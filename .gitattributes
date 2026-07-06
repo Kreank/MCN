@@ -1,0 +1,6 @@
+# Zeilenenden normalisieren; Bash-Skripte brauchen zwingend LF (laufen im Container)
+* text=auto
+*.sh text eol=lf
+*.sql text
+*.py text
+*.md text

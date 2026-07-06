@@ -1,0 +1,14 @@
+# Python / Django
+.venv/
+__pycache__/
+*.pyc
+staticfiles/
+
+# Secrets & lokale Konfiguration
+.env
+*.local
+
+# IDE / OS
+.idea/
+.vscode/
+Thumbs.db
