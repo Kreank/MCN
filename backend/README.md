@@ -53,7 +53,8 @@ uv run uvicorn config.asgi:application --reload   # ASGI, für SSE/KI-Streaming
 
 Regeln:
 - Fachtabellen: immer `managed = False`, `db_table = 'schema"."tabelle'`.
-  `makemigrations` erzeugt für sie nichts — gewollt.
+  `makemigrations db_core` erzeugt dafür nur State-only-Migrationen (kein
+  DDL) — die werden eingecheckt, damit `makemigrations --check` sauber bleibt.
 - Neue Tabellen bekommen den Schutzstandard des Repos (No-Delete/Audit/
   No-Truncate) im selben `RunSQL` mit — Muster in `../db/migrations/0036_*.sql`.
 - Unkritische Neubauten ohne Schutzregeln (UI-Präferenzen, KI-Konversationen

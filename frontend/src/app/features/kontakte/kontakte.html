@@ -1,0 +1,145 @@
+<section class="kontakte" aria-labelledby="kontakte-titel">
+  <header class="page-head">
+    <div>
+      <p class="page-head__kicker">
+        <span class="page-head__scale" aria-hidden="true"></span>
+        Register
+      </p>
+      <h1 id="kontakte-titel" class="page-head__titel">Kontakte</h1>
+    </div>
+    <p class="page-head__hint">
+      Personen und Organisationen aus dem Identitätsregister. Anlage und Pflege
+      laufen über die KI und die API.
+    </p>
+  </header>
+
+  <!-- Steuerung: Suche + Segmentfilter -->
+  <div class="controls">
+    <div class="search">
+      <label class="search__label" for="kontakte-suche">Kontakte durchsuchen</label>
+      <div class="search__field">
+        <span class="search__icon" aria-hidden="true">⌕</span>
+        <input
+          id="kontakte-suche"
+          class="search__input"
+          type="search"
+          inputmode="search"
+          autocomplete="off"
+          placeholder="Name oder Kennung"
+          (input)="onSearch($any($event.target).value)"
+        />
+      </div>
+    </div>
+
+    <div class="segment" role="group" aria-label="Nach Typ filtern">
+      @for (seg of segments; track seg.label) {
+        <button
+          type="button"
+          class="segment__btn"
+          [class.is-active]="partyType() === seg.value"
+          [attr.aria-pressed]="partyType() === seg.value"
+          (click)="selectSegment(seg.value)"
+        >
+          {{ seg.label }}
+        </button>
+      }
+    </div>
+  </div>
+
+  <!-- Ergebniszahl fuer Screenreader; role="status" impliziert aria-live="polite" -->
+  <p class="sr-only" role="status">{{ resultSummary() }}</p>
+
+  @switch (state().kind) {
+    <!-- ------------------------------- Laden ------------------------------ -->
+    @case ('loading') {
+      <ul class="rows" aria-hidden="true">
+        @for (s of skeletons; track $index) {
+          <li class="row row--skeleton">
+            <span class="sk sk--avatar"></span>
+            <span class="sk-block">
+              <span class="sk sk--line"></span>
+              <span class="sk sk--chips"></span>
+            </span>
+            <span class="sk sk--id"></span>
+          </li>
+        }
+      </ul>
+    }
+
+    <!-- ------------------------------- Fehler ----------------------------- -->
+    @case ('error') {
+      <div class="note note--error" role="alert">
+        <h2 class="note__titel">Verbindung zur Registerschnittstelle unterbrochen</h2>
+        <p class="note__text">
+          Die Kontakte ließen sich nicht laden. Prüfe die Verbindung und lade den
+          Bereich erneut.
+        </p>
+        <button type="button" class="btn btn--primary" (click)="retry()">
+          Erneut versuchen
+        </button>
+      </div>
+    }
+
+    <!-- ------------------------------- Bereit ----------------------------- -->
+    @case ('ready') {
+      @if (state().kind === 'ready' && $any(state()).data.items.length === 0) {
+        <div class="note note--empty">
+          <h2 class="note__titel">Noch keine Kontakte im Register</h2>
+          <p class="note__text">
+            Für die aktuelle Auswahl gibt es keine Einträge. Neue Personen und
+            Organisationen entstehen über die KI-gestützte Anlage und die API —
+            sie erscheinen hier, sobald sie angelegt sind.
+          </p>
+        </div>
+      } @else {
+        <ul class="rows">
+          @for (p of $any(state()).data.items; track p.id) {
+            <li class="row">
+              <span
+                class="row__avatar"
+                [class.row__avatar--org]="p.party_type === 'ORGANIZATION'"
+                aria-hidden="true"
+                >{{ monogram(p) }}</span
+              >
+              <span class="row__body">
+                <span class="row__name">{{ p.display_name }}</span>
+                <span class="row__stamps">
+                  <span class="stamp stamp--type">{{ typeLabel(p.party_type) }}</span>
+                  <span class="stamp {{ statusClass(p.status) }}">{{
+                    statusLabel(p.status)
+                  }}</span>
+                </span>
+              </span>
+              <span class="row__id" title="Kennung">
+                <span class="row__id-prefix" aria-hidden="true">ID</span>
+                {{ shortId(p) }}
+              </span>
+            </li>
+          }
+        </ul>
+
+        <nav class="pager" aria-label="Blättern">
+          <button
+            type="button"
+            class="btn"
+            (click)="prev()"
+            [disabled]="page() <= 1"
+          >
+            Zurück
+          </button>
+          <span class="pager__pos" aria-hidden="true">
+            Seite {{ page() }} von {{ totalPages() }}
+          </span>
+          <button
+            type="button"
+            class="btn"
+            (click)="next()"
+            [disabled]="page() >= totalPages()"
+          >
+            Weiter
+          </button>
+        </nav>
+      }
+    }
+  }
+</section>

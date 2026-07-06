@@ -1,0 +1,145 @@
+// =============================================================================
+// MCN Design-Tokens — Design-Richtung "Leitstand & Bauzeichnung"
+// -----------------------------------------------------------------------------
+// Navy-Kommandoflaechen (Sidebar/Header) tragen die Brandakzente; die
+// Arbeitsflaeche ist hell und ruhig (Papierweiss). Kennungen sind Mono.
+//
+// KONTRAST-NACHWEIS (WCAG 2.2 AA, Schwelle 4,5:1 fuer Normaltext).
+// Selbst nachgerechnet nach WCAG-Formel (rel. Luminanz + (L1+0.05)/(L2+0.05)):
+//
+//   Kombination                                       Ratio    Bewertung
+//   ----------------------------------------------------------------------
+//   Navy-Text #1c3244  auf Papier #f7f6f3            12,22:1  AA/AAA  (Body)
+//   Muted-Text #4a5b68 auf Papier #f7f6f3             6,50:1  AA/AAA  (2nd)
+//   Accent #ef804e     auf Navy   #1c3244             4,95:1  AA      (Marke/Text auf Navy)
+//   Accent-dark #a84a17 auf Papier #f7f6f3            5,31:1  AA      (Accent-Text auf hell)
+//   Warn #db9c4d       auf Navy   #1c3244             5,58:1  AA
+//   Warn-dark #8a5a12  auf Papier #f7f6f3             5,47:1  AA
+//   Positive #9fcd99   auf Navy   #1c3244             7,34:1  AA/AAA
+//   Text-invert #e8eef2 auf Dark-BG #14232f          13,68:1  AA/AAA  (Body dark)
+//   Accent #ef804e     auf Dark-BG #14232f            6,00:1  AA      (Accent-Text in dark)
+//
+// Regel (CLAUDE.md): #ef804e in Reinform NUR auf Navy/dunkel als Text.
+// Auf hellem Grund fuer Text die abgedunkelte Variante --accent-ink verwenden.
+// Positive/Warn auf hell nur als Tint-Flaeche mit dunklem Text (Chips).
+// =============================================================================
+
+:root {
+  // --- Marken-Rohfarben (verbindlich, CLAUDE.md) ---------------------------
+  --navy: #1c3244;          // Primaer
+  --accent: #ef804e;        // Orange — nur auf Navy als Text/Marke
+  --positive: #9fcd99;      // Salbeigruen
+  --warn: #db9c4d;          // Amber
+
+  // --- Abgedunkelte Textvarianten fuer hellen Grund ------------------------
+  --accent-ink: #a84a17;    // Accent-Text auf Papier (5,31:1)
+  --warn-ink: #8a5a12;      // Warn-Text auf Papier   (5,47:1)
+  --positive-ink: #2f6b3f;  // Positive-Text auf Papier
+
+  // --- Neutrale Ableitungen aus Navy ---------------------------------------
+  --ink: #1c3244;           // Primaertext auf hell
+  --ink-muted: #4a5b68;     // Sekundaertext auf hell (6,5:1)
+  --ink-faint: #6b7a86;     // Tertiaer/Deko (grosse Texte/Icons)
+
+  // Flaechen-Tints (aus Navy abgeleitet, warm entsaettigt)
+  --paper: #f7f6f3;         // Arbeitsflaeche (kein hartes Weiss)
+  --surface: #ffffff;       // Karten/Zeilen ueber Papier
+  --surface-sunken: #efede8;// vertiefte Flaechen (Skeleton, Segmentleiste)
+  --line: #ddd8ce;          // Hairline-Borders auf Papier
+  --line-strong: #c7c1b4;   // betonte Trennlinien
+
+  // Kommandoflaechen (Navy)
+  --command: #1c3244;       // Sidebar/Header
+  --command-2: #223b50;     // Navy-Tint fuer Hover auf Navy
+  --command-line: #35506a;  // Trennlinien auf Navy
+  --on-command: #eaf0f4;    // Text auf Navy
+  --on-command-muted: #9db0bf; // Sekundaertext auf Navy (>= 4,5:1)
+
+  // Positiv/Warn als Tint-Chips auf hell (dunkler Text darauf)
+  --positive-tint: #e6f1e3;
+  --warn-tint: #f7ead2;
+  --neutral-tint: #ebe8e1;
+
+  // Fokus
+  --focus-ring: #1c3244;    // Navy-Ring auf hell
+  --focus-ring-on-command: #ef804e; // Orange-Marke auf Navy
+
+  // --- Typografie ----------------------------------------------------------
+  --font-display: 'Bricolage Grotesque Variable', 'Source Sans 3 Variable', system-ui, sans-serif;
+  --font-body: 'Source Sans 3 Variable', system-ui, -apple-system, sans-serif;
+  --font-mono: 'Spline Sans Mono Variable', ui-monospace, 'Cascadia Code', monospace;
+
+  // Typoskala (fluide, bewusste Sprünge)
+  --step--1: clamp(0.78rem, 0.75rem + 0.15vw, 0.85rem);
+  --step-0:  clamp(0.94rem, 0.90rem + 0.2vw, 1rem);
+  --step-1:  clamp(1.1rem, 1.02rem + 0.4vw, 1.25rem);
+  --step-2:  clamp(1.35rem, 1.2rem + 0.7vw, 1.6rem);
+  --step-3:  clamp(1.75rem, 1.45rem + 1.5vw, 2.35rem);
+
+  // --- Raster / Radius / Schatten -----------------------------------------
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-8: 3rem;
+
+  --radius-sm: 3px;   // Pruefstempel-Chips: leicht gerundet
+  --radius: 6px;
+  --radius-lg: 10px;
+
+  --shadow-1: 0 1px 2px rgba(28, 50, 68, 0.06), 0 1px 1px rgba(28, 50, 68, 0.04);
+  --shadow-2: 0 8px 24px rgba(28, 50, 68, 0.10);
+
+  --sidebar-w: 15.5rem;
+  --header-h: 4rem;
+
+  color-scheme: light;
+}
+
+// --- Dark: prefers-color-scheme als Default-Signal --------------------------
+@mixin dark-tokens {
+  --ink: #e8eef2;
+  --ink-muted: #a9bac8;
+  --ink-faint: #7f92a1;
+
+  --accent-ink: #f0925f;    // auf dunkel darf Accent heller sein (6:1 auf BG)
+  --warn-ink: #e0ab5e;
+  --positive-ink: #a9d6a2;
+
+  --paper: #14232f;         // Navy-abgeleitete Tiefe, nicht Schwarz
+  --surface: #1c3244;
+  --surface-sunken: #101c26;
+  --line: #2c4459;
+  --line-strong: #3a566f;
+
+  --command: #101c26;
+  --command-2: #1c3244;
+  --command-line: #2c4459;
+  --on-command: #eaf0f4;
+  --on-command-muted: #9db0bf;
+
+  --positive-tint: #1e3a2b;
+  --warn-tint: #3a2f18;
+  --neutral-tint: #22333f;
+
+  --focus-ring: #ef804e;
+  --focus-ring-on-command: #ef804e;
+
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    @include dark-tokens;
+  }
+}
+
+// Expliziter Override durch Toggle (gewinnt in beide Richtungen)
+:root[data-theme='dark'] {
+  @include dark-tokens;
+}
+:root[data-theme='light'] {
+  color-scheme: light;
+}

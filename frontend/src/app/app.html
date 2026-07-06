@@ -1,0 +1,73 @@
+<a class="skip-link" href="#inhalt">Zum Inhalt springen</a>
+
+<div class="shell">
+  <!-- Navy-Kommandoflaeche: Sidebar mit Messkante-Signature -->
+  <aside class="sidebar" aria-label="Bereichsnavigation">
+    <div class="sidebar__brand">
+      <span class="brand__mark" aria-hidden="true">M</span>
+      <span class="brand__type">
+        <span class="brand__name">MCN</span>
+        <span class="brand__sub">Leitstand</span>
+      </span>
+    </div>
+
+    <nav class="nav" aria-label="Hauptnavigation">
+      <!-- Messkante: Maszband-Leiste; orange Bemaszungsmarke verfaehrt zum aktiven Punkt -->
+      <div class="messkante" aria-hidden="true" [style.--active-index]="activeIndex()">
+        <span class="messkante__mark"></span>
+      </div>
+
+      <ul class="nav__list">
+        @for (item of nav; track item.path) {
+          <li>
+            <a
+              class="nav__link"
+              [routerLink]="item.path"
+              routerLinkActive="is-active"
+              #rla="routerLinkActive"
+              [attr.aria-current]="rla.isActive ? 'page' : null"
+            >
+              <span class="nav__mark" aria-hidden="true">{{ item.mark }}</span>
+              <span class="nav__label">{{ item.label }}</span>
+            </a>
+          </li>
+        }
+      </ul>
+    </nav>
+
+    <p class="sidebar__foot">
+      <span class="foot__scale" aria-hidden="true"></span>
+      Maßstab 1:1 — jede Kennung zählt.
+    </p>
+  </aside>
+
+  <div class="frame">
+    <!-- Header: Wortmarke + Theme-Toggle. Suche lebt auf der Kontakte-Seite. -->
+    <header class="header">
+      <div class="header__title">
+        <span class="header__product">MCN</span>
+        <span class="header__divider" aria-hidden="true"></span>
+        <span class="header__context">Leitstand</span>
+      </div>
+
+      <button
+        type="button"
+        class="theme-toggle"
+        (click)="themeSvc.toggle()"
+        [attr.aria-pressed]="themeSvc.theme() === 'dark'"
+        [attr.aria-label]="themeLabel()"
+      >
+        <span class="theme-toggle__glyph" aria-hidden="true">
+          {{ themeSvc.theme() === 'dark' ? '◐' : '◑' }}
+        </span>
+        <span class="theme-toggle__text">
+          {{ themeSvc.theme() === 'dark' ? 'Dunkel' : 'Hell' }}
+        </span>
+      </button>
+    </header>
+
+    <main id="inhalt" class="content" tabindex="-1">
+      <router-outlet />
+    </main>
+  </div>
+</div>

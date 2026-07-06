@@ -1,0 +1,128 @@
+// MCN — globale Basis. Design-Tokens + Reset + Grundtypografie.
+// Schriften werden ueber angular.json (styles[]) gebuendelt (keine CDN-Fonts).
+@use 'styles/tokens';
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: var(--step-0);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1, h2, h3, h4 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  line-height: 1.12;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+a {
+  color: inherit;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+// Sichtbare Fokuszustaende: Navy-Ring auf hell, Orange-Marke auf Navy.
+:focus-visible {
+  outline: 2.5px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+// Skip-Link — versteckt bis fokussiert.
+.skip-link {
+  position: fixed;
+  top: var(--space-3);
+  left: var(--space-3);
+  z-index: 100;
+  transform: translateY(-150%);
+  background: var(--command);
+  color: var(--on-command);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  text-decoration: none;
+  box-shadow: var(--shadow-2);
+  transition: transform 0.15s ease;
+}
+.skip-link:focus {
+  transform: translateY(0);
+}
+
+// Nur fuer Screenreader.
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+// Pruefstempel-Chip — Mono-Uppercase, 1.5px Border. Farbe nie alleiniger Traeger.
+.stamp {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0.18em 0.55em;
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  color: var(--ink-muted);
+  background: var(--neutral-tint);
+  white-space: nowrap;
+}
+.stamp--positive {
+  border-color: color-mix(in srgb, var(--positive-ink) 55%, var(--line-strong));
+  background: var(--positive-tint);
+  color: var(--positive-ink);
+}
+.stamp--warn {
+  border-color: color-mix(in srgb, var(--warn-ink) 55%, var(--line-strong));
+  background: var(--warn-tint);
+  color: var(--warn-ink);
+}
+.stamp--type {
+  border-color: color-mix(in srgb, var(--accent-ink) 45%, var(--line-strong));
+  color: var(--accent-ink);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

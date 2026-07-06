@@ -29,7 +29,10 @@ Pflichtlektüre vor DB- oder Backend-Arbeit:
 
 Eiserne Regeln daraus:
 - Fachschema-Änderungen nur als Hand-SQL (Django-Migration mit `RunSQL`);
-  niemals ORM-generierte Migrationen auf Fachtabellen. Models `managed = False`.
+  niemals ORM-generiertes DDL auf Fachtabellen. Models `managed = False`.
+  Ausnahme: Djangos **State-only-Migrationen** (`CreateModel` für
+  `managed=False`-Models, kein DDL) werden per `makemigrations db_core`
+  erzeugt und eingecheckt, damit `makemigrations --check` sauber bleibt.
 - Fachliche Writes ausschließlich über `db_core.db_context.business_transaction`.
 - Neue Fachtabellen erben den Schutzstandard (No-Delete/Audit/No-Truncate).
 - Dev-DB: Container `mitra-crm-test`, Port 55432; Zugang über `MCN_DB_*`-Env-Vars.
