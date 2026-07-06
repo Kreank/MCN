@@ -35,6 +35,31 @@ Eiserne Regeln daraus:
 - Dev-DB: Container `mitra-crm-test`, Port 55432; Zugang über `MCN_DB_*`-Env-Vars.
   Zugangsdaten niemals aus Container-Umgebungen auslesen.
 
+## Design & Marke
+
+Brandfarben (verbindlich, zentral als Design-Tokens pflegen):
+
+| Farbe | Hex | Rolle |
+|---|---|---|
+| Tiefes Marineblau | `#1c3244` | Primär — Flächen, Navigation, Text auf hellem Grund |
+| Orange | `#ef804e` | Akzent/CTA, Interaktion |
+| Salbeigrün | `#9fcd99` | Positiv/Erfolg |
+| Amber | `#db9c4d` | Warnung/Hervorhebung |
+
+Anspruch: **hochmodern, interaktiv, eigenständig — explizit KEIN
+0815-Standard-CRM-Look** (keine generischen Bootstrap-/Material-Tabellenwüsten).
+Eigenständige, durchdachte Oberfläche mit spürbarer Interaktion.
+
+Barrierefreiheit ist **nicht verhandelbar** (WCAG 2.2 AA):
+- Textkontrast ≥ 4,5:1 (bzw. 3:1 für große Texte/UI-Komponenten). Achtung:
+  `#ef804e` auf Weiß erreicht nur ≈ 2,7:1 — für Text und kleine Icons
+  abgedunkelte Token-Varianten verwenden; Reinform nur für große Flächen/Deko.
+- Vollständige Tastaturbedienung, sichtbare Fokuszustände, korrekte
+  ARIA-Semantik, Screenreader-taugliche Komponenten.
+- `prefers-reduced-motion` und `prefers-color-scheme` respektieren;
+  Light + Dark Theme von Anfang an.
+- Status niemals nur über Farbe kommunizieren (immer Text/Icon dazu).
+
 ## Arbeitsweise: Subagenten & Rollen
 
 - **Fable 5 = Orchestrator und oberste Instanz.** Plant, delegiert, entscheidet,
