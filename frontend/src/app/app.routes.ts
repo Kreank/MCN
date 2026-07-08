@@ -25,24 +25,24 @@ export const routes: Routes = [
       import('./features/liegenschaften/liegenschaften').then((m) => m.Liegenschaften),
   },
   {
-    path: 'vorgaenge',
-    title: 'Vorgänge — MCN Leitstand',
+    path: 'projekte',
+    title: 'Projekte — MCN Leitstand',
     loadComponent: () => import('./shared/platzhalter/platzhalter').then((m) => m.Platzhalter),
     data: {
       platzhalter: {
-        titel: 'Vorgänge',
-        text: 'Aufträge, Einsätze und ihre Statusautomaten laufen künftig an dieser Stelle zusammen. Noch ist der Bereich leer.',
+        titel: 'Projekte',
+        text: 'Projekte, Aufträge, Einsätze und ihre Statusautomaten laufen künftig an dieser Stelle zusammen. Noch ist der Bereich leer.',
       },
     },
   },
   {
-    path: 'belege',
-    title: 'Belege — MCN Leitstand',
+    path: 'dokumente',
+    title: 'Dokumente — MCN Leitstand',
     loadComponent: () => import('./shared/platzhalter/platzhalter').then((m) => m.Platzhalter),
     data: {
       platzhalter: {
-        titel: 'Belege',
-        text: 'Angebote und Rechnungen (GoBD-relevant) erhalten hier ihren geführten Platz. Die Belegverwaltung folgt.',
+        titel: 'Dokumente',
+        text: 'Angebote und Rechnungen (GoBD-relevant) erhalten hier ihren geführten Platz — mit Editor und Konfigurator. Der Bereich folgt.',
       },
     },
   },

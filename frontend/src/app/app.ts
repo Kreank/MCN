@@ -24,8 +24,10 @@ export class App {
     { path: '/uebersicht', label: 'Übersicht', mark: '00' },
     { path: '/kontakte', label: 'Kontakte', mark: '10' },
     { path: '/liegenschaften', label: 'Liegenschaften', mark: '20' },
-    { path: '/vorgaenge', label: 'Vorgänge', mark: '30' },
-    { path: '/belege', label: 'Belege', mark: '40' },
+    // Begriffe an Hero angelehnt (Wiedererkennung): Projekte/Dokumente statt
+    // Vorgänge/Belege — siehe docs/roadmap/00-informationsarchitektur.md.
+    { path: '/projekte', label: 'Projekte', mark: '30' },
+    { path: '/dokumente', label: 'Dokumente', mark: '40' },
   ];
 
   /** Index des aktiven Navigationspunkts — steuert die Bemaszungsmarke. */

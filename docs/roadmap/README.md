@@ -78,15 +78,23 @@ Die Roadmap wurde gegen das reale Schema geerdet. Wichtigste Lücken/Entscheidun
   Arbeitsvertrag/Urlaubsbudget/Steuer-/Bankdaten haben **kein Zuhause** →
   eigenes HR-Fachschema empfohlen. Signatur/Sprache/Mailserver-OAuth fehlen.
 
-## Offene Grundsatz-Entscheidungen (User/Produkt)
+## Grundsatz-Entscheidungen
 
-Gesammelt in `00` und in den Sektionen markiert. Die wichtigsten:
-1. Nav-Begriffe: „Projekte"/„Dokumente" (Hero, Wiedererkennung) vs.
-   „Vorgänge"/„Belege" (aktuelle MCN-Nav).
-2. Liegenschaften als eigener Nav-Punkt vs. Reiter in Kontakten.
-3. Umgang mit Hero-„Löschen" unter GoBD/DSGVO (Archivieren/Anonymisieren).
-4. Lagerverwaltung: bauen (Schema nötig) oder bewusst weglassen.
-5. Wartung: eigenes `maintenance`-Schema und eigener Nav-Punkt?
+Entschieden (User, 2026-07-08):
+1. ✅ Nav-Begriffe **„Projekte"/„Dokumente"** (Hero, Wiedererkennung) — im
+   Leitstand bereits umgestellt.
+2. ✅ **Liegenschaften als eigener Nav-Punkt** (zusätzlich im Kontakt verlinkt).
+3. ✅ **Löschen unter GoBD:** erstellte **Rechnungen nicht löschbar** (nur Storno);
+   **Projekte nicht löschbar** (nur verschieben/archivieren). Leitlinie für alle
+   „Löschen"-Übersetzungen.
+4. ✅ **Lagerverwaltung** vorerst **weglassen** (kommt später sicher dazu → dann
+   DB-Schema nötig, siehe `08`).
+
+Noch offen:
+- Wartung: eigenes `maintenance`-Schema und eigener Nav-Punkt vs. Unterbereich
+  von Projekten (siehe `11`).
+- DSGVO-Endlöschung von Kontakten (Anonymisierung) vs. GoBD-Aufbewahrung — Detail
+  in `02`.
 
 ## Herkunft
 

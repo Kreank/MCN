@@ -85,8 +85,8 @@ das nur als „Objektadressen" unter Kontakten) als eigenen Bereich hebt.
 | **Übersicht** | Übersicht/Dashboard | (aggregiert) + `ai` | `01` | geplant |
 | **Kontakte** | Kontakte | `identity` | `02` | ✅ Liste live, Ausbau offen |
 | **Liegenschaften** | Kontakte→Objektadressen (gehoben) | `property`,`tenure`,`management` | `03` | ✅ Liste live, Ausbau offen |
-| **Vorgänge** | Projekte (+ Wartungsverträge) | `workflow`,`management` | `04`,`11` | Platzhalter |
-| **Belege** | Dokumente | `content`,`invoicing`,`pricing` | `05` | Platzhalter |
+| **Projekte** | Projekte (+ Wartungsverträge) | `workflow`,`management` | `04`,`11` | Platzhalter |
+| **Dokumente** | Dokumente | `content`,`invoicing`,`pricing` | `05` | Platzhalter |
 | **Planung** | Planung | `workflow` (Einsatz) | `06` | — |
 | **Aufgaben** | Aufgaben | `workflow` | `07` | — |
 | **Artikel & Leistungen** | Artikelstamm | `pricing` | `08` | — |
@@ -97,22 +97,21 @@ das nur als „Objektadressen" unter Kontakten) als eigenen Bereich hebt.
 | **Einstellungen** | Firmeneinstellungen | `security`,`content`,`invoicing` | `13` | — |
 | **Mein Profil** | Persönliche Daten | `security` | `14` | — |
 
-### Offene Namens-/Struktur-Entscheidungen (für Produkt/User)
+### Namens-/Struktur-Entscheidungen (entschieden 2026-07-08)
 
-Diese Punkte betreffen die Wiedererkennung direkt und sollten bewusst
-entschieden werden — die Roadmap nutzt vorläufig die MCN-Begriffe mit
-Hero-Begriff in Klammern:
+1. ✅ **„Projekte"** (nicht „Vorgänge") — Hero-Begriff für maximale
+   Wiedererkennung, auch wenn die DB `workflow.project`/`service_case` heißt.
+   Nav-Label und Route sind im Leitstand bereits umgestellt (`/projekte`).
+2. ✅ **„Dokumente"** (nicht „Belege") — Hero-Begriff (der Editor heißt so).
+   Nav-Label und Route bereits umgestellt (`/dokumente`).
+3. ✅ **Liegenschaften als eigener Nav-Punkt** (MCN-Domäne Gebäudeservice), im
+   Kontakt-Detail zusätzlich verlinkt.
+4. **Wartung**: noch offen — eigener Sidebar-Punkt oder Unterbereich von
+   Projekten (Hero uneindeutig; siehe `11`).
 
-1. **„Vorgänge" vs. „Projekte":** Hero-Nutzer kennen **Projekte/Projektmappe**.
-   Empfehlung: Hero-Begriff „Projekte" übernehmen (max. Wiedererkennung), auch
-   wenn die DB `workflow.project`/`vorgang` heißt.
-2. **„Belege" vs. „Dokumente":** Hero-Nutzer kennen **Dokumente** (der Editor
-   heißt so). Empfehlung: „Dokumente" statt „Belege".
-3. **Liegenschaften als eigener Punkt** oder als Reiter in Kontakten (wie Hero)?
-   Empfehlung: eigener Punkt (MCN-Domäne Gebäudeservice), aber im Kontakt-Detail
-   zusätzlich verlinkt.
-4. **Wartung**: eigener Sidebar-Punkt oder Unterbereich von Vorgängen? (Hero
-   uneindeutig; siehe `11`.)
+Bezeichnungs-Hinweis: „Projekte" ist das **UI-Label**; im DB-/Backend-Kontext
+bleiben die Fachbegriffe `project` (Akte/Cockpit) und `service_case` (Vorgang,
+Statusautomat) bestehen — beide zusammen bilden das UI-„Projekt" (siehe `04`).
 
 ## Querschnitts-Prinzipien (gelten für ALLE Sektionen)
 
@@ -127,7 +126,12 @@ werden:
   Dokumente, Artikelstamm). Unser DB-Standard ist **Archivieren statt Löschen**,
   Append-only, Audit-Trigger; GoBD-Belege sind unveränderlich (Storno statt
   Bearbeitung). Wo Hero „löschen" sagt, meinen wir **archivieren/stornieren** —
-  jede Sektion muss das explizit übersetzen.
+  jede Sektion muss das explizit übersetzen. **Bestätigte Regeln (User, 2026-07-08):**
+  - **Erstellte Rechnungen sind nicht löschbar** (GoBD; Korrektur nur per Storno/
+    Rechnungskorrektur — siehe `05`/`09`).
+  - **Projekte sind nicht löschbar** — nur **verschieben** (in ein anderes
+    Projekt/Ordner) oder **archivieren** (siehe `04`).
+  - Diese Regeln sind die Leitlinie für alle „Löschen"-Übersetzungen der Sektionen.
 - **Schreiben nur über Service-Schicht** (`business_transaction`) → dieselben
   Regeln für Mensch und KI; keine ORM-Direktwrites, kein KI-Sonderweg.
 - **Auth/Rechte:** Lesen ist in der Dev-Phase offen; Schreiben braucht Session +
