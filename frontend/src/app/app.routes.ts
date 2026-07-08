@@ -78,6 +78,21 @@ export const routes: Routes = [
     loadComponent: () => import('./features/aufgaben/aufgaben').then((m) => m.Aufgaben),
   },
   {
+    path: 'auswertungen',
+    pathMatch: 'full',
+    title: 'Auswertungen — MCN Leitstand',
+    loadComponent: () =>
+      import('./features/auswertungen/auswertungen').then((m) => m.Auswertungen),
+  },
+  {
+    path: 'auswertungen/umsatz-projektuebersicht',
+    title: 'Umsatz- und Projektübersicht — MCN Leitstand',
+    loadComponent: () =>
+      import('./features/auswertungen-umsatz/auswertungen-umsatz').then(
+        (m) => m.AuswertungenUmsatz,
+      ),
+  },
+  {
     path: 'artikel',
     title: 'Artikel & Leistungen — MCN Leitstand',
     loadComponent: () => import('./features/artikel/artikel').then((m) => m.Artikel),

@@ -1,0 +1,51 @@
+<section class="auswertungen" aria-labelledby="auswertungen-titel">
+  <header class="page-head">
+    <div>
+      <p class="page-head__kicker">
+        <span class="page-head__scale" aria-hidden="true"></span>
+        Auswertungen
+      </p>
+      <h1 id="auswertungen-titel" class="page-head__titel">Dashboards</h1>
+    </div>
+    <p class="page-head__hint">
+      Analytische Dashboards zu Umsatz, Projekten, Kunden und Artikeln.
+      Alle Auswertungen sind rein lesend und lassen sich filtern.
+    </p>
+  </header>
+
+  @switch (state().kind) {
+    @case ('loading') {
+      <p class="lade-hinweis" role="status">Dashboards werden geladen …</p>
+    }
+    @case ('error') {
+      <div class="note note--error" role="alert">
+        <h2 class="note__titel">Dashboards konnten nicht geladen werden</h2>
+        <p class="note__text">Die Auswertungs-Schnittstelle war nicht erreichbar.</p>
+        <div class="note__aktionen">
+          <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
+        </div>
+      </div>
+    }
+    @case ('ready') {
+      <ul class="dash-grid">
+        @for (d of $any(state()).items; track d.key) {
+          <li>
+            @if (d.available) {
+              <a class="dash" [routerLink]="['/auswertungen', d.key]">
+                <span class="dash__titel">{{ d.title }}</span>
+                <span class="dash__text">{{ d.description }}</span>
+                <span class="dash__cta" aria-hidden="true">Öffnen →</span>
+              </a>
+            } @else {
+              <div class="dash dash--soon" aria-disabled="true">
+                <span class="dash__titel">{{ d.title }}</span>
+                <span class="dash__text">{{ d.description }}</span>
+                <span class="stamp stamp--type">In Vorbereitung</span>
+              </div>
+            }
+          </li>
+        }
+      </ul>
+    }
+  }
+</section>

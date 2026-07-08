@@ -1,0 +1,155 @@
+:host {
+  display: block;
+}
+
+.page-head__back {
+  color: var(--accent-ink);
+  text-decoration: none;
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+}
+.page-head__back:hover {
+  text-decoration: underline;
+}
+
+// ============================ KPI-Kacheln ===================================
+.kpi-reihe {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: var(--space-4);
+  margin: var(--space-5) 0;
+}
+.kpi {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-4) var(--space-5);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--radius);
+}
+.kpi--stark {
+  border-left-color: var(--accent);
+}
+.kpi__label {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.kpi__wert {
+  font-family: var(--font-display);
+  font-size: var(--step-2);
+  font-weight: 600;
+  color: var(--ink);
+}
+.kpi--stark .kpi__wert {
+  color: var(--accent-ink);
+}
+.kpi__sub {
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+// ============================ Panels ========================================
+.panel {
+  margin-top: var(--space-5);
+  padding: var(--space-5);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+.panel__titel {
+  margin: 0 0 var(--space-4);
+  font-size: var(--step-1);
+  color: var(--ink);
+}
+
+// ============================ Säulen (Umsatzverlauf) ========================
+.saeulen {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-3);
+  overflow-x: auto;
+  padding-bottom: var(--space-1);
+}
+.saeule {
+  flex: 1 1 0;
+  min-width: 3.5rem;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: var(--space-2);
+  height: 16rem;
+  text-align: center;
+}
+.saeule__wert {
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+.saeule__spur {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.saeule__fuellung {
+  width: 62%;
+  max-width: 3rem;
+  background: var(--accent);
+  border-radius: 4px 4px 0 0;
+}
+.saeule__label {
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  color: var(--ink-faint);
+}
+
+// ============================ Balken (nach Gewerk) ==========================
+.balken {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.balken__zeile {
+  display: grid;
+  grid-template-columns: minmax(7rem, 12rem) 1fr auto;
+  align-items: center;
+  gap: var(--space-3);
+}
+.balken__label {
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.balken__spur {
+  height: 0.9rem;
+  background: var(--surface-sunken);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.balken__fuellung {
+  height: 100%;
+  min-width: 2px;
+  background: color-mix(in srgb, var(--accent) 55%, var(--surface));
+  border-radius: var(--radius-sm);
+}
+.balken__wert {
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+  min-width: 2ch;
+  text-align: right;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .saeule__fuellung,
+  .balken__fuellung {
+    transition: height 0.3s ease, width 0.3s ease;
+  }
+}
