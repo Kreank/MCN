@@ -79,6 +79,9 @@ export interface QuoteDetail extends Quote {
   tax_total: string | null;
   version: number;
   project: QuoteProjectRef | null;
+  sent_at: string | null;
+  has_snapshot: boolean;
+  content_hash: string | null;
   lines: QuoteLine[];
 }
 
@@ -121,10 +124,23 @@ export interface InvoiceQuery {
   project_id?: string | null;
 }
 
+export interface InvoiceParty {
+  party_id: string;
+  display_name: string;
+  role: string;
+  is_primary: boolean;
+  allocation_percent: string | null;
+}
+
 export interface InvoiceDetail extends Invoice {
   due_date: string | null;
   tax_total: string | null;
   version: number;
   project: QuoteProjectRef | null;
+  work_order_number: string | null;
+  published_at: string | null;
+  has_snapshot: boolean;
+  content_hash: string | null;
+  parties: InvoiceParty[];
   lines: QuoteLine[];
 }

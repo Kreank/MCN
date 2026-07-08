@@ -388,6 +388,51 @@ class Command(BaseCommand):
                 f"Auftrag angelegt: {order.order_number} ({order.status})"
             )
 
+        # Veröffentlichte Rechnung am kaufmännisch geprüften Auftrag: erzeugt
+        # echten Umsatz (für die Auswertungen). Durchläuft das Veröffentlichungs-
+        # tor (Snapshot/Hash, Auftrag B-08, Schuldner/Empfänger A-27/A-28) mit
+        # echtem Commit. Idempotent: nur, wenn der Auftrag noch keine
+        # veröffentlichte Rechnung trägt.
+        pub_order = (
+            WorkOrder.objects.filter(
+                project_id=au_proj.id, status="KAUFMAENNISCH_GEPRUEFT"
+            ).first()
+            if au_proj is not None
+            else None
+        )
+        if (
+            pub_order is not None and au_obj is not None and au_weg is not None
+            and not Invoice.objects.filter(
+                work_order_id=pub_order.id, status="VEROEFFENTLICHT"
+            ).exists()
+        ):
+            inv = beleg_service.create_invoice(
+                actor.id, property_id=au_obj.id, invoice_type="RECHNUNG",
+                project_id=au_proj.id, work_order_id=pub_order.id,
+                lines=[
+                    {"line_type": "MATERIAL", "description": "Dachziegel Tonziegel rot",
+                     "quantity": 850, "unit": "Stk", "unit_price": "2.40", "tax_code": "DE_19"},
+                    {"line_type": "ARBEITSZEIT", "description": "Dachdeckerarbeiten",
+                     "quantity": 64, "unit": "h", "unit_price": "58.00", "tax_code": "DE_19"},
+                    {"line_type": "FAHRT", "description": "An- und Abfahrt",
+                     "quantity": 4, "unit": "Fahrt", "unit_price": "35.00", "tax_code": "DE_19"},
+                ],
+            )
+            beleg_service.add_invoice_party(
+                actor.id, invoice_id=inv.id, party_id=au_weg.id,
+                role="INVOICE_DEBTOR", is_primary=True,
+            )
+            beleg_service.add_invoice_party(
+                actor.id, invoice_id=inv.id, party_id=au_weg.id,
+                role="INVOICE_RECIPIENT", is_primary=True,
+            )
+            beleg_service.publish_invoice(actor.id, invoice_id=inv.id)
+            inv.refresh_from_db()
+            angelegt += 1
+            self.stdout.write(
+                f"Rechnung veröffentlicht: {inv.invoice_number} — {inv.gross_total} EUR"
+            )
+
         # Demo-Rechnung (ENTWURF) an der Wohnanlage Lindenhöfe; idempotent
         # darüber, ob die Liegenschaft bereits eine Rechnung trägt.
         re_obj = Property.objects.filter(name="Wohnanlage Lindenhöfe").first()
@@ -433,6 +478,19 @@ class Command(BaseCommand):
             angelegt += 1
             self.stdout.write(
                 f"Angebot angelegt: {created.title} — {created.gross_total} EUR ({created.id})"
+            )
+
+        # Demo-Angebot versenden (ENTWURF → VERSENDET): vergibt die AN-Nummer und
+        # friert den Beleg ein. Idempotent: nur, solange es noch ENTWURF ist.
+        send_q = Quote.objects.filter(
+            title="Angebot Dachsanierung Lindenhöfe", status="ENTWURF"
+        ).first()
+        if send_q is not None:
+            beleg_service.send_quote(actor.id, quote_id=send_q.id)
+            send_q.refresh_from_db()
+            angelegt += 1
+            self.stdout.write(
+                f"Angebot versendet: {send_q.quote_number} ({send_q.status})"
             )
 
         # Lohngruppen (idempotent je Name).

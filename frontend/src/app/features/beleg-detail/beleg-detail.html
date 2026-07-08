@@ -82,7 +82,8 @@
           <div class="feld"><dt class="feld__label">Belegnummer</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.quote_number">{{ daten()!.quote_number || 'noch nicht vergeben' }}</dd></div>
           <div class="feld"><dt class="feld__label">Angebotsdatum</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.quote_date">{{ daten()!.quote_date || '—' }}</dd></div>
           <div class="feld"><dt class="feld__label">Gültig bis</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.valid_until_date">{{ daten()!.valid_until_date || '—' }}</dd></div>
-          <div class="feld"><dt class="feld__label">Währung</dt><dd class="feld__wert">{{ daten()!.currency }}</dd></div>
+          <div class="feld"><dt class="feld__label">Versendet</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.sent_at">{{ daten()!.sent_at || '—' }}</dd></div>
+          <div class="feld"><dt class="feld__label">Inhalts-Hash</dt><dd class="feld__wert feld__wert--mono" [class.feld__wert--leer]="!daten()!.content_hash">{{ hashKurz(daten()!.content_hash) }}</dd></div>
           <div class="feld"><dt class="feld__label">Gesamt (brutto)</dt><dd class="feld__wert">{{ euro(daten()!.gross_total) }}</dd></div>
         </dl>
 

@@ -1,3 +1,8 @@
+.feld__wert--mono {
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+}
+
 :host {
   display: block;
 }

@@ -615,14 +615,21 @@ class Quote(models.Model):
     """invoicing.quote — Angebot (Migration 0018).
 
     Belegnummer wird erst beim Versand vergeben (bleibt im ENTWURF NULL). Ab
-    VERSENDET ist der Beleg eingefroren (B-30). Dieser Slice deckt Anlage bis
-    ENTWURF sowie Liste/Detail ab — der Versand-Workflow folgt separat. Die
-    Versand-/Snapshot-Spalten (billing_snapshot, content_hash, sent_at,
-    replaced_by_quote_id, work_order_id) sind hier bewusst nicht modelliert.
+    VERSENDET ist der Beleg eingefroren (B-30). Versand verlangt Snapshot +
+    Inhalts-Hash (per DB-Trigger). work_order-Bezug bleibt hier ungenutzt
+    (optional in der DB), aber modelliert.
     """
 
     id = models.UUIDField(primary_key=True)
     quote_number = models.TextField(null=True, blank=True)
+    work_order = models.ForeignKey(
+        "WorkOrder",
+        models.DO_NOTHING,
+        db_column="work_order_id",
+        null=True,
+        blank=True,
+        related_name="quotes",
+    )
     project = models.ForeignKey(
         Project,
         models.DO_NOTHING,
@@ -649,6 +656,10 @@ class Quote(models.Model):
     gross_total = models.DecimalField(
         max_digits=15, decimal_places=2, null=True, blank=True
     )
+    billing_snapshot = models.JSONField(null=True, blank=True)
+    content_hash = models.TextField(null=True, blank=True)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    replaced_by_quote_id = models.UUIDField(null=True, blank=True)
     version = models.IntegerField()
     created_at = models.DateTimeField(db_default=Now())
     updated_at = models.DateTimeField(db_default=Now())
@@ -718,15 +729,23 @@ class Invoice(models.Model):
 
     Kein title (Identität über Typ + Nummer). Nummer erst bei Veröffentlichung
     (bleibt im ENTWURF NULL); ab VEROEFFENTLICHT vollständig eingefroren (B-30).
-    Dieser Slice: Anlage bis ENTWURF sowie Liste/Detail. Versand-/Snapshot-/
-    Auftrags-Gate-Spalten (billing_snapshot, content_hash, published_at,
-    work_order_id) sind hier bewusst nicht modelliert.
+    Veröffentlichung verlangt Snapshot + Inhalts-Hash, einen kaufmännisch
+    geprüften Auftrag (work_order, B-08) und bestätigte Beteiligte (invoice_party,
+    A-27) — physisch per DB-Trigger erzwungen.
     """
 
     id = models.UUIDField(primary_key=True)
     invoice_number = models.TextField(null=True, blank=True)
     # RECHNUNG|ABSCHLAGSRECHNUNG|TEILRECHNUNG|SCHLUSSRECHNUNG|GUTSCHRIFT|STORNO
     invoice_type = models.TextField()
+    work_order = models.ForeignKey(
+        "WorkOrder",
+        models.DO_NOTHING,
+        db_column="work_order_id",
+        null=True,
+        blank=True,
+        related_name="invoices",
+    )
     project = models.ForeignKey(
         Project,
         models.DO_NOTHING,
@@ -752,6 +771,9 @@ class Invoice(models.Model):
     gross_total = models.DecimalField(
         max_digits=15, decimal_places=2, null=True, blank=True
     )
+    billing_snapshot = models.JSONField(null=True, blank=True)
+    content_hash = models.TextField(null=True, blank=True)
+    published_at = models.DateTimeField(null=True, blank=True)
     version = models.IntegerField()
     created_at = models.DateTimeField(db_default=Now())
     updated_at = models.DateTimeField(db_default=Now())
@@ -762,6 +784,40 @@ class Invoice(models.Model):
 
     def __str__(self):
         return f"{self.invoice_number or 'ENTWURF'} ({self.invoice_type})"
+
+
+class InvoiceParty(models.Model):
+    """invoicing.invoice_party — strukturierte Rechnungsbeteiligte (Migration 0019).
+
+    Rollen A-27/A-29: INVOICE_DEBTOR (Schuldner), INVOICE_RECIPIENT (Empfänger),
+    REPRESENTATIVE, COST_BEARER. Höchstens ein primärer Beteiligter je Rolle
+    (partieller UNIQUE-Index). Nur im Entwurf veränderbar (nach Veröffentlichung
+    eingefroren).
+    """
+
+    id = models.UUIDField(primary_key=True)
+    invoice = models.ForeignKey(
+        Invoice, models.DO_NOTHING, db_column="invoice_id", related_name="parties"
+    )
+    party = models.ForeignKey(
+        Party, models.DO_NOTHING, db_column="party_id", related_name="invoice_roles"
+    )
+    # INVOICE_DEBTOR|INVOICE_RECIPIENT|REPRESENTATIVE|COST_BEARER
+    role = models.TextField()
+    is_primary = models.BooleanField(db_default=models.Value(False))
+    allocation_percent = models.DecimalField(
+        max_digits=7, decimal_places=4, null=True, blank=True
+    )
+    liability_group = models.TextField(null=True, blank=True)
+    liability_basis = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'invoicing"."invoice_party'
+
+    def __str__(self):
+        return f"{self.role} @ {self.invoice_id}"
 
 
 class InvoiceLine(models.Model):

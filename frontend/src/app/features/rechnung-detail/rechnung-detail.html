@@ -74,6 +74,26 @@
         }
       }
 
+      @if (tab() === 'beteiligte') {
+        @if (daten()!.parties.length === 0) {
+          <div class="tab-platzhalter"><p>Dieser Rechnung sind noch keine Beteiligten zugeordnet. Für die Veröffentlichung sind Rechnungsschuldner und ein primärer Empfänger erforderlich (A-27/A-28).</p></div>
+        } @else {
+          <ul class="ref-liste">
+            @for (b of daten()!.parties; track $index) {
+              <li>
+                <a class="ref" [routerLink]="['/kontakte', b.party_id]">
+                  <span class="ref__name">{{ b.display_name }}</span>
+                  <span class="ref__stamps">
+                    <span class="stamp stamp--type">{{ roleLabel(b.role) }}</span>
+                    @if (b.is_primary) { <span class="stamp stamp--positive">Primär</span> }
+                  </span>
+                </a>
+              </li>
+            }
+          </ul>
+        }
+      }
+
       @if (tab() === 'uebersicht') {
         <dl class="feld-raster">
           <div class="feld"><dt class="feld__label">Belegart</dt><dd class="feld__wert">{{ typeLabel(daten()!.invoice_type) }}</dd></div>
@@ -81,6 +101,9 @@
           <div class="feld"><dt class="feld__label">Belegnummer</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.invoice_number">{{ daten()!.invoice_number || 'noch nicht vergeben' }}</dd></div>
           <div class="feld"><dt class="feld__label">Rechnungsdatum</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.invoice_date">{{ daten()!.invoice_date || '—' }}</dd></div>
           <div class="feld"><dt class="feld__label">Fällig bis</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.due_date">{{ daten()!.due_date || '—' }}</dd></div>
+          <div class="feld"><dt class="feld__label">Veröffentlicht</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.published_at">{{ daten()!.published_at || '—' }}</dd></div>
+          <div class="feld"><dt class="feld__label">Auftrag</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.work_order_number">{{ daten()!.work_order_number || '—' }}</dd></div>
+          <div class="feld"><dt class="feld__label">Inhalts-Hash</dt><dd class="feld__wert feld__wert--mono" [class.feld__wert--leer]="!daten()!.content_hash">{{ hashKurz(daten()!.content_hash) }}</dd></div>
           <div class="feld"><dt class="feld__label">Gesamt (brutto)</dt><dd class="feld__wert">{{ euro(daten()!.gross_total) }}</dd></div>
         </dl>
 

@@ -119,4 +119,9 @@ export class BelegDetail {
   isText(t: LineType): boolean {
     return t === 'TEXT' || t === 'ZWISCHENSUMME';
   }
+
+  // Kurzform des Inhalts-Hashes (Beleg-Fingerabdruck) für die Anzeige.
+  hashKurz(h: string | null): string {
+    return h ? h.slice(0, 12) + '…' : '—';
+  }
 }

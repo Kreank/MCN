@@ -26,6 +26,7 @@ export class RechnungDetail {
 
   protected readonly tabs: MappeTab[] = [
     { id: 'positionen', label: 'Positionen' },
+    { id: 'beteiligte', label: 'Beteiligte' },
     { id: 'uebersicht', label: 'Übersicht' },
   ];
 
@@ -115,5 +116,19 @@ export class RechnungDetail {
   }
   isText(t: LineType): boolean {
     return t === 'TEXT' || t === 'ZWISCHENSUMME';
+  }
+
+  roleLabel(r: string): string {
+    const map: Record<string, string> = {
+      INVOICE_DEBTOR: 'Rechnungsschuldner',
+      INVOICE_RECIPIENT: 'Rechnungsempfänger',
+      REPRESENTATIVE: 'Vertretung',
+      COST_BEARER: 'Kostenträger',
+    };
+    return map[r] ?? r;
+  }
+  // Kurzform des Inhalts-Hashes (GoBD-Beleg-Fingerabdruck) für die Anzeige.
+  hashKurz(h: string | null): string {
+    return h ? h.slice(0, 12) + '…' : '—';
   }
 }

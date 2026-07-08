@@ -14,12 +14,29 @@ abgeleitet; die Steuer wird je Steuergruppe gerundet (wie assert_*_totals).
 Angebot und Rechnung teilen dieselbe Positions-/Summenlogik (invoice_line ist
 strukturgleich zu quote_line).
 """
+import hashlib
+import json
 import uuid
 from collections import defaultdict
 from decimal import ROUND_HALF_UP, Decimal
 
 from db_core.db_context import business_transaction
-from db_core.models import Invoice, InvoiceLine, Quote, QuoteLine, TaxCode
+from db_core.gate_errors import as_business_error
+from db_core.models import (
+    Invoice,
+    InvoiceLine,
+    InvoiceParty,
+    Quote,
+    QuoteLine,
+    TaxCode,
+)
+
+INVOICE_PARTY_ROLES = (
+    "INVOICE_DEBTOR",
+    "INVOICE_RECIPIENT",
+    "REPRESENTATIVE",
+    "COST_BEARER",
+)
 
 LINE_TYPES = (
     "MATERIAL",
@@ -171,6 +188,7 @@ def create_invoice(
     property_id,
     invoice_type="RECHNUNG",
     project_id=None,
+    work_order_id=None,
     reference_invoice_id=None,
     invoice_date=None,
     due_date=None,
@@ -178,8 +196,10 @@ def create_invoice(
 ):
     """Legt eine Rechnung/Gutschrift (Status ENTWURF) mit Positionen an.
 
-    Gutschrift/Storno verlangen eine Referenzrechnung (DB-CHECK). Belegnummer,
-    Veröffentlichung und das Auftrags-Gate sind nicht Teil dieses Slices.
+    Gutschrift/Storno verlangen eine Referenzrechnung (DB-CHECK). Ein
+    work_order-Bezug ist für die spätere Veröffentlichung erforderlich (B-08),
+    beim Anlegen aber optional. Belegnummer und Veröffentlichung: siehe
+    publish_invoice.
     """
     if invoice_type not in INVOICE_TYPES:
         raise ValueError(
@@ -197,6 +217,7 @@ def create_invoice(
             id=uuid.uuid4(),
             property_id=property_id,
             project_id=project_id,
+            work_order_id=work_order_id,
             invoice_type=invoice_type,
             reference_invoice_id=reference_invoice_id,
             status="ENTWURF",
@@ -211,3 +232,188 @@ def create_invoice(
             InvoiceLine.objects.create(id=uuid.uuid4(), invoice_id=invoice.id, **row)
         invoice.refresh_from_db()
     return invoice
+
+
+def add_invoice_party(
+    actor_app_user_id,
+    *,
+    invoice_id,
+    party_id,
+    role,
+    is_primary=False,
+    allocation_percent=None,
+    liability_group=None,
+    liability_basis=None,
+):
+    """Fügt einen Rechnungsbeteiligten hinzu (nur im Entwurf; DB erzwingt das).
+
+    Eine dokumentierte Gesamtschuld-Gruppe (liability_group) verlangt eine
+    Grundlage (liability_basis) — A-29.
+    """
+    if role not in INVOICE_PARTY_ROLES:
+        raise ValueError(
+            f"Ungültige role '{role}'. Erlaubt: {', '.join(INVOICE_PARTY_ROLES)}."
+        )
+    if liability_group is not None and not (liability_basis or "").strip():
+        raise ValueError(
+            "liability_group erfordert eine dokumentierte liability_basis (A-29)."
+        )
+    with business_transaction(actor_app_user_id):
+        party = InvoiceParty.objects.create(
+            id=uuid.uuid4(),
+            invoice_id=invoice_id,
+            party_id=party_id,
+            role=role,
+            is_primary=is_primary,
+            allocation_percent=allocation_percent,
+            liability_group=liability_group,
+            liability_basis=liability_basis,
+        )
+    return party
+
+
+def _line_snapshot(line):
+    def s(v):
+        return None if v is None else str(v)
+
+    return {
+        "position_number": line.position_number,
+        "line_type": line.line_type,
+        "description": line.description,
+        "quantity": s(line.quantity),
+        "unit": line.unit,
+        "unit_price": s(line.unit_price),
+        "discount_percent": s(line.discount_percent),
+        "tax_code": line.tax_code_id,
+        "tax_rate_percent": s(line.tax_rate_percent),
+        "net_amount": s(line.net_amount),
+    }
+
+
+def _snapshot_and_hash(header, lines, parties=None):
+    """Baut einen unveränderlichen Beleg-Snapshot (dict) und dessen SHA-256-Hash.
+
+    Der Hash läuft über die kanonische JSON-Serialisierung (sortierte Schlüssel,
+    keine Zeitstempel) — er identifiziert den Inhalt reproduzierbar (B-21/B-30).
+    """
+    snapshot = {
+        "header": header,
+        "lines": [_line_snapshot(l) for l in lines],
+        "parties": parties or [],
+    }
+    canonical = json.dumps(snapshot, sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return snapshot, digest
+
+
+def publish_invoice(actor_app_user_id, *, invoice_id):
+    """Veröffentlicht eine Rechnung (ENTWURF → VEROEFFENTLICHT).
+
+    Legt Snapshot + Inhalts-Hash an und flippt den Status in einem Zug; die DB
+    vergibt die Belegnummer (RE-/GS-Kreis) und prüft die Tore (Auftrag
+    kaufmännisch geprüft B-08, Rechnungsschuldner + genau ein primärer
+    Empfänger A-27/A-28). Fachliche Tor-Verstöße werden zu ValueError (→422).
+    """
+    invoice = (
+        Invoice.objects.filter(id=invoice_id)
+        .prefetch_related("lines", "parties")
+        .first()
+    )
+    if invoice is None:
+        raise ValueError("Rechnung nicht gefunden.")
+    if invoice.status != "ENTWURF":
+        raise ValueError("Nur Rechnungen im Entwurf können veröffentlicht werden.")
+    if invoice.invoice_type not in _CREDIT_TYPES and invoice.work_order_id is None:
+        raise ValueError(
+            "Veröffentlichung erfordert einen zugeordneten Auftrag (B-08)."
+        )
+
+    header = {
+        "invoice_type": invoice.invoice_type,
+        "property_id": str(invoice.property_id),
+        "project_id": str(invoice.project_id) if invoice.project_id else None,
+        "work_order_id": (
+            str(invoice.work_order_id) if invoice.work_order_id else None
+        ),
+        "reference_invoice_id": (
+            str(invoice.reference_invoice_id)
+            if invoice.reference_invoice_id
+            else None
+        ),
+        "invoice_date": invoice.invoice_date.isoformat() if invoice.invoice_date else None,
+        "due_date": invoice.due_date.isoformat() if invoice.due_date else None,
+        "currency": invoice.currency,
+        "net_total": str(invoice.net_total),
+        "tax_total": str(invoice.tax_total),
+        "gross_total": str(invoice.gross_total),
+    }
+    parties = [
+        {
+            "party_id": str(p.party_id),
+            "role": p.role,
+            "is_primary": p.is_primary,
+            "allocation_percent": (
+                str(p.allocation_percent) if p.allocation_percent is not None else None
+            ),
+        }
+        for p in sorted(invoice.parties.all(), key=lambda p: (p.role, str(p.party_id)))
+    ]
+    lines = sorted(invoice.lines.all(), key=lambda l: l.position_number)
+    snapshot, digest = _snapshot_and_hash(header, lines, parties)
+
+    with as_business_error():
+        with business_transaction(actor_app_user_id):
+            updated = Invoice.objects.filter(id=invoice_id, status="ENTWURF").update(
+                billing_snapshot=snapshot,
+                content_hash=digest,
+                status="VEROEFFENTLICHT",
+            )
+            if not updated:
+                # Zwischenzeitlich veröffentlicht (Wettlauf): kein stiller Erfolg.
+                raise ValueError(
+                    "Rechnung ist nicht mehr im Entwurf (bereits veröffentlicht?)."
+                )
+    invoice.refresh_from_db()
+    return invoice
+
+
+def send_quote(actor_app_user_id, *, quote_id):
+    """Versendet ein Angebot (ENTWURF → … → VERSENDET).
+
+    Durchläuft die erlaubten Zwischenstatus (INTERN_GEPRUEFT, FREIGEGEBEN) und
+    setzt beim Versand Snapshot + Inhalts-Hash; die DB vergibt die AN-Nummer und
+    friert den Beleg ein (B-30).
+    """
+    quote = Quote.objects.filter(id=quote_id).prefetch_related("lines").first()
+    if quote is None:
+        raise ValueError("Angebot nicht gefunden.")
+    if quote.status != "ENTWURF":
+        raise ValueError("Nur Angebote im Entwurf können versendet werden.")
+
+    header = {
+        "title": quote.title,
+        "property_id": str(quote.property_id),
+        "project_id": str(quote.project_id) if quote.project_id else None,
+        "quote_date": quote.quote_date.isoformat() if quote.quote_date else None,
+        "valid_until_date": (
+            quote.valid_until_date.isoformat() if quote.valid_until_date else None
+        ),
+        "currency": quote.currency,
+        "net_total": str(quote.net_total),
+        "tax_total": str(quote.tax_total),
+        "gross_total": str(quote.gross_total),
+    }
+    lines = sorted(quote.lines.all(), key=lambda l: l.position_number)
+    snapshot, digest = _snapshot_and_hash(header, lines)
+
+    with as_business_error():
+        with business_transaction(actor_app_user_id):
+            Quote.objects.filter(id=quote_id).update(status="INTERN_GEPRUEFT")
+            Quote.objects.filter(id=quote_id).update(status="FREIGEGEBEN")
+            Quote.objects.filter(id=quote_id).update(
+                billing_snapshot=snapshot,
+                content_hash=digest,
+                status="VERSENDET",
+            )
+    quote.refresh_from_db()
+    return quote

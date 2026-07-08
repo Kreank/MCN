@@ -3,7 +3,7 @@
 Lesen in der Dev-Phase ohne Auth; Anlegen verlangt Django-Session + app_user.
 Deckt Anlage bis ENTWURF sowie Liste/Detail ab (Versand-Workflow folgt separat).
 """
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -71,6 +71,9 @@ class QuoteDetailOut(QuoteOut):
     tax_total: Decimal | None = None
     version: int
     project: ProjectRefOut | None = None
+    sent_at: datetime | None = None
+    has_snapshot: bool = False
+    content_hash: str | None = None
     lines: list[QuoteLineOut]
 
 
@@ -199,6 +202,9 @@ def _quote_detail(quote_id):
         version=quote.version,
         property=_property_ref(quote),
         project=project,
+        sent_at=quote.sent_at,
+        has_snapshot=quote.billing_snapshot is not None,
+        content_hash=quote.content_hash,
         lines=lines,
     )
 
@@ -235,6 +241,18 @@ def create_quote(request, payload: QuoteIn):
     return Status(201, _quote_detail(quote.id))
 
 
+@router.post("/quotes/{quote_id}/send", response=QuoteDetailOut, auth=django_auth)
+def send_quote(request, quote_id: UUID):
+    """Angebot versenden (ENTWURF → … → VERSENDET); DB vergibt die AN-Nummer und
+    friert den Beleg ein."""
+    actor = _actor_id(request)
+    try:
+        beleg_service.send_quote(actor, quote_id=quote_id)
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _quote_detail(quote_id)
+
+
 @router.get("/quotes/{quote_id}", response=QuoteDetailOut)
 def get_quote(request, quote_id: UUID):
     """Detail eines Angebots inkl. Positionen."""
@@ -262,11 +280,24 @@ class InvoiceListOut(Schema):
     page_size: int
 
 
+class InvoicePartyOut(Schema):
+    party_id: UUID
+    display_name: str
+    role: str
+    is_primary: bool
+    allocation_percent: Decimal | None = None
+
+
 class InvoiceDetailOut(InvoiceOut):
     due_date: date | None = None
     tax_total: Decimal | None = None
     version: int
     project: ProjectRefOut | None = None
+    work_order_number: str | None = None
+    published_at: datetime | None = None
+    has_snapshot: bool = False
+    content_hash: str | None = None
+    parties: list[InvoicePartyOut] = []
     lines: list[QuoteLineOut]
 
 
@@ -274,10 +305,20 @@ class InvoiceIn(Schema):
     property_id: UUID
     invoice_type: str = "RECHNUNG"
     project_id: UUID | None = None
+    work_order_id: UUID | None = None
     reference_invoice_id: UUID | None = None
     invoice_date: date | None = None
     due_date: date | None = None
     lines: list[QuoteLineIn] = []
+
+
+class InvoicePartyIn(Schema):
+    party_id: UUID
+    role: str
+    is_primary: bool = False
+    allocation_percent: Decimal | None = None
+    liability_group: str | None = None
+    liability_basis: str | None = None
 
 
 class InvoiceFilter(Schema):
@@ -332,8 +373,8 @@ def list_invoices(
 def _invoice_detail(invoice_id):
     invoice = (
         Invoice.objects.filter(id=invoice_id)
-        .select_related("property__address", "project")
-        .prefetch_related("lines")
+        .select_related("property__address", "project", "work_order")
+        .prefetch_related("lines", "parties__party")
         .first()
     )
     if invoice is None:
@@ -353,6 +394,16 @@ def _invoice_detail(invoice_id):
             net_amount=l.net_amount,
         )
         for l in sorted(invoice.lines.all(), key=lambda l: l.position_number)
+    ]
+    parties = [
+        InvoicePartyOut(
+            party_id=p.party.id,
+            display_name=p.party.display_name,
+            role=p.role,
+            is_primary=p.is_primary,
+            allocation_percent=p.allocation_percent,
+        )
+        for p in sorted(invoice.parties.all(), key=lambda p: (p.role, not p.is_primary))
     ]
     project = (
         ProjectRefOut(
@@ -377,6 +428,13 @@ def _invoice_detail(invoice_id):
         version=invoice.version,
         property=_property_ref(invoice),
         project=project,
+        work_order_number=(
+            invoice.work_order.order_number if invoice.work_order_id else None
+        ),
+        published_at=invoice.published_at,
+        has_snapshot=invoice.billing_snapshot is not None,
+        content_hash=invoice.content_hash,
+        parties=parties,
         lines=lines,
     )
 
@@ -391,6 +449,7 @@ def create_invoice(request, payload: InvoiceIn):
             property_id=payload.property_id,
             invoice_type=payload.invoice_type,
             project_id=payload.project_id,
+            work_order_id=payload.work_order_id,
             reference_invoice_id=payload.reference_invoice_id,
             invoice_date=payload.invoice_date,
             due_date=payload.due_date,
@@ -399,6 +458,42 @@ def create_invoice(request, payload: InvoiceIn):
     except ValueError as exc:
         raise HttpError(422, str(exc))
     return Status(201, _invoice_detail(invoice.id))
+
+
+@router.post(
+    "/invoices/{invoice_id}/parties",
+    response={201: InvoiceDetailOut},
+    auth=django_auth,
+)
+def add_invoice_party(request, invoice_id: UUID, payload: InvoicePartyIn):
+    """Rechnungsbeteiligten (Schuldner/Empfänger …) hinzufügen (nur im Entwurf)."""
+    actor = _actor_id(request)
+    try:
+        beleg_service.add_invoice_party(
+            actor,
+            invoice_id=invoice_id,
+            party_id=payload.party_id,
+            role=payload.role,
+            is_primary=payload.is_primary,
+            allocation_percent=payload.allocation_percent,
+            liability_group=payload.liability_group,
+            liability_basis=payload.liability_basis,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return Status(201, _invoice_detail(invoice_id))
+
+
+@router.post("/invoices/{invoice_id}/publish", response=InvoiceDetailOut, auth=django_auth)
+def publish_invoice(request, invoice_id: UUID):
+    """Rechnung veröffentlichen (ENTWURF → VEROEFFENTLICHT); DB vergibt die Nummer
+    und prüft die Tore (Auftrag geprüft, Schuldner/Empfänger)."""
+    actor = _actor_id(request)
+    try:
+        beleg_service.publish_invoice(actor, invoice_id=invoice_id)
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _invoice_detail(invoice_id)
 
 
 @router.get("/invoices/{invoice_id}", response=InvoiceDetailOut)
