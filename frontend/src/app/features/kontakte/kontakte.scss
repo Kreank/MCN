@@ -157,10 +157,16 @@
   border-left: 3px solid var(--line-strong);
   border-radius: var(--radius);
   box-shadow: var(--shadow-1);
+  color: inherit;
+  text-decoration: none;
   transition: border-color 0.15s ease, transform 0.15s ease;
 
   &:hover {
     border-left-color: var(--accent);
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
   }
 }
 

@@ -94,26 +94,28 @@
       } @else {
         <ul class="rows">
           @for (p of $any(state()).data.items; track p.id) {
-            <li class="row">
-              <span
-                class="row__avatar"
-                [class.row__avatar--org]="p.party_type === 'ORGANIZATION'"
-                aria-hidden="true"
-                >{{ monogram(p) }}</span
-              >
-              <span class="row__body">
-                <span class="row__name">{{ p.display_name }}</span>
-                <span class="row__stamps">
-                  <span class="stamp stamp--type">{{ typeLabel(p.party_type) }}</span>
-                  <span class="stamp {{ statusClass(p.status) }}">{{
-                    statusLabel(p.status)
-                  }}</span>
+            <li>
+              <a class="row" [routerLink]="[p.id]">
+                <span
+                  class="row__avatar"
+                  [class.row__avatar--org]="p.party_type === 'ORGANIZATION'"
+                  aria-hidden="true"
+                  >{{ monogram(p) }}</span
+                >
+                <span class="row__body">
+                  <span class="row__name">{{ p.display_name }}</span>
+                  <span class="row__stamps">
+                    <span class="stamp stamp--type">{{ typeLabel(p.party_type) }}</span>
+                    <span class="stamp {{ statusClass(p.status) }}">{{
+                      statusLabel(p.status)
+                    }}</span>
+                  </span>
                 </span>
-              </span>
-              <span class="row__id" title="Kennung">
-                <span class="row__id-prefix" aria-hidden="true">ID</span>
-                {{ shortId(p) }}
-              </span>
+                <span class="row__id" title="Kennung">
+                  <span class="row__id-prefix" aria-hidden="true">ID</span>
+                  {{ shortId(p) }}
+                </span>
+              </a>
             </li>
           }
         </ul>

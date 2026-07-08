@@ -1,5 +1,6 @@
 import { Component, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { RouterLink } from '@angular/router';
 import { Subject, debounceTime, distinctUntilChanged } from 'rxjs';
 import { PropertyService } from '../../core/property.service';
 import {
@@ -18,7 +19,7 @@ type Segment = { value: PropertyType | null; label: string };
 
 @Component({
   selector: 'app-liegenschaften',
-  imports: [],
+  imports: [RouterLink],
   templateUrl: './liegenschaften.html',
   styleUrl: './liegenschaften.scss',
 })

@@ -1,0 +1,115 @@
+@switch (state().kind) {
+  @case ('loading') {
+    <p class="lade-hinweis" role="status">Liegenschaft wird geladen …</p>
+  }
+
+  @case ('error') {
+    <div class="note note--error" role="alert">
+      <h2 class="note__titel">Liegenschaft konnte nicht geladen werden</h2>
+      <p class="note__text">Das Objektregister war nicht erreichbar oder die Liegenschaft existiert nicht.</p>
+      <div class="note__aktionen">
+        <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
+        <a class="btn" routerLink="/liegenschaften">Zum Objektregister</a>
+      </div>
+    </div>
+  }
+
+  @case ('ready') {
+    <app-mappe
+      kicker="Liegenschaft {{ daten()!.property_number }}"
+      [titel]="daten()!.name"
+      backLink="/liegenschaften"
+      backLabel="Liegenschaften"
+      [tabs]="tabs"
+      [(aktiv)]="tab"
+    >
+      <span mappe-kopf class="stamp stamp--type">{{ typeLabel(daten()!.property_type) }}</span>
+      <span mappe-kopf class="stamp {{ statusClass(daten()!.status) }}">{{ statusLabel(daten()!.status) }}</span>
+
+      <!-- ------------------------------ Übersicht ------------------------- -->
+      @if (tab() === 'uebersicht') {
+        <dl class="feld-raster">
+          <div class="feld"><dt class="feld__label">Objektnummer</dt><dd class="feld__wert">{{ daten()!.property_number }}</dd></div>
+          <div class="feld"><dt class="feld__label">Typ</dt><dd class="feld__wert">{{ typeLabel(daten()!.property_type) }}</dd></div>
+          <div class="feld"><dt class="feld__label">Straße</dt><dd class="feld__wert">{{ daten()!.address.street }} {{ daten()!.address.house_number || '' }}</dd></div>
+          <div class="feld"><dt class="feld__label">PLZ / Ort</dt><dd class="feld__wert">{{ daten()!.address.postal_code }} {{ daten()!.address.city }}</dd></div>
+          @if (daten()!.address.address_addition) {
+            <div class="feld"><dt class="feld__label">Adresszusatz</dt><dd class="feld__wert">{{ daten()!.address.address_addition }}</dd></div>
+          }
+          <div class="feld"><dt class="feld__label">Land</dt><dd class="feld__wert">{{ daten()!.address.country_code }}</dd></div>
+          <div class="feld"><dt class="feld__label">Gebäude / Einheiten</dt><dd class="feld__wert">{{ daten()!.buildings.length }} / {{ einheitenGesamt() }}</dd></div>
+        </dl>
+      }
+
+      <!-- ------------------------------ Struktur -------------------------- -->
+      @if (tab() === 'struktur') {
+        @if (daten()!.buildings.length === 0) {
+          <div class="tab-platzhalter"><p>Für diese Liegenschaft sind noch keine Gebäude erfasst.</p></div>
+        } @else {
+          <ul class="baum">
+            @for (b of daten()!.buildings; track b.id) {
+              <li class="baum__gebaeude">
+                <div class="baum__kopf">
+                  <span class="baum__marke" aria-hidden="true">{{ b.building_number }}</span>
+                  <span class="baum__name">{{ b.name || 'Gebäude ' + b.building_number }}</span>
+                  <span class="baum__zahl">{{ b.units.length }} {{ b.units.length === 1 ? 'Einheit' : 'Einheiten' }}</span>
+                </div>
+                @if (b.units.length > 0) {
+                  <ul class="einheiten">
+                    @for (u of b.units; track u.id) {
+                      <li class="einheit">
+                        <span class="einheit__nr">{{ u.unit_number }}</span>
+                        <span class="stamp">{{ unitTypeLabel(u.unit_type) }}</span>
+                      </li>
+                    }
+                  </ul>
+                }
+              </li>
+            }
+          </ul>
+        }
+      }
+
+      <!-- ------------------------------ Beteiligte ------------------------ -->
+      @if (tab() === 'beteiligte') {
+        @if (daten()!.party_roles.length === 0) {
+          <div class="tab-platzhalter"><p>Für diese Liegenschaft sind noch keine Party-Rollen erfasst.</p></div>
+        } @else {
+          <ul class="rollen">
+            @for (r of daten()!.party_roles; track r.party_id + r.role + r.valid_from + r.valid_until) {
+              <li class="rolle">
+                <span class="rolle__bez">{{ roleLabel(r.role) }}</span>
+                <a class="rolle__party" [routerLink]="['/kontakte', r.party_id]">{{ r.party_display_name }}</a>
+                <span class="rolle__zeit">
+                  seit {{ r.valid_from }}{{ r.valid_until ? ' bis ' + r.valid_until : '' }}
+                </span>
+                <span class="stamp {{ r.is_current ? 'stamp--positive' : '' }}">
+                  {{ r.is_current ? 'Aktuell' : 'Beendet' }}
+                </span>
+              </li>
+            }
+          </ul>
+        }
+      }
+
+      @if (tab() === 'eigentum') {
+        <div class="tab-platzhalter">
+          <h2 class="tab-platzhalter__titel">Eigentum</h2>
+          <p>Eigentumsperioden und -anteile je Einheit (Schema <code>tenure</code>) werden hier angezeigt, sobald die Lesepfade angebunden sind (Roadmap 03).</p>
+        </div>
+      }
+      @if (tab() === 'belegung') {
+        <div class="tab-platzhalter">
+          <h2 class="tab-platzhalter__titel">Belegung</h2>
+          <p>Mieter/Nutzer je Einheit (Schema <code>tenure</code>) folgen mit der Belegungs-Anbindung.</p>
+        </div>
+      }
+      @if (tab() === 'dokumente') {
+        <div class="tab-platzhalter">
+          <h2 class="tab-platzhalter__titel">Dokumente</h2>
+          <p>Objektbezogene Angebote, Rechnungen und Berichte erscheinen hier, sobald der Dokumentenbereich steht (Roadmap 05).</p>
+        </div>
+      }
+    </app-mappe>
+  }
+}

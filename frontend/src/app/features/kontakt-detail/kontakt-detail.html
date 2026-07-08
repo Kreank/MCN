@@ -1,0 +1,77 @@
+@switch (state().kind) {
+  @case ('loading') {
+    <p class="lade-hinweis" role="status">Kontakt wird geladen …</p>
+  }
+
+  @case ('error') {
+    <div class="note note--error" role="alert">
+      <h2 class="note__titel">Kontakt konnte nicht geladen werden</h2>
+      <p class="note__text">Die Registerschnittstelle war nicht erreichbar oder der Kontakt existiert nicht.</p>
+      <div class="note__aktionen">
+        <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
+        <a class="btn" routerLink="/kontakte">Zur Kontaktliste</a>
+      </div>
+    </div>
+  }
+
+  @case ('ready') {
+    <app-mappe
+      kicker="Kontakt"
+      [titel]="daten()!.display_name"
+      backLink="/kontakte"
+      backLabel="Kontakte"
+      [tabs]="tabs"
+      [(aktiv)]="tab"
+    >
+      <span mappe-kopf class="stamp stamp--type">{{ typeLabel(daten()!.party_type) }}</span>
+      <span mappe-kopf class="stamp {{ statusClass(daten()!.status) }}">{{ statusLabel(daten()!.status) }}</span>
+
+      @if (tab() === 'stammdaten') {
+        @if (daten()!.person; as p) {
+          <dl class="feld-raster">
+            <div class="feld"><dt class="feld__label">Anrede</dt><dd class="feld__wert" [class.feld__wert--leer]="!p.salutation">{{ p.salutation || '—' }}</dd></div>
+            <div class="feld"><dt class="feld__label">Titel</dt><dd class="feld__wert" [class.feld__wert--leer]="!p.title">{{ p.title || '—' }}</dd></div>
+            <div class="feld"><dt class="feld__label">Vorname</dt><dd class="feld__wert">{{ p.first_name }}</dd></div>
+            <div class="feld"><dt class="feld__label">Nachname</dt><dd class="feld__wert">{{ p.last_name }}</dd></div>
+            <div class="feld"><dt class="feld__label">Geburtsdatum</dt><dd class="feld__wert" [class.feld__wert--leer]="!p.birth_date">{{ p.birth_date || '—' }}</dd></div>
+          </dl>
+        }
+        @if (daten()!.organization; as o) {
+          <dl class="feld-raster">
+            <div class="feld"><dt class="feld__label">Rechtsname</dt><dd class="feld__wert">{{ o.legal_name }}</dd></div>
+            <div class="feld"><dt class="feld__label">Organisationstyp</dt><dd class="feld__wert">{{ orgTypeLabel(o.organization_type) }}</dd></div>
+            <div class="feld"><dt class="feld__label">Rechtsform</dt><dd class="feld__wert" [class.feld__wert--leer]="!o.legal_form">{{ o.legal_form || '—' }}</dd></div>
+            <div class="feld"><dt class="feld__label">Registernummer</dt><dd class="feld__wert" [class.feld__wert--leer]="!o.registration_number">{{ o.registration_number || '—' }}</dd></div>
+            <div class="feld"><dt class="feld__label">Steuernummer</dt><dd class="feld__wert" [class.feld__wert--leer]="!o.tax_number">{{ o.tax_number || '—' }}</dd></div>
+            <div class="feld"><dt class="feld__label">USt-IdNr.</dt><dd class="feld__wert" [class.feld__wert--leer]="!o.vat_id">{{ o.vat_id || '—' }}</dd></div>
+          </dl>
+        }
+      }
+
+      @if (tab() === 'objektadressen') {
+        <div class="tab-platzhalter">
+          <h2 class="tab-platzhalter__titel">Objektadressen</h2>
+          <p>Verknüpfte Liegenschaften und Objektadressen dieses Kontakts erscheinen hier, sobald der Adress-/Rollen-Bezug angebunden ist (siehe Roadmap 02/03).</p>
+        </div>
+      }
+      @if (tab() === 'ansprechpartner') {
+        <div class="tab-platzhalter">
+          <h2 class="tab-platzhalter__titel">Ansprechpartner</h2>
+          <p>Personen und Kontaktwege zu dieser Organisation folgen mit der Kontaktweg-Anbindung.</p>
+        </div>
+      }
+      @if (tab() === 'dokumente') {
+        <div class="tab-platzhalter">
+          <h2 class="tab-platzhalter__titel">Dokumente</h2>
+          <p>Angebote und Rechnungen dieses Kontakts werden hier gebündelt, sobald der Dokumentenbereich steht (Roadmap 05).</p>
+        </div>
+      }
+      @if (tab() === 'logbuch') {
+        <div class="tab-platzhalter">
+          <h2 class="tab-platzhalter__titel">Logbuch</h2>
+          <p>Das Aktivitäts- und Audit-Logbuch (inkl. KI-Vorschläge) erscheint hier, gespeist aus dem Audit-Schema.</p>
+        </div>
+      }
+    </app-mappe>
+  }
+}

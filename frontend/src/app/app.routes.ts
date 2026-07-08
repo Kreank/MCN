@@ -8,6 +8,12 @@ export const routes: Routes = [
     loadComponent: () => import('./features/kontakte/kontakte').then((m) => m.Kontakte),
   },
   {
+    path: 'kontakte/:id',
+    title: 'Kontakt — MCN Leitstand',
+    loadComponent: () =>
+      import('./features/kontakt-detail/kontakt-detail').then((m) => m.KontaktDetail),
+  },
+  {
     path: 'uebersicht',
     title: 'Übersicht — MCN Leitstand',
     loadComponent: () => import('./shared/platzhalter/platzhalter').then((m) => m.Platzhalter),
@@ -23,6 +29,14 @@ export const routes: Routes = [
     title: 'Liegenschaften — MCN Leitstand',
     loadComponent: () =>
       import('./features/liegenschaften/liegenschaften').then((m) => m.Liegenschaften),
+  },
+  {
+    path: 'liegenschaften/:id',
+    title: 'Liegenschaft — MCN Leitstand',
+    loadComponent: () =>
+      import('./features/liegenschaft-detail/liegenschaft-detail').then(
+        (m) => m.LiegenschaftDetail,
+      ),
   },
   {
     path: 'projekte',

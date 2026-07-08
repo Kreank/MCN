@@ -1,0 +1,48 @@
+<section class="mappe">
+  <header class="mappe__head">
+    @if (backLink()) {
+      <a class="mappe__back" [routerLink]="backLink()">
+        <span aria-hidden="true">←</span> {{ backLabel() }}
+      </a>
+    }
+    <p class="mappe__kicker">
+      <span class="mappe__scale" aria-hidden="true"></span>
+      {{ kicker() }}
+    </p>
+    <div class="mappe__titelzeile">
+      <h1 class="mappe__titel">{{ titel() }}</h1>
+      <div class="mappe__kopf">
+        <ng-content select="[mappe-kopf]"></ng-content>
+      </div>
+    </div>
+  </header>
+
+  <div class="mappe__tabs" role="tablist" aria-label="Bereiche der Mappe">
+    @for (t of tabs(); track t.id; let i = $index) {
+      <button
+        type="button"
+        role="tab"
+        class="mappe__tab"
+        [id]="'mappe-tab-' + t.id"
+        [class.is-active]="aktiv() === t.id"
+        [attr.aria-selected]="aktiv() === t.id"
+        [attr.aria-controls]="'mappe-panel'"
+        [attr.tabindex]="aktiv() === t.id ? 0 : -1"
+        (click)="select(t.id)"
+        (keydown)="onTabKey($event, i)"
+      >
+        {{ t.label }}
+      </button>
+    }
+  </div>
+
+  <div
+    class="mappe__body"
+    id="mappe-panel"
+    role="tabpanel"
+    tabindex="0"
+    [attr.aria-labelledby]="'mappe-tab-' + aktiv()"
+  >
+    <ng-content></ng-content>
+  </div>
+</section>

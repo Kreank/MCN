@@ -1,5 +1,6 @@
 import { Component, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { RouterLink } from '@angular/router';
 import { Subject, debounceTime, distinctUntilChanged } from 'rxjs';
 import { PartyService } from '../../core/party.service';
 import { Party, PartyPage, PartyStatus, PartyType } from '../../core/party.model';
@@ -13,7 +14,7 @@ type Segment = { value: PartyType | null; label: string };
 
 @Component({
   selector: 'app-kontakte',
-  imports: [],
+  imports: [RouterLink],
   templateUrl: './kontakte.html',
   styleUrl: './kontakte.scss',
 })

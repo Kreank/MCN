@@ -22,3 +22,26 @@ export interface PartyQuery {
   q?: string;
   party_type?: PartyType | null;
 }
+
+// --- Detail (GET /api/identity/parties/{id}) -------------------------------
+export interface Person {
+  salutation: string | null;
+  title: string | null;
+  first_name: string;
+  last_name: string;
+  birth_date: string | null;
+}
+
+export interface Organization {
+  organization_type: string;
+  legal_name: string;
+  legal_form: string | null;
+  registration_number: string | null;
+  tax_number: string | null;
+  vat_id: string | null;
+}
+
+export interface PartyDetail extends Party {
+  person: Person | null;
+  organization: Organization | null;
+}

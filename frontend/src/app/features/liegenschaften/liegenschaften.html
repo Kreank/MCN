@@ -94,27 +94,29 @@
       } @else {
         <ul class="rows">
           @for (p of $any(state()).data.items; track p.id) {
-            <li class="row">
-              <span class="row__avatar" aria-hidden="true">{{ monogram(p) }}</span>
-              <span class="row__body">
-                <span class="row__name">{{ p.name }}</span>
-                <span class="row__meta">
-                  <span class="row__place">
-                    <span class="row__place-icon" aria-hidden="true">◧</span>
-                    {{ p.city }}
-                  </span>
-                  <span class="row__stamps">
-                    <span class="stamp stamp--type">{{ typeLabel(p.property_type) }}</span>
-                    <span class="stamp {{ statusClass(p.status) }}">{{
-                      statusLabel(p.status)
-                    }}</span>
+            <li>
+              <a class="row" [routerLink]="[p.id]">
+                <span class="row__avatar" aria-hidden="true">{{ monogram(p) }}</span>
+                <span class="row__body">
+                  <span class="row__name">{{ p.name }}</span>
+                  <span class="row__meta">
+                    <span class="row__place">
+                      <span class="row__place-icon" aria-hidden="true">◧</span>
+                      {{ p.city }}
+                    </span>
+                    <span class="row__stamps">
+                      <span class="stamp stamp--type">{{ typeLabel(p.property_type) }}</span>
+                      <span class="stamp {{ statusClass(p.status) }}">{{
+                        statusLabel(p.status)
+                      }}</span>
+                    </span>
                   </span>
                 </span>
-              </span>
-              <span class="row__id" title="Objektnummer">
-                <span class="row__id-prefix" aria-hidden="true">Nr.</span>
-                {{ p.property_number }}
-              </span>
+                <span class="row__id" title="Objektnummer">
+                  <span class="row__id-prefix" aria-hidden="true">Nr.</span>
+                  {{ p.property_number }}
+                </span>
+              </a>
             </li>
           }
         </ul>

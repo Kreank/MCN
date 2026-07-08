@@ -116,6 +116,132 @@ button {
   background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
+// ============================================================================
+// Detailseiten-Bausteine (global, weil in Mappen projizierter Inhalt gestylt
+// werden muss): Feld-Kacheln, Tab-Platzhalter, Notiz-/Button-Basis.
+// ============================================================================
+.feld-raster {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  gap: var(--space-4);
+  margin: 0;
+}
+.feld {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--radius);
+}
+.feld__label {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.feld__wert {
+  margin: 0;
+  font-size: var(--step-0);
+  color: var(--ink);
+}
+.feld__wert--leer {
+  color: var(--ink-faint);
+}
+
+.tab-platzhalter {
+  max-width: 42rem;
+  padding: var(--space-6);
+  border: 1.5px dashed var(--line-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-sunken);
+  color: var(--ink-muted);
+}
+.tab-platzhalter__titel {
+  font-size: var(--step-1);
+  margin-bottom: var(--space-2);
+  color: var(--ink);
+}
+
+.lade-hinweis {
+  max-width: 64rem;
+  margin: 0 auto;
+  color: var(--ink-muted);
+}
+
+// Notiz-/Hinweisfläche (Fehler/Leer) — global, damit Detailseiten sie erben.
+// Die Listen (kontakte/liegenschaften) haben eigene, scoped Varianten; daher
+// hier KEIN margin setzen (sonst würden die Listen-Notizen zentriert).
+.note {
+  max-width: 42rem;
+  padding: var(--space-6);
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.note--error {
+  border-color: color-mix(in srgb, var(--warn-ink) 45%, var(--line-strong));
+  background: var(--warn-tint);
+}
+.note__titel {
+  font-size: var(--step-2);
+  margin-bottom: var(--space-3);
+  color: var(--ink);
+}
+.note__text {
+  margin: 0 0 var(--space-4);
+  color: var(--ink-muted);
+}
+.note__aktionen {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+// Button-Basis (global). Funktioniert für <button> und <a class="btn">.
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 var(--space-5);
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 600;
+  font-size: var(--step-0);
+  text-decoration: none;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+
+  &:hover:not(:disabled) {
+    border-color: var(--ink);
+  }
+  &:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+.btn--primary {
+  background: var(--command);
+  color: var(--on-command);
+  border-color: var(--command);
+
+  &:hover:not(:disabled) {
+    border-color: var(--accent);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

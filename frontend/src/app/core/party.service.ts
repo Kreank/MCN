@@ -1,7 +1,7 @@
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { PartyPage, PartyQuery } from './party.model';
+import { PartyDetail, PartyPage, PartyQuery } from './party.model';
 
 /** Typisierter Zugriff auf die Kontakte-API (dev-Proxy: /api -> :8000). */
 @Injectable({ providedIn: 'root' })
@@ -21,5 +21,9 @@ export class PartyService {
       params = params.set('party_type', query.party_type);
     }
     return this.http.get<PartyPage>(this.base, { params });
+  }
+
+  get(id: string): Observable<PartyDetail> {
+    return this.http.get<PartyDetail>(`${this.base}/${id}`);
   }
 }
