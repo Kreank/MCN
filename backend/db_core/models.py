@@ -47,6 +47,10 @@ class ServiceCaseNumberDefault(_NextNumber):
     template = "workflow.next_number('V')"
 
 
+class WorkOrderNumberDefault(_NextNumber):
+    template = "workflow.next_number('AU')"
+
+
 class AppUser(models.Model):
     """security.app_user — fachliches Referenzziel für Audit/Trigger."""
 
@@ -928,3 +932,116 @@ class AssemblyComponent(models.Model):
 
     def __str__(self):
         return f"{self.position}. @ {self.assembly_id}"
+
+
+class WorkOrder(models.Model):
+    """workflow.work_order — Auftrag (Migration 0013).
+
+    Reicher Statusautomat ENTWURF → FREIGEGEBEN → IN_PLANUNG → IN_AUSFUEHRUNG →
+    TECHNISCH_ABGESCHLOSSEN → KAUFMAENNISCH_GEPRUEFT → ABGERECHNET (jederzeit
+    STORNIERT). Übergänge validiert workflow.validate_status_change; die
+    Freigabe-/Abrechnungs-Tore (Beauftragungsnachweis, bestätigter
+    Verantwortungsbereich, PRINCIPAL, INVOICE_DEBTOR) prüft die DB als deferred
+    Constraint-Trigger. Auftragsnummer (AU-…) vergibt die DB (db_default), erst
+    veröffentlichte Rechnungen entstehen aus KAUFMAENNISCH_GEPRUEFT-Aufträgen
+    (B-08).
+
+    building_id/unit_id/asset_id sind zusammengesetzte FKs auf property; hier als
+    reine UUIDs geführt (kein ORM-FK, da Composite-Ziel).
+    """
+
+    id = models.UUIDField(primary_key=True)
+    order_number = models.TextField(db_default=WorkOrderNumberDefault())
+    project = models.ForeignKey(
+        Project,
+        models.DO_NOTHING,
+        db_column="project_id",
+        null=True,
+        blank=True,
+        related_name="work_orders",
+    )
+    service_case = models.ForeignKey(
+        ServiceCase,
+        models.DO_NOTHING,
+        db_column="service_case_id",
+        null=True,
+        blank=True,
+        related_name="work_orders",
+    )
+    title = models.TextField()
+    description = models.TextField(null=True, blank=True)
+    property = models.ForeignKey(
+        Property, models.DO_NOTHING, db_column="property_id", related_name="work_orders"
+    )
+    building_id = models.UUIDField(null=True, blank=True)
+    unit_id = models.UUIDField(null=True, blank=True)
+    asset_id = models.UUIDField(null=True, blank=True)
+    # UNKNOWN | COMMON_PROPERTY | PRIVATE_UNIT | MIXED
+    responsibility_scope = models.TextField()
+    # ENTWURF|FREIGABE_AUSSTEHEND|FREIGEGEBEN|IN_PLANUNG|IN_AUSFUEHRUNG|
+    # TECHNISCH_ABGESCHLOSSEN|KAUFMAENNISCH_GEPRUEFT|ABGERECHNET|STORNIERT
+    status = models.TextField()
+    priority = models.TextField()  # FK priority_level.code (NORMAL|DRINGEND|NOTFALL)
+    customer_reference = models.TextField(null=True, blank=True)
+    order_evidence_reference = models.TextField(null=True, blank=True)
+    authority_id = models.UUIDField(null=True, blank=True)
+    is_emergency = models.BooleanField(db_default=models.Value(False))
+    responsibility_confirmed_at = models.DateTimeField(null=True, blank=True)
+    responsibility_confirmed_by = models.ForeignKey(
+        AppUser,
+        models.DO_NOTHING,
+        db_column="responsibility_confirmed_by",
+        null=True,
+        blank=True,
+        related_name="confirmed_work_orders",
+    )
+    follow_up_of_work_order_id = models.UUIDField(null=True, blank=True)
+    is_warranty_case = models.BooleanField(db_default=models.Value(False))
+    ordered_at = models.DateTimeField(null=True, blank=True)
+    desired_date = models.DateField(null=True, blank=True)
+    version = models.IntegerField()
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'workflow"."work_order'
+
+    def __str__(self):
+        return f"{self.order_number} {self.title}"
+
+
+class WorkOrderParty(models.Model):
+    """workflow.work_order_party — Beteiligte eines Auftrags (Migration 0013).
+
+    Rollen A-25/A-27/A-29; höchstens ein primärer Beteiligter je Auftrag und
+    Rolle (partieller UNIQUE-Index). Für die Freigabe-/Abrechnungs-Tore relevant:
+    PRINCIPAL (Auftraggeber) und INVOICE_DEBTOR (Rechnungsschuldner).
+    """
+
+    id = models.UUIDField(primary_key=True)
+    work_order = models.ForeignKey(
+        WorkOrder, models.DO_NOTHING, db_column="work_order_id", related_name="parties"
+    )
+    party = models.ForeignKey(
+        Party, models.DO_NOTHING, db_column="party_id", related_name="work_order_roles"
+    )
+    # PRINCIPAL|REPRESENTATIVE|SERVICE_RECIPIENT|OCCUPANT|COST_BEARER|
+    # INVOICE_DEBTOR|INVOICE_RECIPIENT|REPORTER|ON_SITE_CONTACT
+    role = models.TextField()
+    # MANDATE|OWNERSHIP|OCCUPANCY|BILLING_INSTRUCTION|MANUAL
+    source = models.TextField()
+    source_reference_id = models.UUIDField(null=True, blank=True)
+    resolved_at = models.DateTimeField(db_default=Now())
+    is_primary = models.BooleanField(db_default=models.Value(False))
+    allocation_percent = models.DecimalField(
+        max_digits=7, decimal_places=4, null=True, blank=True
+    )
+    created_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'workflow"."work_order_party'
+
+    def __str__(self):
+        return f"{self.role} @ {self.work_order_id}"

@@ -81,6 +81,34 @@
         }
       }
 
+      <!-- ------------------------------ Aufträge -------------------------- -->
+      @if (tab() === 'auftraege') {
+        @switch (ordersState().kind) {
+          @case ('loading') { <p class="lade-hinweis" role="status">Aufträge werden geladen …</p> }
+          @case ('error') { <div class="tab-platzhalter"><p>Aufträge konnten nicht geladen werden.</p></div> }
+          @case ('ready') {
+            @if ($any(ordersState()).items.length === 0) {
+              <div class="tab-platzhalter"><p>Zu diesem Projekt gibt es noch keine Aufträge.</p></div>
+            } @else {
+              <ul class="ref-liste">
+                @for (a of $any(ordersState()).items; track a.id) {
+                  <li>
+                    <a class="ref" [routerLink]="['/auftraege', a.id]">
+                      <span class="ref__name">{{ a.title }}</span>
+                      <span class="ref__stamps">
+                        @if (a.is_emergency) { <span class="stamp stamp--warn">Notfall</span> }
+                        <span class="stamp {{ orderStatusClass(a.status) }}">{{ orderStatusLabel(a.status) }}</span>
+                      </span>
+                      <span class="ref__nr">{{ a.order_number }}</span>
+                    </a>
+                  </li>
+                }
+              </ul>
+            }
+          }
+        }
+      }
+
       @if (tab() === 'aufgaben') {
         @switch (tasksState().kind) {
           @case ('loading') { <p class="lade-hinweis" role="status">Aufgaben werden geladen …</p> }

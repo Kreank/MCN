@@ -1,0 +1,113 @@
+@switch (state().kind) {
+  @case ('loading') {
+    <p class="lade-hinweis" role="status">Auftrag wird geladen …</p>
+  }
+
+  @case ('error') {
+    <div class="note note--error" role="alert">
+      <h2 class="note__titel">Auftrag konnte nicht geladen werden</h2>
+      <p class="note__text">Die Schnittstelle war nicht erreichbar oder der Auftrag existiert nicht.</p>
+      <div class="note__aktionen">
+        <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
+        <a class="btn" routerLink="/projekte">Zu den Projekten</a>
+      </div>
+    </div>
+  }
+
+  @case ('ready') {
+    <app-mappe
+      kicker="Auftrag {{ daten()!.order_number }}"
+      [titel]="daten()!.title"
+      [backLink]="daten()!.project ? '/projekte/' + daten()!.project!.id : '/projekte'"
+      [backLabel]="daten()!.project ? 'Projekt' : 'Projekte'"
+      [tabs]="tabs"
+      [(aktiv)]="tab"
+    >
+      @if (daten()!.is_emergency) {
+        <span mappe-kopf class="stamp stamp--warn">Notfall</span>
+      }
+      <span mappe-kopf class="stamp {{ priorityClass(daten()!.priority) }}">{{ priorityLabel(daten()!.priority) }}</span>
+      <span mappe-kopf class="stamp {{ statusClass(daten()!.status) }}">{{ statusLabel(daten()!.status) }}</span>
+
+      @if (tab() === 'uebersicht') {
+        <dl class="feld-raster">
+          <div class="feld"><dt class="feld__label">Auftragsnummer</dt><dd class="feld__wert">{{ daten()!.order_number }}</dd></div>
+          <div class="feld"><dt class="feld__label">Status</dt><dd class="feld__wert">{{ statusLabel(daten()!.status) }}</dd></div>
+          <div class="feld"><dt class="feld__label">Priorität</dt><dd class="feld__wert">{{ priorityLabel(daten()!.priority) }}</dd></div>
+          <div class="feld"><dt class="feld__label">Zuständigkeit</dt><dd class="feld__wert">{{ scopeLabel(daten()!.responsibility_scope) }}</dd></div>
+          <div class="feld"><dt class="feld__label">Wunschtermin</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.desired_date">{{ daten()!.desired_date || '—' }}</dd></div>
+          <div class="feld"><dt class="feld__label">Kundenreferenz</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.customer_reference">{{ daten()!.customer_reference || '—' }}</dd></div>
+          <div class="feld"><dt class="feld__label">Beauftragungsnachweis</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.order_evidence_reference">{{ daten()!.order_evidence_reference || '—' }}</dd></div>
+        </dl>
+
+        @if (daten()!.description) {
+          <p class="beschreibung">{{ daten()!.description }}</p>
+        }
+
+        <div class="bezug">
+          <a class="bezug__item" [routerLink]="['/liegenschaften', daten()!.property.id]">
+            <span class="bezug__label">Liegenschaft</span>
+            <span class="bezug__wert">{{ daten()!.property.name }} · {{ daten()!.property.city }}</span>
+          </a>
+          @if (daten()!.project; as p) {
+            <a class="bezug__item" [routerLink]="['/projekte', p.id]">
+              <span class="bezug__label">Projekt</span>
+              <span class="bezug__wert">{{ p.name }}</span>
+            </a>
+          }
+          @if (daten()!.service_case_number; as sc) {
+            <div class="bezug__item bezug__item--static">
+              <span class="bezug__label">Vorgang</span>
+              <span class="bezug__wert">{{ sc }}</span>
+            </div>
+          }
+        </div>
+      }
+
+      @if (tab() === 'beteiligte') {
+        @if (daten()!.parties.length === 0) {
+          <div class="tab-platzhalter"><p>Diesem Auftrag sind noch keine Beteiligten zugeordnet.</p></div>
+        } @else {
+          <ul class="ref-liste">
+            @for (b of daten()!.parties; track $index) {
+              <li>
+                <a class="ref" [routerLink]="['/kontakte', b.party_id]">
+                  <span class="ref__name">{{ b.display_name }}</span>
+                  <span class="ref__stamps">
+                    <span class="stamp stamp--type">{{ roleLabel(b.role) }}</span>
+                    @if (b.is_primary) { <span class="stamp stamp--positive">Primär</span> }
+                  </span>
+                </a>
+              </li>
+            }
+          </ul>
+        }
+      }
+
+      @if (tab() === 'verlauf') {
+        @if (daten()!.history.length === 0) {
+          <div class="tab-platzhalter"><p>Für diesen Auftrag ist noch kein Statusverlauf protokolliert.</p></div>
+        } @else {
+          <ol class="verlauf">
+            @for (h of daten()!.history; track $index) {
+              <li class="verlauf__eintrag">
+                <span class="verlauf__punkt" aria-hidden="true"></span>
+                <div class="verlauf__inhalt">
+                  <span class="verlauf__wechsel">
+                    {{ statusLabelStr(h.from_status) }}
+                    <span class="verlauf__pfeil" aria-hidden="true">→</span>
+                    <strong>{{ statusLabelStr(h.to_status) }}</strong>
+                  </span>
+                  <span class="verlauf__meta">
+                    {{ h.occurred_at }}@if (h.changed_by) { · {{ h.changed_by }} }
+                  </span>
+                  @if (h.reason) { <span class="verlauf__grund">„{{ h.reason }}"</span> }
+                </div>
+              </li>
+            }
+          </ol>
+        }
+      }
+    </app-mappe>
+  }
+}

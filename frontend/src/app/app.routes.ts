@@ -50,6 +50,12 @@ export const routes: Routes = [
       import('./features/vorgang-detail/vorgang-detail').then((m) => m.VorgangDetail),
   },
   {
+    path: 'auftraege/:id',
+    title: 'Auftrag — MCN Leitstand',
+    loadComponent: () =>
+      import('./features/auftrag-detail/auftrag-detail').then((m) => m.AuftragDetail),
+  },
+  {
     path: 'dokumente',
     title: 'Dokumente — MCN Leitstand',
     loadComponent: () => import('./features/dokumente/dokumente').then((m) => m.Dokumente),

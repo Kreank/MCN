@@ -4,7 +4,14 @@ import { ActivatedRoute, RouterLink } from '@angular/router';
 import { Mappe, MappeTab } from '../../shared/mappe/mappe';
 import { ProjektService } from '../../core/projekt.service';
 import { AufgabeService } from '../../core/aufgabe.service';
+import { AuftragService } from '../../core/auftrag.service';
 import { Task, TaskStatus } from '../../core/aufgabe.model';
+import {
+  WorkOrder,
+  WorkOrderStatus,
+  workOrderStatusClass,
+  workOrderStatusLabel,
+} from '../../core/auftrag.model';
 import {
   CasePriority,
   Checklist,
@@ -42,10 +49,12 @@ export class ProjektDetail {
   private readonly route = inject(ActivatedRoute);
   private readonly svc = inject(ProjektService);
   private readonly aufgabeSvc = inject(AufgabeService);
+  private readonly auftragSvc = inject(AuftragService);
 
   protected readonly tab = signal('uebersicht');
   protected readonly state = signal<ViewState>({ kind: 'loading' });
   protected readonly tasksState = signal<TasksState>({ kind: 'idle' });
+  protected readonly ordersState = signal<LazyState<WorkOrder>>({ kind: 'idle' });
   protected readonly logState = signal<LazyState<LogEntry>>({ kind: 'idle' });
   protected readonly checklistsState = signal<LazyState<Checklist>>({ kind: 'idle' });
   private reqId = 0;
@@ -54,6 +63,7 @@ export class ProjektDetail {
     { id: 'uebersicht', label: 'Übersicht' },
     { id: 'liegenschaften', label: 'Liegenschaften' },
     { id: 'vorgaenge', label: 'Vorgänge' },
+    { id: 'auftraege', label: 'Aufträge' },
     { id: 'aufgaben', label: 'Aufgaben' },
     { id: 'logbuch', label: 'Logbuch' },
     { id: 'checklisten', label: 'Checklisten' },
@@ -70,6 +80,7 @@ export class ProjektDetail {
       const id = pm.get('id');
       this.tab.set('uebersicht');
       this.tasksState.set({ kind: 'idle' });
+      this.ordersState.set({ kind: 'idle' });
       this.logState.set({ kind: 'idle' });
       this.checklistsState.set({ kind: 'idle' });
       if (!id) {
@@ -85,6 +96,7 @@ export class ProjektDetail {
       if (!d) return;
       const t = this.tab();
       if (t === 'aufgaben' && this.tasksState().kind === 'idle') this.loadTasks(d.id);
+      if (t === 'auftraege' && this.ordersState().kind === 'idle') this.loadOrders(d.id);
       if (t === 'logbuch' && this.logState().kind === 'idle') this.loadLog(d.id);
       if (t === 'checklisten' && this.checklistsState().kind === 'idle') {
         this.loadChecklists(d.id);
@@ -97,6 +109,14 @@ export class ProjektDetail {
     this.aufgabeSvc.list({ page: 1, page_size: 50, project_id: projectId }).subscribe({
       next: (d) => this.tasksState.set({ kind: 'ready', items: d.items }),
       error: () => this.tasksState.set({ kind: 'error' }),
+    });
+  }
+
+  private loadOrders(projectId: string): void {
+    this.ordersState.set({ kind: 'loading' });
+    this.auftragSvc.list({ page: 1, page_size: 50, project_id: projectId }).subscribe({
+      next: (d) => this.ordersState.set({ kind: 'ready', items: d.items }),
+      error: () => this.ordersState.set({ kind: 'error' }),
     });
   }
 
@@ -197,5 +217,12 @@ export class ProjektDetail {
     if (s === 'ERLEDIGT') return 'stamp--positive';
     if (s === 'VERWORFEN') return 'stamp--warn';
     return '';
+  }
+
+  orderStatusLabel(s: WorkOrderStatus): string {
+    return workOrderStatusLabel(s);
+  }
+  orderStatusClass(s: WorkOrderStatus): string {
+    return workOrderStatusClass(s);
   }
 }

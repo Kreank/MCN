@@ -16,10 +16,11 @@ from django.db import transaction
 
 from db_core.models import (
     AppUser, Article, Assembly, Invoice, Party, Project, ProjectLog, Property,
-    Quote, Task, WageGroup,
+    Quote, Task, WageGroup, WorkOrder,
 )
 from db_core.services import artikel as artikel_service
 from db_core.services import aufgabe as aufgabe_service
+from db_core.services import auftrag as auftrag_service
 from db_core.services import beleg as beleg_service
 from db_core.services import identity as identity_service
 from db_core.services import projekt as projekt_service
@@ -343,6 +344,49 @@ class Command(BaseCommand):
                 aufgabe_service.complete_task(actor.id, created.id)
             angelegt += 1
             self.stdout.write(f"Aufgabe angelegt: {created.title} ({created.id})")
+
+        # Demo-Auftrag am Dachsanierungs-Projekt, durchgeschaltet bis
+        # KAUFMAENNISCH_GEPRUEFT (Voraussetzung für eine veröffentlichte
+        # Rechnung, B-08). Durchläuft die echten Freigabe-/Prüf-Tore der DB.
+        # Idempotent darüber, ob das Projekt bereits einen Auftrag trägt.
+        au_proj = Project.objects.filter(name="Dachsanierung Lindenhöfe").first()
+        au_obj = Property.objects.filter(name="Wohnanlage Lindenhöfe").first()
+        au_weg = Party.objects.filter(display_name="WEG Lindenstraße 12").first()
+        if (
+            au_proj is not None and au_obj is not None and au_weg is not None
+            and not WorkOrder.objects.filter(project_id=au_proj.id).exists()
+        ):
+            order = auftrag_service.create_work_order(
+                actor.id, property_id=au_obj.id,
+                title="Dacheindeckung Vorderhaus erneuern",
+                project_id=au_proj.id,
+                description="Alteindeckung abnehmen, neue Tonziegel verlegen.",
+            )
+            auftrag_service.set_order_evidence(
+                actor.id, work_order_id=order.id,
+                reference="Beschluss Eigentümerversammlung vom 12.03.",
+            )
+            auftrag_service.confirm_responsibility(
+                actor.id, work_order_id=order.id, scope="COMMON_PROPERTY"
+            )
+            auftrag_service.add_work_order_party(
+                actor.id, work_order_id=order.id, party_id=au_weg.id,
+                role="PRINCIPAL", is_primary=True, source="OWNERSHIP",
+            )
+            auftrag_service.add_work_order_party(
+                actor.id, work_order_id=order.id, party_id=au_weg.id,
+                role="INVOICE_DEBTOR", is_primary=True, source="BILLING_INSTRUCTION",
+            )
+            for to_status in ("FREIGEGEBEN", "IN_PLANUNG", "IN_AUSFUEHRUNG",
+                              "TECHNISCH_ABGESCHLOSSEN", "KAUFMAENNISCH_GEPRUEFT"):
+                auftrag_service.advance_status(
+                    actor.id, work_order_id=order.id, to_status=to_status
+                )
+            order.refresh_from_db()
+            angelegt += 1
+            self.stdout.write(
+                f"Auftrag angelegt: {order.order_number} ({order.status})"
+            )
 
         # Demo-Rechnung (ENTWURF) an der Wohnanlage Lindenhöfe; idempotent
         # darüber, ob die Liegenschaft bereits eine Rechnung trägt.

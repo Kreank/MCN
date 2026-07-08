@@ -1,0 +1,157 @@
+:host {
+  display: block;
+}
+
+// ============================ Referenzlisten ================================
+.ref-liste {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.ref {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--radius);
+  color: inherit;
+  text-decoration: none;
+  transition: border-color 0.15s ease;
+}
+a.ref:hover {
+  border-left-color: var(--accent);
+}
+a.ref:focus-visible {
+  outline: 2.5px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.ref__name {
+  flex: 1;
+  min-width: 12rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+.ref__stamps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+// ============================ Beschreibung ==================================
+.beschreibung {
+  margin: var(--space-4) 0 0;
+  max-width: 44rem;
+  color: var(--ink-muted);
+  white-space: pre-line;
+}
+
+// ============================ Bezug-Kacheln =================================
+.bezug {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}
+.bezug__item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: var(--space-3) var(--space-4);
+  min-width: 13rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--radius);
+  color: inherit;
+  text-decoration: none;
+  transition: border-color 0.15s ease;
+}
+a.bezug__item:hover {
+  border-left-color: var(--accent);
+}
+a.bezug__item:focus-visible {
+  outline: 2.5px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.bezug__item--static {
+  cursor: default;
+}
+.bezug__label {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.bezug__wert {
+  color: var(--accent-ink);
+}
+.bezug__item--static .bezug__wert {
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+}
+
+// ============================ Statusverlauf =================================
+.verlauf {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.verlauf__eintrag {
+  position: relative;
+  display: flex;
+  gap: var(--space-4);
+  padding: 0 0 var(--space-4) var(--space-2);
+}
+.verlauf__eintrag::before {
+  content: '';
+  position: absolute;
+  left: calc(var(--space-2) + 0.33rem);
+  top: 0.9rem;
+  bottom: -0.4rem;
+  width: 1.5px;
+  background: var(--line);
+}
+.verlauf__eintrag:last-child::before {
+  display: none;
+}
+.verlauf__punkt {
+  flex: none;
+  width: 0.7rem;
+  height: 0.7rem;
+  margin-top: 0.35rem;
+  border-radius: 50%;
+  background: var(--accent);
+  outline: 3px solid var(--paper);
+  z-index: 1;
+}
+.verlauf__inhalt {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.verlauf__wechsel {
+  font-size: var(--step-0);
+  color: var(--ink);
+}
+.verlauf__pfeil {
+  margin: 0 0.3em;
+  color: var(--ink-faint);
+}
+.verlauf__meta {
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+.verlauf__grund {
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+  font-style: italic;
+}
