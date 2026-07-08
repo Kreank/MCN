@@ -14,8 +14,9 @@ from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
-from db_core.models import AppUser, Party, Project, Property, Task
+from db_core.models import AppUser, Party, Project, Property, Quote, Task
 from db_core.services import aufgabe as aufgabe_service
+from db_core.services import beleg as beleg_service
 from db_core.services import identity as identity_service
 from db_core.services import projekt as projekt_service
 from db_core.services import property as property_service
@@ -147,10 +148,29 @@ DEMO_TASKS = [
 ]
 
 
+# Demo-Angebote (Status ENTWURF): verweisen über Liegenschafts-/Projektname.
+DEMO_QUOTES = [
+    {
+        "title": "Angebot Dachsanierung Lindenhöfe",
+        "property": "Wohnanlage Lindenhöfe",
+        "project": "Dachsanierung Lindenhöfe",
+        "lines": [
+            {"line_type": "TEXT", "description": "Erneuerung der Dacheindeckung Vorderhaus."},
+            {"line_type": "MATERIAL", "description": "Dachziegel Tonziegel rot",
+             "quantity": 850, "unit": "Stk", "unit_price": "2.40", "tax_code": "DE_19"},
+            {"line_type": "ARBEITSZEIT", "description": "Dachdeckerarbeiten",
+             "quantity": 64, "unit": "h", "unit_price": "58.00", "tax_code": "DE_19"},
+            {"line_type": "FAHRT", "description": "An- und Abfahrt",
+             "quantity": 4, "unit": "Fahrt", "unit_price": "35.00", "tax_code": "DE_19"},
+        ],
+    },
+]
+
+
 class Command(BaseCommand):
     help = (
-        "Legt Demo-Kontakte, -Liegenschaften, -Projekte (mit Vorgängen) und "
-        "-Aufgaben für die Entwicklung an."
+        "Legt Demo-Kontakte, -Liegenschaften, -Projekte (mit Vorgängen), "
+        "-Aufgaben und -Angebote für die Entwicklung an."
     )
 
     def handle(self, *args, **options):
@@ -286,6 +306,33 @@ class Command(BaseCommand):
                 aufgabe_service.complete_task(actor.id, created.id)
             angelegt += 1
             self.stdout.write(f"Aufgabe angelegt: {created.title} ({created.id})")
+
+        # Angebote: idempotent je Titel; brauchen eine Liegenschaft (Pflicht).
+        for quote in DEMO_QUOTES:
+            if Quote.objects.filter(title=quote["title"]).exists():
+                uebersprungen += 1
+                continue
+            obj = Property.objects.filter(name=quote["property"]).first()
+            if obj is None:
+                self.stdout.write(
+                    self.style.WARNING(
+                        f"Angebot '{quote['title']}' übersprungen: Liegenschaft "
+                        f"'{quote['property']}' nicht gefunden."
+                    )
+                )
+                continue
+            project_id = None
+            if quote.get("project"):
+                proj = Project.objects.filter(name=quote["project"]).first()
+                project_id = proj.id if proj else None
+            created = beleg_service.create_quote(
+                actor.id, property_id=obj.id, title=quote["title"],
+                project_id=project_id, lines=quote["lines"],
+            )
+            angelegt += 1
+            self.stdout.write(
+                f"Angebot angelegt: {created.title} — {created.gross_total} EUR ({created.id})"
+            )
 
         self.stdout.write(
             self.style.SUCCESS(

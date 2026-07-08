@@ -480,3 +480,127 @@ class Task(models.Model):
 
     def __str__(self):
         return self.title
+
+
+class TaxCode(models.Model):
+    """invoicing.tax_code — Steuercodes (DE_19, DE_7, DE_0, DE_13B; Migration 0016)."""
+
+    code = models.TextField(primary_key=True)
+    label = models.TextField()
+    rate_percent = models.DecimalField(max_digits=5, decimal_places=2)
+    mandatory_text = models.TextField(null=True, blank=True)
+    valid_from = models.DateField()
+    valid_until = models.DateField(null=True, blank=True)
+    stb_confirmed_at = models.DateField(null=True, blank=True)
+    version = models.IntegerField()
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'invoicing"."tax_code'
+
+    def __str__(self):
+        return f"{self.code} ({self.rate_percent} %)"
+
+
+class Quote(models.Model):
+    """invoicing.quote — Angebot (Migration 0018).
+
+    Belegnummer wird erst beim Versand vergeben (bleibt im ENTWURF NULL). Ab
+    VERSENDET ist der Beleg eingefroren (B-30). Dieser Slice deckt Anlage bis
+    ENTWURF sowie Liste/Detail ab — der Versand-Workflow folgt separat. Die
+    Versand-/Snapshot-Spalten (billing_snapshot, content_hash, sent_at,
+    replaced_by_quote_id, work_order_id) sind hier bewusst nicht modelliert.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    quote_number = models.TextField(null=True, blank=True)
+    project = models.ForeignKey(
+        Project,
+        models.DO_NOTHING,
+        db_column="project_id",
+        null=True,
+        blank=True,
+        related_name="quotes",
+    )
+    property = models.ForeignKey(
+        Property, models.DO_NOTHING, db_column="property_id", related_name="quotes"
+    )
+    title = models.TextField()
+    # ENTWURF|INTERN_GEPRUEFT|FREIGEGEBEN|VERSENDET|ANGENOMMEN|ABGELEHNT|ABGELAUFEN|ERSETZT
+    status = models.TextField()
+    quote_date = models.DateField(null=True, blank=True)
+    valid_until_date = models.DateField(null=True, blank=True)
+    currency = models.CharField(max_length=3, db_default="EUR")
+    net_total = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True
+    )
+    tax_total = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True
+    )
+    gross_total = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True
+    )
+    version = models.IntegerField()
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'invoicing"."quote'
+
+    def __str__(self):
+        return f"{self.quote_number or 'ENTWURF'} {self.title}"
+
+
+class QuoteLine(models.Model):
+    """invoicing.quote_line — Angebotsposition (Migration 0018).
+
+    TEXT/ZWISCHENSUMME tragen keine Beträge; Betragszeilen sind vollständig
+    (quantity/unit_price/net_amount/tax_code/tax_rate_percent). net_amount wird
+    per CHECK erzwungen (kaufmännische Rundung) — die App muss es korrekt
+    vorberechnen.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    quote = models.ForeignKey(
+        Quote, models.DO_NOTHING, db_column="quote_id", related_name="lines"
+    )
+    position_number = models.IntegerField()
+    # MATERIAL|ARBEITSZEIT|PAUSCHALE|FREMDLEISTUNG|FAHRT|ZUSCHLAG|TEXT|ZWISCHENSUMME
+    line_type = models.TextField()
+    description = models.TextField()
+    quantity = models.DecimalField(
+        max_digits=15, decimal_places=3, null=True, blank=True
+    )
+    unit = models.TextField(null=True, blank=True)
+    unit_price = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True
+    )
+    discount_percent = models.DecimalField(
+        max_digits=7, decimal_places=4, null=True, blank=True
+    )
+    tax_code = models.ForeignKey(
+        TaxCode,
+        models.DO_NOTHING,
+        db_column="tax_code",
+        null=True,
+        blank=True,
+        related_name="quote_lines",
+    )
+    tax_rate_percent = models.DecimalField(
+        max_digits=5, decimal_places=2, null=True, blank=True
+    )
+    net_amount = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True
+    )
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'invoicing"."quote_line'
+
+    def __str__(self):
+        return f"{self.position_number}. {self.description}"

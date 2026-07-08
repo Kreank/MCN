@@ -1,0 +1,108 @@
+<section class="dokumente" aria-labelledby="dokumente-titel">
+  <header class="page-head">
+    <div>
+      <p class="page-head__kicker">
+        <span class="page-head__scale" aria-hidden="true"></span>
+        Belegregister
+      </p>
+      <h1 id="dokumente-titel" class="page-head__titel">Dokumente</h1>
+    </div>
+    <p class="page-head__hint">
+      Angebote und Rechnungen (GoBD-relevant). Dieser Bereich zeigt zunächst
+      Angebote; Erstellung und Versand laufen über die KI und die API.
+    </p>
+  </header>
+
+  <div class="controls">
+    <div class="search">
+      <label class="search__label" for="dokumente-suche">Belege durchsuchen</label>
+      <div class="search__field">
+        <span class="search__icon" aria-hidden="true">⌕</span>
+        <input
+          id="dokumente-suche"
+          class="search__input"
+          type="search"
+          inputmode="search"
+          autocomplete="off"
+          placeholder="Titel oder Belegnummer"
+          (input)="onSearch($any($event.target).value)"
+        />
+      </div>
+    </div>
+
+    <div class="segment" role="group" aria-label="Nach Status filtern">
+      @for (seg of segments; track seg.label) {
+        <button
+          type="button"
+          class="segment__btn"
+          [class.is-active]="status() === seg.value"
+          [attr.aria-pressed]="status() === seg.value"
+          (click)="selectSegment(seg.value)"
+        >
+          {{ seg.label }}
+        </button>
+      }
+    </div>
+  </div>
+
+  <p class="sr-only" role="status">{{ resultSummary() }}</p>
+
+  @switch (state().kind) {
+    @case ('loading') {
+      <ul class="rows" aria-hidden="true">
+        @for (s of skeletons; track $index) {
+          <li class="row row--skeleton">
+            <span class="sk sk--badge"></span>
+            <span class="sk-block">
+              <span class="sk sk--line"></span>
+              <span class="sk sk--chips"></span>
+            </span>
+            <span class="sk sk--sum"></span>
+          </li>
+        }
+      </ul>
+    }
+
+    @case ('error') {
+      <div class="note note--error" role="alert">
+        <h2 class="note__titel">Verbindung zum Belegregister unterbrochen</h2>
+        <p class="note__text">Die Belege ließen sich nicht laden. Prüfe die Verbindung und lade den Bereich erneut.</p>
+        <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
+      </div>
+    }
+
+    @case ('ready') {
+      @if (state().kind === 'ready' && $any(state()).data.items.length === 0) {
+        <div class="note note--empty">
+          <h2 class="note__titel">Keine Belege für diese Auswahl</h2>
+          <p class="note__text">Neue Angebote entstehen über die KI-gestützte Anlage und die API.</p>
+        </div>
+      } @else {
+        <ul class="rows">
+          @for (q of $any(state()).data.items; track q.id) {
+            <li>
+              <a class="row" [routerLink]="[q.id]">
+                <span class="row__badge" aria-hidden="true">AN</span>
+                <span class="row__body">
+                  <span class="row__title">{{ q.title }}</span>
+                  <span class="row__meta">
+                    <span class="row__nr">{{ belegNummer(q) }}</span>
+                    <span class="row__place">◧ {{ q.property.city }}</span>
+                    <span class="stamp {{ statusClass(q.status) }}">{{ statusLabel(q.status) }}</span>
+                  </span>
+                </span>
+                <span class="row__sum">{{ euro(q.gross_total) }}</span>
+              </a>
+            </li>
+          }
+        </ul>
+
+        <nav class="pager" aria-label="Blättern">
+          <button type="button" class="btn" (click)="prev()" [disabled]="page() <= 1">Zurück</button>
+          <span class="pager__pos" aria-hidden="true">Seite {{ page() }} von {{ totalPages() }}</span>
+          <button type="button" class="btn" (click)="next()" [disabled]="page() >= totalPages()">Weiter</button>
+        </nav>
+      }
+    }
+  }
+</section>

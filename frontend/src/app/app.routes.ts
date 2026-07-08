@@ -52,13 +52,13 @@ export const routes: Routes = [
   {
     path: 'dokumente',
     title: 'Dokumente — MCN Leitstand',
-    loadComponent: () => import('./shared/platzhalter/platzhalter').then((m) => m.Platzhalter),
-    data: {
-      platzhalter: {
-        titel: 'Dokumente',
-        text: 'Angebote und Rechnungen (GoBD-relevant) erhalten hier ihren geführten Platz — mit Editor und Konfigurator. Der Bereich folgt.',
-      },
-    },
+    loadComponent: () => import('./features/dokumente/dokumente').then((m) => m.Dokumente),
+  },
+  {
+    path: 'dokumente/:id',
+    title: 'Beleg — MCN Leitstand',
+    loadComponent: () =>
+      import('./features/beleg-detail/beleg-detail').then((m) => m.BelegDetail),
   },
   {
     path: 'aufgaben',

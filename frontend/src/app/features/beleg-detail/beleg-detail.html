@@ -1,0 +1,104 @@
+@switch (state().kind) {
+  @case ('loading') {
+    <p class="lade-hinweis" role="status">Beleg wird geladen …</p>
+  }
+
+  @case ('error') {
+    <div class="note note--error" role="alert">
+      <h2 class="note__titel">Beleg konnte nicht geladen werden</h2>
+      <p class="note__text">Das Belegregister war nicht erreichbar oder der Beleg existiert nicht.</p>
+      <div class="note__aktionen">
+        <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
+        <a class="btn" routerLink="/dokumente">Zum Belegregister</a>
+      </div>
+    </div>
+  }
+
+  @case ('ready') {
+    <app-mappe
+      kicker="Angebot {{ daten()!.quote_number || '(Entwurf)' }}"
+      [titel]="daten()!.title"
+      backLink="/dokumente"
+      backLabel="Dokumente"
+      [tabs]="tabs"
+      [(aktiv)]="tab"
+    >
+      <span mappe-kopf class="stamp {{ statusClass(daten()!.status) }}">{{ statusLabel(daten()!.status) }}</span>
+      <span mappe-kopf class="kopf-summe">{{ euro(daten()!.gross_total) }}</span>
+
+      <!-- ------------------------------ Positionen ----------------------- -->
+      @if (tab() === 'positionen') {
+        @if (daten()!.lines.length === 0) {
+          <div class="tab-platzhalter"><p>Dieses Angebot enthält noch keine Positionen.</p></div>
+        } @else {
+          <div class="pos-wrap">
+            <table class="pos">
+              <thead>
+                <tr>
+                  <th class="pos__nr" scope="col">Pos.</th>
+                  <th scope="col">Bezeichnung</th>
+                  <th class="pos__num" scope="col">Menge</th>
+                  <th class="pos__num" scope="col">Einzelpreis</th>
+                  <th class="pos__num" scope="col">Netto</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (l of daten()!.lines; track l.position_number) {
+                  <tr [class.pos--text]="isText(l.line_type)">
+                    <td class="pos__nr">{{ l.position_number }}</td>
+                    <td>
+                      <span class="pos__desc">{{ l.description }}</span>
+                      <span class="pos__type">{{ lineTypeLabel(l.line_type) }}</span>
+                    </td>
+                    <td class="pos__num">{{ menge(l.quantity, l.unit) }}</td>
+                    <td class="pos__num">{{ euro(l.unit_price) }}</td>
+                    <td class="pos__num">{{ euro(l.net_amount) }}</td>
+                  </tr>
+                }
+              </tbody>
+              <tfoot>
+                <tr>
+                  <th colspan="4" scope="row" class="pos__sumlabel">Nettobetrag</th>
+                  <td class="pos__num">{{ euro(daten()!.net_total) }}</td>
+                </tr>
+                <tr>
+                  <th colspan="4" scope="row" class="pos__sumlabel">zzgl. Steuer</th>
+                  <td class="pos__num">{{ euro(daten()!.tax_total) }}</td>
+                </tr>
+                <tr class="pos--gross">
+                  <th colspan="4" scope="row" class="pos__sumlabel">Gesamtbetrag</th>
+                  <td class="pos__num">{{ euro(daten()!.gross_total) }}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        }
+      }
+
+      <!-- ------------------------------ Übersicht ------------------------- -->
+      @if (tab() === 'uebersicht') {
+        <dl class="feld-raster">
+          <div class="feld"><dt class="feld__label">Status</dt><dd class="feld__wert">{{ statusLabel(daten()!.status) }}</dd></div>
+          <div class="feld"><dt class="feld__label">Belegnummer</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.quote_number">{{ daten()!.quote_number || 'noch nicht vergeben' }}</dd></div>
+          <div class="feld"><dt class="feld__label">Angebotsdatum</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.quote_date">{{ daten()!.quote_date || '—' }}</dd></div>
+          <div class="feld"><dt class="feld__label">Gültig bis</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.valid_until_date">{{ daten()!.valid_until_date || '—' }}</dd></div>
+          <div class="feld"><dt class="feld__label">Währung</dt><dd class="feld__wert">{{ daten()!.currency }}</dd></div>
+          <div class="feld"><dt class="feld__label">Gesamt (brutto)</dt><dd class="feld__wert">{{ euro(daten()!.gross_total) }}</dd></div>
+        </dl>
+
+        <div class="bezug">
+          <a class="bezug__item" [routerLink]="['/liegenschaften', daten()!.property.id]">
+            <span class="bezug__label">Liegenschaft</span>
+            <span class="bezug__wert">{{ daten()!.property.name }} · {{ daten()!.property.city }}</span>
+          </a>
+          @if (daten()!.project; as p) {
+            <a class="bezug__item" [routerLink]="['/projekte', p.id]">
+              <span class="bezug__label">Projekt</span>
+              <span class="bezug__wert">{{ p.name }}</span>
+            </a>
+          }
+        </div>
+      }
+    </app-mappe>
+  }
+}
