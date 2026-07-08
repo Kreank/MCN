@@ -1,0 +1,126 @@
+<section class="uebersicht" aria-labelledby="uebersicht-titel">
+  <header class="page-head">
+    <div>
+      <p class="page-head__kicker">
+        <span class="page-head__scale" aria-hidden="true"></span>
+        Leitstand
+      </p>
+      <h1 id="uebersicht-titel" class="page-head__titel">Übersicht</h1>
+    </div>
+    <p class="page-head__hint">
+      Der Leitstand bündelt offene Aufgaben, laufende Projekte, Angebote und
+      KI-Vorschläge auf einen Blick.
+    </p>
+  </header>
+
+  <div class="kacheln">
+    <!-- ------------------------------ Aufgaben ------------------------- -->
+    <article class="kachel">
+      <header class="kachel__kopf">
+        <div>
+          <p class="kachel__kicker">Offene Aufgaben</p>
+          @if (tasks().kind === 'ready') {
+            <p class="kachel__zahl">{{ $any(tasks()).total }}</p>
+          }
+        </div>
+        <a class="kachel__link" routerLink="/aufgaben">Alle →</a>
+      </header>
+      @switch (tasks().kind) {
+        @case ('loading') { <p class="kachel__leer">Wird geladen …</p> }
+        @case ('error') { <p class="kachel__leer">Konnte nicht geladen werden.</p> }
+        @case ('ready') {
+          @if ($any(tasks()).items.length === 0) {
+            <p class="kachel__leer">Keine offenen Aufgaben. 👍</p>
+          } @else {
+            <ul class="kachel__liste">
+              @for (t of $any(tasks()).items; track t.id) {
+                <li class="zeile">
+                  <span class="zeile__text">{{ t.title }}</span>
+                  @if (t.due_date) { <span class="zeile__neben">fällig {{ t.due_date }}</span> }
+                </li>
+              }
+            </ul>
+          }
+        }
+      }
+    </article>
+
+    <!-- ------------------------------ Projekte ------------------------- -->
+    <article class="kachel">
+      <header class="kachel__kopf">
+        <div>
+          <p class="kachel__kicker">Offene Projekte</p>
+          @if (projects().kind === 'ready') {
+            <p class="kachel__zahl">{{ $any(projects()).total }}</p>
+          }
+        </div>
+        <a class="kachel__link" routerLink="/projekte">Alle →</a>
+      </header>
+      @switch (projects().kind) {
+        @case ('loading') { <p class="kachel__leer">Wird geladen …</p> }
+        @case ('error') { <p class="kachel__leer">Konnte nicht geladen werden.</p> }
+        @case ('ready') {
+          @if ($any(projects()).items.length === 0) {
+            <p class="kachel__leer">Keine offenen Projekte.</p>
+          } @else {
+            <ul class="kachel__liste">
+              @for (p of $any(projects()).items; track p.id) {
+                <li class="zeile">
+                  <a class="zeile__link" [routerLink]="['/projekte', p.id]">{{ p.name }}</a>
+                  <span class="zeile__neben">{{ p.project_number }}</span>
+                </li>
+              }
+            </ul>
+          }
+        }
+      }
+    </article>
+
+    <!-- ------------------------------ Angebote ------------------------- -->
+    <article class="kachel">
+      <header class="kachel__kopf">
+        <div>
+          <p class="kachel__kicker">Angebote (Entwurf)</p>
+          @if (quotes().kind === 'ready') {
+            <p class="kachel__zahl">{{ $any(quotes()).total }}</p>
+          }
+        </div>
+        <a class="kachel__link" routerLink="/dokumente">Alle →</a>
+      </header>
+      @switch (quotes().kind) {
+        @case ('loading') { <p class="kachel__leer">Wird geladen …</p> }
+        @case ('error') { <p class="kachel__leer">Konnte nicht geladen werden.</p> }
+        @case ('ready') {
+          @if ($any(quotes()).items.length === 0) {
+            <p class="kachel__leer">Keine Angebots-Entwürfe.</p>
+          } @else {
+            <ul class="kachel__liste">
+              @for (q of $any(quotes()).items; track q.id) {
+                <li class="zeile">
+                  <a class="zeile__link" [routerLink]="['/dokumente', q.id]">{{ q.title }}</a>
+                  <span class="zeile__neben">{{ euro(q.gross_total) }}</span>
+                </li>
+              }
+            </ul>
+          }
+        }
+      }
+    </article>
+
+    <!-- ---------------------------- KI-Vorschläge ---------------------- -->
+    <article class="kachel kachel--ki">
+      <header class="kachel__kopf">
+        <div>
+          <p class="kachel__kicker">KI-Vorschläge</p>
+        </div>
+      </header>
+      <div class="kachel__ki">
+        <p class="kachel__leer">
+          Die KI schlägt hier bald Aktionen vor (Angebote, Aufgaben, nächste
+          Schritte) — durch dieselben Freigabe-Tore wie ein Mensch. Schema
+          <code>ai.ai_proposal</code>; Anbindung folgt.
+        </p>
+      </div>
+    </article>
+  </div>
+</section>

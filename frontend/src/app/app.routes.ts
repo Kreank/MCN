@@ -1,7 +1,7 @@
 import { Routes } from '@angular/router';
 
 export const routes: Routes = [
-  { path: '', pathMatch: 'full', redirectTo: 'kontakte' },
+  { path: '', pathMatch: 'full', redirectTo: 'uebersicht' },
   {
     path: 'kontakte',
     title: 'Kontakte — MCN Leitstand',
@@ -16,13 +16,7 @@ export const routes: Routes = [
   {
     path: 'uebersicht',
     title: 'Übersicht — MCN Leitstand',
-    loadComponent: () => import('./shared/platzhalter/platzhalter').then((m) => m.Platzhalter),
-    data: {
-      platzhalter: {
-        titel: 'Übersicht',
-        text: 'Der Leitstand bündelt hier bald offene Vorgänge, fällige Einsätze und KI-Vorschläge auf einen Blick. Bis dahin startest du direkt im Kontaktregister.',
-      },
-    },
+    loadComponent: () => import('./features/uebersicht/uebersicht').then((m) => m.Uebersicht),
   },
   {
     path: 'liegenschaften',
@@ -82,5 +76,5 @@ export const routes: Routes = [
     loadComponent: () =>
       import('./features/leistung-detail/leistung-detail').then((m) => m.LeistungDetail),
   },
-  { path: '**', redirectTo: 'kontakte' },
+  { path: '**', redirectTo: 'uebersicht' },
 ];
