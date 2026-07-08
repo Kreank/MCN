@@ -421,6 +421,77 @@ class ServiceCase(models.Model):
         return f"{self.case_number} {self.subject}"
 
 
+class ProjectLog(models.Model):
+    """workflow.project_log — Projekt-Logbuch (append-only, Migration 0035)."""
+
+    id = models.UUIDField(primary_key=True)
+    project = models.ForeignKey(
+        Project, models.DO_NOTHING, db_column="project_id", related_name="log_entries"
+    )
+    category = models.TextField()  # NOTIZ|ANRUF|ABSPRACHE|ENTSCHEIDUNG|SYSTEM
+    entry = models.TextField()
+    created_by = models.ForeignKey(
+        AppUser, models.DO_NOTHING, db_column="created_by", related_name="log_entries"
+    )
+    created_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'workflow"."project_log'
+
+
+class Checklist(models.Model):
+    """workflow.checklist — Checklisten-Instanz eines Projekts (Migration 0035)."""
+
+    id = models.UUIDField(primary_key=True)
+    project = models.ForeignKey(
+        Project, models.DO_NOTHING, db_column="project_id", related_name="checklists"
+    )
+    name = models.TextField()
+    template_id = models.UUIDField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        AppUser, models.DO_NOTHING, db_column="created_by", related_name="checklists"
+    )
+    created_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'workflow"."checklist'
+
+    def __str__(self):
+        return self.name
+
+
+class ChecklistItem(models.Model):
+    """workflow.checklist_item — Checklistenpunkt (Migration 0035).
+
+    Erledigt = done_by UND done_at gesetzt (DB-CHECK erzwingt beide gemeinsam).
+    """
+
+    id = models.UUIDField(primary_key=True)
+    checklist = models.ForeignKey(
+        Checklist, models.DO_NOTHING, db_column="checklist_id", related_name="items"
+    )
+    position = models.IntegerField()
+    label = models.TextField()
+    done_by = models.ForeignKey(
+        AppUser,
+        models.DO_NOTHING,
+        db_column="done_by",
+        null=True,
+        blank=True,
+        related_name="done_checklist_items",
+    )
+    done_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        managed = False
+        db_table = 'workflow"."checklist_item'
+
+    def __str__(self):
+        return f"{self.position}. {self.label}"
+
+
 class StatusChange(models.Model):
     """workflow.status_change — append-only Statusverlauf (Migration 0010).
 

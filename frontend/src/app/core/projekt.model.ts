@@ -103,3 +103,27 @@ export interface ProjectMini {
   project_number: string;
   name: string;
 }
+
+// --- Projekt-Cockpit: Logbuch & Checklisten --------------------------------
+export type LogCategory = 'NOTIZ' | 'ANRUF' | 'ABSPRACHE' | 'ENTSCHEIDUNG' | 'SYSTEM';
+
+export interface LogEntry {
+  category: LogCategory;
+  entry: string;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface ChecklistItem {
+  position: number;
+  label: string;
+  done: boolean;
+  done_by: string | null;
+  done_at: string | null;
+}
+
+export interface Checklist {
+  id: string;
+  name: string;
+  items: ChecklistItem[];
+}

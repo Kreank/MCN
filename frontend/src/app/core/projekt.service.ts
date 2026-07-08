@@ -2,6 +2,8 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import {
+  Checklist,
+  LogEntry,
   ProjectDetail,
   ProjectPage,
   ProjectQuery,
@@ -33,6 +35,14 @@ export class ProjektService {
     return this.http.get<ServiceCaseDetail>(
       `/api/workflow/service_cases/${id}`,
     );
+  }
+
+  getProjectLog(id: string): Observable<LogEntry[]> {
+    return this.http.get<LogEntry[]>(`${this.base}/${id}/log`);
+  }
+
+  getChecklists(id: string): Observable<Checklist[]> {
+    return this.http.get<Checklist[]>(`${this.base}/${id}/checklists`);
   }
 }
 

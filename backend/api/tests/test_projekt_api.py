@@ -110,6 +110,27 @@ def test_vorgang_detail_404(client, seeded):
 
 
 @pytest.mark.django_db
+def test_projekt_cockpit_log_und_checklisten(client, app_user):
+    p = projekt_service.create_project(app_user.id, name="Cockpit-Projekt")
+    projekt_service.add_project_log(
+        app_user.id, project_id=p.id, category="NOTIZ", entry="Erster Eintrag"
+    )
+    projekt_service.create_checklist(
+        app_user.id, project_id=p.id, name="Start", items=["A", "B"]
+    )
+    log = client.get(f"/api/workflow/projects/{p.id}/log").json()
+    assert len(log) == 1
+    assert log[0]["entry"] == "Erster Eintrag"
+    assert log[0]["created_by"] == app_user.display_name
+
+    cls = client.get(f"/api/workflow/projects/{p.id}/checklists").json()
+    assert len(cls) == 1
+    assert cls[0]["name"] == "Start"
+    assert len(cls[0]["items"]) == 2
+    assert cls[0]["items"][0]["done"] is False
+
+
+@pytest.mark.django_db
 def test_create_eingeloggt(client, db):
     c = _logged_in_client(client, with_app_user=True)
     r = c.post(

@@ -7,6 +7,9 @@ import { AufgabeService } from '../../core/aufgabe.service';
 import { Task, TaskStatus } from '../../core/aufgabe.model';
 import {
   CasePriority,
+  Checklist,
+  LogCategory,
+  LogEntry,
   ProjectDetail,
   ProjectStatus,
   ServiceCaseStatus,
@@ -23,6 +26,12 @@ type TasksState =
   | { kind: 'ready'; items: Task[] }
   | { kind: 'error' };
 
+type LazyState<T> =
+  | { kind: 'idle' }
+  | { kind: 'loading' }
+  | { kind: 'ready'; items: T[] }
+  | { kind: 'error' };
+
 @Component({
   selector: 'app-projekt-detail',
   imports: [Mappe, RouterLink],
@@ -37,6 +46,8 @@ export class ProjektDetail {
   protected readonly tab = signal('uebersicht');
   protected readonly state = signal<ViewState>({ kind: 'loading' });
   protected readonly tasksState = signal<TasksState>({ kind: 'idle' });
+  protected readonly logState = signal<LazyState<LogEntry>>({ kind: 'idle' });
+  protected readonly checklistsState = signal<LazyState<Checklist>>({ kind: 'idle' });
   private reqId = 0;
 
   protected readonly tabs: MappeTab[] = [
@@ -59,6 +70,8 @@ export class ProjektDetail {
       const id = pm.get('id');
       this.tab.set('uebersicht');
       this.tasksState.set({ kind: 'idle' });
+      this.logState.set({ kind: 'idle' });
+      this.checklistsState.set({ kind: 'idle' });
       if (!id) {
         this.state.set({ kind: 'error' });
         return;
@@ -66,11 +79,15 @@ export class ProjektDetail {
       this.load(id);
     });
 
-    // Aufgaben des Projekts erst laden, wenn der Tab geöffnet wird (lazy).
+    // Cockpit-Tabs (Aufgaben/Logbuch/Checklisten) erst beim Öffnen laden (lazy).
     effect(() => {
       const d = this.daten();
-      if (this.tab() === 'aufgaben' && d && this.tasksState().kind === 'idle') {
-        this.loadTasks(d.id);
+      if (!d) return;
+      const t = this.tab();
+      if (t === 'aufgaben' && this.tasksState().kind === 'idle') this.loadTasks(d.id);
+      if (t === 'logbuch' && this.logState().kind === 'idle') this.loadLog(d.id);
+      if (t === 'checklisten' && this.checklistsState().kind === 'idle') {
+        this.loadChecklists(d.id);
       }
     });
   }
@@ -81,6 +98,33 @@ export class ProjektDetail {
       next: (d) => this.tasksState.set({ kind: 'ready', items: d.items }),
       error: () => this.tasksState.set({ kind: 'error' }),
     });
+  }
+
+  private loadLog(projectId: string): void {
+    this.logState.set({ kind: 'loading' });
+    this.svc.getProjectLog(projectId).subscribe({
+      next: (items) => this.logState.set({ kind: 'ready', items }),
+      error: () => this.logState.set({ kind: 'error' }),
+    });
+  }
+
+  private loadChecklists(projectId: string): void {
+    this.checklistsState.set({ kind: 'loading' });
+    this.svc.getChecklists(projectId).subscribe({
+      next: (items) => this.checklistsState.set({ kind: 'ready', items }),
+      error: () => this.checklistsState.set({ kind: 'error' }),
+    });
+  }
+
+  logCategoryLabel(c: LogCategory): string {
+    const map: Record<LogCategory, string> = {
+      NOTIZ: 'Notiz',
+      ANRUF: 'Anruf',
+      ABSPRACHE: 'Absprache',
+      ENTSCHEIDUNG: 'Entscheidung',
+      SYSTEM: 'System',
+    };
+    return map[c] ?? c;
   }
 
   retry(): void {

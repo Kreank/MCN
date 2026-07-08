@@ -106,16 +106,53 @@
       }
 
       @if (tab() === 'logbuch') {
-        <div class="tab-platzhalter">
-          <h2 class="tab-platzhalter__titel">Logbuch</h2>
-          <p>Der Unternehmensfeed je Projekt (Notizen, Anrufe, Entscheidungen; Schema <code>workflow.project_log</code>) erscheint hier, sobald der Cockpit-Bereich angebunden ist (Roadmap 04).</p>
-        </div>
+        @switch (logState().kind) {
+          @case ('loading') { <p class="lade-hinweis" role="status">Logbuch wird geladen …</p> }
+          @case ('error') { <div class="tab-platzhalter"><p>Das Logbuch konnte nicht geladen werden.</p></div> }
+          @case ('ready') {
+            @if ($any(logState()).items.length === 0) {
+              <div class="tab-platzhalter"><p>Für dieses Projekt gibt es noch keine Logbuch-Einträge.</p></div>
+            } @else {
+              <ul class="feed">
+                @for (e of $any(logState()).items; track $index) {
+                  <li class="feed__eintrag">
+                    <span class="stamp stamp--type feed__kat">{{ logCategoryLabel(e.category) }}</span>
+                    <div class="feed__inhalt">
+                      <span class="feed__text">{{ e.entry }}</span>
+                      <span class="feed__meta">{{ e.created_at }}@if (e.created_by) { · {{ e.created_by }} }</span>
+                    </div>
+                  </li>
+                }
+              </ul>
+            }
+          }
+        }
       }
       @if (tab() === 'checklisten') {
-        <div class="tab-platzhalter">
-          <h2 class="tab-platzhalter__titel">Checklisten</h2>
-          <p>Projekt-Checklisten (<code>workflow.checklist</code>, optional aus Vorlagen) folgen mit der Cockpit-Anbindung.</p>
-        </div>
+        @switch (checklistsState().kind) {
+          @case ('loading') { <p class="lade-hinweis" role="status">Checklisten werden geladen …</p> }
+          @case ('error') { <div class="tab-platzhalter"><p>Die Checklisten konnten nicht geladen werden.</p></div> }
+          @case ('ready') {
+            @if ($any(checklistsState()).items.length === 0) {
+              <div class="tab-platzhalter"><p>Für dieses Projekt gibt es noch keine Checklisten.</p></div>
+            } @else {
+              @for (cl of $any(checklistsState()).items; track cl.id) {
+                <section class="checkliste">
+                  <h2 class="checkliste__titel">{{ cl.name }}</h2>
+                  <ul class="checkliste__items">
+                    @for (it of cl.items; track it.position) {
+                      <li class="check" [class.check--done]="it.done">
+                        <span class="check__box" [class.check__box--done]="it.done" aria-hidden="true">{{ it.done ? '✓' : '' }}</span>
+                        <span class="check__label">{{ it.label }}</span>
+                        @if (it.done && it.done_by) { <span class="check__meta">{{ it.done_by }}</span> }
+                      </li>
+                    }
+                  </ul>
+                </section>
+              }
+            }
+          }
+        }
       }
       @if (tab() === 'dateien') {
         <div class="tab-platzhalter">

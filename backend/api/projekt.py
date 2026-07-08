@@ -14,7 +14,7 @@ from ninja.errors import HttpError
 from ninja.responses import Status
 from ninja.security import django_auth
 
-from db_core.models import Project, ServiceCase, StatusChange
+from db_core.models import Checklist, Project, ProjectLog, ServiceCase, StatusChange
 from db_core.services import projekt as projekt_service
 
 router = Router()
@@ -253,6 +253,72 @@ class ServiceCaseDetailOut(Schema):
     project: ProjectRefOut | None = None
     reported_by: PartyRefOut | None = None
     history: list[StatusChangeOut]
+
+
+# --- Projekt-Cockpit: Logbuch & Checklisten --------------------------------
+
+class LogEntryOut(Schema):
+    category: str
+    entry: str
+    created_by: str | None = None
+    created_at: datetime
+
+
+class ChecklistItemOut(Schema):
+    position: int
+    label: str
+    done: bool
+    done_by: str | None = None
+    done_at: datetime | None = None
+
+
+class ChecklistOut(Schema):
+    id: UUID
+    name: str
+    items: list[ChecklistItemOut]
+
+
+@router.get("/projects/{project_id}/log", response=list[LogEntryOut])
+def get_project_log(request, project_id: UUID):
+    """Logbuch-Einträge eines Projekts (neueste zuerst)."""
+    entries = (
+        ProjectLog.objects.filter(project_id=project_id)
+        .select_related("created_by")
+        .order_by("-created_at")
+    )
+    return [
+        LogEntryOut(
+            category=e.category,
+            entry=e.entry,
+            created_by=e.created_by.display_name if e.created_by_id else None,
+            created_at=e.created_at,
+        )
+        for e in entries
+    ]
+
+
+@router.get("/projects/{project_id}/checklists", response=list[ChecklistOut])
+def get_project_checklists(request, project_id: UUID):
+    """Checklisten eines Projekts inkl. Punkten (erledigt-Status)."""
+    checklists = (
+        Checklist.objects.filter(project_id=project_id)
+        .prefetch_related("items__done_by")
+        .order_by("created_at")
+    )
+    result = []
+    for cl in checklists:
+        items = [
+            ChecklistItemOut(
+                position=i.position,
+                label=i.label,
+                done=i.done_at is not None,
+                done_by=i.done_by.display_name if i.done_by_id else None,
+                done_at=i.done_at,
+            )
+            for i in sorted(cl.items.all(), key=lambda i: i.position)
+        ]
+        result.append(ChecklistOut(id=cl.id, name=cl.name, items=items))
+    return result
 
 
 @router.get("/service_cases/{case_id}", response=ServiceCaseDetailOut)

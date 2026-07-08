@@ -15,8 +15,8 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
 from db_core.models import (
-    AppUser, Article, Assembly, Invoice, Party, Project, Property, Quote, Task,
-    WageGroup,
+    AppUser, Article, Assembly, Invoice, Party, Project, ProjectLog, Property,
+    Quote, Task, WageGroup,
 )
 from db_core.services import artikel as artikel_service
 from db_core.services import aufgabe as aufgabe_service
@@ -432,6 +432,30 @@ class Command(BaseCommand):
             )
             angelegt += 1
             self.stdout.write(f"Leistung angelegt: {created.assembly_number} {created.name}")
+
+        # Projekt-Cockpit: Logbuch + Checkliste am Dachsanierungs-Projekt
+        # (idempotent darüber, ob das Projekt bereits Logeinträge hat).
+        cockpit_proj = Project.objects.filter(name="Dachsanierung Lindenhöfe").first()
+        if cockpit_proj and not ProjectLog.objects.filter(project_id=cockpit_proj.id).exists():
+            projekt_service.add_project_log(
+                actor.id, project_id=cockpit_proj.id, category="ANRUF",
+                entry="Eigentümergemeinschaft über Sturmschaden informiert; Freigabe angefragt.",
+            )
+            projekt_service.add_project_log(
+                actor.id, project_id=cockpit_proj.id, category="ENTSCHEIDUNG",
+                entry="Erneuerung Vorderhaus-Eindeckung beschlossen, Gartenhaus separat.",
+            )
+            projekt_service.create_checklist(
+                actor.id, project_id=cockpit_proj.id, name="Baustellenstart",
+                items=[
+                    "Gerüst bestellt",
+                    "Container für Bauschutt bestellt",
+                    "Materiallieferung terminiert",
+                    "Anwohner informiert",
+                ],
+            )
+            angelegt += 1
+            self.stdout.write("Projekt-Cockpit (Logbuch + Checkliste) angelegt.")
 
         self.stdout.write(
             self.style.SUCCESS(
