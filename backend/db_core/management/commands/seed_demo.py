@@ -15,7 +15,8 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
 from db_core.models import (
-    AppUser, Article, Assembly, Party, Project, Property, Quote, Task, WageGroup,
+    AppUser, Article, Assembly, Invoice, Party, Project, Property, Quote, Task,
+    WageGroup,
 )
 from db_core.services import artikel as artikel_service
 from db_core.services import aufgabe as aufgabe_service
@@ -342,6 +343,26 @@ class Command(BaseCommand):
                 aufgabe_service.complete_task(actor.id, created.id)
             angelegt += 1
             self.stdout.write(f"Aufgabe angelegt: {created.title} ({created.id})")
+
+        # Demo-Rechnung (ENTWURF) an der Wohnanlage Lindenhöfe; idempotent
+        # darüber, ob die Liegenschaft bereits eine Rechnung trägt.
+        re_obj = Property.objects.filter(name="Wohnanlage Lindenhöfe").first()
+        re_proj = Project.objects.filter(name="Dachsanierung Lindenhöfe").first()
+        if re_obj is not None and not Invoice.objects.filter(property_id=re_obj.id).exists():
+            inv = beleg_service.create_invoice(
+                actor.id, property_id=re_obj.id, invoice_type="RECHNUNG",
+                project_id=re_proj.id if re_proj else None,
+                lines=[
+                    {"line_type": "MATERIAL", "description": "Dachziegel Tonziegel rot",
+                     "quantity": 320, "unit": "Stk", "unit_price": "2.40", "tax_code": "DE_19"},
+                    {"line_type": "ARBEITSZEIT", "description": "Dachdeckerarbeiten (Teilabschnitt)",
+                     "quantity": 24, "unit": "h", "unit_price": "58.00", "tax_code": "DE_19"},
+                ],
+            )
+            angelegt += 1
+            self.stdout.write(
+                f"Rechnung angelegt: {inv.invoice_type} (Entwurf) — {inv.gross_total} EUR ({inv.id})"
+            )
 
         # Angebote: idempotent je Titel; brauchen eine Liegenschaft (Pflicht).
         for quote in DEMO_QUOTES:

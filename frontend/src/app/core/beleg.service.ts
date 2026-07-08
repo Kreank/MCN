@@ -1,7 +1,14 @@
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { QuoteDetail, QuotePage, QuoteQuery } from './beleg.model';
+import {
+  InvoiceDetail,
+  InvoicePage,
+  InvoiceQuery,
+  QuoteDetail,
+  QuotePage,
+  QuoteQuery,
+} from './beleg.model';
 
 /** Typisierter Zugriff auf die Beleg-API (dev-Proxy: /api -> :8000). */
 @Injectable({ providedIn: 'root' })
@@ -23,5 +30,22 @@ export class BelegService {
 
   get(id: string): Observable<QuoteDetail> {
     return this.http.get<QuoteDetail>(`${this.base}/${id}`);
+  }
+
+  listInvoices(query: InvoiceQuery): Observable<InvoicePage> {
+    let params = new HttpParams()
+      .set('page', query.page)
+      .set('page_size', query.page_size);
+    const q = query.q?.trim();
+    if (q) params = params.set('q', q);
+    if (query.status) params = params.set('status', query.status);
+    if (query.invoice_type) params = params.set('invoice_type', query.invoice_type);
+    if (query.property_id) params = params.set('property_id', query.property_id);
+    if (query.project_id) params = params.set('project_id', query.project_id);
+    return this.http.get<InvoicePage>('/api/invoicing/invoices', { params });
+  }
+
+  getInvoice(id: string): Observable<InvoiceDetail> {
+    return this.http.get<InvoiceDetail>(`/api/invoicing/invoices/${id}`);
   }
 }

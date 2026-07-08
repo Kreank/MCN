@@ -81,3 +81,50 @@ export interface QuoteDetail extends Quote {
   project: QuoteProjectRef | null;
   lines: QuoteLine[];
 }
+
+// --- Rechnungen (invoicing.invoice) ----------------------------------------
+export type InvoiceType =
+  | 'RECHNUNG'
+  | 'ABSCHLAGSRECHNUNG'
+  | 'TEILRECHNUNG'
+  | 'SCHLUSSRECHNUNG'
+  | 'GUTSCHRIFT'
+  | 'STORNO';
+export type InvoiceStatus = 'ENTWURF' | 'VEROEFFENTLICHT';
+
+export interface Invoice {
+  id: string;
+  invoice_number: string | null;
+  invoice_type: InvoiceType;
+  status: InvoiceStatus;
+  currency: string;
+  invoice_date: string | null;
+  net_total: string | null;
+  gross_total: string | null;
+  property: QuotePropertyRef;
+}
+
+export interface InvoicePage {
+  items: Invoice[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface InvoiceQuery {
+  page: number;
+  page_size: number;
+  q?: string;
+  status?: InvoiceStatus | null;
+  invoice_type?: InvoiceType | null;
+  property_id?: string | null;
+  project_id?: string | null;
+}
+
+export interface InvoiceDetail extends Invoice {
+  due_date: string | null;
+  tax_total: string | null;
+  version: number;
+  project: QuoteProjectRef | null;
+  lines: QuoteLine[];
+}

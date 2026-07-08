@@ -13,7 +13,7 @@ from ninja.errors import HttpError
 from ninja.responses import Status
 from ninja.security import django_auth
 
-from db_core.models import Quote
+from db_core.models import Invoice, Quote
 from db_core.services import beleg as beleg_service
 
 router = Router()
@@ -239,3 +239,169 @@ def create_quote(request, payload: QuoteIn):
 def get_quote(request, quote_id: UUID):
     """Detail eines Angebots inkl. Positionen."""
     return _quote_detail(quote_id)
+
+
+# --- Rechnungen (invoicing.invoice) ----------------------------------------
+
+class InvoiceOut(Schema):
+    id: UUID
+    invoice_number: str | None = None
+    invoice_type: str
+    status: str
+    currency: str
+    invoice_date: date | None = None
+    net_total: Decimal | None = None
+    gross_total: Decimal | None = None
+    property: PropertyRefOut
+
+
+class InvoiceListOut(Schema):
+    items: list[InvoiceOut]
+    total: int
+    page: int
+    page_size: int
+
+
+class InvoiceDetailOut(InvoiceOut):
+    due_date: date | None = None
+    tax_total: Decimal | None = None
+    version: int
+    project: ProjectRefOut | None = None
+    lines: list[QuoteLineOut]
+
+
+class InvoiceIn(Schema):
+    property_id: UUID
+    invoice_type: str = "RECHNUNG"
+    project_id: UUID | None = None
+    reference_invoice_id: UUID | None = None
+    invoice_date: date | None = None
+    due_date: date | None = None
+    lines: list[QuoteLineIn] = []
+
+
+class InvoiceFilter(Schema):
+    q: str | None = None
+    status: str | None = None
+    invoice_type: str | None = None
+    property_id: UUID | None = None
+    project_id: UUID | None = None
+
+
+def _invoice_out(invoice):
+    return InvoiceOut(
+        id=invoice.id,
+        invoice_number=invoice.invoice_number,
+        invoice_type=invoice.invoice_type,
+        status=invoice.status,
+        currency=invoice.currency,
+        invoice_date=invoice.invoice_date,
+        net_total=invoice.net_total,
+        gross_total=invoice.gross_total,
+        property=_property_ref(invoice),
+    )
+
+
+@router.get("/invoices", response=InvoiceListOut)
+def list_invoices(
+    request,
+    filters: InvoiceFilter = Query(...),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=100),
+):
+    """Rechnungen auflisten: Suche (Nummer), Status-/Typ-/Objekt-/Projektfilter."""
+    qs = Invoice.objects.select_related("property__address")
+    if filters.q:
+        qs = qs.filter(invoice_number__icontains=filters.q.strip())
+    if filters.status:
+        qs = qs.filter(status=filters.status)
+    if filters.invoice_type:
+        qs = qs.filter(invoice_type=filters.invoice_type)
+    if filters.property_id:
+        qs = qs.filter(property_id=filters.property_id)
+    if filters.project_id:
+        qs = qs.filter(project_id=filters.project_id)
+    qs = qs.order_by("-created_at", "id")
+
+    total = qs.count()
+    start = (page - 1) * page_size
+    items = [_invoice_out(i) for i in qs[start:start + page_size]]
+    return InvoiceListOut(items=items, total=total, page=page, page_size=page_size)
+
+
+def _invoice_detail(invoice_id):
+    invoice = (
+        Invoice.objects.filter(id=invoice_id)
+        .select_related("property__address", "project")
+        .prefetch_related("lines")
+        .first()
+    )
+    if invoice is None:
+        raise HttpError(404, "Rechnung nicht gefunden.")
+
+    lines = [
+        QuoteLineOut(
+            position_number=l.position_number,
+            line_type=l.line_type,
+            description=l.description,
+            quantity=l.quantity,
+            unit=l.unit,
+            unit_price=l.unit_price,
+            discount_percent=l.discount_percent,
+            tax_code=l.tax_code_id,
+            tax_rate_percent=l.tax_rate_percent,
+            net_amount=l.net_amount,
+        )
+        for l in sorted(invoice.lines.all(), key=lambda l: l.position_number)
+    ]
+    project = (
+        ProjectRefOut(
+            id=invoice.project.id,
+            project_number=invoice.project.project_number,
+            name=invoice.project.name,
+        )
+        if invoice.project_id
+        else None
+    )
+    return InvoiceDetailOut(
+        id=invoice.id,
+        invoice_number=invoice.invoice_number,
+        invoice_type=invoice.invoice_type,
+        status=invoice.status,
+        currency=invoice.currency,
+        invoice_date=invoice.invoice_date,
+        due_date=invoice.due_date,
+        net_total=invoice.net_total,
+        tax_total=invoice.tax_total,
+        gross_total=invoice.gross_total,
+        version=invoice.version,
+        property=_property_ref(invoice),
+        project=project,
+        lines=lines,
+    )
+
+
+@router.post("/invoices", response={201: InvoiceDetailOut}, auth=django_auth)
+def create_invoice(request, payload: InvoiceIn):
+    """Neue Rechnung/Gutschrift (Status ENTWURF) mit Positionen anlegen."""
+    actor = _actor_id(request)
+    try:
+        invoice = beleg_service.create_invoice(
+            actor,
+            property_id=payload.property_id,
+            invoice_type=payload.invoice_type,
+            project_id=payload.project_id,
+            reference_invoice_id=payload.reference_invoice_id,
+            invoice_date=payload.invoice_date,
+            due_date=payload.due_date,
+            lines=[line.dict() for line in payload.lines],
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return Status(201, _invoice_detail(invoice.id))
+
+
+@router.get("/invoices/{invoice_id}", response=InvoiceDetailOut)
+def get_invoice(request, invoice_id: UUID):
+    """Detail einer Rechnung inkl. Positionen."""
+    return _invoice_detail(invoice_id)

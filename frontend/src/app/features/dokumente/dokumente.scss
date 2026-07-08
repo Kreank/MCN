@@ -181,6 +181,11 @@
   font-size: 0.8rem;
   letter-spacing: 0.06em;
 }
+.row__badge--re {
+  border-color: color-mix(in srgb, var(--command-line) 60%, var(--line-strong));
+  color: var(--ink);
+  background: var(--surface-sunken);
+}
 
 .row__body {
   flex: 1;

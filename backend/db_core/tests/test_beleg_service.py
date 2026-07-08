@@ -8,7 +8,7 @@ from decimal import Decimal
 
 import pytest
 
-from db_core.models import QuoteLine
+from db_core.models import InvoiceLine, QuoteLine
 from db_core.services import beleg as beleg_service
 from db_core.services import property as property_service
 
@@ -152,3 +152,39 @@ def test_create_quote_steuer_pro_gruppe_gerundet(app_user):
     )
     assert q.net_total == Decimal("0.06")
     assert q.tax_total == Decimal("0.01")  # nicht 0.02 (Pro-Zeile-Rundung)
+
+
+@pytest.mark.django_db
+def test_create_invoice_entwurf(app_user):
+    obj = _property(app_user)
+    inv = beleg_service.create_invoice(
+        app_user.id, property_id=obj.id, invoice_type="RECHNUNG",
+        lines=[
+            {"line_type": "MATERIAL", "description": "Dachziegel",
+             "quantity": 10, "unit_price": 3, "tax_code": "DE_19"},
+        ],
+    )
+    assert inv.status == "ENTWURF"
+    assert inv.invoice_number is None  # Nummer erst bei Veröffentlichung
+    assert inv.invoice_type == "RECHNUNG"
+    assert inv.net_total == Decimal("30.00")
+    assert inv.gross_total == Decimal("35.70")
+    assert InvoiceLine.objects.filter(invoice_id=inv.id).count() == 1
+
+
+@pytest.mark.django_db
+def test_create_invoice_ungueltiger_typ(app_user):
+    obj = _property(app_user)
+    with pytest.raises(ValueError):
+        beleg_service.create_invoice(
+            app_user.id, property_id=obj.id, invoice_type="FALSCH",
+        )
+
+
+@pytest.mark.django_db
+def test_create_gutschrift_ohne_referenz(app_user):
+    obj = _property(app_user)
+    with pytest.raises(ValueError):
+        beleg_service.create_invoice(
+            app_user.id, property_id=obj.id, invoice_type="GUTSCHRIFT",
+        )

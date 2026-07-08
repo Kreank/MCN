@@ -61,6 +61,12 @@ export const routes: Routes = [
       import('./features/beleg-detail/beleg-detail').then((m) => m.BelegDetail),
   },
   {
+    path: 'rechnungen/:id',
+    title: 'Rechnung — MCN Leitstand',
+    loadComponent: () =>
+      import('./features/rechnung-detail/rechnung-detail').then((m) => m.RechnungDetail),
+  },
+  {
     path: 'aufgaben',
     title: 'Aufgaben — MCN Leitstand',
     loadComponent: () => import('./features/aufgaben/aufgaben').then((m) => m.Aufgaben),

@@ -138,3 +138,67 @@ def test_create_ohne_login_abgelehnt(client, db, app_user):
         content_type="application/json",
     )
     assert r.status_code in (401, 403)
+
+
+@pytest.mark.django_db
+def test_rechnung_liste_und_detail(client, app_user):
+    obj = property_service.create_property(
+        app_user.id, name="RE-Objekt", property_type="WEG",
+        street="W", house_number="2", postal_code="10115", city="Berlin",
+    )
+    inv = beleg_service.create_invoice(
+        app_user.id, property_id=obj.id, invoice_type="RECHNUNG",
+        lines=[{"line_type": "MATERIAL", "description": "Pos", "quantity": 2,
+                "unit_price": 50, "tax_code": "DE_19"}],
+    )
+    r = client.get("/api/invoicing/invoices")
+    assert r.status_code == 200
+    assert r.json()["total"] == 1
+    assert r.json()["items"][0]["invoice_type"] == "RECHNUNG"
+    assert r.json()["items"][0]["invoice_number"] is None
+
+    d = client.get(f"/api/invoicing/invoices/{inv.id}")
+    assert d.status_code == 200
+    body = d.json()
+    assert len(body["lines"]) == 1
+    assert body["net_total"] == "100.00"
+
+
+@pytest.mark.django_db
+def test_rechnung_detail_404(client, db):
+    r = client.get(f"/api/invoicing/invoices/{uuid.uuid4()}")
+    assert r.status_code == 404
+
+
+@pytest.mark.django_db
+def test_rechnung_create_eingeloggt(client, db, app_user):
+    obj = property_service.create_property(
+        app_user.id, name="O", property_type="OTHER",
+        street="S", postal_code="1", city="C",
+    )
+    c = _logged_in_client(client, with_app_user=True)
+    r = c.post(
+        "/api/invoicing/invoices",
+        data={
+            "property_id": str(obj.id), "invoice_type": "RECHNUNG",
+            "lines": [{"line_type": "MATERIAL", "description": "P", "quantity": 1,
+                       "unit_price": 100, "tax_code": "DE_19"}],
+        },
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    assert r.json()["gross_total"] == "119.00"
+
+
+@pytest.mark.django_db
+def test_rechnung_create_ohne_login(client, db, app_user):
+    obj = property_service.create_property(
+        app_user.id, name="O", property_type="OTHER",
+        street="S", postal_code="1", city="C",
+    )
+    r = client.post(
+        "/api/invoicing/invoices",
+        data={"property_id": str(obj.id), "invoice_type": "RECHNUNG", "lines": []},
+        content_type="application/json",
+    )
+    assert r.status_code in (401, 403)

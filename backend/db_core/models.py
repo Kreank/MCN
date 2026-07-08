@@ -638,6 +638,102 @@ class QuoteLine(models.Model):
         return f"{self.position_number}. {self.description}"
 
 
+class Invoice(models.Model):
+    """invoicing.invoice — Rechnung/Gutschrift (Migration 0019).
+
+    Kein title (Identität über Typ + Nummer). Nummer erst bei Veröffentlichung
+    (bleibt im ENTWURF NULL); ab VEROEFFENTLICHT vollständig eingefroren (B-30).
+    Dieser Slice: Anlage bis ENTWURF sowie Liste/Detail. Versand-/Snapshot-/
+    Auftrags-Gate-Spalten (billing_snapshot, content_hash, published_at,
+    work_order_id) sind hier bewusst nicht modelliert.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    invoice_number = models.TextField(null=True, blank=True)
+    # RECHNUNG|ABSCHLAGSRECHNUNG|TEILRECHNUNG|SCHLUSSRECHNUNG|GUTSCHRIFT|STORNO
+    invoice_type = models.TextField()
+    project = models.ForeignKey(
+        Project,
+        models.DO_NOTHING,
+        db_column="project_id",
+        null=True,
+        blank=True,
+        related_name="invoices",
+    )
+    property = models.ForeignKey(
+        Property, models.DO_NOTHING, db_column="property_id", related_name="invoices"
+    )
+    reference_invoice_id = models.UUIDField(null=True, blank=True)
+    status = models.TextField()  # ENTWURF | VEROEFFENTLICHT
+    invoice_date = models.DateField(null=True, blank=True)
+    due_date = models.DateField(null=True, blank=True)
+    currency = models.CharField(max_length=3, db_default="EUR")
+    net_total = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True
+    )
+    tax_total = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True
+    )
+    gross_total = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True
+    )
+    version = models.IntegerField()
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'invoicing"."invoice'
+
+    def __str__(self):
+        return f"{self.invoice_number or 'ENTWURF'} ({self.invoice_type})"
+
+
+class InvoiceLine(models.Model):
+    """invoicing.invoice_line — Rechnungsposition (Migration 0019, wie quote_line)."""
+
+    id = models.UUIDField(primary_key=True)
+    invoice = models.ForeignKey(
+        Invoice, models.DO_NOTHING, db_column="invoice_id", related_name="lines"
+    )
+    position_number = models.IntegerField()
+    line_type = models.TextField()
+    description = models.TextField()
+    quantity = models.DecimalField(
+        max_digits=15, decimal_places=3, null=True, blank=True
+    )
+    unit = models.TextField(null=True, blank=True)
+    unit_price = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True
+    )
+    discount_percent = models.DecimalField(
+        max_digits=7, decimal_places=4, null=True, blank=True
+    )
+    tax_code = models.ForeignKey(
+        TaxCode,
+        models.DO_NOTHING,
+        db_column="tax_code",
+        null=True,
+        blank=True,
+        related_name="invoice_lines",
+    )
+    tax_rate_percent = models.DecimalField(
+        max_digits=5, decimal_places=2, null=True, blank=True
+    )
+    net_amount = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True
+    )
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'invoicing"."invoice_line'
+
+    def __str__(self):
+        return f"{self.position_number}. {self.description}"
+
+
 class Article(models.Model):
     """pricing.article — Artikel/Material (Migration 0028, list_price aus 0033).
 

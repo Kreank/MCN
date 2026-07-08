@@ -8,8 +8,8 @@
       <h1 id="dokumente-titel" class="page-head__titel">Dokumente</h1>
     </div>
     <p class="page-head__hint">
-      Angebote und Rechnungen (GoBD-relevant). Dieser Bereich zeigt zunächst
-      Angebote; Erstellung und Versand laufen über die KI und die API.
+      Angebote und Rechnungen (GoBD-relevant). Erstellung und Versand laufen
+      über die KI und die API.
     </p>
   </header>
 
@@ -25,23 +25,31 @@
           inputmode="search"
           autocomplete="off"
           placeholder="Titel oder Belegnummer"
+          [value]="query()"
           (input)="onSearch($any($event.target).value)"
         />
       </div>
     </div>
 
-    <div class="segment" role="group" aria-label="Nach Status filtern">
-      @for (seg of segments; track seg.label) {
-        <button
-          type="button"
-          class="segment__btn"
-          [class.is-active]="status() === seg.value"
-          [attr.aria-pressed]="status() === seg.value"
-          (click)="selectSegment(seg.value)"
-        >
-          {{ seg.label }}
-        </button>
-      }
+    <div class="segment" role="group" aria-label="Zwischen Angeboten und Rechnungen wechseln">
+      <button
+        type="button"
+        class="segment__btn"
+        [class.is-active]="modus() === 'angebote'"
+        [attr.aria-pressed]="modus() === 'angebote'"
+        (click)="selectModus('angebote')"
+      >
+        Angebote
+      </button>
+      <button
+        type="button"
+        class="segment__btn"
+        [class.is-active]="modus() === 'rechnungen'"
+        [attr.aria-pressed]="modus() === 'rechnungen'"
+        (click)="selectModus('rechnungen')"
+      >
+        Rechnungen
+      </button>
     </div>
   </div>
 
@@ -72,28 +80,47 @@
     }
 
     @case ('ready') {
-      @if (state().kind === 'ready' && $any(state()).data.items.length === 0) {
+      @if ($any(state()).data.items.length === 0) {
         <div class="note note--empty">
           <h2 class="note__titel">Keine Belege für diese Auswahl</h2>
-          <p class="note__text">Neue Angebote entstehen über die KI-gestützte Anlage und die API.</p>
+          <p class="note__text">Neue Belege entstehen über die KI-gestützte Anlage und die API.</p>
         </div>
       } @else {
         <ul class="rows">
-          @for (q of $any(state()).data.items; track q.id) {
-            <li>
-              <a class="row" [routerLink]="[q.id]">
-                <span class="row__badge" aria-hidden="true">AN</span>
-                <span class="row__body">
-                  <span class="row__title">{{ q.title }}</span>
-                  <span class="row__meta">
-                    <span class="row__nr">{{ belegNummer(q) }}</span>
-                    <span class="row__place">◧ {{ q.property.city }}</span>
-                    <span class="stamp {{ statusClass(q.status) }}">{{ statusLabel(q.status) }}</span>
+          @if (modus() === 'angebote') {
+            @for (q of $any(state()).data.items; track q.id) {
+              <li>
+                <a class="row" [routerLink]="['/dokumente', q.id]">
+                  <span class="row__badge" aria-hidden="true">AN</span>
+                  <span class="row__body">
+                    <span class="row__title">{{ q.title }}</span>
+                    <span class="row__meta">
+                      <span class="row__nr">{{ belegNummer(q.quote_number) }}</span>
+                      <span class="row__place">◧ {{ q.property.city }}</span>
+                      <span class="stamp {{ quoteStatusClass(q.status) }}">{{ quoteStatusLabel(q.status) }}</span>
+                    </span>
                   </span>
-                </span>
-                <span class="row__sum">{{ euro(q.gross_total) }}</span>
-              </a>
-            </li>
+                  <span class="row__sum">{{ euro(q.gross_total) }}</span>
+                </a>
+              </li>
+            }
+          } @else {
+            @for (inv of $any(state()).data.items; track inv.id) {
+              <li>
+                <a class="row" [routerLink]="['/rechnungen', inv.id]">
+                  <span class="row__badge row__badge--re" aria-hidden="true">RE</span>
+                  <span class="row__body">
+                    <span class="row__title">{{ invoiceTypeLabel(inv.invoice_type) }}</span>
+                    <span class="row__meta">
+                      <span class="row__nr">{{ belegNummer(inv.invoice_number) }}</span>
+                      <span class="row__place">◧ {{ inv.property.city }}</span>
+                      <span class="stamp {{ invoiceStatusClass(inv.status) }}">{{ invoiceStatusLabel(inv.status) }}</span>
+                    </span>
+                  </span>
+                  <span class="row__sum">{{ euro(inv.gross_total) }}</span>
+                </a>
+              </li>
+            }
           }
         </ul>
 
