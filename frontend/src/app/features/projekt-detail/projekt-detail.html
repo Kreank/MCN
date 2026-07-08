@@ -81,6 +81,30 @@
         }
       }
 
+      @if (tab() === 'aufgaben') {
+        @switch (tasksState().kind) {
+          @case ('loading') { <p class="lade-hinweis" role="status">Aufgaben werden geladen …</p> }
+          @case ('error') { <div class="tab-platzhalter"><p>Aufgaben konnten nicht geladen werden.</p></div> }
+          @case ('ready') {
+            @if ($any(tasksState()).items.length === 0) {
+              <div class="tab-platzhalter"><p>Zu diesem Projekt gibt es noch keine Aufgaben.</p></div>
+            } @else {
+              <ul class="ref-liste">
+                @for (t of $any(tasksState()).items; track t.id) {
+                  <li>
+                    <div class="ref">
+                      <span class="ref__name">{{ t.title }}</span>
+                      @if (t.due_date) { <span class="ref__meta">fällig {{ t.due_date }}</span> }
+                      <span class="stamp {{ taskStatusClass(t.status) }}">{{ taskStatusLabel(t.status) }}</span>
+                    </div>
+                  </li>
+                }
+              </ul>
+            }
+          }
+        }
+      }
+
       @if (tab() === 'logbuch') {
         <div class="tab-platzhalter">
           <h2 class="tab-platzhalter__titel">Logbuch</h2>
