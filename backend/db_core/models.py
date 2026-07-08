@@ -30,6 +30,23 @@ class PropertyNumberDefault(Func):
     output_field = models.TextField()
 
 
+class _NextNumber(Func):
+    """DB-seitiger Default über workflow.next_number(prefix) — vergibt fortlaufende
+    Fachnummern (Format PREFIX-JJJJ-NNNNNN) in der DB (Migration 0010). Subklassen
+    setzen den Prefix; als db_default bleibt die Vergabe atomar in der DB."""
+
+    function = ""
+    output_field = models.TextField()
+
+
+class ProjectNumberDefault(_NextNumber):
+    template = "workflow.next_number('P')"
+
+
+class ServiceCaseNumberDefault(_NextNumber):
+    template = "workflow.next_number('V')"
+
+
 class AppUser(models.Model):
     """security.app_user — fachliches Referenzziel für Audit/Trigger."""
 
@@ -267,3 +284,138 @@ class PropertyPartyRole(models.Model):
 
     def __str__(self):
         return f"{self.role} @ {self.property_id}"
+
+
+class ProjectCategory(models.Model):
+    """workflow.project_category — Projektordner/-kategorie (Gliederung/Filter).
+
+    Rein organisatorisch (Name, Farbe, Reihenfolge), kein Statusautomat.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    name = models.TextField()
+    color_hex = models.TextField(null=True, blank=True)
+    sort_order = models.IntegerField()
+    status = models.TextField()  # AKTIV | INAKTIV
+    version = models.IntegerField()
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'workflow"."project_category'
+
+    def __str__(self):
+        return self.name
+
+
+class Project(models.Model):
+    """workflow.project — Projekt (Akte/Cockpit-Klammer, Hero-„Projekt").
+
+    Technischer Minimalstatus OPEN/CLOSED (kein Statusautomat). Append-only:
+    trg_project_no_delete verbietet DELETE; Updates werden auditiert.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    # Nummernvergabe bleibt in der DB (workflow.next_number), siehe Default.
+    project_number = models.TextField(db_default=ProjectNumberDefault())
+    name = models.TextField()
+    status = models.TextField()  # OPEN | CLOSED
+    start_date = models.DateField(null=True, blank=True)
+    target_end_date = models.DateField(null=True, blank=True)
+    responsible_user = models.ForeignKey(
+        AppUser,
+        models.DO_NOTHING,
+        db_column="responsible_user_id",
+        null=True,
+        blank=True,
+        related_name="responsible_projects",
+    )
+    category = models.ForeignKey(
+        ProjectCategory,
+        models.DO_NOTHING,
+        db_column="category_id",
+        null=True,
+        blank=True,
+        related_name="projects",
+    )
+    version = models.IntegerField()
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'workflow"."project'
+
+    def __str__(self):
+        return f"{self.project_number} {self.name}"
+
+
+class ProjectProperty(models.Model):
+    """workflow.project_property — Projekt↔Liegenschaft (M:N).
+
+    Zusammengesetzter PK (project_id, property_id) über Djangos
+    CompositePrimaryKey (Django 5.2). Zeilen sind unveränderlich; Löschen nur
+    solange das Projekt OPEN ist (DB-Trigger).
+    """
+
+    pk = models.CompositePrimaryKey("project_id", "property_id")
+    project = models.ForeignKey(
+        Project, models.DO_NOTHING, db_column="project_id", related_name="property_links"
+    )
+    property = models.ForeignKey(
+        Property, models.DO_NOTHING, db_column="property_id", related_name="project_links"
+    )
+    created_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'workflow"."project_property'
+
+
+class ServiceCase(models.Model):
+    """workflow.service_case — Vorgang (reicher Statusautomat).
+
+    Statusänderungen laufen über die DB-Trigger (validate_status_change);
+    begründungspflichtige Übergänge verlangen app.status_reason. Hier zunächst
+    für Anzeige (Liste/Detail) und einfache Anlage (Initialstatus NEU).
+    """
+
+    id = models.UUIDField(primary_key=True)
+    case_number = models.TextField(db_default=ServiceCaseNumberDefault())
+    project = models.ForeignKey(
+        Project,
+        models.DO_NOTHING,
+        db_column="project_id",
+        null=True,
+        blank=True,
+        related_name="service_cases",
+    )
+    subject = models.TextField()
+    description = models.TextField(null=True, blank=True)
+    reported_by_party = models.ForeignKey(
+        Party,
+        models.DO_NOTHING,
+        db_column="reported_by_party_id",
+        null=True,
+        blank=True,
+        related_name="reported_cases",
+    )
+    property = models.ForeignKey(
+        Property, models.DO_NOTHING, db_column="property_id", related_name="service_cases"
+    )
+    responsibility_scope = models.TextField()  # UNKNOWN|COMMON_PROPERTY|PRIVATE_UNIT|MIXED
+    priority = models.TextField()  # NORMAL|DRINGEND|NOTFALL (FK priority_level.code)
+    # NEU|IN_PRUEFUNG|RUECKFRAGE|FREIGABE_AUSSTEHEND|BEAUFTRAGT|ABGESCHLOSSEN|ABGELEHNT
+    status = models.TextField()
+    received_at = models.DateTimeField(db_default=Now())
+    version = models.IntegerField()
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'workflow"."service_case'
+
+    def __str__(self):
+        return f"{self.case_number} {self.subject}"

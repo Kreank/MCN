@@ -1,0 +1,104 @@
+@switch (state().kind) {
+  @case ('loading') {
+    <p class="lade-hinweis" role="status">Projekt wird geladen …</p>
+  }
+
+  @case ('error') {
+    <div class="note note--error" role="alert">
+      <h2 class="note__titel">Projekt konnte nicht geladen werden</h2>
+      <p class="note__text">Das Projektregister war nicht erreichbar oder das Projekt existiert nicht.</p>
+      <div class="note__aktionen">
+        <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
+        <a class="btn" routerLink="/projekte">Zum Projektregister</a>
+      </div>
+    </div>
+  }
+
+  @case ('ready') {
+    <app-mappe
+      kicker="Projekt {{ daten()!.project_number }}"
+      [titel]="daten()!.name"
+      backLink="/projekte"
+      backLabel="Projekte"
+      [tabs]="tabs"
+      [(aktiv)]="tab"
+    >
+      @if (daten()!.category; as c) {
+        <span mappe-kopf class="stamp stamp--type">{{ c.name }}</span>
+      }
+      <span mappe-kopf class="stamp {{ statusClass(daten()!.status) }}">{{ statusLabel(daten()!.status) }}</span>
+
+      <!-- ------------------------------ Übersicht ------------------------- -->
+      @if (tab() === 'uebersicht') {
+        <dl class="feld-raster">
+          <div class="feld"><dt class="feld__label">Projektnummer</dt><dd class="feld__wert">{{ daten()!.project_number }}</dd></div>
+          <div class="feld"><dt class="feld__label">Status</dt><dd class="feld__wert">{{ statusLabel(daten()!.status) }}</dd></div>
+          <div class="feld"><dt class="feld__label">Kategorie</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.category">{{ daten()!.category?.name || '—' }}</dd></div>
+          <div class="feld"><dt class="feld__label">Beginn</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.start_date">{{ daten()!.start_date || '—' }}</dd></div>
+          <div class="feld"><dt class="feld__label">Zieltermin</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.target_end_date">{{ daten()!.target_end_date || '—' }}</dd></div>
+          <div class="feld"><dt class="feld__label">Liegenschaften / Vorgänge</dt><dd class="feld__wert">{{ daten()!.properties.length }} / {{ daten()!.service_cases.length }}</dd></div>
+        </dl>
+      }
+
+      <!-- ---------------------------- Liegenschaften ---------------------- -->
+      @if (tab() === 'liegenschaften') {
+        @if (daten()!.properties.length === 0) {
+          <div class="tab-platzhalter"><p>Diesem Projekt ist noch keine Liegenschaft zugeordnet.</p></div>
+        } @else {
+          <ul class="ref-liste">
+            @for (o of daten()!.properties; track o.id) {
+              <li>
+                <a class="ref" [routerLink]="['/liegenschaften', o.id]">
+                  <span class="ref__name">{{ o.name }}</span>
+                  <span class="ref__meta">{{ o.city }}</span>
+                  <span class="ref__nr">{{ o.property_number }}</span>
+                </a>
+              </li>
+            }
+          </ul>
+        }
+      }
+
+      <!-- ------------------------------ Vorgänge -------------------------- -->
+      @if (tab() === 'vorgaenge') {
+        @if (daten()!.service_cases.length === 0) {
+          <div class="tab-platzhalter"><p>Zu diesem Projekt gibt es noch keine Vorgänge.</p></div>
+        } @else {
+          <ul class="ref-liste">
+            @for (v of daten()!.service_cases; track v.id) {
+              <li>
+                <div class="ref ref--vorgang">
+                  <span class="ref__name">{{ v.subject }}</span>
+                  <span class="ref__stamps">
+                    <span class="stamp {{ priorityClass(v.priority) }}">{{ priorityLabel(v.priority) }}</span>
+                    <span class="stamp {{ caseStatusClass(v.status) }}">{{ caseStatusLabel(v.status) }}</span>
+                  </span>
+                  <span class="ref__nr">{{ v.case_number }}</span>
+                </div>
+              </li>
+            }
+          </ul>
+        }
+      }
+
+      @if (tab() === 'logbuch') {
+        <div class="tab-platzhalter">
+          <h2 class="tab-platzhalter__titel">Logbuch</h2>
+          <p>Der Unternehmensfeed je Projekt (Notizen, Anrufe, Entscheidungen; Schema <code>workflow.project_log</code>) erscheint hier, sobald der Cockpit-Bereich angebunden ist (Roadmap 04).</p>
+        </div>
+      }
+      @if (tab() === 'checklisten') {
+        <div class="tab-platzhalter">
+          <h2 class="tab-platzhalter__titel">Checklisten</h2>
+          <p>Projekt-Checklisten (<code>workflow.checklist</code>, optional aus Vorlagen) folgen mit der Cockpit-Anbindung.</p>
+        </div>
+      }
+      @if (tab() === 'dateien') {
+        <div class="tab-platzhalter">
+          <h2 class="tab-platzhalter__titel">Dateien</h2>
+          <p>Projektbezogene Bilder und Dokumente (<code>content.file_link</code>) erscheinen hier, sobald der Dateibereich steht (Roadmap 05).</p>
+        </div>
+      }
+    </app-mappe>
+  }
+}

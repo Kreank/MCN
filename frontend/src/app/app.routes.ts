@@ -41,13 +41,13 @@ export const routes: Routes = [
   {
     path: 'projekte',
     title: 'Projekte — MCN Leitstand',
-    loadComponent: () => import('./shared/platzhalter/platzhalter').then((m) => m.Platzhalter),
-    data: {
-      platzhalter: {
-        titel: 'Projekte',
-        text: 'Projekte, Aufträge, Einsätze und ihre Statusautomaten laufen künftig an dieser Stelle zusammen. Noch ist der Bereich leer.',
-      },
-    },
+    loadComponent: () => import('./features/projekte/projekte').then((m) => m.Projekte),
+  },
+  {
+    path: 'projekte/:id',
+    title: 'Projekt — MCN Leitstand',
+    loadComponent: () =>
+      import('./features/projekt-detail/projekt-detail').then((m) => m.ProjektDetail),
   },
   {
     path: 'dokumente',

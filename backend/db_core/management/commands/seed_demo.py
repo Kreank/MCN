@@ -14,8 +14,9 @@ from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
-from db_core.models import AppUser, Party, Property
+from db_core.models import AppUser, Party, Project, Property
 from db_core.services import identity as identity_service
+from db_core.services import projekt as projekt_service
 from db_core.services import property as property_service
 
 # Fester Namespace → wiederholbare Aufrufe treffen denselben Demo-Benutzer.
@@ -116,10 +117,31 @@ DEMO_PROPERTIES = [
 ]
 
 
+# Demo-Projekte: verweisen über den Liegenschaftsnamen auf die oben angelegten
+# Objekte; optionale Vorgänge (service_case) starten im Status NEU.
+DEMO_PROJECTS = [
+    {
+        "name": "Dachsanierung Lindenhöfe",
+        "property": "Wohnanlage Lindenhöfe",
+        "cases": [
+            {"subject": "Dachziegel nach Sturm lose", "priority": "DRINGEND"},
+            {"subject": "Dachrinne Vorderhaus verstopft", "priority": "NORMAL"},
+        ],
+    },
+    {
+        "name": "Fassadeninstandsetzung Rheinpassage",
+        "property": "Geschäftshaus Rheinpassage",
+        "cases": [
+            {"subject": "Risse in der Sockelzone prüfen", "priority": "NORMAL"},
+        ],
+    },
+]
+
+
 class Command(BaseCommand):
     help = (
-        "Legt Demo-Kontakte und -Liegenschaften (mit Gebäuden/Einheiten und "
-        "Party-Rollen) für die Entwicklung an."
+        "Legt Demo-Kontakte, -Liegenschaften und -Projekte (mit Vorgängen) "
+        "für die Entwicklung an."
     )
 
     def handle(self, *args, **options):
@@ -202,6 +224,37 @@ class Command(BaseCommand):
                     party_id=party.id,
                     role=role["role"],
                     valid_from=date(2020, 1, 1),
+                )
+
+        # Projekte: idempotent je Name; verknüpfen eine Liegenschaft und legen
+        # optionale Vorgänge (service_case) an.
+        for proj in DEMO_PROJECTS:
+            if Project.objects.filter(name=proj["name"]).exists():
+                uebersprungen += 1
+                continue
+            obj = Property.objects.filter(name=proj["property"]).first()
+            if obj is None:
+                self.stdout.write(
+                    self.style.WARNING(
+                        f"Projekt '{proj['name']}' übersprungen: Liegenschaft "
+                        f"'{proj['property']}' nicht gefunden."
+                    )
+                )
+                continue
+            project = projekt_service.create_project(
+                actor.id, name=proj["name"], property_ids=[obj.id]
+            )
+            angelegt += 1
+            self.stdout.write(
+                f"Projekt angelegt: {project.project_number} {project.name} ({project.id})"
+            )
+            for case in proj["cases"]:
+                projekt_service.create_service_case(
+                    actor.id,
+                    property_id=obj.id,
+                    subject=case["subject"],
+                    project_id=project.id,
+                    priority=case["priority"],
                 )
 
         self.stdout.write(
