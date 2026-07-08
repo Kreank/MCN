@@ -158,13 +158,35 @@ Nav-Reihenfolge (Marks 00–60), alle committet, je Tests + Browser + Review:
 | Kontakte (10) | Liste + Detail-Mappe | `/api/identity` |
 | Liegenschaften (20) | Liste + Mappe (Struktur, Beteiligte) | `/api/property` |
 | Projekte (30) | Liste + Projektmappe: Übersicht, Liegenschaften, **Vorgänge** (mit Statusverlauf), **Aufgaben**, **Logbuch**, **Checklisten** (Dateien=Platzhalter) | `/api/workflow/projects`, `/service_cases/{id}`, `/projects/{id}/log`+`/checklists` |
-| Dokumente (40) | **Angebote + Rechnungen** (Umschalter): Liste + Positions-Mappe, Anlegen bis ENTWURF | `/api/invoicing/quotes` + `/invoices` |
+| Projekte (30) | …zusätzlich **Aufträge**-Tab (work_order) in der Projektmappe | `/api/workflow/work_orders` |
+| Dokumente (40) | **Angebote + Rechnungen**: Liste + Mappe, Anlegen bis ENTWURF; **Veröffentlichen (Rechnung→VEROEFFENTLICHT) / Versenden (Angebot→VERSENDET)** inkl. Snapshot+Hash+Beteiligte | `/api/invoicing/…/publish`,`/send`,`/parties` |
+| Aufträge | Detail-Mappe (Übersicht/Beteiligte/Verlauf), Statusautomat bis KAUFMAENNISCH_GEPRUEFT/ABGERECHNET mit DB-Toren | `/api/workflow/work_orders` |
 | Aufgaben (50) | Liste + Statusaktionen; **neue Tabelle `workflow.task`** | `/api/workflow/tasks` |
 | Artikel (60) | Artikel + Leistungen (Stücklisten), Liste + Detail | `/api/pricing` |
+| Auswertungen (70) | Landing + **Umsatz-/Projektübersicht** (KPIs, Umsatzverlauf, Projekte nach Gewerk) | `/api/auswertungen/…` |
 
-Backend: **109 Tests grün**, db_core-Migrationen bis **0011**. `seed_demo` deckt
-alle Bereiche ab (Kontakte, Liegenschaften+Gebäude/Einheiten/Rollen, Projekte+
-Vorgänge, Aufgaben, Angebot, Rechnung, Artikelstamm, Cockpit).
+Backend: **151 Tests grün**, db_core-Migrationen bis **0013**. `seed_demo` deckt
+alle Bereiche ab (Kontakte, Liegenschaften, Projekte+Vorgänge, **durchgeschalteter
+Auftrag**, Aufgaben, Angebot [versendet], **veröffentlichte Rechnung**, Artikel,
+Cockpit).
+
+Neu seit dem letzten Handoff (Kette Auftrag→Beleg→Auswertung, 3 Commits):
+- **Aufträge** `workflow.work_order`: Models/Service/API, Statusübergänge +
+  Freigabe-/Abrechnungs-Tore (DEFERRED Constraint-Trigger). `db_core.gate_errors.
+  as_business_error` übersetzt fachliche DB-Tor-Fehler (SQLSTATE P0001) in 422.
+- **Beleg-Veröffentlichung**: `publish_invoice`/`send_quote` (Snapshot + SHA-256-
+  Hash, DB vergibt Belegnummer), `InvoiceParty`. **Kein PDF nötig** — die DB
+  verlangt zur Veröffentlichung nur Snapshot+Hash (PDF-Index 0032 = „höchstens
+  eine Ausfertigung", keine Vorbedingung).
+- **Auswertungen**: erste Aggregations-Dashboards (Umsatz aus VEROEFFENTLICHT-
+  Rechnungen; `dataviz`-konforme Inline-Diagramme).
+
+**Wichtige Erkenntnis (Test-Gotcha korrigiert):** DEFERRED Constraint-Trigger
+feuern unter der pytest-Transaktion NICHT am Blockende — im Test mit
+`SET CONSTRAINTS ALL IMMEDIATE` scharf prüfen (Muster in
+`test_auftrag_service.py::_force_deferred_checks`). Der publish-Pfad ruft die
+Tore aber real; deshalb bauen Tests, die veröffentlichen, ein vollständig
+gültiges Szenario (geprüfter Auftrag + Beteiligte).
 
 ## 7. Fixierte Entscheidungen (nicht erneut aufmachen)
 
@@ -180,22 +202,25 @@ Vorgänge, Aufgaben, Angebot, Rechnung, Artikelstamm, Cockpit).
 ## 8. Nächste Bereiche (priorisierter Backlog) + Gotchas
 
 Details je Sektion in `docs/roadmap/01..14`. DB-Befunde in
-`docs/roadmap/README.md`. Empfohlene Reihenfolge:
+`docs/roadmap/README.md`.
 
-1. **Auswertungen** (neuer sichtbarer Bereich): Aggregations-Endpoints
-   (Umsatz/Marge/Projekte) + Diagramme. Vorher die **`dataviz`-Skill** laden.
-   Marge/Umsatz-Definitionen stehen in `docs/roadmap/10-auswertungen.md`.
-2. **Aufträge (`workflow.work_order`, Migration 0013)**: existiert in der DB,
-   in ENTWURF anlegbar (wie service_case). Schließt die Kette Vorgang→Auftrag→
-   Einsatz und ist Voraussetzung für Rechnungen-mit-Auftrag und Planung.
-   `work_order_party` (Beteiligte) für spätere Status-Gates.
-3. **Einsätze/Planung (`workflow.service_job`, 0014)**: `service_job` hängt an
-   `work_order` (Pflicht) → braucht #2 zuerst. Plantafel = große Drag-&-Drop-UI.
-4. **Beleg-Versand/Veröffentlichung**: quote→VERSENDET / invoice→VEROEFFENTLICHT
-   erzeugt erst die Nummer, braucht aber Snapshot+`content_hash`+PDF-Rendering+
-   deferred Summen-Gate (invoice zusätzlich Auftrags-Status + `invoice_party`
-   Schuldner). Groß — eigener Slice mit PDF-Pipeline.
-5. **VK-Kalkulation/DATANORM**: Verkaufspreis ist eine Formel über
+**Erledigt** (diese Session): ✔ Auswertungen (Landing + Umsatz-/Projektübersicht —
+weitere Dashboards offen), ✔ Aufträge (`workflow.work_order`), ✔ Beleg-
+Veröffentlichung (invoice→VEROEFFENTLICHT / quote→VERSENDET, ohne PDF).
+
+Empfohlene nächste Reihenfolge:
+
+1. **Auswertungen ausbauen**: die übrigen Dashboards (Projekte/Kunden/Artikel/
+   Mitarbeitende/Umsätze-Details/Projektkarte). **Marge** braucht die EK-Ebene
+   (`pricing.article_supplier_reference.last_purchase_price`, noch kein Model)
+   und ist aus Belegzeilen NICHT ableitbar — ggf. über den `billing_snapshot`.
+   Startseite `01` kann jetzt die Umsatz-Kennzahlen aus `/auswertungen` ziehen.
+2. **Einsätze/Planung (`workflow.service_job`, 0014)**: hängt an `work_order`
+   (jetzt vorhanden). Plantafel = große Drag-&-Drop-UI.
+3. **Beleg-PDF (optional)**: PDF-Ausfertigung + `content.file_link`
+   (`link_category='BELEG_PDF'`, Einmaligkeits-Index 0032) — reine Ausgabe,
+   nicht Voraussetzung der Veröffentlichung.
+4. **VK-Kalkulation/DATANORM**: Verkaufspreis ist eine Formel über
    `sale_price_group`/`article_sale_price` (nicht ein Feld). DATANORM-Import-Wizard.
 6. **Buchhaltung**: Zahlungen (0025), **Mahnwesen** (`dunning_level` seedet nur
    3 Stufen, Hero braucht 6 → ausbauen), DATEV/Lexware-Export. Baut auf Rechnungen.
