@@ -21,13 +21,8 @@ export const routes: Routes = [
   {
     path: 'liegenschaften',
     title: 'Liegenschaften — MCN Leitstand',
-    loadComponent: () => import('./shared/platzhalter/platzhalter').then((m) => m.Platzhalter),
-    data: {
-      platzhalter: {
-        titel: 'Liegenschaften',
-        text: 'Objekte, Einheiten und Zugänge werden hier verwaltet — mit Bezug zu Mandaten und Vorgängen. Der Bereich wird gerade aufgebaut.',
-      },
-    },
+    loadComponent: () =>
+      import('./features/liegenschaften/liegenschaften').then((m) => m.Liegenschaften),
   },
   {
     path: 'vorgaenge',

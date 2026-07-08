@@ -1,19 +1,22 @@
-"""seed_demo — Demodaten für die Entwicklung (Identity).
+"""seed_demo — Demodaten für die Entwicklung (Identity + Liegenschaften).
 
-Legt idempotent einen Demo-Sachbearbeiter (security.app_user) und eine
-Handvoll realistischer Parties (Personen/Organisationen) an. Läuft
-ausschließlich mit settings.DEBUG; auf produktiven Umgebungen bricht der
-Befehl ab. Alle Party-Writes gehen über die Service-Schicht, also durch
-business_transaction (Benutzerkontext, Audit).
+Legt idempotent einen Demo-Sachbearbeiter (security.app_user), eine Handvoll
+realistischer Parties (Personen/Organisationen) sowie ein paar Liegenschaften
+mit Adresse, Gebäude/Einheiten und Party-Rollen an. Läuft ausschließlich mit
+settings.DEBUG; auf produktiven Umgebungen bricht der Befehl ab. Alle Writes
+gehen über die Service-Schicht, also durch business_transaction
+(Benutzerkontext, Audit).
 """
 import uuid
+from datetime import date
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
-from db_core.models import AppUser, Party
+from db_core.models import AppUser, Party, Property
 from db_core.services import identity as identity_service
+from db_core.services import property as property_service
 
 # Fester Namespace → wiederholbare Aufrufe treffen denselben Demo-Benutzer.
 DEMO_APP_USER_ID = uuid.UUID("00000000-0000-4000-8000-000000000001")
@@ -49,9 +52,75 @@ DEMO_ORGANIZATIONS = [
     },
 ]
 
+# Demo-Liegenschaften. Rollen verweisen über den Anzeigenamen auf die oben
+# angelegten Parties (aufgelöst zur Laufzeit); Gebäude/Einheiten hängen daran.
+DEMO_PROPERTIES = [
+    {
+        "name": "Wohnanlage Lindenhöfe",
+        "property_type": "WEG",
+        "address": {
+            "street": "Lindenstraße",
+            "house_number": "12",
+            "postal_code": "40213",
+            "city": "Musterstadt",
+        },
+        "buildings": [
+            {
+                "building_number": "A",
+                "name": "Vorderhaus",
+                "units": [
+                    {"unit_type": "APARTMENT", "unit_number": "WE 01"},
+                    {"unit_type": "APARTMENT", "unit_number": "WE 02"},
+                    {"unit_type": "APARTMENT", "unit_number": "WE 03"},
+                ],
+            },
+            {
+                "building_number": "B",
+                "name": "Gartenhaus",
+                "units": [
+                    {"unit_type": "APARTMENT", "unit_number": "WE 04"},
+                    {"unit_type": "COMMON_AREA", "unit_number": "Waschküche"},
+                ],
+            },
+        ],
+        "roles": [
+            {"party": "WEG Lindenstraße 12", "role": "COMMUNITY_OF_OWNERS"},
+            {"party": "Michael Hoffmann", "role": "CARETAKER"},
+        ],
+    },
+    {
+        "name": "Geschäftshaus Rheinpassage",
+        "property_type": "COMMERCIAL",
+        "address": {
+            "street": "Rheinuferpromenade",
+            "house_number": "5",
+            "postal_code": "50667",
+            "city": "Musterstadt",
+        },
+        "buildings": [
+            {
+                "building_number": "1",
+                "name": None,
+                "units": [
+                    {"unit_type": "COMMERCIAL", "unit_number": "EG links"},
+                    {"unit_type": "COMMERCIAL", "unit_number": "EG rechts"},
+                    {"unit_type": "TECHNICAL_ROOM", "unit_number": "Technik UG"},
+                ],
+            },
+        ],
+        "roles": [
+            {"party": "Thomas Bergmann", "role": "PROPERTY_OWNER"},
+            {"party": "Elektro Schneider GmbH", "role": "OPERATOR"},
+        ],
+    },
+]
+
 
 class Command(BaseCommand):
-    help = "Legt Demo-Kontakte (Personen/Organisationen) für die Entwicklung an."
+    help = (
+        "Legt Demo-Kontakte und -Liegenschaften (mit Gebäuden/Einheiten und "
+        "Party-Rollen) für die Entwicklung an."
+    )
 
     def handle(self, *args, **options):
         if not settings.DEBUG:
@@ -79,6 +148,61 @@ class Command(BaseCommand):
             party = identity_service.create_organization(actor.id, **org)
             angelegt += 1
             self.stdout.write(f"Organisation angelegt: {party.display_name} ({party.id})")
+
+        # Liegenschaften: idempotent auf Property-Ebene (existiert der Name,
+        # wird die ganze Liegenschaft übersprungen). Ein nach Teilerfolg
+        # abgebrochener Lauf heilt Gebäude/Einheiten/Rollen NICHT nach — für
+        # Demodaten genügt das. Rollen-Parties werden über den Anzeigenamen
+        # aufgelöst; fehlt eine Party, wird die Rolle mit Hinweis übersprungen
+        # statt den Lauf abzubrechen.
+        for prop_data in DEMO_PROPERTIES:
+            if Property.objects.filter(name=prop_data["name"]).exists():
+                uebersprungen += 1
+                continue
+            prop = property_service.create_property(
+                actor.id,
+                name=prop_data["name"],
+                property_type=prop_data["property_type"],
+                **prop_data["address"],
+            )
+            angelegt += 1
+            self.stdout.write(
+                f"Liegenschaft angelegt: {prop.property_number} {prop.name} ({prop.id})"
+            )
+
+            for bld in prop_data["buildings"]:
+                building = property_service.add_building(
+                    actor.id,
+                    property_id=prop.id,
+                    building_number=bld["building_number"],
+                    name=bld["name"],
+                )
+                for unit in bld["units"]:
+                    property_service.add_unit(
+                        actor.id,
+                        building_id=building.id,
+                        property_id=prop.id,
+                        unit_type=unit["unit_type"],
+                        unit_number=unit["unit_number"],
+                    )
+
+            for role in prop_data["roles"]:
+                party = Party.objects.filter(display_name=role["party"]).first()
+                if party is None:
+                    self.stdout.write(
+                        self.style.WARNING(
+                            f"  Rolle {role['role']} übersprungen: Party "
+                            f"'{role['party']}' nicht gefunden."
+                        )
+                    )
+                    continue
+                property_service.add_party_role(
+                    actor.id,
+                    property_id=prop.id,
+                    party_id=party.id,
+                    role=role["role"],
+                    valid_from=date(2020, 1, 1),
+                )
 
         self.stdout.write(
             self.style.SUCCESS(
