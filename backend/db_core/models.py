@@ -421,6 +421,38 @@ class ServiceCase(models.Model):
         return f"{self.case_number} {self.subject}"
 
 
+class StatusChange(models.Model):
+    """workflow.status_change — append-only Statusverlauf (Migration 0010).
+
+    Wird ausschließlich von den Statusautomat-Triggern befüllt; hier nur lesend
+    (Verlauf einer Entität anzeigen). entity/entity_id verweisen generisch auf
+    service_case/work_order/service_job/quote.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    entity = models.TextField()
+    entity_id = models.UUIDField()
+    from_status = models.TextField(null=True, blank=True)
+    to_status = models.TextField()
+    reason = models.TextField(null=True, blank=True)
+    changed_by = models.ForeignKey(
+        AppUser,
+        models.DO_NOTHING,
+        db_column="changed_by_user_id",
+        null=True,
+        blank=True,
+        related_name="status_changes",
+    )
+    occurred_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'workflow"."status_change'
+
+    def __str__(self):
+        return f"{self.entity} {self.from_status}->{self.to_status}"
+
+
 class Task(models.Model):
     """workflow.task — Aufgabe (leichtgewichtiges To-do, Migration 0005).
 

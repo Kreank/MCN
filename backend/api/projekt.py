@@ -14,7 +14,7 @@ from ninja.errors import HttpError
 from ninja.responses import Status
 from ninja.security import django_auth
 
-from db_core.models import Project
+from db_core.models import Project, ServiceCase, StatusChange
 from db_core.services import projekt as projekt_service
 
 router = Router()
@@ -217,3 +217,104 @@ def create_project(request, payload: ProjectIn):
 def get_project(request, project_id: UUID):
     """Detail eines Projekts inkl. Liegenschaften und Vorgängen."""
     return _project_detail(project_id)
+
+
+# --- Vorgang (service_case) Detail -----------------------------------------
+
+class PartyRefOut(Schema):
+    id: UUID
+    display_name: str
+
+
+class ProjectRefOut(Schema):
+    id: UUID
+    project_number: str
+    name: str
+
+
+class StatusChangeOut(Schema):
+    from_status: str | None = None
+    to_status: str
+    reason: str | None = None
+    changed_by: str | None = None
+    occurred_at: datetime
+
+
+class ServiceCaseDetailOut(Schema):
+    id: UUID
+    case_number: str
+    subject: str
+    description: str | None = None
+    status: str
+    priority: str
+    responsibility_scope: str
+    received_at: datetime
+    property: PropertyRefOut
+    project: ProjectRefOut | None = None
+    reported_by: PartyRefOut | None = None
+    history: list[StatusChangeOut]
+
+
+@router.get("/service_cases/{case_id}", response=ServiceCaseDetailOut)
+def get_service_case(request, case_id: UUID):
+    """Detail eines Vorgangs inkl. Liegenschaft, Projekt, Melder und
+    Statusverlauf (append-only aus workflow.status_change)."""
+    case = (
+        ServiceCase.objects.filter(id=case_id)
+        .select_related("property__address", "project", "reported_by_party")
+        .first()
+    )
+    if case is None:
+        raise HttpError(404, "Vorgang nicht gefunden.")
+
+    changes = (
+        StatusChange.objects.filter(entity="service_case", entity_id=case.id)
+        .select_related("changed_by")
+        .order_by("-occurred_at")
+    )
+    history = [
+        StatusChangeOut(
+            from_status=c.from_status,
+            to_status=c.to_status,
+            reason=c.reason,
+            changed_by=c.changed_by.display_name if c.changed_by_id else None,
+            occurred_at=c.occurred_at,
+        )
+        for c in changes
+    ]
+    project = (
+        ProjectRefOut(
+            id=case.project.id,
+            project_number=case.project.project_number,
+            name=case.project.name,
+        )
+        if case.project_id
+        else None
+    )
+    reporter = (
+        PartyRefOut(
+            id=case.reported_by_party.id,
+            display_name=case.reported_by_party.display_name,
+        )
+        if case.reported_by_party_id
+        else None
+    )
+    return ServiceCaseDetailOut(
+        id=case.id,
+        case_number=case.case_number,
+        subject=case.subject,
+        description=case.description,
+        status=case.status,
+        priority=case.priority,
+        responsibility_scope=case.responsibility_scope,
+        received_at=case.received_at,
+        property=PropertyRefOut(
+            id=case.property.id,
+            property_number=case.property.property_number,
+            name=case.property.name,
+            city=case.property.address.city,
+        ),
+        project=project,
+        reported_by=reporter,
+        history=history,
+    )

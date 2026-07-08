@@ -44,6 +44,12 @@ export const routes: Routes = [
       import('./features/projekt-detail/projekt-detail').then((m) => m.ProjektDetail),
   },
   {
+    path: 'vorgaenge/:id',
+    title: 'Vorgang — MCN Leitstand',
+    loadComponent: () =>
+      import('./features/vorgang-detail/vorgang-detail').then((m) => m.VorgangDetail),
+  },
+  {
     path: 'dokumente',
     title: 'Dokumente — MCN Leitstand',
     loadComponent: () => import('./features/dokumente/dokumente').then((m) => m.Dokumente),

@@ -1,0 +1,88 @@
+@switch (state().kind) {
+  @case ('loading') {
+    <p class="lade-hinweis" role="status">Vorgang wird geladen …</p>
+  }
+
+  @case ('error') {
+    <div class="note note--error" role="alert">
+      <h2 class="note__titel">Vorgang konnte nicht geladen werden</h2>
+      <p class="note__text">Die Schnittstelle war nicht erreichbar oder der Vorgang existiert nicht.</p>
+      <div class="note__aktionen">
+        <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
+        <a class="btn" routerLink="/projekte">Zu den Projekten</a>
+      </div>
+    </div>
+  }
+
+  @case ('ready') {
+    <app-mappe
+      kicker="Vorgang {{ daten()!.case_number }}"
+      [titel]="daten()!.subject"
+      [backLink]="daten()!.project ? '/projekte/' + daten()!.project!.id : '/projekte'"
+      [backLabel]="daten()!.project ? 'Projekt' : 'Projekte'"
+      [tabs]="tabs"
+      [(aktiv)]="tab"
+    >
+      <span mappe-kopf class="stamp {{ priorityClass(daten()!.priority) }}">{{ priorityLabel(daten()!.priority) }}</span>
+      <span mappe-kopf class="stamp {{ statusClass(daten()!.status) }}">{{ statusLabel(daten()!.status) }}</span>
+
+      @if (tab() === 'uebersicht') {
+        <dl class="feld-raster">
+          <div class="feld"><dt class="feld__label">Vorgangsnummer</dt><dd class="feld__wert">{{ daten()!.case_number }}</dd></div>
+          <div class="feld"><dt class="feld__label">Status</dt><dd class="feld__wert">{{ statusLabel(daten()!.status) }}</dd></div>
+          <div class="feld"><dt class="feld__label">Priorität</dt><dd class="feld__wert">{{ priorityLabel(daten()!.priority) }}</dd></div>
+          <div class="feld"><dt class="feld__label">Zuständigkeit</dt><dd class="feld__wert">{{ scopeLabel(daten()!.responsibility_scope) }}</dd></div>
+          <div class="feld"><dt class="feld__label">Eingegangen</dt><dd class="feld__wert">{{ daten()!.received_at }}</dd></div>
+        </dl>
+
+        @if (daten()!.description) {
+          <p class="beschreibung">{{ daten()!.description }}</p>
+        }
+
+        <div class="bezug">
+          <a class="bezug__item" [routerLink]="['/liegenschaften', daten()!.property.id]">
+            <span class="bezug__label">Liegenschaft</span>
+            <span class="bezug__wert">{{ daten()!.property.name }} · {{ daten()!.property.city }}</span>
+          </a>
+          @if (daten()!.project; as p) {
+            <a class="bezug__item" [routerLink]="['/projekte', p.id]">
+              <span class="bezug__label">Projekt</span>
+              <span class="bezug__wert">{{ p.name }}</span>
+            </a>
+          }
+          @if (daten()!.reported_by; as r) {
+            <a class="bezug__item" [routerLink]="['/kontakte', r.id]">
+              <span class="bezug__label">Gemeldet von</span>
+              <span class="bezug__wert">{{ r.display_name }}</span>
+            </a>
+          }
+        </div>
+      }
+
+      @if (tab() === 'verlauf') {
+        @if (daten()!.history.length === 0) {
+          <div class="tab-platzhalter"><p>Für diesen Vorgang ist noch kein Statusverlauf protokolliert.</p></div>
+        } @else {
+          <ol class="verlauf">
+            @for (h of daten()!.history; track $index) {
+              <li class="verlauf__eintrag">
+                <span class="verlauf__punkt" aria-hidden="true"></span>
+                <div class="verlauf__inhalt">
+                  <span class="verlauf__wechsel">
+                    {{ statusLabelStr(h.from_status) }}
+                    <span class="verlauf__pfeil" aria-hidden="true">→</span>
+                    <strong>{{ statusLabelStr(h.to_status) }}</strong>
+                  </span>
+                  <span class="verlauf__meta">
+                    {{ h.occurred_at }}@if (h.changed_by) { · {{ h.changed_by }} }
+                  </span>
+                  @if (h.reason) { <span class="verlauf__grund">„{{ h.reason }}"</span> }
+                </div>
+              </li>
+            }
+          </ol>
+        }
+      }
+    </app-mappe>
+  }
+}

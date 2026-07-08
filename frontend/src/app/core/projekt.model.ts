@@ -67,3 +67,39 @@ export interface ProjectDetail extends Project {
   properties: PropertyRef[];
   service_cases: ServiceCaseRef[];
 }
+
+// --- Vorgang (service_case) Detail -----------------------------------------
+export interface PartyRef {
+  id: string;
+  display_name: string;
+}
+
+export interface StatusChangeEntry {
+  from_status: string | null;
+  to_status: string;
+  reason: string | null;
+  changed_by: string | null;
+  occurred_at: string;
+}
+
+export interface ServiceCaseDetail {
+  id: string;
+  case_number: string;
+  subject: string;
+  description: string | null;
+  status: ServiceCaseStatus;
+  priority: CasePriority;
+  responsibility_scope: string;
+  received_at: string;
+  property: PropertyRef;
+  project: ProjectMini | null;
+  reported_by: PartyRef | null;
+  history: StatusChangeEntry[];
+}
+
+// Projekt-Kurzreferenz (id/number/name) — im Vorgang-Detail.
+export interface ProjectMini {
+  id: string;
+  project_number: string;
+  name: string;
+}

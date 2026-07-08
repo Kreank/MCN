@@ -67,14 +67,14 @@
           <ul class="ref-liste">
             @for (v of daten()!.service_cases; track v.id) {
               <li>
-                <div class="ref ref--vorgang">
+                <a class="ref ref--vorgang" [routerLink]="['/vorgaenge', v.id]">
                   <span class="ref__name">{{ v.subject }}</span>
                   <span class="ref__stamps">
                     <span class="stamp {{ priorityClass(v.priority) }}">{{ priorityLabel(v.priority) }}</span>
                     <span class="stamp {{ caseStatusClass(v.status) }}">{{ caseStatusLabel(v.status) }}</span>
                   </span>
                   <span class="ref__nr">{{ v.case_number }}</span>
-                </div>
+                </a>
               </li>
             }
           </ul>

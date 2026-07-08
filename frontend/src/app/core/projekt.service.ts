@@ -1,7 +1,12 @@
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { ProjectDetail, ProjectPage, ProjectQuery } from './projekt.model';
+import {
+  ProjectDetail,
+  ProjectPage,
+  ProjectQuery,
+  ServiceCaseDetail,
+} from './projekt.model';
 
 /** Typisierter Zugriff auf die Projekt-API (dev-Proxy: /api -> :8000). */
 @Injectable({ providedIn: 'root' })
@@ -23,4 +28,11 @@ export class ProjektService {
   get(id: string): Observable<ProjectDetail> {
     return this.http.get<ProjectDetail>(`${this.base}/${id}`);
   }
+
+  getServiceCase(id: string): Observable<ServiceCaseDetail> {
+    return this.http.get<ServiceCaseDetail>(
+      `/api/workflow/service_cases/${id}`,
+    );
+  }
 }
+

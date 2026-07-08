@@ -84,6 +84,32 @@ def test_detail_404(client, seeded):
 
 
 @pytest.mark.django_db
+def test_vorgang_detail_mit_verlauf(client, app_user):
+    obj = property_service.create_property(
+        app_user.id, name="V-Objekt", property_type="WEG",
+        street="S", postal_code="1", city="Berlin",
+    )
+    case = projekt_service.create_service_case(
+        app_user.id, property_id=obj.id, subject="Heizung",
+    )
+    r = client.get(f"/api/workflow/service_cases/{case.id}")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["subject"] == "Heizung"
+    assert body["status"] == "NEU"
+    assert body["property"]["city"] == "Berlin"
+    # Der Initial-Status NEU wird per Trigger protokolliert.
+    assert len(body["history"]) >= 1
+    assert body["history"][-1]["to_status"] == "NEU"
+
+
+@pytest.mark.django_db
+def test_vorgang_detail_404(client, seeded):
+    r = client.get(f"/api/workflow/service_cases/{uuid.uuid4()}")
+    assert r.status_code == 404
+
+
+@pytest.mark.django_db
 def test_create_eingeloggt(client, db):
     c = _logged_in_client(client, with_app_user=True)
     r = c.post(
