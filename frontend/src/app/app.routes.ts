@@ -60,5 +60,10 @@ export const routes: Routes = [
       },
     },
   },
+  {
+    path: 'aufgaben',
+    title: 'Aufgaben — MCN Leitstand',
+    loadComponent: () => import('./features/aufgaben/aufgaben').then((m) => m.Aufgaben),
+  },
   { path: '**', redirectTo: 'kontakte' },
 ];

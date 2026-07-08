@@ -419,3 +419,64 @@ class ServiceCase(models.Model):
 
     def __str__(self):
         return f"{self.case_number} {self.subject}"
+
+
+class Task(models.Model):
+    """workflow.task — Aufgabe (leichtgewichtiges To-do, Migration 0005).
+
+    Optional verknüpft mit Projekt und/oder Kontakt (Party) und einem
+    Zuständigen. Erledigen setzt completed_by/completed_at; kein physisches
+    Löschen (Schutzstandard) — Status VERWORFEN statt DELETE.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    title = models.TextField()
+    description = models.TextField(null=True, blank=True)
+    due_date = models.DateField(null=True, blank=True)
+    status = models.TextField()  # OFFEN | ERLEDIGT | VERWORFEN
+    assigned_to = models.ForeignKey(
+        AppUser,
+        models.DO_NOTHING,
+        db_column="assigned_to_user_id",
+        null=True,
+        blank=True,
+        related_name="assigned_tasks",
+    )
+    project = models.ForeignKey(
+        Project,
+        models.DO_NOTHING,
+        db_column="project_id",
+        null=True,
+        blank=True,
+        related_name="tasks",
+    )
+    party = models.ForeignKey(
+        Party,
+        models.DO_NOTHING,
+        db_column="party_id",
+        null=True,
+        blank=True,
+        related_name="tasks",
+    )
+    completed_by = models.ForeignKey(
+        AppUser,
+        models.DO_NOTHING,
+        db_column="completed_by",
+        null=True,
+        blank=True,
+        related_name="completed_tasks",
+    )
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        AppUser, models.DO_NOTHING, db_column="created_by", related_name="created_tasks"
+    )
+    version = models.IntegerField()
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'workflow"."task'
+
+    def __str__(self):
+        return self.title

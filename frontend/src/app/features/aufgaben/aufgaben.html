@@ -1,0 +1,123 @@
+<section class="aufgaben" aria-labelledby="aufgaben-titel">
+  <header class="page-head">
+    <div>
+      <p class="page-head__kicker">
+        <span class="page-head__scale" aria-hidden="true"></span>
+        Aufgabenliste
+      </p>
+      <h1 id="aufgaben-titel" class="page-head__titel">Aufgaben</h1>
+    </div>
+    <p class="page-head__hint">
+      To-dos mit Zuständigem, Fälligkeit und Bezug zu Projekt oder Kontakt.
+      Anlage, Delegation und Erledigung laufen über die KI und die API.
+    </p>
+  </header>
+
+  <div class="controls">
+    <div class="search">
+      <label class="search__label" for="aufgaben-suche">Aufgaben durchsuchen</label>
+      <div class="search__field">
+        <span class="search__icon" aria-hidden="true">⌕</span>
+        <input
+          id="aufgaben-suche"
+          class="search__input"
+          type="search"
+          inputmode="search"
+          autocomplete="off"
+          placeholder="Titel"
+          (input)="onSearch($any($event.target).value)"
+        />
+      </div>
+    </div>
+
+    <div class="segment" role="group" aria-label="Nach Status filtern">
+      @for (seg of segments; track seg.label) {
+        <button
+          type="button"
+          class="segment__btn"
+          [class.is-active]="status() === seg.value"
+          [attr.aria-pressed]="status() === seg.value"
+          (click)="selectSegment(seg.value)"
+        >
+          {{ seg.label }}
+        </button>
+      }
+    </div>
+  </div>
+
+  <p class="sr-only" role="status">{{ resultSummary() }}</p>
+
+  @switch (state().kind) {
+    @case ('loading') {
+      <ul class="rows" aria-hidden="true">
+        @for (s of skeletons; track $index) {
+          <li class="row row--skeleton">
+            <span class="sk sk--box"></span>
+            <span class="sk-block">
+              <span class="sk sk--line"></span>
+              <span class="sk sk--chips"></span>
+            </span>
+          </li>
+        }
+      </ul>
+    }
+
+    @case ('error') {
+      <div class="note note--error" role="alert">
+        <h2 class="note__titel">Verbindung zur Aufgabenschnittstelle unterbrochen</h2>
+        <p class="note__text">Die Aufgaben ließen sich nicht laden. Prüfe die Verbindung und lade den Bereich erneut.</p>
+        <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
+      </div>
+    }
+
+    @case ('ready') {
+      @if (state().kind === 'ready' && $any(state()).data.items.length === 0) {
+        <div class="note note--empty">
+          <h2 class="note__titel">Keine Aufgaben für diese Auswahl</h2>
+          <p class="note__text">Neue Aufgaben entstehen über die KI-gestützte Anlage und die API.</p>
+        </div>
+      } @else {
+        <ul class="rows">
+          @for (t of $any(state()).data.items; track t.id) {
+            <li class="row" [class.row--done]="t.status === 'ERLEDIGT'">
+              <span
+                class="row__box"
+                [class.row__box--done]="t.status === 'ERLEDIGT'"
+                aria-hidden="true"
+                >{{ t.status === 'ERLEDIGT' ? '✓' : '' }}</span
+              >
+              <span class="row__body">
+                <span class="row__title">{{ t.title }}</span>
+                <span class="row__meta">
+                  @if (t.due_date) {
+                    <span class="row__due">fällig {{ t.due_date }}</span>
+                  }
+                  @if (t.project) {
+                    <a class="ref-chip" [routerLink]="['/projekte', t.project.id]"
+                      >▤ {{ t.project.name }}</a
+                    >
+                  }
+                  @if (t.party) {
+                    <a class="ref-chip" [routerLink]="['/kontakte', t.party.id]"
+                      >◐ {{ t.party.display_name }}</a
+                    >
+                  }
+                  @if (t.assigned_to) {
+                    <span class="row__assignee">{{ t.assigned_to.display_name }}</span>
+                  }
+                </span>
+              </span>
+              <span class="stamp {{ statusClass(t.status) }}">{{ statusLabel(t.status) }}</span>
+            </li>
+          }
+        </ul>
+
+        <nav class="pager" aria-label="Blättern">
+          <button type="button" class="btn" (click)="prev()" [disabled]="page() <= 1">Zurück</button>
+          <span class="pager__pos" aria-hidden="true">Seite {{ page() }} von {{ totalPages() }}</span>
+          <button type="button" class="btn" (click)="next()" [disabled]="page() >= totalPages()">Weiter</button>
+        </nav>
+      }
+    }
+  }
+</section>

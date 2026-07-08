@@ -14,7 +14,8 @@ from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
-from db_core.models import AppUser, Party, Project, Property
+from db_core.models import AppUser, Party, Project, Property, Task
+from db_core.services import aufgabe as aufgabe_service
 from db_core.services import identity as identity_service
 from db_core.services import projekt as projekt_service
 from db_core.services import property as property_service
@@ -138,10 +139,18 @@ DEMO_PROJECTS = [
 ]
 
 
+# Demo-Aufgaben: verweisen optional über Projektname bzw. Party-Anzeigename.
+DEMO_TASKS = [
+    {"title": "Angebot Dachsanierung nachfassen", "project": "Dachsanierung Lindenhöfe"},
+    {"title": "Rückruf Hausverwaltung Meyer", "party": "Hausverwaltung Meyer & Partner GmbH"},
+    {"title": "Fotos Sockelzone anfordern", "project": "Fassadeninstandsetzung Rheinpassage", "done": True},
+]
+
+
 class Command(BaseCommand):
     help = (
-        "Legt Demo-Kontakte, -Liegenschaften und -Projekte (mit Vorgängen) "
-        "für die Entwicklung an."
+        "Legt Demo-Kontakte, -Liegenschaften, -Projekte (mit Vorgängen) und "
+        "-Aufgaben für die Entwicklung an."
     )
 
     def handle(self, *args, **options):
@@ -256,6 +265,27 @@ class Command(BaseCommand):
                     project_id=project.id,
                     priority=case["priority"],
                 )
+
+        # Aufgaben: idempotent je Titel; optionale Projekt-/Party-Verknüpfung.
+        for task in DEMO_TASKS:
+            if Task.objects.filter(title=task["title"]).exists():
+                uebersprungen += 1
+                continue
+            project_id = None
+            if task.get("project"):
+                proj = Project.objects.filter(name=task["project"]).first()
+                project_id = proj.id if proj else None
+            party_id = None
+            if task.get("party"):
+                party = Party.objects.filter(display_name=task["party"]).first()
+                party_id = party.id if party else None
+            created = aufgabe_service.create_task(
+                actor.id, title=task["title"], project_id=project_id, party_id=party_id
+            )
+            if task.get("done"):
+                aufgabe_service.complete_task(actor.id, created.id)
+            angelegt += 1
+            self.stdout.write(f"Aufgabe angelegt: {created.title} ({created.id})")
 
         self.stdout.write(
             self.style.SUCCESS(

@@ -1,0 +1,45 @@
+// Vertrag zu /api/workflow/tasks (workflow.task in der DB).
+export type TaskStatus = 'OFFEN' | 'ERLEDIGT' | 'VERWORFEN';
+
+export interface UserRef {
+  id: string;
+  display_name: string;
+}
+export interface TaskProjectRef {
+  id: string;
+  project_number: string;
+  name: string;
+}
+export interface TaskPartyRef {
+  id: string;
+  display_name: string;
+}
+
+export interface Task {
+  id: string;
+  title: string;
+  description: string | null;
+  due_date: string | null;
+  status: TaskStatus;
+  completed_at: string | null;
+  created_at: string;
+  assigned_to: UserRef | null;
+  project: TaskProjectRef | null;
+  party: TaskPartyRef | null;
+}
+
+export interface TaskPage {
+  items: Task[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface TaskQuery {
+  page: number;
+  page_size: number;
+  q?: string;
+  status?: TaskStatus | null;
+  project_id?: string | null;
+  party_id?: string | null;
+}
