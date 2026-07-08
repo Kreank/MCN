@@ -1,0 +1,55 @@
+@switch (state().kind) {
+  @case ('loading') {
+    <p class="lade-hinweis" role="status">Artikel wird geladen …</p>
+  }
+
+  @case ('error') {
+    <div class="note note--error" role="alert">
+      <h2 class="note__titel">Artikel konnte nicht geladen werden</h2>
+      <p class="note__text">Der Artikelstamm war nicht erreichbar oder der Artikel existiert nicht.</p>
+      <div class="note__aktionen">
+        <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
+        <a class="btn" routerLink="/artikel">Zum Artikelstamm</a>
+      </div>
+    </div>
+  }
+
+  @case ('ready') {
+    <app-mappe
+      kicker="Artikel {{ daten()!.article_number }}"
+      [titel]="daten()!.description"
+      backLink="/artikel"
+      backLabel="Artikel & Leistungen"
+      [tabs]="tabs"
+      [(aktiv)]="tab"
+    >
+      <span mappe-kopf class="stamp stamp--type">{{ lineTypeLabel(daten()!.line_type) }}</span>
+      <span mappe-kopf class="stamp {{ statusClass(daten()!.status) }}">{{ statusLabel(daten()!.status) }}</span>
+
+      @if (tab() === 'stammdaten') {
+        <dl class="feld-raster">
+          <div class="feld"><dt class="feld__label">Artikelnummer</dt><dd class="feld__wert">{{ daten()!.article_number }}</dd></div>
+          <div class="feld"><dt class="feld__label">Einheit</dt><dd class="feld__wert">{{ daten()!.unit }}</dd></div>
+          <div class="feld"><dt class="feld__label">Typ</dt><dd class="feld__wert">{{ lineTypeLabel(daten()!.line_type) }}</dd></div>
+          <div class="feld"><dt class="feld__label">Warengruppe</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.product_group">{{ daten()!.product_group || '—' }}</dd></div>
+          <div class="feld"><dt class="feld__label">Hersteller</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.manufacturer_name">{{ daten()!.manufacturer_name || '—' }}</dd></div>
+          <div class="feld"><dt class="feld__label">Hersteller-Nr.</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.manufacturer_number">{{ daten()!.manufacturer_number || '—' }}</dd></div>
+          <div class="feld"><dt class="feld__label">GTIN</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.gtin">{{ daten()!.gtin || '—' }}</dd></div>
+        </dl>
+        @if (daten()!.long_description) {
+          <p class="langtext">{{ daten()!.long_description }}</p>
+        }
+      }
+
+      @if (tab() === 'preis') {
+        <dl class="feld-raster">
+          <div class="feld"><dt class="feld__label">Listenpreis</dt><dd class="feld__wert">{{ euro(daten()!.list_price) }}</dd></div>
+        </dl>
+        <div class="tab-platzhalter">
+          <h2 class="tab-platzhalter__titel">Verkaufspreis</h2>
+          <p>Der Verkaufspreis ergibt sich aus einer Preisgruppen-Formel (Aufschlag auf EK/Listenpreis) bzw. einem Festpreis. Die Live-Berechnung folgt mit dem Kalkulations-Slice (Roadmap 08).</p>
+        </div>
+      }
+    </app-mappe>
+  }
+}

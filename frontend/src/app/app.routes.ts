@@ -65,5 +65,22 @@ export const routes: Routes = [
     title: 'Aufgaben — MCN Leitstand',
     loadComponent: () => import('./features/aufgaben/aufgaben').then((m) => m.Aufgaben),
   },
+  {
+    path: 'artikel',
+    title: 'Artikel & Leistungen — MCN Leitstand',
+    loadComponent: () => import('./features/artikel/artikel').then((m) => m.Artikel),
+  },
+  {
+    path: 'artikel/:id',
+    title: 'Artikel — MCN Leitstand',
+    loadComponent: () =>
+      import('./features/artikel-detail/artikel-detail').then((m) => m.ArtikelDetail),
+  },
+  {
+    path: 'leistungen/:id',
+    title: 'Leistung — MCN Leitstand',
+    loadComponent: () =>
+      import('./features/leistung-detail/leistung-detail').then((m) => m.LeistungDetail),
+  },
   { path: '**', redirectTo: 'kontakte' },
 ];

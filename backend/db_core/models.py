@@ -604,3 +604,128 @@ class QuoteLine(models.Model):
 
     def __str__(self):
         return f"{self.position_number}. {self.description}"
+
+
+class Article(models.Model):
+    """pricing.article — Artikel/Material (Migration 0028, list_price aus 0033).
+
+    Keine automatische Nummernvergabe (article_number ist app-/nutzergesetzt).
+    Kein Löschen (No-Delete-Trigger) — nur status AKTIV/INAKTIV.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    article_number = models.TextField()
+    description = models.TextField()
+    long_description = models.TextField(null=True, blank=True)
+    gtin = models.TextField(null=True, blank=True)
+    manufacturer_name = models.TextField(null=True, blank=True)
+    manufacturer_number = models.TextField(null=True, blank=True)
+    unit = models.TextField()
+    # MATERIAL|ARBEITSZEIT|PAUSCHALE|FREMDLEISTUNG|FAHRT|ZUSCHLAG
+    line_type = models.TextField()
+    product_group = models.TextField(null=True, blank=True)
+    status = models.TextField()  # AKTIV | INAKTIV
+    list_price = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True
+    )
+    version = models.IntegerField()
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'pricing"."article'
+
+    def __str__(self):
+        return f"{self.article_number} {self.description}"
+
+
+class WageGroup(models.Model):
+    """pricing.wage_group — Lohn-/Maschinengruppe (Migration 0033/0034)."""
+
+    id = models.UUIDField(primary_key=True)
+    name = models.TextField()
+    kind = models.TextField()  # LOHN | MASCHINE
+    hourly_rate = models.DecimalField(max_digits=12, decimal_places=2)
+    cost_rate = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True
+    )
+    status = models.TextField()  # AKTIV | INAKTIV
+    version = models.IntegerField()
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'pricing"."wage_group'
+
+    def __str__(self):
+        return self.name
+
+
+class Assembly(models.Model):
+    """pricing.assembly — Leistung (Stückliste aus Material + Lohn; Migration 0033)."""
+
+    id = models.UUIDField(primary_key=True)
+    assembly_number = models.TextField()
+    name = models.TextField()
+    internal_name = models.TextField(null=True, blank=True)
+    unit = models.TextField()
+    description = models.TextField(null=True, blank=True)
+    status = models.TextField()  # AKTIV | INAKTIV
+    version = models.IntegerField()
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'pricing"."assembly'
+
+    def __str__(self):
+        return f"{self.assembly_number} {self.name}"
+
+
+class AssemblyComponent(models.Model):
+    """pricing.assembly_component — Position einer Leistung.
+
+    Entweder Material (article_id + quantity) ODER Lohn (wage_group_id +
+    minutes) — nie beides (DB-XOR-CHECK).
+    """
+
+    id = models.UUIDField(primary_key=True)
+    assembly = models.ForeignKey(
+        Assembly, models.DO_NOTHING, db_column="assembly_id", related_name="components"
+    )
+    position = models.IntegerField()
+    article = models.ForeignKey(
+        Article,
+        models.DO_NOTHING,
+        db_column="article_id",
+        null=True,
+        blank=True,
+        related_name="assembly_components",
+    )
+    wage_group = models.ForeignKey(
+        WageGroup,
+        models.DO_NOTHING,
+        db_column="wage_group_id",
+        null=True,
+        blank=True,
+        related_name="assembly_components",
+    )
+    quantity = models.DecimalField(
+        max_digits=12, decimal_places=3, null=True, blank=True
+    )
+    minutes = models.DecimalField(
+        max_digits=9, decimal_places=2, null=True, blank=True
+    )
+    note = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'pricing"."assembly_component'
+
+    def __str__(self):
+        return f"{self.position}. @ {self.assembly_id}"

@@ -1,0 +1,70 @@
+@switch (state().kind) {
+  @case ('loading') {
+    <p class="lade-hinweis" role="status">Leistung wird geladen …</p>
+  }
+
+  @case ('error') {
+    <div class="note note--error" role="alert">
+      <h2 class="note__titel">Leistung konnte nicht geladen werden</h2>
+      <p class="note__text">Der Artikelstamm war nicht erreichbar oder die Leistung existiert nicht.</p>
+      <div class="note__aktionen">
+        <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
+        <a class="btn" routerLink="/artikel">Zum Artikelstamm</a>
+      </div>
+    </div>
+  }
+
+  @case ('ready') {
+    <app-mappe
+      kicker="Leistung {{ daten()!.assembly_number }}"
+      [titel]="daten()!.name"
+      backLink="/artikel"
+      backLabel="Artikel & Leistungen"
+      [tabs]="tabs"
+      [(aktiv)]="tab"
+    >
+      <span mappe-kopf class="stamp {{ statusClass(daten()!.status) }}">{{ statusLabel(daten()!.status) }}</span>
+      <span mappe-kopf class="stamp stamp--type">je {{ daten()!.unit }}</span>
+
+      @if (tab() === 'stueckliste') {
+        @if (daten()!.components.length === 0) {
+          <div class="tab-platzhalter"><p>Diese Leistung hat noch keine Positionen (Material oder Lohn).</p></div>
+        } @else {
+          <div class="pos-wrap">
+            <table class="pos">
+              <thead>
+                <tr>
+                  <th class="pos__nr" scope="col">Pos.</th>
+                  <th scope="col">Art</th>
+                  <th scope="col">Bezeichnung</th>
+                  <th class="pos__num" scope="col">Menge / Zeit</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (c of daten()!.components; track c.position) {
+                  <tr>
+                    <td class="pos__nr">{{ c.position }}</td>
+                    <td><span class="stamp {{ c.kind === 'LOHN' ? 'stamp--positive' : '' }}">{{ kindLabel(c.kind) }}</span></td>
+                    <td>{{ c.description }}</td>
+                    <td class="pos__num">{{ menge(c) }}</td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+      }
+
+      @if (tab() === 'stammdaten') {
+        <dl class="feld-raster">
+          <div class="feld"><dt class="feld__label">Leistungsnummer</dt><dd class="feld__wert">{{ daten()!.assembly_number }}</dd></div>
+          <div class="feld"><dt class="feld__label">Einheit</dt><dd class="feld__wert">{{ daten()!.unit }}</dd></div>
+          <div class="feld"><dt class="feld__label">Interner Name</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.internal_name">{{ daten()!.internal_name || '—' }}</dd></div>
+        </dl>
+        @if (daten()!.description) {
+          <p class="langtext">{{ daten()!.description }}</p>
+        }
+      }
+    </app-mappe>
+  }
+}

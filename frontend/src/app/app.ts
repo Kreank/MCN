@@ -29,6 +29,7 @@ export class App {
     { path: '/projekte', label: 'Projekte', mark: '30' },
     { path: '/dokumente', label: 'Dokumente', mark: '40' },
     { path: '/aufgaben', label: 'Aufgaben', mark: '50' },
+    { path: '/artikel', label: 'Artikel', mark: '60' },
   ];
 
   /** Index des aktiven Navigationspunkts — steuert die Bemaszungsmarke. */

@@ -5,6 +5,7 @@ OpenAPI-Schema: /api/openapi.json — daraus werden die Clients generiert
 """
 from ninja import NinjaAPI
 
+from api.artikel import router as artikel_router
 from api.aufgabe import router as aufgabe_router
 from api.beleg import router as beleg_router
 from api.identity import router as identity_router
@@ -26,3 +27,4 @@ api.add_router("/property", property_router, tags=["property"])
 api.add_router("/workflow", projekt_router, tags=["workflow"])
 api.add_router("/workflow", aufgabe_router, tags=["workflow"])
 api.add_router("/invoicing", beleg_router, tags=["invoicing"])
+api.add_router("/pricing", artikel_router, tags=["pricing"])

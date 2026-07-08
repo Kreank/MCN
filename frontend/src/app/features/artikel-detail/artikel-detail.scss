@@ -1,0 +1,10 @@
+:host {
+  display: block;
+}
+
+.langtext {
+  margin-top: var(--space-4);
+  max-width: 44rem;
+  color: var(--ink-muted);
+  white-space: pre-line;
+}

@@ -1,0 +1,45 @@
+:host {
+  display: block;
+}
+
+.langtext {
+  margin-top: var(--space-4);
+  max-width: 44rem;
+  color: var(--ink-muted);
+  white-space: pre-line;
+}
+
+.pos-wrap {
+  overflow-x: auto;
+}
+.pos {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--step-0);
+}
+.pos th,
+.pos td {
+  padding: var(--space-3) var(--space-3);
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+.pos thead th {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  border-bottom: 1.5px solid var(--line-strong);
+  white-space: nowrap;
+}
+.pos__nr {
+  width: 3rem;
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+}
+.pos__num {
+  text-align: right;
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}

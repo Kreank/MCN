@@ -14,7 +14,10 @@ from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
-from db_core.models import AppUser, Party, Project, Property, Quote, Task
+from db_core.models import (
+    AppUser, Article, Assembly, Party, Project, Property, Quote, Task, WageGroup,
+)
+from db_core.services import artikel as artikel_service
 from db_core.services import aufgabe as aufgabe_service
 from db_core.services import beleg as beleg_service
 from db_core.services import identity as identity_service
@@ -167,10 +170,43 @@ DEMO_QUOTES = [
 ]
 
 
+# Demo-Artikelstamm: Lohngruppen, Artikel und eine Leistung (Stückliste).
+DEMO_WAGE_GROUPS = [
+    {"name": "Monteur", "kind": "LOHN", "hourly_rate": "58.00", "cost_rate": "42.00"},
+    {"name": "Meister", "kind": "LOHN", "hourly_rate": "72.00", "cost_rate": "55.00"},
+]
+DEMO_ARTICLES = [
+    {"article_number": "MAT-1001", "description": "Dachziegel Tonziegel rot",
+     "unit": "Stk", "line_type": "MATERIAL", "list_price": "2.40",
+     "manufacturer_name": "Braas", "product_group": "Dachbaustoffe"},
+    {"article_number": "MAT-1002", "description": "Dachrinne verzinkt 6-teilig",
+     "unit": "m", "line_type": "MATERIAL", "list_price": "12.90",
+     "product_group": "Dachentwässerung"},
+    {"article_number": "MAT-1003", "description": "Edelstahlschraube 4,5x60",
+     "unit": "Stk", "line_type": "MATERIAL", "list_price": "0.18",
+     "product_group": "Befestigung"},
+    {"article_number": "FAH-2001", "description": "An- und Abfahrt Servicefahrzeug",
+     "unit": "Fahrt", "line_type": "FAHRT", "list_price": "35.00"},
+]
+DEMO_ASSEMBLIES = [
+    {
+        "assembly_number": "LEI-3001",
+        "name": "Dacheindeckung je m² erneuern",
+        "unit": "m²",
+        "description": "Alteindeckung abnehmen, neue Tonziegel verlegen.",
+        "components": [
+            {"article": "MAT-1001", "quantity": "12.000"},
+            {"article": "MAT-1003", "quantity": "24.000"},
+            {"wage_group": "Monteur", "minutes": "45.00"},
+        ],
+    },
+]
+
+
 class Command(BaseCommand):
     help = (
         "Legt Demo-Kontakte, -Liegenschaften, -Projekte (mit Vorgängen), "
-        "-Aufgaben und -Angebote für die Entwicklung an."
+        "-Aufgaben, -Angebote und -Artikelstamm für die Entwicklung an."
     )
 
     def handle(self, *args, **options):
@@ -333,6 +369,48 @@ class Command(BaseCommand):
             self.stdout.write(
                 f"Angebot angelegt: {created.title} — {created.gross_total} EUR ({created.id})"
             )
+
+        # Lohngruppen (idempotent je Name).
+        for wg in DEMO_WAGE_GROUPS:
+            if WageGroup.objects.filter(name=wg["name"]).exists():
+                uebersprungen += 1
+                continue
+            artikel_service.create_wage_group(actor.id, **wg)
+            angelegt += 1
+
+        # Artikel (idempotent je Nummer).
+        for art in DEMO_ARTICLES:
+            if Article.objects.filter(article_number=art["article_number"]).exists():
+                uebersprungen += 1
+                continue
+            created = artikel_service.create_article(actor.id, **art)
+            angelegt += 1
+            self.stdout.write(f"Artikel angelegt: {created.article_number} {created.description}")
+
+        # Leistungen mit Stückliste (idempotent je Nummer); Komponenten über
+        # Artikelnummer bzw. Lohngruppennamen aufgelöst.
+        for asm in DEMO_ASSEMBLIES:
+            if Assembly.objects.filter(assembly_number=asm["assembly_number"]).exists():
+                uebersprungen += 1
+                continue
+            components = []
+            for comp in asm["components"]:
+                if comp.get("article"):
+                    a = Article.objects.filter(article_number=comp["article"]).first()
+                    if a is None:
+                        continue
+                    components.append({"article_id": a.id, "quantity": comp["quantity"]})
+                elif comp.get("wage_group"):
+                    w = WageGroup.objects.filter(name=comp["wage_group"]).first()
+                    if w is None:
+                        continue
+                    components.append({"wage_group_id": w.id, "minutes": comp["minutes"]})
+            created = artikel_service.create_assembly(
+                actor.id, assembly_number=asm["assembly_number"], name=asm["name"],
+                unit=asm["unit"], description=asm.get("description"), components=components,
+            )
+            angelegt += 1
+            self.stdout.write(f"Leistung angelegt: {created.assembly_number} {created.name}")
 
         self.stdout.write(
             self.style.SUCCESS(
