@@ -90,6 +90,21 @@ export const routes: Routes = [
     loadComponent: () => import('./features/aufgaben/aufgaben').then((m) => m.Aufgaben),
   },
   {
+    path: 'buchhaltung',
+    pathMatch: 'full',
+    title: 'Buchhaltung — MCN Leitstand',
+    loadComponent: () =>
+      import('./features/buchhaltung/buchhaltung').then((m) => m.Buchhaltung),
+  },
+  {
+    path: 'buchhaltung/:id',
+    title: 'Rechnung — MCN Leitstand',
+    loadComponent: () =>
+      import('./features/buchhaltung-detail/buchhaltung-detail').then(
+        (m) => m.BuchhaltungDetail,
+      ),
+  },
+  {
     path: 'auswertungen',
     pathMatch: 'full',
     title: 'Auswertungen — MCN Leitstand',

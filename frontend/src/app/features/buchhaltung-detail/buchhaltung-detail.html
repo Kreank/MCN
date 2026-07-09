@@ -1,0 +1,111 @@
+@switch (state().kind) {
+  @case ('loading') {
+    <p class="lade-hinweis" role="status">Rechnung wird geladen …</p>
+  }
+
+  @case ('error') {
+    <div class="note note--error" role="alert">
+      <h2 class="note__titel">Rechnung konnte nicht geladen werden</h2>
+      <p class="note__text">Die Schnittstelle war nicht erreichbar oder die Rechnung existiert nicht (bzw. ist noch nicht veröffentlicht).</p>
+      <div class="note__aktionen">
+        <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
+        <a class="btn" routerLink="/buchhaltung">Zu den offenen Posten</a>
+      </div>
+    </div>
+  }
+
+  @case ('ready') {
+    <app-mappe
+      kicker="Rechnung {{ daten()!.invoice_number }}"
+      [titel]="typeLabel(daten()!.invoice_type) + ' · ' + euro(daten()!.open_amount) + ' offen'"
+      backLink="/buchhaltung"
+      backLabel="Offene Posten"
+      [tabs]="tabs"
+      [(aktiv)]="tab"
+    >
+      @if (daten()!.is_overdue) {
+        <span mappe-kopf class="stamp stamp--warn">Überfällig</span>
+      }
+      @if (daten()!.dunning_level) {
+        <span mappe-kopf class="stamp stamp--type">Mahnstufe {{ daten()!.dunning_level }}</span>
+      }
+      <span mappe-kopf class="stamp {{ statusClass(daten()!.payment_status) }}">{{ statusLabel(daten()!.payment_status) }}</span>
+
+      @if (tab() === 'uebersicht') {
+        <dl class="feld-raster">
+          <div class="feld"><dt class="feld__label">Rechnungsnummer</dt><dd class="feld__wert">{{ daten()!.invoice_number }}</dd></div>
+          <div class="feld"><dt class="feld__label">Belegart</dt><dd class="feld__wert">{{ typeLabel(daten()!.invoice_type) }}</dd></div>
+          <div class="feld"><dt class="feld__label">Zahlungsstatus</dt><dd class="feld__wert">{{ statusLabel(daten()!.payment_status) }}</dd></div>
+          <div class="feld"><dt class="feld__label">Rechnungsdatum</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.invoice_date">{{ d(daten()!.invoice_date) }}</dd></div>
+          <div class="feld"><dt class="feld__label">Fällig am</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.due_date">{{ d(daten()!.due_date) }}</dd></div>
+          <div class="feld"><dt class="feld__label">Bruttobetrag</dt><dd class="feld__wert">{{ euro(daten()!.gross_total) }}</dd></div>
+          <div class="feld"><dt class="feld__label">Bezahlt</dt><dd class="feld__wert">{{ euro(daten()!.paid_total) }}</dd></div>
+          <div class="feld feld--stark"><dt class="feld__label">Offener Betrag</dt><dd class="feld__wert">{{ euro(daten()!.open_amount) }}</dd></div>
+        </dl>
+
+        <div class="bezug">
+          <div class="bezug__item bezug__item--static">
+            <span class="bezug__label">Liegenschaft</span>
+            <span class="bezug__wert">{{ daten()!.reference.property_name }}</span>
+          </div>
+          @if (daten()!.reference.project_name; as pn) {
+            <div class="bezug__item bezug__item--static">
+              <span class="bezug__label">Projekt</span>
+              <span class="bezug__wert">{{ pn }}</span>
+            </div>
+          }
+          @if (daten()!.reference.work_order_number; as wo) {
+            <div class="bezug__item bezug__item--static">
+              <span class="bezug__label">Auftrag</span>
+              <span class="bezug__wert">{{ wo }}</span>
+            </div>
+          }
+        </div>
+      }
+
+      @if (tab() === 'zahlungen') {
+        @if (daten()!.payments.length === 0) {
+          <div class="tab-platzhalter"><p>Zu dieser Rechnung wurde noch keine Zahlung erfasst.</p></div>
+        } @else {
+          <ul class="buchung-liste">
+            @for (p of daten()!.payments; track $index) {
+              <li class="buchung">
+                <span class="buchung__kopf">
+                  <span class="stamp stamp--type">{{ paymentTypeLabel(p.payment_type) }}</span>
+                  <span class="buchung__datum">{{ d(p.paid_at) }}</span>
+                </span>
+                <span class="buchung__betrag" [class.buchung__betrag--minus]="p.payment_type === 'STORNO_BUCHUNG' || p.payment_type === 'RUECKERSTATTUNG'">
+                  {{ euro(p.amount) }}
+                </span>
+                <span class="buchung__quelle">{{ p.import_source }}</span>
+              </li>
+            }
+          </ul>
+        }
+      }
+
+      @if (tab() === 'mahnverlauf') {
+        @if (daten()!.dunning.length === 0) {
+          <div class="tab-platzhalter"><p>Für diese Rechnung wurde noch keine Mahnstufe erzeugt.</p></div>
+        } @else {
+          <ol class="verlauf">
+            @for (m of daten()!.dunning; track $index) {
+              <li class="verlauf__eintrag">
+                <span class="verlauf__punkt" aria-hidden="true"></span>
+                <div class="verlauf__inhalt">
+                  <span class="verlauf__wechsel">
+                    <strong>Stufe {{ m.level }}</strong> · {{ m.label }}
+                  </span>
+                  <span class="verlauf__meta">
+                    {{ d(m.issued_at) }}@if (m.created_by) { · {{ m.created_by }} }
+                  </span>
+                  @if (m.note) { <span class="verlauf__grund">„{{ m.note }}"</span> }
+                </div>
+              </li>
+            }
+          </ol>
+        }
+      }
+    </app-mappe>
+  }
+}

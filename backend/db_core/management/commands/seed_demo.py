@@ -16,13 +16,14 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
 from db_core.models import (
-    AppUser, Article, Assembly, Invoice, Party, Project, ProjectLog, Property,
-    Quote, Task, WageGroup, WorkOrder,
+    AppUser, Article, Assembly, DunningNotice, Invoice, Party, Payment, Project,
+    ProjectLog, Property, Quote, Task, WageGroup, WorkOrder,
 )
 from db_core.services import artikel as artikel_service
 from db_core.services import aufgabe as aufgabe_service
 from db_core.services import auftrag as auftrag_service
 from db_core.services import beleg as beleg_service
+from db_core.services import buchhaltung as buchhaltung_service
 from db_core.services import einsatz as einsatz_service
 from db_core.services import identity as identity_service
 from db_core.services import projekt as projekt_service
@@ -411,6 +412,7 @@ class Command(BaseCommand):
             inv = beleg_service.create_invoice(
                 actor.id, property_id=au_obj.id, invoice_type="RECHNUNG",
                 project_id=au_proj.id, work_order_id=pub_order.id,
+                invoice_date=date(2026, 5, 15), due_date=date(2026, 6, 14),
                 lines=[
                     {"line_type": "MATERIAL", "description": "Dachziegel Tonziegel rot",
                      "quantity": 850, "unit": "Stk", "unit_price": "2.40", "tax_code": "DE_19"},
@@ -659,6 +661,39 @@ class Command(BaseCommand):
             self.stdout.write(
                 f"Einsatz angelegt: {job2.job_number} ({job2.status})"
             )
+
+        # Buchhaltung: Teilzahlung + erste Mahnstufe auf der veröffentlichten
+        # Rechnung. Idempotent je Rechnung. Die Zahlung braucht kein due_date;
+        # die Mahnung nur eine fällige Rechnung (issued_at > due_date, per DB-Tor
+        # erzwungen). Auf einer Alt-DB ohne due_date entfällt die Mahn-Demo.
+        bh_inv = (
+            Invoice.objects.filter(
+                work_order_id=pub_order.id, status="VEROEFFENTLICHT"
+            ).first()
+            if pub_order is not None
+            else None
+        )
+        if bh_inv is not None:
+            if not Payment.objects.filter(invoice_id=bh_inv.id).exists():
+                buchhaltung_service.record_payment(
+                    actor.id, invoice_id=bh_inv.id, amount=Decimal("3000.00"),
+                    paid_at=date(2026, 6, 20), payment_type="TEILZAHLUNG",
+                )
+                angelegt += 1
+                self.stdout.write(
+                    f"Teilzahlung erfasst: {bh_inv.invoice_number} — 3000.00 EUR"
+                )
+            if (
+                bh_inv.due_date is not None
+                and not DunningNotice.objects.filter(invoice_id=bh_inv.id).exists()
+            ):
+                buchhaltung_service.issue_dunning_notice(
+                    actor.id, invoice_id=bh_inv.id, level=1,
+                    issued_at=date(2026, 6, 21),
+                    note="Erste Zahlungserinnerung (Demo).",
+                )
+                angelegt += 1
+                self.stdout.write(f"Mahnstufe 1 erzeugt: {bh_inv.invoice_number}")
 
         self.stdout.write(
             self.style.SUCCESS(

@@ -1,0 +1,118 @@
+<section class="buchhaltung" aria-labelledby="buchhaltung-titel">
+  <header class="page-head">
+    <div>
+      <p class="page-head__kicker">
+        <span class="page-head__scale" aria-hidden="true"></span>
+        Buchhaltung · Offene Posten
+      </p>
+      <h1 id="buchhaltung-titel" class="page-head__titel">Offene Posten</h1>
+    </div>
+    <p class="page-head__hint">
+      Veröffentlichte Rechnungen mit Zahlungsstatus, offenem Betrag und Mahnstufe.
+      Zahlungserfassung und Mahnlauf laufen über die KI und die API.
+    </p>
+  </header>
+
+  <div class="controls">
+    <div class="search">
+      <label class="search__label" for="buchhaltung-suche">Rechnungen durchsuchen</label>
+      <div class="search__field">
+        <span class="search__icon" aria-hidden="true">⌕</span>
+        <input
+          id="buchhaltung-suche"
+          class="search__input"
+          type="search"
+          inputmode="search"
+          autocomplete="off"
+          placeholder="Rechnungsnummer"
+          (input)="onSearch($any($event.target).value)"
+        />
+      </div>
+    </div>
+
+    <div class="segment" role="group" aria-label="Nach Zahlungsstatus filtern">
+      @for (seg of segments; track seg.label) {
+        <button
+          type="button"
+          class="segment__btn"
+          [class.is-active]="status() === seg.value"
+          [attr.aria-pressed]="status() === seg.value"
+          (click)="selectSegment(seg.value)"
+        >
+          {{ seg.label }}
+        </button>
+      }
+    </div>
+  </div>
+
+  <p class="sr-only" role="status">{{ resultSummary() }}</p>
+
+  @switch (state().kind) {
+    @case ('loading') {
+      <ul class="rows" aria-hidden="true">
+        @for (s of skeletons; track $index) {
+          <li class="row row--skeleton">
+            <span class="sk-block">
+              <span class="sk sk--line"></span>
+              <span class="sk sk--chips"></span>
+            </span>
+          </li>
+        }
+      </ul>
+    }
+
+    @case ('error') {
+      <div class="note note--error" role="alert">
+        <h2 class="note__titel">Verbindung zur Buchhaltungsschnittstelle unterbrochen</h2>
+        <p class="note__text">Die offenen Posten ließen sich nicht laden. Prüfe die Verbindung und lade den Bereich erneut.</p>
+        <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
+      </div>
+    }
+
+    @case ('ready') {
+      @if (state().kind === 'ready' && $any(state()).data.items.length === 0) {
+        <div class="note note--empty">
+          <h2 class="note__titel">Keine Rechnungen für diese Auswahl</h2>
+          <p class="note__text">Offene Posten entstehen aus veröffentlichten Rechnungen.</p>
+        </div>
+      } @else {
+        <ul class="rows">
+          @for (r of $any(state()).data.items; track r.id) {
+            <li class="row">
+              <a class="row__link" [routerLink]="['/buchhaltung', r.id]">
+                <span class="row__body">
+                  <span class="row__title">
+                    {{ r.invoice_number }}
+                    @if (r.debtor) { <span class="row__debtor">· {{ r.debtor }}</span> }
+                  </span>
+                  <span class="row__meta">
+                    <span class="row__due" [class.row__due--over]="r.is_overdue">
+                      ◷ fällig {{ d(r.due_date) }}
+                    </span>
+                    @if (r.is_overdue) {
+                      <span class="row__flag">überfällig</span>
+                    }
+                    @if (r.dunning_level) {
+                      <span class="row__dun">Mahnstufe {{ r.dunning_level }}</span>
+                    }
+                  </span>
+                </span>
+                <span class="row__betrag">
+                  <span class="row__offen">{{ euro(r.open_amount) }}</span>
+                  <span class="row__gross">von {{ euro(r.gross_total) }}</span>
+                </span>
+                <span class="stamp {{ statusClass(r.payment_status) }}">{{ statusLabel(r.payment_status) }}</span>
+              </a>
+            </li>
+          }
+        </ul>
+
+        <nav class="pager" aria-label="Blättern">
+          <button type="button" class="btn" (click)="prev()" [disabled]="page() <= 1">Zurück</button>
+          <span class="pager__pos" aria-hidden="true">Seite {{ page() }} von {{ totalPages() }}</span>
+          <button type="button" class="btn" (click)="next()" [disabled]="page() >= totalPages()">Weiter</button>
+        </nav>
+      }
+    }
+  }
+</section>

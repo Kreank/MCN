@@ -1,0 +1,377 @@
+"""Buchhaltungs-API — offene Posten, Zahlungen und Mahnwesen zu veröffentlichten
+Rechnungen.
+
+Read-only in der Dev-Phase (Zahlung/Storno/Mahnung laufen über den
+buchhaltung-Service, sind aber ohne Auth nicht im UI verdrahtet). Der
+Zahlungsstatus und der offene Betrag sind in der DB NICHT gespeichert — sie
+werden aus der vorzeichenbehafteten Summe der Zahlungen abgeleitet
+(PAYMENT_SIGN, dieselbe Konvention wie im Service).
+"""
+from datetime import date, datetime
+from decimal import Decimal
+from uuid import UUID
+
+from django.db.models import (
+    Case,
+    DecimalField,
+    F,
+    Max,
+    OuterRef,
+    Q,
+    Subquery,
+    Sum,
+    Value,
+    When,
+)
+from django.db.models.functions import Coalesce
+from ninja import Query, Router, Schema
+from ninja.errors import HttpError
+
+from db_core.models import DunningLevel, DunningNotice, Invoice, Payment
+from db_core.services.buchhaltung import PAYMENT_SIGN
+
+router = Router()
+
+_POS = tuple(t for t, s in PAYMENT_SIGN.items() if s > 0)
+_NEG = tuple(t for t, s in PAYMENT_SIGN.items() if s < 0)
+_ZERO = Decimal("0.00")
+
+PAYMENT_STATUSES = ("OFFEN", "TEILZAHLUNG", "BEZAHLT", "UEBERZAHLT")
+
+
+# --- Ableitungen -----------------------------------------------------------
+
+def _paid_subquery():
+    """Subquery: vorzeichenbehaftete Summe der Zahlungen je Rechnung (als eigene
+    Aggregation, damit kein Join-Kreuzprodukt mit anderen Relationen entsteht)."""
+    return Subquery(
+        Payment.objects.filter(invoice_id=OuterRef("pk"))
+        .values("invoice_id")
+        .annotate(
+            s=Sum(
+                Case(
+                    When(payment_type__in=_POS, then=F("amount")),
+                    When(payment_type__in=_NEG, then=-F("amount")),
+                    default=Value(0),
+                    output_field=DecimalField(max_digits=15, decimal_places=2),
+                )
+            )
+        )
+        .values("s"),
+        output_field=DecimalField(max_digits=15, decimal_places=2),
+    )
+
+
+def _level_subquery():
+    return Subquery(
+        DunningNotice.objects.filter(invoice_id=OuterRef("pk"))
+        .values("invoice_id")
+        .annotate(m=Max("level"))
+        .values("m")
+    )
+
+
+def _payment_status(paid: Decimal, gross: Decimal) -> str:
+    if paid <= _ZERO:
+        return "OFFEN"
+    if paid < gross:
+        return "TEILZAHLUNG"
+    if paid == gross:
+        return "BEZAHLT"
+    return "UEBERZAHLT"
+
+
+def _debtor_name(invoice):
+    """Primärer Rechnungsschuldner (INVOICE_DEBTOR) als Anzeige, sonst None."""
+    debtor = None
+    for p in invoice.parties.all():
+        if p.role == "INVOICE_DEBTOR":
+            debtor = p
+            if p.is_primary:
+                break
+    return debtor.party.display_name if debtor else None
+
+
+# --- Schemas ---------------------------------------------------------------
+
+class OpenItemOut(Schema):
+    id: UUID
+    invoice_number: str | None = None
+    invoice_type: str
+    status: str
+    debtor: str | None = None
+    invoice_date: date | None = None
+    due_date: date | None = None
+    gross_total: Decimal | None = None
+    paid_total: Decimal
+    open_amount: Decimal
+    payment_status: str
+    is_overdue: bool
+    dunning_level: int | None = None
+
+
+class OpenItemListOut(Schema):
+    items: list[OpenItemOut]
+    total: int
+    page: int
+    page_size: int
+
+
+class PaymentOut(Schema):
+    payment_type: str
+    amount: Decimal
+    currency: str
+    paid_at: date
+    import_source: str
+
+
+class DunningNoticeOut(Schema):
+    level: int
+    label: str
+    issued_at: date
+    note: str | None = None
+    created_by: str | None = None
+
+
+class InvoiceRefOut(Schema):
+    id: UUID
+    property_name: str
+    project_name: str | None = None
+    work_order_number: str | None = None
+
+
+class OpenItemDetailOut(OpenItemOut):
+    currency: str
+    net_total: Decimal | None = None
+    tax_total: Decimal | None = None
+    reference: InvoiceRefOut
+    payments: list[PaymentOut]
+    dunning: list[DunningNoticeOut]
+
+
+class DunningRowOut(Schema):
+    id: UUID
+    invoice_number: str | None = None
+    debtor: str | None = None
+    due_date: date | None = None
+    gross_total: Decimal | None = None
+    open_amount: Decimal
+    dunning_level: int | None = None
+    last_issued_at: date | None = None
+    days_overdue: int | None = None
+
+
+class DunningListOut(Schema):
+    items: list[DunningRowOut]
+    levels: list[dict]
+
+
+class OpenItemFilter(Schema):
+    q: str | None = None
+    payment_status: str | None = None
+    overdue: bool | None = None
+    invoice_type: str | None = None
+
+
+# --- Mapper ----------------------------------------------------------------
+
+def _open_item_out(inv, today):
+    gross = inv.gross_total or _ZERO
+    paid = inv.paid_total if inv.paid_total is not None else _ZERO
+    open_amount = gross - paid
+    status = _payment_status(paid, gross)
+    is_overdue = bool(
+        inv.due_date and inv.due_date < today and open_amount > _ZERO
+    )
+    return OpenItemOut(
+        id=inv.id,
+        invoice_number=inv.invoice_number,
+        invoice_type=inv.invoice_type,
+        status=inv.status,
+        debtor=_debtor_name(inv),
+        invoice_date=inv.invoice_date,
+        due_date=inv.due_date,
+        gross_total=inv.gross_total,
+        paid_total=paid,
+        open_amount=open_amount,
+        payment_status=status,
+        is_overdue=is_overdue,
+        dunning_level=inv.dunning_level,
+    )
+
+
+# --- Lesende Endpoints (Dev-Phase ohne Auth) -------------------------------
+
+@router.get("/invoices", response=OpenItemListOut)
+def list_open_items(
+    request,
+    filters: OpenItemFilter = Query(...),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=100),
+):
+    """Offene Posten: veröffentlichte Rechnungen mit abgeleitetem Zahlungsstatus
+    und offenem Betrag. Filter: Zahlungsstatus, überfällig, Belegart, Suche
+    (Rechnungsnummer)."""
+    if filters.payment_status and filters.payment_status not in PAYMENT_STATUSES:
+        raise HttpError(422, f"Unbekannter payment_status '{filters.payment_status}'.")
+
+    today = date.today()
+    qs = (
+        Invoice.objects.filter(status="VEROEFFENTLICHT")
+        .annotate(
+            paid_total=Coalesce(
+                _paid_subquery(),
+                Value(_ZERO, output_field=DecimalField(max_digits=15, decimal_places=2)),
+            ),
+            dunning_level=_level_subquery(),
+        )
+        .prefetch_related("parties__party")
+    )
+    if filters.q:
+        qs = qs.filter(invoice_number__icontains=filters.q.strip())
+    if filters.invoice_type:
+        qs = qs.filter(invoice_type=filters.invoice_type)
+    if filters.overdue:
+        qs = qs.filter(
+            due_date__lt=today, gross_total__gt=F("paid_total")
+        )
+    qs = qs.order_by(F("due_date").asc(nulls_last=True), "-created_at", "id")
+
+    start = (page - 1) * page_size
+    if filters.payment_status:
+        # Der Zahlungsstatus ist abgeleitet (nicht in SQL filterbar) → alle mappen,
+        # in Python filtern und erst dann paginieren. Nur dieser Zweig materialisiert
+        # die volle Ergebnismenge.
+        items = [
+            it
+            for it in (_open_item_out(inv, today) for inv in qs)
+            if it.payment_status == filters.payment_status
+        ]
+        total = len(items)
+        window = items[start:start + page_size]
+    else:
+        total = qs.count()
+        window = [_open_item_out(inv, today) for inv in qs[start:start + page_size]]
+    return OpenItemListOut(
+        items=window, total=total, page=page, page_size=page_size
+    )
+
+
+@router.get("/invoices/{invoice_id}", response=OpenItemDetailOut)
+def get_open_item(request, invoice_id: UUID):
+    """Detail eines offenen Postens inkl. Zahlungen und Mahnverlauf."""
+    today = date.today()
+    inv = (
+        Invoice.objects.filter(id=invoice_id, status="VEROEFFENTLICHT")
+        .annotate(
+            paid_total=Coalesce(
+                _paid_subquery(),
+                Value(_ZERO, output_field=DecimalField(max_digits=15, decimal_places=2)),
+            ),
+            dunning_level=_level_subquery(),
+        )
+        .select_related("property__address", "project", "work_order")
+        .prefetch_related("parties__party")
+        .first()
+    )
+    if inv is None:
+        raise HttpError(404, "Veröffentlichte Rechnung nicht gefunden.")
+
+    payments = [
+        PaymentOut(
+            payment_type=p.payment_type,
+            amount=p.amount,
+            currency=p.currency,
+            paid_at=p.paid_at,
+            import_source=p.import_source,
+        )
+        for p in Payment.objects.filter(invoice_id=inv.id).order_by("paid_at", "imported_at")
+    ]
+    notices = [
+        DunningNoticeOut(
+            level=n.level_id,
+            label=n.level.label,
+            issued_at=n.issued_at,
+            note=n.note,
+            created_by=n.created_by.display_name if n.created_by_id else None,
+        )
+        for n in DunningNotice.objects.filter(invoice_id=inv.id)
+        .select_related("level", "created_by")
+        .order_by("level")
+    ]
+
+    base = _open_item_out(inv, today)
+    reference = InvoiceRefOut(
+        id=inv.id,
+        property_name=f"{inv.property.name} · {inv.property.address.city}",
+        project_name=inv.project.name if inv.project_id else None,
+        work_order_number=inv.work_order.order_number if inv.work_order_id else None,
+    )
+    return OpenItemDetailOut(
+        **base.model_dump(),
+        currency=inv.currency,
+        net_total=inv.net_total,
+        tax_total=inv.tax_total,
+        reference=reference,
+        payments=payments,
+        dunning=notices,
+    )
+
+
+@router.get("/dunning", response=DunningListOut)
+def list_dunning(request, level: int | None = Query(None)):
+    """Mahnliste: veröffentlichte Rechnungen, die überfällig mit offenem Betrag
+    sind oder bereits gemahnt wurden. Optional nach aktueller Mahnstufe gefiltert
+    (level=0 → überfällig, aber noch ungemahnt)."""
+    today = date.today()
+    qs = (
+        Invoice.objects.filter(status="VEROEFFENTLICHT")
+        .annotate(
+            paid_total=Coalesce(
+                _paid_subquery(),
+                Value(_ZERO, output_field=DecimalField(max_digits=15, decimal_places=2)),
+            ),
+            dunning_level=_level_subquery(),
+        )
+        .filter(
+            Q(due_date__lt=today, gross_total__gt=F("paid_total"))
+            | Q(dunning_level__isnull=False)
+        )
+        .prefetch_related("parties__party")
+        .order_by(F("due_date").asc(nulls_last=True), "id")
+    )
+
+    last_issued = {
+        row["invoice_id"]: row["m"]
+        for row in DunningNotice.objects.filter(invoice_id__in=[i.id for i in qs])
+        .values("invoice_id")
+        .annotate(m=Max("issued_at"))
+    }
+
+    items = []
+    for inv in qs:
+        cur = inv.dunning_level or 0
+        if level is not None and cur != level:
+            continue
+        gross = inv.gross_total or _ZERO
+        paid = inv.paid_total or _ZERO
+        days_overdue = (today - inv.due_date).days if inv.due_date else None
+        items.append(
+            DunningRowOut(
+                id=inv.id,
+                invoice_number=inv.invoice_number,
+                debtor=_debtor_name(inv),
+                due_date=inv.due_date,
+                gross_total=inv.gross_total,
+                open_amount=gross - paid,
+                dunning_level=inv.dunning_level,
+                last_issued_at=last_issued.get(inv.id),
+                days_overdue=days_overdue,
+            )
+        )
+
+    levels = [
+        {"level": lv.level, "label": lv.label, "days_after_due": lv.days_after_due}
+        for lv in DunningLevel.objects.order_by("level")
+    ]
+    return DunningListOut(items=items, levels=levels)

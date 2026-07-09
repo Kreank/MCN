@@ -869,6 +869,103 @@ class InvoiceLine(models.Model):
         return f"{self.position_number}. {self.description}"
 
 
+class Payment(models.Model):
+    """invoicing.payment — Zahlungseingang zu einer Rechnung (Migration 0025).
+
+    Append-only (UPDATE/DELETE per Trigger gesperrt); Zahlung nur auf eine
+    veröffentlichte Rechnung (B-23). Kein gespeicherter Zahlungsstatus — er wird
+    aus der vorzeichenbehafteten Summe der Zahlungen abgeleitet (Konvention im
+    Service). Ein „Storno" ist eine Gegenbuchung payment_type='STORNO_BUCHUNG',
+    keine physische Löschung. UNIQUE(import_source, external_reference) macht den
+    Rückimport idempotent; manuelle Erfassung nutzt import_source='MANUAL' mit
+    synthetischer Referenz.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    invoice = models.ForeignKey(
+        Invoice, models.DO_NOTHING, db_column="invoice_id", related_name="payments"
+    )
+    # ZAHLUNG|TEILZAHLUNG|UEBERZAHLUNG|RUECKERSTATTUNG|STORNO_BUCHUNG
+    payment_type = models.TextField()
+    amount = models.DecimalField(max_digits=15, decimal_places=2)
+    currency = models.CharField(max_length=3, db_default="EUR")
+    paid_at = models.DateField()
+    import_source = models.TextField()
+    external_reference = models.TextField()
+    imported_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'invoicing"."payment'
+
+    def __str__(self):
+        return f"{self.payment_type} {self.amount} {self.currency}"
+
+
+class DunningLevel(models.Model):
+    """invoicing.dunning_level — Mahnstufen-Stammdaten (Migration 0025).
+
+    Primärschlüssel ist die Stufennummer selbst. Geseedet sind 3 Stufen
+    (Zahlungserinnerung, Mahnung 1/2); fee bleibt NULL (STB-Vorbehalt B-22). Der
+    Hero-Vollausbau auf 6 Stufen steht noch aus.
+    """
+
+    level = models.IntegerField(primary_key=True)
+    label = models.TextField()
+    days_after_due = models.IntegerField()
+    fee = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+    interest_note = models.TextField(null=True, blank=True)
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'invoicing"."dunning_level'
+
+    def __str__(self):
+        return f"{self.level}. {self.label}"
+
+
+class DunningNotice(models.Model):
+    """invoicing.dunning_notice — erzeugte Mahnung/Zahlungserinnerung (Migration 0025).
+
+    Append-only; je Rechnung ist jede Stufe nur einmal möglich (UNIQUE) und die
+    Stufen müssen lückenlos aufsteigen. Die DB erzwingt: veröffentlichte, zum
+    issued_at bereits fällige Rechnung; nächste Stufe = max+1. Das Mahndokument
+    (content.document) ist optional — eine Mahnung entsteht auch ohne PDF.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    invoice = models.ForeignKey(
+        Invoice,
+        models.DO_NOTHING,
+        db_column="invoice_id",
+        related_name="dunning_notices",
+    )
+    level = models.ForeignKey(
+        DunningLevel,
+        models.DO_NOTHING,
+        db_column="level",
+        related_name="notices",
+    )
+    issued_at = models.DateField()
+    document_id = models.UUIDField(null=True, blank=True)
+    note = models.TextField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        AppUser,
+        models.DO_NOTHING,
+        db_column="created_by",
+        related_name="dunning_notices",
+    )
+    created_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'invoicing"."dunning_notice'
+
+    def __str__(self):
+        return f"Mahnstufe {self.level_id} @ {self.invoice_id}"
+
+
 class Article(models.Model):
     """pricing.article — Artikel/Material (Migration 0028, list_price aus 0033).
 

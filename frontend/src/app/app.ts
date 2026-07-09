@@ -31,7 +31,8 @@ export class App {
     { path: '/planung', label: 'Planung', mark: '50' },
     { path: '/aufgaben', label: 'Aufgaben', mark: '60' },
     { path: '/artikel', label: 'Artikel', mark: '70' },
-    { path: '/auswertungen', label: 'Auswertungen', mark: '80' },
+    { path: '/buchhaltung', label: 'Buchhaltung', mark: '80' },
+    { path: '/auswertungen', label: 'Auswertungen', mark: '90' },
   ];
 
   /** Index des aktiven Navigationspunkts — steuert die Bemaszungsmarke. */
