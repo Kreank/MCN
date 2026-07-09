@@ -6,77 +6,87 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 > TL;DR: MCN ist ein KI-first CRM (Nachfolger des Hero-CRM) für Handwerk/
 > Gebäudeservice. DB ist database-first PostgreSQL (Regeln in Triggern). Backend
 > Django 5 + django-ninja. Frontend Angular „Leitstand". Es wird in **vertikalen
-> Slices** gebaut (DB→Service→API→UI→Verifikation→Review). Aktuell **~16 Bereiche
-> read-only live** (Kontakte, Liegenschaften, Projekte, Dokumente, Planung inkl.
-> Plantafel/Kalender, Wartung, Aufgaben, **Mitarbeiter/HR**, Artikel inkl.
-> VK-Kalkulation, Buchhaltung inkl. Mahnwesen + Storno/Korrektur + Beleg-PDF,
-> Auswertungen). **Auth/Login + Rechtematrix stehen** (eigenes Login, kein SSO);
-> die gesamte API ist anmeldepflichtig. **500 Backend-Tests grün**,
-> db_core-Migrationen bis **0022**, accounts bis **0002**.
+> Slices** gebaut (DB→Service→API→UI→Verifikation→Review). Aktuell **~18 Bereiche
+> live und bedienbar** (Kontakte, Liegenschaften, Projekte, Dokumente, Planung
+> inkl. Plantafel/Kalender/Ressourcen, Wartung, Aufgaben, Mitarbeiter/HR, Artikel
+> inkl. VK-Kalkulation, Buchhaltung inkl. Mahnwesen + Storno/Korrektur +
+> Beleg-PDF, Auswertungen, Einstellungen, Mein Profil).
+> **Auth/Login + Rechtematrix stehen** (eigenes Login, kein SSO); die gesamte API
+> ist anmeldepflichtig. **Der Schreibpfad ist verdrahtet**: „+ Neu", Statusaktionen
+> und Freigaben laufen aus dem UI durch Rechte, Statusautomaten und DB-Trigger.
+> **808 Backend-Tests grün**, db_core-Migrationen bis **0027**, accounts bis **0002**.
 
 ---
 
-## 0. Nächste Session — Empfehlung & offene Entscheidung (ZUERST LESEN)
+## 0. Nächste Session — Stand & offene Entscheidungen (ZUERST LESEN)
 
-Der breite **read-only-Ausbau ist abgeschlossen**, **HR-Schema (0019) steht**, und
-**Auth/Login + Rechtematrix sind gebaut**. Für praktisch jede Aktion existiert ein
-**getesteter Schreib-Service** (create/status/publish/storno/zahlung/mahnung/
-wartung-trigger/kalkulation/personal …) — die meisten sind aber **noch nicht im UI
-verdrahtet**. Genau das ist jetzt der größte Hebel.
+**Das System ist bedienbar.** Auth, Rechtematrix und der komplette Schreibpfad
+stehen: Aus dem UI laufen „+ Neu", Statusaktionen, Freigaben, Zahlungen und
+Stornos durch Rechteprüfung, Service-Schicht, Statusautomaten und DB-Trigger.
+Alle Fachschemata der Roadmap sind gebaut außer **Belegerfassung** und
+**HR-Steuer/Bank** — beide brauchen eine Entscheidung (siehe unten).
 
-**A) Schreib-UIs — „+ Neu", Bearbeiten, Statusaktionen. KEIN neues Schema.**
-- *Was:* Formulare und Aktions-Buttons an die vorhandenen, getesteten
-  Schreib-Endpunkte hängen. Auth, CSRF, Rechte und das 403-Handling im Frontend
-  stehen bereits — `authService.darf(modul, aktion)` blendet aus, was der Server
-  ohnehin ablehnen würde.
-- *Warum zuerst:* verwandelt das read-only-Gerüst in ein **bedienbares System**.
-  Jede Aktion ist ein kleiner, unabhängiger Slice. Größe: **L**, aber gut teilbar.
-- *Reihenfolge-Vorschlag:* Aufgaben (anlegen/erledigen) → Abwesenheiten
-  (einreichen/genehmigen) → Kontakte/Liegenschaften anlegen → Belege
-  (anlegen/veröffentlichen/versenden) → Zahlungen/Mahnungen (Endpunkte fehlen
-  noch, nur Services!) → Plantafel-Drag&Drop.
+### Drei Entscheidungen, die nur der User treffen kann
 
-**A2) Offene Enden aus dem Auth-Slice** (klein, aber sicherheitsrelevant):
+**E1) Belegerfassung / Eingangsrechnungen.** Zentrale Entwurfsfrage: eigene
+`receipt`-Tabelle **oder** eine gerichtete `invoice` (Eingang/Ausgang per Flag)?
+Dazu fehlen `ledger_account` und `cost_center` komplett. GoBD-relevant.
+Feldquelle: `docs/roadmap/09-buchhaltung.md`.
+
+**E2) HR-Steuer- und Bankdaten.** Aus Migration 0019 bewusst ausgeklammert.
+Besondere Kategorie nach DSGVO Art. 9/32. Offen: Verschlüsselung at rest
+(pgcrypto?), Schlüsselverwaltung — und die Durchsetzung des Vier-Augen-Prinzips.
+`security.four_eyes_action` kennt die Aktion 'BANKDATEN', aber **einen
+Vier-Augen-Flow gibt es nicht**. Dasselbe gilt schon jetzt für die Firmen-IBAN
+aus Migration 0023.
+
+**E3) Beleg-PDF-Archivierung (MinIO).** Container `mitra-crm-minio` existiert,
+läuft aber nicht; im Backend ist **kein** S3-/MinIO-Client vorhanden (weder
+boto3 noch minio). Das Schema ist fertig: `content.file` + `content.file_link`
+mit dem Einmaligkeits-Index aus Migration 0032. Braucht eine
+Infrastruktur-Entscheidung.
+
+### Ableitbare Reste (kein Entscheidungsbedarf, einfach bauen)
+
+- **Vier-Augen-Flow** (`security.four_eyes_action`): existiert als Stammdaten,
+  wird nirgends durchgesetzt. Betrifft Bankdaten, Rechnungskorrektur,
+  Dubletten-Merge, Massenexport, KI-Massenaktionen.
+- **Rechtematrix-Pflege-UI**: `security.role_permission` ist nur per SQL
+  änderbar. Der Bereich „Einstellungen" (Nav-Mark 95) ist der natürliche Ort.
+- **Weitere Auswertungs-Dashboards** (Projekte, Artikel, Mitarbeitende).
+  Achtung: **Marge** braucht die EK-Ebene und ist aus Belegzeilen nicht
+  ableitbar (ggf. über den `billing_snapshot`).
+- **Plantafel Drag & Drop** (Umplanen ruft `POST /planung/einsaetze/{id}/schedule`,
+  der Endpunkt existiert).
+- **DATANORM-Import** (Artikelstamm) und **DATEV/Lexware-Export**.
+- **Wartungs-Fälligkeits-Scheduler** (Cron/Worker; heute nur manuell auslösbar).
+- **„Passwort vergessen"**: braucht Mailversand. Hero-Fakt: Einmal-Passwort
+  12 Stunden gültig. Passwort **ändern** existiert bereits unter `/profil`.
+- **Mailversand** insgesamt — dazu gehört auch der Mailserver-OAuth aus
+  `docs/roadmap/14`. Das ist **Mailversand, nicht Login** (siehe Abschnitt 2b).
+
+### Bewusst offene Invarianten (nicht versehentlich „reparieren")
+
 - **`row_scope='EIGENE'` ist nur für Aufgaben und Einsätze umgesetzt.** Überall
-  sonst gilt **fail-closed**: `require()` wirft 403, wenn die Rolle nur eigene
-  Zeilen sehen darf. Folge: ein MONTEUR sieht Projekte, Aufträge, Wartung und
-  Plantafel gar nicht. Wer das ändern will, setzt EIGENE dort echt um und stellt
-  den Endpunkt auf `require_scoped` um — **niemals** einfach auf `require`
-  zurückfallen, das wäre ein stiller Datenleak.
-- Kein „Passwort vergessen"-Flow (braucht Mailversand). Kein Passwort-Ändern-UI.
-  Hero-Fakt für später: Einmal-Passwort 12 Stunden gültig.
-- Keine Rechtematrix-Pflege-UI (`security.role_permission` ist Stammdaten;
-  Änderungen derzeit nur per SQL/Migration). Siehe `docs/roadmap/13`.
-- Zwei Sub-Ressourcen zeigen 403 noch als generischen Fehler:
-  `projekt-detail` (Tabs Aufträge/Aufgaben/Logbuch/Checklisten) und
-  `artikel-detail` (VK-Kalkulation). Muster zum Nachziehen:
-  `shared/http-fehler.ts` + `shared/kein-zugriff`.
-
-**B) Verbleibende Schema-Bereiche (read-only, Hand-SQL-Migrationen).**
-Muster: `migrations/0019_hr_personal.py` bzw. `0016_maintenance_wartung.py`
-(RunSQL + Schutzstandard). Jede braucht eine kurze fachliche Feld-Entscheidung:
-- **Firmeneinstellungen** (`company_profile`/branch/gewerk/email_template fehlen) —
-  klein & wertvoll: ersetzt u.a. den Aussteller-Platzhalter im Beleg-PDF.
-- **HR-Nachzügler** (aus 0019 bewusst ausgeklammert, siehe Abschnitt 8):
-  Steuer-/Bankdaten (DSGVO, Vier-Augen), Zeitkategorien/Pausenregeln/
-  Stundenausgleich, Niederlassung (`security.branch`).
-- **Belegerfassung/Eingangsrechnungen** (eigene `receipt`-Tabelle vs. gerichtete
-  `invoice` — entscheiden) + `ledger_account`/`cost_center` (Buchhaltung-Ausbau).
-- **Ressourcen + Terminkategorien** (Planung) — schaltet die Ressourcen-Bahnen der
-  Plantafel und die Kategorie-Farben frei.
-
-**C) Kleinere Reste (geringes Risiko, schnelle Slices).**
-- Weitere Auswertungs-Dashboards (Projekte/Artikel/Mitarbeitende) — reine Read-Views.
-- Beleg-PDF-**Archivierung** (MinIO + `content.document`/`file_link`,
-  Einmaligkeits-Index 0032) — braucht MinIO-Anbindung (Container `mitra-crm-minio`).
-- Plantafel **Drag&Drop** (Umplanen = Schreibaktion → kommt mit Auth), Mahnstufen
-  3→6 (`dunning_level` seedet nur 3), DATANORM-Import-Wizard (Schreib-Flow).
-
-**Empfehlung des bisherigen Standes:** **A (Auth) als nächstes** — es ist der
-einzige Schritt, der das viele bereits Gebaute *nutzbar* macht, und braucht kein
-Schema. Falls doch erst Schema: **Firmeneinstellungen** (kleinster Slice).
-Details/Gotchas je Bereich in `docs/roadmap/09/11/12/13/14` + Abschnitt 8 unten.
-
+  sonst gilt **fail-closed**: `require()` wirft 403. Ein MONTEUR sieht Projekte,
+  Aufträge, Wartung und Plantafel deshalb gar nicht. Wer das ändern will, setzt
+  EIGENE dort **echt** um und stellt auf `require_scoped` — niemals einfach auf
+  `require` zurückfallen, das wäre ein stiller Datenleak. Zwei Reviews haben hier
+  je ein Loch gefunden (`create_task`, `create_service_case`); beide sind
+  geschlossen, das Muster bleibt gefährlich.
+- **Ressourcen-Doppelbelegung ist nicht physisch verhindert.** Der maßgebliche
+  Zeitraum liegt auf `service_job` und ist dort nullable; ein EXCLUDE käme nur
+  mit Denormalisierung plus Synchron-Trigger zustande und griffe an NULL-Rändern
+  still nicht. Der Service warnt, blockiert aber nicht. Die Roadmap führt
+  Doppelbuchung ausdrücklich als weich.
+- **Mahnstufen:** `fee`/`interest_note` bleiben NULL (Beschluss B-22,
+  Steuerberater-Vorbehalt). Aktive Stufen müssen einen lückenlosen Präfix bilden,
+  sonst könnte der DB-Trigger sie nie ausstellen.
+- **Kein Feiertagskalender** — Abwesenheitstage zählen gesetzliche Feiertage als
+  Arbeitstage, wenn der Vertrag für den Wochentag ein Soll ausweist.
+- **Belegeditor rechnet keine Summen.** Exakte Rundung je Steuergruppe ist in
+  JavaScript-`number` nicht verlustfrei; der Server rechnet verbindlich. Nicht
+  „nachrüsten".
 ---
 
 ## 1. Sofort loslegen: Umgebung
@@ -174,21 +184,55 @@ Anmeldung. Nicht verwechseln.
   `api/permissions.py` setzt durch. Rollen **addieren** Rechte; beim `row_scope`
   gewinnt die weiteste Sicht (`ALLE`).
 - **Drei Torfunktionen — fail-closed als Grundhaltung:**
-  - `require(request, modul, aktion)` — Regelfall. Wirft **403 auch dann**, wenn
+  - `require(request, modul, aktion)` — **Regelfall.** Wirft 403 auch dann, wenn
     die Rolle nur `EIGENE` sehen darf, der Endpunkt das aber nicht umsetzt.
     `EIGENE` wird **nie** stillschweigend zu `ALLE`.
   - `require_scoped(...)` — nur für Endpunkte, die wirklich auf eigene Zeilen
-    filtern (aktuell: Aufgaben, Einsätze). Wer das nutzt, **muss** filtern.
-  - `require_create(...)` — für ANLEGEN; dort ist `EIGENE` bedeutungslos.
+    filtern (aktuell: Aufgaben, Einsätze inkl. Zeit-/Materialbuchung). Wer das
+    nutzt, **muss** filtern, sonst ist die Begrenzung wirkungslos.
+  - `require_create(...)` — für ANLEGEN, **aber nur bei Zeilen ohne setzbares
+    Owner-Feld UND ohne fremdes Elternobjekt.**
+- **Faustregel (aus zwei Review-Befunden gelernt):** Hängt die neue Zeile an einem
+  Elternobjekt, das der Akteur womöglich nicht sehen darf, oder trägt sie ein Feld,
+  mit dem er sie jemand anderem zuordnen kann → **`require`** (bzw.
+  `require_scoped` und den Akteur als Owner erzwingen). Über `create_task` ließ
+  sich sonst eine Aufgabe fremd zuweisen, über `create_service_case` ein
+  nummerierter Vorgang an einem fremden Projekt anlegen.
 - **Fremde Zeilen → 404, nicht 403** (Detail/Schreibzugriff), damit ihre Existenz
   nicht verraten wird.
 - **Zwei Ebenen nicht verwechseln:** Recht (403, `permissions.py`) vs. fachliches
   Tor (422, Service + DB-Trigger). Wer FREIGEBEN darf, darf trotzdem keinen
   Auftrag freigeben, dem die Vorbedingungen fehlen.
+- **Payload-Fremdschlüssel vorab prüfen** (`services/_validation.py`:
+  `ensure_exists`, `ensure_all_exist`, `ensure_party_usable`) — sonst schlägt eine
+  unbekannte UUID als IntegrityError durch (500 statt 422).
 - **Frontend**: `core/auth.service.ts` (Signal + `darf()`), `auth.interceptor.ts`
   (`withCredentials`, `X-CSRFToken`, 401 → `/login`, 403 **nicht** umleiten),
   `auth.guard.ts` (`authGuard` + `darfGuard(modul, aktion)` je Route),
   `shared/http-fehler.ts` (403 → `kind:'forbidden'`), `shared/kein-zugriff`.
+
+## 2c. Schreib-UI-Bausteine (seit dem Schreibpfad-Slice)
+
+Vorher gab es kein Formular außer dem Login. Diese Bausteine tragen jetzt alle
+Bereiche — **nutze sie, baue nichts Eigenes**:
+
+| Baustein | Zweck |
+|---|---|
+| `shared/dialog` | native `<dialog>`-Hülle: Fokus-Trap, Fokus-Rückgabe, Escape/Backdrop abschaltbar, Scroll-Lock |
+| `shared/formular/feld` | ein Feld für Text/Textarea/Zahl/Datum/Select/Checkbox, mit Label, `aria-invalid`, `aria-describedby` |
+| `shared/formular/dezimal.ts` | deutsche Komma-Eingabe ⇄ API-Punkt-String. **Decimal bleibt String** |
+| `shared/formular/api-fehler.ts` | `apiFehlerZuweisen` — versteht beide 422-Formen (Pydantic-Feldfehler und Freitext aus `HttpError(422, str(exc))`) |
+| `shared/formular/referenz-wahl` | WAI-ARIA-Combobox mit Serversuche für Fremdschlüssel (statt roher UUID) |
+| `shared/bestaetigung` | Konsequenz-Text, optionales Pflicht-Begründungsfeld, „Bestätigen" ist nie der Standardfokus |
+
+Regeln, die überall gelten:
+- Aktion nur rendern, wenn `authService.darf(modul, aktion)` — der Server lehnt
+  sonst ohnehin mit 403 ab.
+- **Geld und Mengen sind Strings.** Nie `parseFloat`/`Number()` ins Datenmodell,
+  nur zur Anzeige. Der **Server rechnet Summen verbindlich** — der Belegeditor
+  zeigt bewusst keine eigene Summe.
+- Jede unumkehrbare Aktion (veröffentlichen, versenden, stornieren, archivieren,
+  austragen, kündigen, ablehnen) hinter `shared/bestaetigung`.
 
 ## 3. Architektur & eiserne Konventionen
 
@@ -294,13 +338,27 @@ Nav-Reihenfolge (Marks 00–60), alle committet, je Tests + Browser + Review:
 | Artikel (70) | Artikel + Leistungen (Stücklisten), Liste + Detail + **VK-Kalkulation** (Verkaufspreis-Formel je Artikel) | `/api/pricing`, `/articles/{id}/kalkulation` |
 | Buchhaltung (80) | **Offene Posten** + Detail-Mappe (Übersicht/Zahlungen/Mahnverlauf, **Storno-/Gutschrift-Referenzen**) + **Mahnwesen-Screen**. Services: Zahlung/Mahnung + **Storno/Rechnungskorrektur** (STORNO/GUTSCHRIFT, `POST …/cancel`,`/correction`) getestet | `/api/buchhaltung` |
 | Auswertungen (90) | Landing + **Umsatz-/Projektübersicht** (KPIs, Umsatzverlauf, Projekte nach Gewerk) | `/api/auswertungen/…` |
+| Einstellungen (95) | **Firmenprofil, Mahnstufen (6), Gewerke, Niederlassungen** (`company.*`, NEUES Schema 0023). Das Firmenprofil speist Aussteller und Fußzeile des Beleg-PDF | `/api/company`, `/api/buchhaltung/dunning-levels` |
+| Mein Profil | Anzeigename/E-Mail/Rollen read-only + **Passwort ändern** (Sitzung bleibt gültig) | `/api/auth/password` |
+
+**Der Schreibpfad ist verdrahtet.** In allen Bereichen gibt es „+ Neu",
+Statusaktionen, Freigaben; unumkehrbare Aktionen laufen über einen
+Bestätigungsdialog. Zusätzlich neu: Zahlung erfassen/stornieren, Mahnung
+erzeugen, Belegeditor mit Positionen, Einsatz-Zuweisung, Zeit-/Materialbuchung
+(auch für den Monteur auf eigenen Einsätzen), Ressourcen und Terminkategorien.
 
 Nav-Marks: Planung=50, Wartung=55 (bewusst nicht-rund, Service-Cluster),
-Aufgaben=60, Mitarbeiter=65, Artikel=70, Buchhaltung=80, Auswertungen=90.
+Aufgaben=60, Mitarbeiter=65, Artikel=70, Buchhaltung=80, Auswertungen=90,
+Einstellungen=95.
 
-Backend: **298 Tests grün**, db_core-Migrationen bis **0020** (0016 = Hand-SQL
-`maintenance`-Schema, 0019 = Hand-SQL `hr`-Schema; 0017/0018/0020 = State-only
-Models). Neue Dependency **fpdf2**
+Backend: **808 Tests grün**, db_core-Migrationen bis **0027**, accounts bis 0002.
+Hand-SQL-Fachschemata: 0016 `maintenance`, 0019 `hr`, 0023 `company`,
+0025 `resource` + `workflow.appointment_category`; 0021/0024 erweitern die
+Rechtematrix um die Module `hr` und `company`; 0025 baut die Mahnleiter auf sechs
+Stufen aus. **Achtung:** zwei Migrationen heißen `0025_*` (paralleler Bau); der
+Graph ist gültig (0026 führt beide Zweige zusammen, 0027 ist das einzige Leaf),
+aber `migrate db_core 0025` ist mehrdeutig — vollen Namen angeben.
+Neue Dependency **fpdf2**
 (Beleg-PDF). `seed_demo` deckt
 alle Bereiche ab (Kontakte, Liegenschaften, Projekte+Vorgänge, **durchgeschalteter
 Auftrag**, Aufgaben, Angebot [versendet], **veröffentlichte Rechnung**, Artikel,
