@@ -164,12 +164,13 @@ Nav-Reihenfolge (Marks 00–60), alle committet, je Tests + Browser + Review:
 | Planung (50) | **Einsätze** (`workflow.service_job`): Liste + Einsatz-Mappe (Übersicht, Zuweisungen, Zeiten & Material, Verlauf). Read-only; Einsatz-Write-Service existiert + getestet | `/api/planung/einsaetze` |
 | Aufgaben (60) | Liste + Statusaktionen; **neue Tabelle `workflow.task`** | `/api/workflow/tasks` |
 | Artikel (70) | Artikel + Leistungen (Stücklisten), Liste + Detail | `/api/pricing` |
-| Auswertungen (80) | Landing + **Umsatz-/Projektübersicht** (KPIs, Umsatzverlauf, Projekte nach Gewerk) | `/api/auswertungen/…` |
+| Buchhaltung (80) | **Offene Posten** (veröffentl. Rechnungen mit abgeleitetem Zahlungsstatus/offenem Betrag) + Detail-Mappe (Übersicht/Zahlungen/Mahnverlauf). Zahlungs-/Mahn-Service existiert + getestet | `/api/buchhaltung` |
+| Auswertungen (90) | Landing + **Umsatz-/Projektübersicht** (KPIs, Umsatzverlauf, Projekte nach Gewerk) | `/api/auswertungen/…` |
 
-Nav-Marks nach Einführung von „Planung" neu vergeben (Planung=50, Aufgaben=60,
-Artikel=70, Auswertungen=80).
+Nav-Marks nach „Planung"/„Buchhaltung" neu vergeben (Planung=50, Aufgaben=60,
+Artikel=70, Buchhaltung=80, Auswertungen=90).
 
-Backend: **172 Tests grün**, db_core-Migrationen bis **0014**. `seed_demo` deckt
+Backend: **192 Tests grün**, db_core-Migrationen bis **0015**. `seed_demo` deckt
 alle Bereiche ab (Kontakte, Liegenschaften, Projekte+Vorgänge, **durchgeschalteter
 Auftrag**, Aufgaben, Angebot [versendet], **veröffentlichte Rechnung**, Artikel,
 Cockpit).
@@ -212,13 +213,24 @@ Details je Sektion in `docs/roadmap/01..14`. DB-Befunde in
 — weitere Dashboards offen), ✔ Aufträge (`workflow.work_order`), ✔ Beleg-
 Veröffentlichung (invoice→VEROEFFENTLICHT / quote→VERSENDET, ohne PDF).
 
-**Erledigt** (diese Session): ✔ **Einsätze/Planung** (`workflow.service_job`):
-Models/Service/API + Liste + Einsatz-Mappe (read-only). Der Einsatz-Write-Service
-(`services/einsatz.py`: create/set_schedule/advance_status/assign_user/log_time/
-log_material) existiert und ist getestet, aber noch NICHT im UI verdrahtet (kommt
-mit Auth). **Offen für Planung:** Plantafel (Schwimmbahnen + Drag&Drop, XL-Neubau),
-Kalenderansicht, Terminkategorie- und Ressourcen-Schema (beide fehlen in der DB →
-neue Migration nötig, siehe `docs/roadmap/06-planung.md`).
+**Erledigt** (diese Session):
+- ✔ **Einsätze/Planung** (`workflow.service_job`): Models/Service/API + Liste +
+  Einsatz-Mappe (read-only). Write-Service `services/einsatz.py` (create/
+  set_schedule/advance_status/assign_user/log_time/log_material) getestet, noch
+  nicht im UI (kommt mit Auth). **Offen:** Plantafel (Schwimmbahnen + Drag&Drop,
+  XL), Kalender, Terminkategorie-/Ressourcen-Schema (fehlen in der DB →
+  Migration nötig, siehe `docs/roadmap/06-planung.md`).
+- ✔ **Buchhaltung** (`invoicing.payment/dunning_level/dunning_notice`, 0025):
+  Models/Service/API + Offene-Posten-Liste + Detail-Mappe (Übersicht/Zahlungen/
+  Mahnverlauf), read-only. Write-Service `services/buchhaltung.py` (record_payment/
+  reverse_payment/issue_dunning_notice) getestet. Zahlungsstatus/offener Betrag
+  sind **abgeleitet** (nicht gespeichert; Vorzeichenkonvention `PAYMENT_SIGN`).
+  **Offen:** Storno/Rechnungskorrektur-Flow (invoice_type STORNO/GUTSCHRIFT +
+  reference_invoice_id), Belegerfassung (Eingangsrechnungen, neues/erweitertes
+  Schema), Stammdaten-CRUD (ledger_account/cost_center fehlen), Mahnwesen-Screen
+  (Endpoint `/api/buchhaltung/dunning` existiert + getestet, aber noch kein UI),
+  Mahnstufen-Ausbau 3→6, DATEV/Lexware-Export. Details `docs/roadmap/09-buchhaltung.md`.
+  Mahnverlauf-Pausieren fehlt im DB-Schema.
 
 Empfohlene nächste Reihenfolge:
 
