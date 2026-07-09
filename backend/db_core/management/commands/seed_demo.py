@@ -16,8 +16,8 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
 from db_core.models import (
-    AppUser, Article, Assembly, DunningNotice, Invoice, Party, Payment, Project,
-    ProjectLog, Property, Quote, Task, WageGroup, WorkOrder,
+    AppUser, Article, Assembly, DunningNotice, Invoice, MaintenanceContract, Party,
+    Payment, Project, ProjectLog, Property, Quote, Task, WageGroup, WorkOrder,
 )
 from db_core.services import artikel as artikel_service
 from db_core.services import aufgabe as aufgabe_service
@@ -25,6 +25,7 @@ from db_core.services import auftrag as auftrag_service
 from db_core.services import beleg as beleg_service
 from db_core.services import buchhaltung as buchhaltung_service
 from db_core.services import einsatz as einsatz_service
+from db_core.services import wartung as wartung_service
 from db_core.services import identity as identity_service
 from db_core.services import projekt as projekt_service
 from db_core.services import property as property_service
@@ -694,6 +695,36 @@ class Command(BaseCommand):
                 )
                 angelegt += 1
                 self.stdout.write(f"Mahnstufe 1 erzeugt: {bh_inv.invoice_number}")
+
+        # Wartung: jährlicher Wartungsvertrag mit bereits fälliger erster Wartung;
+        # eine Auslösung erzeugt die Folge-Aufgabe und rückt die Fälligkeit vor.
+        # Idempotent je Liegenschaft.
+        wa_obj = Property.objects.filter(name="Geschäftshaus Rheinpassage").first()
+        wa_party = Party.objects.filter(display_name="Thomas Bergmann").first()
+        if (
+            wa_obj is not None
+            and not MaintenanceContract.objects.filter(property_id=wa_obj.id).exists()
+        ):
+            contract = wartung_service.create_contract(
+                actor.id, property_id=wa_obj.id,
+                name="Thermenwartung jährlich",
+                start_date=date(2026, 6, 1),
+                interval_kind="JAEHRLICH",
+                due_action="AUFGABE",
+                party_id=wa_party.id if wa_party else None,
+                lead_time_days=14,
+                notes="Jährliche Wartung der Gasthermen inkl. Abgasmessung.",
+            )
+            wartung_service.trigger_action(
+                actor.id, contract_id=contract.id,
+                note="Erste Wartung fällig — Folge-Aufgabe erzeugt (Demo).",
+            )
+            contract.refresh_from_db()
+            angelegt += 1
+            self.stdout.write(
+                f"Wartungsvertrag angelegt: {contract.contract_number} "
+                f"(nächste Fälligkeit {contract.next_due_date})"
+            )
 
         self.stdout.write(
             self.style.SUCCESS(

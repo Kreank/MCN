@@ -1,0 +1,98 @@
+@switch (state().kind) {
+  @case ('loading') {
+    <p class="lade-hinweis" role="status">Wartungsvertrag wird geladen …</p>
+  }
+
+  @case ('error') {
+    <div class="note note--error" role="alert">
+      <h2 class="note__titel">Wartungsvertrag konnte nicht geladen werden</h2>
+      <p class="note__text">Die Schnittstelle war nicht erreichbar oder der Vertrag existiert nicht.</p>
+      <div class="note__aktionen">
+        <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
+        <a class="btn" routerLink="/wartung">Zu den Wartungsverträgen</a>
+      </div>
+    </div>
+  }
+
+  @case ('ready') {
+    <app-mappe
+      kicker="Wartungsvertrag {{ daten()!.contract_number }}"
+      [titel]="daten()!.name"
+      backLink="/wartung"
+      backLabel="Wartung"
+      [tabs]="tabs"
+      [(aktiv)]="tab"
+    >
+      @if (daten()!.is_due) {
+        <span mappe-kopf class="stamp stamp--warn">Fällig</span>
+      }
+      <span mappe-kopf class="stamp {{ statusClass(daten()!.status) }}">{{ statusLabel(daten()!.status) }}</span>
+
+      @if (tab() === 'details') {
+        <dl class="feld-raster">
+          <div class="feld"><dt class="feld__label">Vertragsnummer</dt><dd class="feld__wert">{{ daten()!.contract_number }}</dd></div>
+          <div class="feld"><dt class="feld__label">Status</dt><dd class="feld__wert">{{ statusLabel(daten()!.status) }}</dd></div>
+          <div class="feld"><dt class="feld__label">Intervall</dt><dd class="feld__wert">{{ intervalLabel(daten()!.interval_kind, daten()!.interval_days) }}</dd></div>
+          <div class="feld"><dt class="feld__label">Start</dt><dd class="feld__wert">{{ d(daten()!.start_date) }}</dd></div>
+          <div class="feld feld--stark"><dt class="feld__label">Nächste Fälligkeit</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.next_due_date">{{ d(daten()!.next_due_date) }}</dd></div>
+          @if (daten()!.fixed_date) {
+            <div class="feld"><dt class="feld__label">Festes Datum</dt><dd class="feld__wert">{{ d(daten()!.fixed_date) }}</dd></div>
+          }
+        </dl>
+
+        <div class="bezug">
+          <div class="bezug__item bezug__item--static">
+            <span class="bezug__label">Liegenschaft</span>
+            <span class="bezug__wert">{{ daten()!.property.name }} · {{ daten()!.property.city }}</span>
+          </div>
+          @if (daten()!.customer; as cust) {
+            <div class="bezug__item bezug__item--static">
+              <span class="bezug__label">Kunde</span>
+              <span class="bezug__wert">{{ cust }}</span>
+            </div>
+          }
+          @if (daten()!.project_name; as pn) {
+            <div class="bezug__item bezug__item--static">
+              <span class="bezug__label">Projekt</span>
+              <span class="bezug__wert">{{ pn }}</span>
+            </div>
+          }
+        </div>
+      }
+
+      @if (tab() === 'erinnerung') {
+        <dl class="feld-raster">
+          <div class="feld"><dt class="feld__label">Fälligkeits-Aktion</dt><dd class="feld__wert">{{ actionLabel(daten()!.due_action) }}</dd></div>
+          <div class="feld"><dt class="feld__label">Vorlauf (Erinnerung)</dt><dd class="feld__wert" [class.feld__wert--leer]="daten()!.lead_time_days === null">{{ daten()!.lead_time_days !== null ? daten()!.lead_time_days + ' Tage' : '—' }}</dd></div>
+        </dl>
+        @if (daten()!.notes) {
+          <p class="beschreibung">{{ daten()!.notes }}</p>
+        }
+      }
+
+      @if (tab() === 'verlauf') {
+        @if (daten()!.events.length === 0) {
+          <div class="tab-platzhalter"><p>Für diesen Vertrag wurde noch keine Fälligkeits-Aktion ausgelöst.</p></div>
+        } @else {
+          <ol class="verlauf">
+            @for (e of daten()!.events; track $index) {
+              <li class="verlauf__eintrag">
+                <span class="verlauf__punkt" aria-hidden="true"></span>
+                <div class="verlauf__inhalt">
+                  <span class="verlauf__wechsel">
+                    <strong>{{ actionLabel(e.action) }}</strong>
+                    @if (e.due_date) { · fällig {{ d(e.due_date) }} }
+                  </span>
+                  <span class="verlauf__meta">
+                    {{ d(e.occurred_at) }}@if (e.triggered_by) { · {{ e.triggered_by }} }@if (e.result_object_type) { · {{ e.result_object_type }} }
+                  </span>
+                  @if (e.note) { <span class="verlauf__grund">„{{ e.note }}"</span> }
+                </div>
+              </li>
+            }
+          </ol>
+        }
+      }
+    </app-mappe>
+  }
+}

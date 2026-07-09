@@ -29,6 +29,9 @@ export class App {
     { path: '/projekte', label: 'Projekte', mark: '30' },
     { path: '/dokumente', label: 'Dokumente', mark: '40' },
     { path: '/planung', label: 'Planung', mark: '50' },
+    // Wartung liegt fachlich beim Service-/Einsatz-Cluster (wiederkehrende
+    // Einsätze) → Zwischenschritt 55 statt Renummerierung der Folgepunkte.
+    { path: '/wartung', label: 'Wartung', mark: '55' },
     { path: '/aufgaben', label: 'Aufgaben', mark: '60' },
     { path: '/artikel', label: 'Artikel', mark: '70' },
     { path: '/buchhaltung', label: 'Buchhaltung', mark: '80' },

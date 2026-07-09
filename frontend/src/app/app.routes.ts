@@ -90,6 +90,18 @@ export const routes: Routes = [
     loadComponent: () => import('./features/aufgaben/aufgaben').then((m) => m.Aufgaben),
   },
   {
+    path: 'wartung',
+    pathMatch: 'full',
+    title: 'Wartung — MCN Leitstand',
+    loadComponent: () => import('./features/wartung/wartung').then((m) => m.Wartung),
+  },
+  {
+    path: 'wartung/:id',
+    title: 'Wartungsvertrag — MCN Leitstand',
+    loadComponent: () =>
+      import('./features/wartung-detail/wartung-detail').then((m) => m.WartungDetail),
+  },
+  {
     path: 'buchhaltung',
     pathMatch: 'full',
     title: 'Buchhaltung — MCN Leitstand',

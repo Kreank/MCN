@@ -1,0 +1,114 @@
+<section class="wartung" aria-labelledby="wartung-titel">
+  <header class="page-head">
+    <div>
+      <p class="page-head__kicker">
+        <span class="page-head__scale" aria-hidden="true"></span>
+        Wartung · Verträge
+      </p>
+      <h1 id="wartung-titel" class="page-head__titel">Wartungsverträge</h1>
+    </div>
+    <p class="page-head__hint">
+      Wiederkehrende Wartungs- und Prüfleistungen je Liegenschaft mit Intervall,
+      nächster Fälligkeit und Fälligkeits-Aktion. Auslösen läuft über die API.
+    </p>
+  </header>
+
+  <div class="controls">
+    <div class="search">
+      <label class="search__label" for="wartung-suche">Verträge durchsuchen</label>
+      <div class="search__field">
+        <span class="search__icon" aria-hidden="true">⌕</span>
+        <input
+          id="wartung-suche"
+          class="search__input"
+          type="search"
+          inputmode="search"
+          autocomplete="off"
+          placeholder="Name oder Vertragsnummer"
+          (input)="onSearch($any($event.target).value)"
+        />
+      </div>
+    </div>
+
+    <div class="segment" role="group" aria-label="Nach Status filtern">
+      @for (seg of segments; track seg.label) {
+        <button
+          type="button"
+          class="segment__btn"
+          [class.is-active]="status() === seg.value"
+          [attr.aria-pressed]="status() === seg.value"
+          (click)="selectSegment(seg.value)"
+        >
+          {{ seg.label }}
+        </button>
+      }
+    </div>
+  </div>
+
+  <p class="sr-only" role="status">{{ resultSummary() }}</p>
+
+  @switch (state().kind) {
+    @case ('loading') {
+      <ul class="rows" aria-hidden="true">
+        @for (s of skeletons; track $index) {
+          <li class="row row--skeleton">
+            <span class="sk-block">
+              <span class="sk sk--line"></span>
+              <span class="sk sk--chips"></span>
+            </span>
+          </li>
+        }
+      </ul>
+    }
+
+    @case ('error') {
+      <div class="note note--error" role="alert">
+        <h2 class="note__titel">Verbindung zur Wartungsschnittstelle unterbrochen</h2>
+        <p class="note__text">Die Wartungsverträge ließen sich nicht laden. Prüfe die Verbindung und lade den Bereich erneut.</p>
+        <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
+      </div>
+    }
+
+    @case ('ready') {
+      @if (state().kind === 'ready' && $any(state()).data.items.length === 0) {
+        <div class="note note--empty">
+          <h2 class="note__titel">Keine Wartungsverträge für diese Auswahl</h2>
+          <p class="note__text">Neue Verträge entstehen über die KI-gestützte Anlage und die API.</p>
+        </div>
+      } @else {
+        <ul class="rows">
+          @for (c of $any(state()).data.items; track c.id) {
+            <li class="row">
+              <a class="row__link" [routerLink]="['/wartung', c.id]">
+                <span class="row__body">
+                  <span class="row__title">
+                    {{ c.name }}
+                    <span class="row__num">· {{ c.contract_number }}</span>
+                  </span>
+                  <span class="row__meta">
+                    <span class="row__interval">↻ {{ intervalLabel(c.interval_kind, c.interval_days) }}</span>
+                    <span class="row__due" [class.row__due--faellig]="c.is_due">
+                      ◷ fällig {{ d(c.next_due_date) }}
+                    </span>
+                    @if (c.is_due) { <span class="row__flag">fällig</span> }
+                    <span class="row__action">{{ actionLabel(c.due_action) }}</span>
+                    @if (c.property) {
+                      <span class="row__prop">▤ {{ c.property.name }} · {{ c.property.city }}</span>
+                    }
+                  </span>
+                </span>
+                <span class="stamp {{ statusClass(c.status) }}">{{ statusLabel(c.status) }}</span>
+              </a>
+            </li>
+          }
+        </ul>
+
+        <nav class="pager" aria-label="Blättern">
+          <button type="button" class="btn" (click)="prev()" [disabled]="page() <= 1">Zurück</button>
+          <span class="pager__pos" aria-hidden="true">Seite {{ page() }} von {{ totalPages() }}</span>
+          <button type="button" class="btn" (click)="next()" [disabled]="page() >= totalPages()">Weiter</button>
+        </nav>
+      }
+    }
+  }
+</section>

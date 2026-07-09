@@ -55,6 +55,10 @@ class ServiceJobNumberDefault(_NextNumber):
     template = "workflow.next_number('E')"
 
 
+class MaintenanceContractNumberDefault(_NextNumber):
+    template = "workflow.next_number('W')"
+
+
 class AppUser(models.Model):
     """security.app_user — fachliches Referenzziel für Audit/Trigger."""
 
@@ -964,6 +968,108 @@ class DunningNotice(models.Model):
 
     def __str__(self):
         return f"Mahnstufe {self.level_id} @ {self.invoice_id}"
+
+
+class MaintenanceContract(models.Model):
+    """maintenance.maintenance_contract — Wartungsvertrag (Migration 0016).
+
+    Objektzentriert (property Pflicht), Kunde/Projekt optional. Statusautomat
+    AKTIV ↔ INAKTIV, INAKTIV → ARCHIVIERT (final, per DB-Trigger erzwungen; kein
+    Row-Delete). Vertragsnummer (W-…) vergibt die DB (db_default). Bei Fälligkeit
+    (next_due_date) löst die konfigurierte due_action eine Folgeaktion aus.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    contract_number = models.TextField(db_default=MaintenanceContractNumberDefault())
+    name = models.TextField()
+    property = models.ForeignKey(
+        Property,
+        models.DO_NOTHING,
+        db_column="property_id",
+        related_name="maintenance_contracts",
+    )
+    party = models.ForeignKey(
+        Party,
+        models.DO_NOTHING,
+        db_column="party_id",
+        null=True,
+        blank=True,
+        related_name="maintenance_contracts",
+    )
+    project = models.ForeignKey(
+        Project,
+        models.DO_NOTHING,
+        db_column="project_id",
+        null=True,
+        blank=True,
+        related_name="maintenance_contracts",
+    )
+    status = models.TextField()  # AKTIV | INAKTIV | ARCHIVIERT
+    start_date = models.DateField()
+    # JAEHRLICH|MONATLICH|WOECHENTLICH|TAGE|FESTES_DATUM
+    interval_kind = models.TextField()
+    interval_days = models.IntegerField(null=True, blank=True)
+    fixed_date = models.DateField(null=True, blank=True)
+    next_due_date = models.DateField(null=True, blank=True)
+    # PROJEKT|AUFTRAG|AUFGABE|BENACHRICHTIGUNG
+    due_action = models.TextField()
+    lead_time_days = models.IntegerField(null=True, blank=True)
+    notes = models.TextField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        AppUser,
+        models.DO_NOTHING,
+        db_column="created_by",
+        related_name="maintenance_contracts",
+    )
+    version = models.IntegerField(db_default=models.Value(1))
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'maintenance"."maintenance_contract'
+
+    def __str__(self):
+        return f"{self.contract_number} {self.name}"
+
+
+class MaintenanceEvent(models.Model):
+    """maintenance.maintenance_event — ausgelöste Fälligkeits-Aktion (Migration 0016).
+
+    Append-only Nachweis, welche Fälligkeit welche Folgeaktion (und welches
+    Folgeobjekt) erzeugt hat.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    contract = models.ForeignKey(
+        MaintenanceContract,
+        models.DO_NOTHING,
+        db_column="contract_id",
+        related_name="events",
+    )
+    occurred_at = models.DateTimeField(db_default=Now())
+    due_date = models.DateField(null=True, blank=True)
+    # PROJEKT|AUFTRAG|AUFGABE|BENACHRICHTIGUNG
+    action = models.TextField()
+    result_object_type = models.TextField(null=True, blank=True)
+    result_object_id = models.UUIDField(null=True, blank=True)
+    note = models.TextField(null=True, blank=True)
+    triggered_by = models.ForeignKey(
+        AppUser,
+        models.DO_NOTHING,
+        db_column="triggered_by",
+        null=True,
+        blank=True,
+        related_name="maintenance_events",
+    )
+    created_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'maintenance"."maintenance_event'
+
+    def __str__(self):
+        return f"{self.action} @ {self.contract_id}"
 
 
 class Article(models.Model):
