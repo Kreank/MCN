@@ -161,11 +161,15 @@ Nav-Reihenfolge (Marks 00–60), alle committet, je Tests + Browser + Review:
 | Projekte (30) | …zusätzlich **Aufträge**-Tab (work_order) in der Projektmappe | `/api/workflow/work_orders` |
 | Dokumente (40) | **Angebote + Rechnungen**: Liste + Mappe, Anlegen bis ENTWURF; **Veröffentlichen (Rechnung→VEROEFFENTLICHT) / Versenden (Angebot→VERSENDET)** inkl. Snapshot+Hash+Beteiligte | `/api/invoicing/…/publish`,`/send`,`/parties` |
 | Aufträge | Detail-Mappe (Übersicht/Beteiligte/Verlauf), Statusautomat bis KAUFMAENNISCH_GEPRUEFT/ABGERECHNET mit DB-Toren | `/api/workflow/work_orders` |
-| Aufgaben (50) | Liste + Statusaktionen; **neue Tabelle `workflow.task`** | `/api/workflow/tasks` |
-| Artikel (60) | Artikel + Leistungen (Stücklisten), Liste + Detail | `/api/pricing` |
-| Auswertungen (70) | Landing + **Umsatz-/Projektübersicht** (KPIs, Umsatzverlauf, Projekte nach Gewerk) | `/api/auswertungen/…` |
+| Planung (50) | **Einsätze** (`workflow.service_job`): Liste + Einsatz-Mappe (Übersicht, Zuweisungen, Zeiten & Material, Verlauf). Read-only; Einsatz-Write-Service existiert + getestet | `/api/planung/einsaetze` |
+| Aufgaben (60) | Liste + Statusaktionen; **neue Tabelle `workflow.task`** | `/api/workflow/tasks` |
+| Artikel (70) | Artikel + Leistungen (Stücklisten), Liste + Detail | `/api/pricing` |
+| Auswertungen (80) | Landing + **Umsatz-/Projektübersicht** (KPIs, Umsatzverlauf, Projekte nach Gewerk) | `/api/auswertungen/…` |
 
-Backend: **151 Tests grün**, db_core-Migrationen bis **0013**. `seed_demo` deckt
+Nav-Marks nach Einführung von „Planung" neu vergeben (Planung=50, Aufgaben=60,
+Artikel=70, Auswertungen=80).
+
+Backend: **172 Tests grün**, db_core-Migrationen bis **0014**. `seed_demo` deckt
 alle Bereiche ab (Kontakte, Liegenschaften, Projekte+Vorgänge, **durchgeschalteter
 Auftrag**, Aufgaben, Angebot [versendet], **veröffentlichte Rechnung**, Artikel,
 Cockpit).
@@ -204,9 +208,17 @@ gültiges Szenario (geprüfter Auftrag + Beteiligte).
 Details je Sektion in `docs/roadmap/01..14`. DB-Befunde in
 `docs/roadmap/README.md`.
 
-**Erledigt** (diese Session): ✔ Auswertungen (Landing + Umsatz-/Projektübersicht —
-weitere Dashboards offen), ✔ Aufträge (`workflow.work_order`), ✔ Beleg-
+**Erledigt** (frühere Session): ✔ Auswertungen (Landing + Umsatz-/Projektübersicht
+— weitere Dashboards offen), ✔ Aufträge (`workflow.work_order`), ✔ Beleg-
 Veröffentlichung (invoice→VEROEFFENTLICHT / quote→VERSENDET, ohne PDF).
+
+**Erledigt** (diese Session): ✔ **Einsätze/Planung** (`workflow.service_job`):
+Models/Service/API + Liste + Einsatz-Mappe (read-only). Der Einsatz-Write-Service
+(`services/einsatz.py`: create/set_schedule/advance_status/assign_user/log_time/
+log_material) existiert und ist getestet, aber noch NICHT im UI verdrahtet (kommt
+mit Auth). **Offen für Planung:** Plantafel (Schwimmbahnen + Drag&Drop, XL-Neubau),
+Kalenderansicht, Terminkategorie- und Ressourcen-Schema (beide fehlen in der DB →
+neue Migration nötig, siehe `docs/roadmap/06-planung.md`).
 
 Empfohlene nächste Reihenfolge:
 
@@ -215,9 +227,7 @@ Empfohlene nächste Reihenfolge:
    (`pricing.article_supplier_reference.last_purchase_price`, noch kein Model)
    und ist aus Belegzeilen NICHT ableitbar — ggf. über den `billing_snapshot`.
    Startseite `01` kann jetzt die Umsatz-Kennzahlen aus `/auswertungen` ziehen.
-2. **Einsätze/Planung (`workflow.service_job`, 0014)**: hängt an `work_order`
-   (jetzt vorhanden). Plantafel = große Drag-&-Drop-UI.
-3. **Beleg-PDF (optional)**: PDF-Ausfertigung + `content.file_link`
+2. **Beleg-PDF (optional)**: PDF-Ausfertigung + `content.file_link`
    (`link_category='BELEG_PDF'`, Einmaligkeits-Index 0032) — reine Ausgabe,
    nicht Voraussetzung der Veröffentlichung.
 4. **VK-Kalkulation/DATANORM**: Verkaufspreis ist eine Formel über
