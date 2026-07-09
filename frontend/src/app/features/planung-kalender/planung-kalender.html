@@ -1,0 +1,79 @@
+<section class="kalender" aria-labelledby="kalender-titel">
+  <header class="page-head">
+    <div>
+      <p class="page-head__kicker">
+        <span class="page-head__scale" aria-hidden="true"></span>
+        Planung · Kalender
+      </p>
+      <h1 id="kalender-titel" class="page-head__titel">Kalender</h1>
+    </div>
+  </header>
+
+  <app-planung-nav />
+
+  <div class="kal-controls">
+    <div class="zeitnav" role="group" aria-label="Monat wechseln">
+      <button type="button" class="btn" (click)="prev()" aria-label="Voriger Monat">‹</button>
+      <button type="button" class="btn" (click)="today()">Heute</button>
+      <button type="button" class="btn" (click)="next()" aria-label="Nächster Monat">›</button>
+    </div>
+    <span class="kal-monat" aria-hidden="true">{{ monthLabel() }}</span>
+  </div>
+
+  <p class="sr-only" role="status">{{ summary() }}</p>
+
+  @switch (state().kind) {
+    @case ('loading') {
+      <p class="lade-hinweis" role="status">Kalender wird geladen …</p>
+    }
+
+    @case ('error') {
+      <div class="note note--error" role="alert">
+        <h2 class="note__titel">Verbindung zum Kalender unterbrochen</h2>
+        <p class="note__text">Die Einsätze ließen sich nicht laden. Prüfe die Verbindung und lade den Bereich erneut.</p>
+        <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
+      </div>
+    }
+
+    @case ('ready') {
+      <div class="kal-wrap">
+        <div class="kal" role="grid" aria-label="Monatskalender">
+          <div class="kal__weekhead" role="row">
+            @for (wd of weekdays; track wd) {
+              <span class="kal__wd" role="columnheader">{{ wd }}</span>
+            }
+          </div>
+          @for (week of weeks(); track $index) {
+            <div class="kal__week" role="row">
+              @for (day of week; track day.iso) {
+                <div
+                  class="kal__day"
+                  role="gridcell"
+                  [class.kal__day--out]="!day.inMonth"
+                  [class.is-today]="day.isToday"
+                >
+                  <span class="kal__daynum">{{ day.day }}</span>
+                  <div class="kal__events">
+                    @for (job of jobsOn(day.iso); track job.id) {
+                      <a
+                        class="chip chip--{{ statusMod(job.status) }}"
+                        [routerLink]="['/planung', job.id]"
+                        [attr.aria-label]="job.title + ', ' + time(job.scheduled_start) + ', ' + statusLabel(job.status)"
+                      >
+                        <span class="chip__line">
+                          <span class="chip__time">{{ time(job.scheduled_start) }}</span>
+                          <span class="chip__title">{{ job.title }}</span>
+                        </span>
+                        <span class="chip__status">{{ statusLabel(job.status) }}</span>
+                      </a>
+                    }
+                  </div>
+                </div>
+              }
+            </div>
+          }
+        </div>
+      </div>
+    }
+  }
+</section>

@@ -69,6 +69,31 @@ export interface MaterialEntry {
   note: string | null;
 }
 
+// --- Plantafel-Board -------------------------------------------------------
+export interface BoardResource {
+  id: string;
+  display_name: string;
+}
+
+export interface BoardJob {
+  id: string;
+  job_number: string;
+  title: string;
+  status: ServiceJobStatus;
+  scheduled_start: string;
+  scheduled_end: string | null;
+  property_name: string | null;
+  assignee_ids: string[];
+}
+
+export interface Plantafel {
+  date_from: string;
+  date_to: string;
+  resources: BoardResource[];
+  jobs: BoardJob[];
+  unassigned_count: number;
+}
+
 export interface ServiceJobDetail extends ServiceJob {
   access_instructions: string | null;
   completion_notes: string | null;

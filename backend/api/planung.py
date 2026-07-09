@@ -9,7 +9,7 @@ Der Einsatz trägt keinen eigenen Titel — er kommt vom zugehörigen Auftrag
 (work_order); dessen Liegenschaft liefert den Ort. Zugewiesene sind interne
 security.app_user, der Vor-Ort-Ansprechpartner ist eine identity.party.
 """
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID
 
@@ -292,4 +292,93 @@ def get_einsatz(request, job_id: UUID):
         history=history,
         time_entries=time_entries,
         material_entries=material_entries,
+    )
+
+
+# --- Plantafel-Board (Schwimmbahnen) ---------------------------------------
+
+class BoardResourceOut(Schema):
+    id: UUID
+    display_name: str
+
+
+class BoardJobOut(Schema):
+    id: UUID
+    job_number: str
+    title: str
+    status: str
+    scheduled_start: datetime
+    scheduled_end: datetime | None = None
+    property_name: str | None = None
+    assignee_ids: list[UUID]
+
+
+class PlantafelOut(Schema):
+    date_from: date
+    date_to: date
+    resources: list[BoardResourceOut]
+    jobs: list[BoardJobOut]
+    unassigned_count: int
+
+
+@router.get("/plantafel", response=PlantafelOut)
+def plantafel(
+    request,
+    date_from: date | None = Query(None),
+    date_to: date | None = Query(None),
+):
+    """Plantafel-Daten für einen Zeitraum: die Mitarbeiter-Bahnen (aus den
+    Zuweisungen der Einsätze im Fenster) und die verplanten Einsätze mit ihren
+    assignee_ids. Nur Einsätze mit Planbeginn erscheinen; Mehrfachzuweisungen
+    tauchen in jeder betroffenen Bahn auf (n:m). Standardfenster: 7 Tage ab heute,
+    maximal 31 Tage."""
+    today = date.today()
+    start = date_from or today
+    end = date_to or (start + timedelta(days=6))
+    if end < start:
+        raise HttpError(422, "date_to darf nicht vor date_from liegen.")
+    if (end - start).days > 45:
+        raise HttpError(422, "Der Zeitraum darf höchstens 45 Tage umfassen.")
+
+    jobs = (
+        ServiceJob.objects.filter(
+            scheduled_start__date__gte=start, scheduled_start__date__lte=end
+        )
+        .select_related("work_order__property")
+        .prefetch_related("assignments__assignee")
+        .order_by("scheduled_start", "id")
+    )
+
+    resources: dict = {}
+    unassigned = 0
+    out_jobs = []
+    for j in jobs:
+        assignee_ids = []
+        for a in j.assignments.all():
+            resources[a.assignee_id] = a.assignee.display_name
+            assignee_ids.append(a.assignee_id)
+        if not assignee_ids:
+            unassigned += 1
+        out_jobs.append(
+            BoardJobOut(
+                id=j.id,
+                job_number=j.job_number,
+                title=j.work_order.title,
+                status=j.status,
+                scheduled_start=j.scheduled_start,
+                scheduled_end=j.scheduled_end,
+                property_name=j.work_order.property.name,
+                assignee_ids=assignee_ids,
+            )
+        )
+    resource_list = [
+        BoardResourceOut(id=uid, display_name=name)
+        for uid, name in sorted(resources.items(), key=lambda kv: kv[1])
+    ]
+    return PlantafelOut(
+        date_from=start,
+        date_to=end,
+        resources=resource_list,
+        jobs=out_jobs,
+        unassigned_count=unassigned,
     )

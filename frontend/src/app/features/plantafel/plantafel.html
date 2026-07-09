@@ -1,0 +1,80 @@
+<section class="plantafel" aria-labelledby="plantafel-titel">
+  <header class="page-head">
+    <div>
+      <p class="page-head__kicker">
+        <span class="page-head__scale" aria-hidden="true"></span>
+        Planung · Plantafel
+      </p>
+      <h1 id="plantafel-titel" class="page-head__titel">Plantafel</h1>
+    </div>
+  </header>
+
+  <app-planung-nav />
+
+  <div class="board-controls">
+    <div class="zeitnav" role="group" aria-label="Zeitraum wechseln">
+      <button type="button" class="btn" (click)="prev()" aria-label="Vorheriger Zeitraum">‹</button>
+      <button type="button" class="btn" (click)="today()">Heute</button>
+      <button type="button" class="btn" (click)="next()" aria-label="Nächster Zeitraum">›</button>
+    </div>
+    <span class="zeitraum" aria-hidden="true">{{ rangeLabel() }}</span>
+  </div>
+
+  <p class="sr-only" role="status">{{ summary() }}</p>
+
+  @switch (state().kind) {
+    @case ('loading') {
+      <p class="lade-hinweis" role="status">Plantafel wird geladen …</p>
+    }
+
+    @case ('error') {
+      <div class="note note--error" role="alert">
+        <h2 class="note__titel">Verbindung zur Plantafel unterbrochen</h2>
+        <p class="note__text">Die Einsätze ließen sich nicht laden. Prüfe die Verbindung und lade den Bereich erneut.</p>
+        <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
+      </div>
+    }
+
+    @case ('ready') {
+      @if (lanes().length === 0) {
+        <div class="note note--empty">
+          <h2 class="note__titel">Keine verplanten Einsätze im Zeitraum</h2>
+          <p class="note__text">In diesem Zeitfenster hat keine Bahn geplante Einsätze. Wechsle den Zeitraum oben.</p>
+        </div>
+      } @else {
+        <div class="board-wrap">
+          <div class="board" [style.--days]="windowDays">
+            <div class="board__corner"></div>
+            @for (day of days(); track day.iso) {
+              <div class="board__dayhead" [class.is-today]="day.isToday">
+                <span class="board__dow">{{ day.dow }}</span>
+                <span class="board__date">{{ day.label }}</span>
+              </div>
+            }
+
+            @for (lane of lanes(); track lane.id) {
+              <div class="board__lane" [class.board__lane--none]="lane.id === ''">
+                <span class="board__lane-name">{{ lane.name }}</span>
+              </div>
+              @for (day of days(); track day.iso) {
+                <div class="board__cell" [class.is-today]="day.isToday">
+                  @for (job of cellJobs(lane.id, day.iso); track job.id) {
+                    <a
+                      class="tile tile--{{ statusMod(job.status) }}"
+                      [routerLink]="['/planung', job.id]"
+                      [attr.aria-label]="job.title + ', ' + time(job.scheduled_start) + ', ' + statusLabel(job.status)"
+                    >
+                      <span class="tile__time">{{ time(job.scheduled_start) }}</span>
+                      <span class="tile__title">{{ job.title }}</span>
+                      <span class="tile__status">{{ statusLabel(job.status) }}</span>
+                    </a>
+                  }
+                </div>
+              }
+            }
+          </div>
+        </div>
+      }
+    }
+  }
+</section>

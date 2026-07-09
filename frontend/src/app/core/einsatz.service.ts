@@ -1,7 +1,12 @@
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { ServiceJobDetail, ServiceJobPage, ServiceJobQuery } from './einsatz.model';
+import {
+  Plantafel,
+  ServiceJobDetail,
+  ServiceJobPage,
+  ServiceJobQuery,
+} from './einsatz.model';
 
 /** Typisierter Zugriff auf die Planungs-/Einsatz-API (dev-Proxy: /api -> :8000). */
 @Injectable({ providedIn: 'root' })
@@ -22,5 +27,13 @@ export class EinsatzService {
 
   get(id: string): Observable<ServiceJobDetail> {
     return this.http.get<ServiceJobDetail>(`${this.base}/${id}`);
+  }
+
+  /** Plantafel-Board für einen Zeitraum (Bahnen + verplante Einsätze). */
+  plantafel(dateFrom: string, dateTo: string): Observable<Plantafel> {
+    const params = new HttpParams()
+      .set('date_from', dateFrom)
+      .set('date_to', dateTo);
+    return this.http.get<Plantafel>('/api/planung/plantafel', { params });
   }
 }

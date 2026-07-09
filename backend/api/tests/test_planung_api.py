@@ -141,3 +141,29 @@ def test_detail_mit_zuweisung_zeit_material(client, seeded):
 def test_detail_404(client, db):
     r = client.get(f"/api/planung/einsaetze/{uuid4()}")
     assert r.status_code == 404
+
+
+@pytest.mark.django_db
+def test_plantafel(client, seeded):
+    # Beide Einsätze sind auf 2026-07-13 geplant; j1 hat eine Zuweisung, j2 nicht.
+    r = client.get("/api/planung/plantafel?date_from=2026-07-13&date_to=2026-07-13")
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["jobs"]) == 2
+    assert [res["display_name"] for res in body["resources"]] == ["Test Sachbearbeiter"]
+    assert body["unassigned_count"] == 1
+    vor_ort = next(j for j in body["jobs"] if j["status"] == "VOR_ORT")
+    assert len(vor_ort["assignee_ids"]) == 1
+    assert vor_ort["title"] == "Sockelrisse setzen"
+
+
+@pytest.mark.django_db
+def test_plantafel_range_invalid(client, db):
+    r = client.get("/api/planung/plantafel?date_from=2026-07-20&date_to=2026-07-10")
+    assert r.status_code == 422
+
+
+@pytest.mark.django_db
+def test_plantafel_range_zu_gross(client, db):
+    r = client.get("/api/planung/plantafel?date_from=2026-01-01&date_to=2026-12-31")
+    assert r.status_code == 422

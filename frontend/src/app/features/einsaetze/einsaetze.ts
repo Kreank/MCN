@@ -9,6 +9,7 @@ import {
   serviceJobStatusClass,
   serviceJobStatusLabel,
 } from '../../core/einsatz.model';
+import { PlanungNav } from '../planung-nav/planung-nav';
 
 type ViewState =
   | { kind: 'loading' }
@@ -19,7 +20,7 @@ type Segment = { value: ServiceJobStatus | null; label: string };
 
 @Component({
   selector: 'app-einsaetze',
-  imports: [RouterLink],
+  imports: [RouterLink, PlanungNav],
   templateUrl: './einsaetze.html',
   styleUrl: './einsaetze.scss',
 })

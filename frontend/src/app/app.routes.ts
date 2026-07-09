@@ -62,6 +62,17 @@ export const routes: Routes = [
     loadComponent: () => import('./features/einsaetze/einsaetze').then((m) => m.Einsaetze),
   },
   {
+    path: 'planung/plantafel',
+    title: 'Plantafel — MCN Leitstand',
+    loadComponent: () => import('./features/plantafel/plantafel').then((m) => m.Plantafel),
+  },
+  {
+    path: 'planung/kalender',
+    title: 'Kalender — MCN Leitstand',
+    loadComponent: () =>
+      import('./features/planung-kalender/planung-kalender').then((m) => m.PlanungKalender),
+  },
+  {
     path: 'planung/:id',
     title: 'Einsatz — MCN Leitstand',
     loadComponent: () =>

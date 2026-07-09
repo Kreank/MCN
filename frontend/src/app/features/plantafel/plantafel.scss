@@ -1,0 +1,196 @@
+.plantafel {
+  max-width: 76rem;
+  margin: 0 auto;
+}
+
+// ============================== Seitenkopf ==================================
+.page-head {
+  margin-bottom: var(--space-4);
+}
+.page-head__kicker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+}
+.page-head__scale {
+  width: 2.5rem;
+  height: 0.5rem;
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--line-strong) 0,
+    var(--line-strong) 1px,
+    transparent 1px,
+    transparent 0.5rem
+  );
+  border-bottom: 1.5px solid var(--line-strong);
+}
+.page-head__titel {
+  font-size: var(--step-3);
+}
+
+// ============================== Steuerung ===================================
+.board-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+.zeitnav {
+  display: inline-flex;
+  gap: var(--space-2);
+}
+.zeitraum {
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+// ============================== Board =======================================
+.board-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-1);
+  background: var(--surface);
+}
+.board {
+  display: grid;
+  grid-template-columns: 11rem repeat(var(--days), minmax(8.5rem, 1fr));
+  min-width: max-content;
+}
+
+.board__corner {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  background: var(--surface-sunken);
+  border-bottom: 1.5px solid var(--line-strong);
+  border-right: 1.5px solid var(--line-strong);
+}
+.board__dayhead {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-sunken);
+  border-bottom: 1.5px solid var(--line-strong);
+  border-left: 1px solid var(--line);
+}
+.board__dayhead.is-today {
+  background: var(--warn-tint);
+}
+.board__dow {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.board__date {
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  color: var(--ink);
+}
+
+.board__lane {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  padding: var(--space-3) var(--space-3);
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  border-right: 1.5px solid var(--line-strong);
+}
+.board__lane--none .board__lane-name {
+  color: var(--ink-faint);
+  font-style: italic;
+}
+.board__lane-name {
+  font-weight: 600;
+  font-size: var(--step--1);
+  color: var(--ink);
+}
+
+.board__cell {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  min-height: 4.5rem;
+  border-bottom: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+}
+.board__cell.is-today {
+  background: color-mix(in srgb, var(--warn-tint) 45%, transparent);
+}
+
+// ============================== Kacheln =====================================
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--line-strong);
+  background: var(--surface-sunken);
+  color: inherit;
+  text-decoration: none;
+  transition: transform 0.1s ease, box-shadow 0.15s ease;
+
+  &:hover {
+    box-shadow: var(--shadow-1);
+    transform: translateY(-1px);
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+.tile__time {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--ink-muted);
+}
+.tile__title {
+  font-size: var(--step--1);
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.2;
+}
+.tile__status {
+  font-size: 0.66rem;
+  color: var(--ink-muted);
+}
+
+.tile--plan {
+  border-left-color: var(--command);
+}
+.tile--aktiv {
+  border-left-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface-sunken));
+}
+.tile--fertig {
+  border-left-color: var(--positive-ink);
+  background: color-mix(in srgb, var(--positive-tint) 60%, var(--surface-sunken));
+}
+.tile--aus {
+  border-left-color: var(--warn-ink);
+  background: color-mix(in srgb, var(--warn-tint) 55%, var(--surface-sunken));
+}
+.tile--pause,
+.tile--nach {
+  border-left-color: var(--warn);
+}
+.tile--neutral {
+  border-left-color: var(--line-strong);
+}
