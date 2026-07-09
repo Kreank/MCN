@@ -25,6 +25,9 @@
     >
       <span mappe-kopf class="stamp {{ statusClass(daten()!.status) }}">{{ statusLabel(daten()!.status) }}</span>
       <span mappe-kopf class="kopf-summe">{{ euro(daten()!.gross_total) }}</span>
+      @if (daten()!.status === 'VEROEFFENTLICHT') {
+        <a mappe-kopf class="btn kopf-pdf" [href]="pdfUrl(daten()!.id)" target="_blank" rel="noopener" aria-label="PDF ansehen (öffnet in neuem Tab)">PDF ansehen ↗</a>
+      }
 
       @if (tab() === 'positionen') {
         @if (daten()!.lines.length === 0) {

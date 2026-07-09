@@ -131,4 +131,9 @@ export class RechnungDetail {
   hashKurz(h: string | null): string {
     return h ? h.slice(0, 12) + '…' : '—';
   }
+
+  /** URL der on-the-fly gerenderten PDF-Ausfertigung (nur veröffentlicht). */
+  pdfUrl(id: string): string {
+    return `/api/invoicing/invoices/${id}/pdf`;
+  }
 }

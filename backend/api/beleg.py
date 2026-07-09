@@ -8,6 +8,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from django.db.models import Q
+from django.http import HttpResponse
 from ninja import Query, Router, Schema
 from ninja.errors import HttpError
 from ninja.responses import Status
@@ -15,6 +16,7 @@ from ninja.security import django_auth
 
 from db_core.models import Invoice, Quote
 from db_core.services import beleg as beleg_service
+from db_core.services import beleg_pdf as beleg_pdf_service
 
 router = Router()
 
@@ -500,3 +502,22 @@ def publish_invoice(request, invoice_id: UUID):
 def get_invoice(request, invoice_id: UUID):
     """Detail einer Rechnung inkl. Positionen."""
     return _invoice_detail(invoice_id)
+
+
+@router.get("/invoices/{invoice_id}/pdf")
+def invoice_pdf(request, invoice_id: UUID):
+    """PDF-Ausfertigung einer veröffentlichten Rechnung (on-the-fly gerendert).
+
+    Nur festgeschriebene Belege (VEROEFFENTLICHT) erhalten eine Ausfertigung; für
+    Entwürfe/unbekannte Belege → 404."""
+    pdf = beleg_pdf_service.render_invoice_pdf(invoice_id)
+    if pdf is None:
+        raise HttpError(404, "Veröffentlichte Rechnung nicht gefunden.")
+    invoice = Invoice.objects.filter(id=invoice_id).only("invoice_number").first()
+    raw = invoice.invoice_number or str(invoice_id)
+    # Dateinamen auf unbedenkliche Zeichen beschränken (Defense-in-Depth gegen
+    # Header-Injection; Belegnummern sind ohnehin RE-/GS-Format).
+    safe = "".join(ch for ch in raw if ch.isalnum() or ch in "-_")
+    response = HttpResponse(pdf, content_type="application/pdf")
+    response["Content-Disposition"] = f'inline; filename="{safe or "beleg"}.pdf"'
+    return response

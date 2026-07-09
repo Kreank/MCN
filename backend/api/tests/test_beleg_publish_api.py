@@ -138,3 +138,82 @@ def test_send_quote_ueber_api(client, app_user):
     assert body["status"] == "VERSENDET"
     assert body["quote_number"].startswith("AN-")
     assert body["has_snapshot"] is True
+
+
+def _published_invoice(app_user, client):
+    obj = property_service.create_property(
+        app_user.id, name="PDF-Objekt", property_type="WEG",
+        street="W", postal_code="1", city="Berlin",
+    )
+    weg = identity_service.create_person(app_user.id, first_name="Petra", last_name="P")
+    order = _gepruefter_auftrag(app_user, obj, weg)
+    inv = beleg_service.create_invoice(
+        app_user.id, property_id=obj.id, invoice_type="RECHNUNG",
+        work_order_id=order.id,
+        lines=[{"line_type": "MATERIAL", "description": "Ziegel", "quantity": 10,
+                "unit": "Stk", "unit_price": "2.40", "tax_code": "DE_19"}],
+    )
+    for role in ("INVOICE_DEBTOR", "INVOICE_RECIPIENT"):
+        beleg_service.add_invoice_party(
+            app_user.id, invoice_id=inv.id, party_id=weg.id, role=role, is_primary=True
+        )
+    beleg_service.publish_invoice(app_user.id, invoice_id=inv.id)
+    return inv
+
+
+@pytest.mark.django_db
+def test_invoice_pdf_veroeffentlicht(client, app_user):
+    inv = _published_invoice(app_user, client)
+    r = client.get(f"/api/invoicing/invoices/{inv.id}/pdf")
+    assert r.status_code == 200
+    assert r["Content-Type"] == "application/pdf"
+    content = r.getvalue()
+    assert content[:4] == b"%PDF"
+    assert len(content) > 500
+
+
+@pytest.mark.django_db
+def test_invoice_pdf_sonderzeichen_kein_500(client, app_user):
+    """Nicht-Latin-1-Zeichen in Beschreibung/Einheit/Partei dürfen kein 500
+    auslösen (fpdf2-Kernfont ist Latin-1; der Service sanitisiert Freitext)."""
+    obj = property_service.create_property(
+        app_user.id, name="Sonder-Objekt", property_type="WEG",
+        street="W", postal_code="1", city="Berlin",
+    )
+    weg = identity_service.create_person(app_user.id, first_name="Ödün", last_name="Zhang中")
+    order = _gepruefter_auftrag(app_user, obj, weg)
+    inv = beleg_service.create_invoice(
+        app_user.id, property_id=obj.id, invoice_type="RECHNUNG",
+        work_order_id=order.id,
+        lines=[{"line_type": "MATERIAL", "description": "Röhre ∅20 ✓ 中",
+                "quantity": 3, "unit": "㎡", "unit_price": "2.40", "tax_code": "DE_19"}],
+    )
+    for role in ("INVOICE_DEBTOR", "INVOICE_RECIPIENT"):
+        beleg_service.add_invoice_party(
+            app_user.id, invoice_id=inv.id, party_id=weg.id, role=role, is_primary=True
+        )
+    beleg_service.publish_invoice(app_user.id, invoice_id=inv.id)
+    r = client.get(f"/api/invoicing/invoices/{inv.id}/pdf")
+    assert r.status_code == 200
+    assert r.getvalue()[:4] == b"%PDF"
+
+
+@pytest.mark.django_db
+def test_invoice_pdf_entwurf_404(client, app_user):
+    obj = property_service.create_property(
+        app_user.id, name="O", property_type="WEG", street="W",
+        postal_code="1", city="Berlin",
+    )
+    inv = beleg_service.create_invoice(
+        app_user.id, property_id=obj.id, invoice_type="RECHNUNG",
+        lines=[{"line_type": "MATERIAL", "description": "X", "quantity": 1,
+                "unit_price": "1.00", "tax_code": "DE_19"}],
+    )
+    r = client.get(f"/api/invoicing/invoices/{inv.id}/pdf")
+    assert r.status_code == 404
+
+
+@pytest.mark.django_db
+def test_invoice_pdf_unbekannt_404(client, db):
+    r = client.get(f"/api/invoicing/invoices/{uuid.uuid4()}/pdf")
+    assert r.status_code == 404
