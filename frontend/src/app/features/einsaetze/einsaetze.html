@@ -1,0 +1,113 @@
+<section class="einsaetze" aria-labelledby="einsaetze-titel">
+  <header class="page-head">
+    <div>
+      <p class="page-head__kicker">
+        <span class="page-head__scale" aria-hidden="true"></span>
+        Planung · Einsätze
+      </p>
+      <h1 id="einsaetze-titel" class="page-head__titel">Einsätze</h1>
+    </div>
+    <p class="page-head__hint">
+      Termine und Einsätze zu den Aufträgen — mit Zuweisung, Planzeitraum und
+      Status. Disposition und Anlage laufen über die KI und die API.
+    </p>
+  </header>
+
+  <div class="controls">
+    <div class="search">
+      <label class="search__label" for="einsaetze-suche">Einsätze durchsuchen</label>
+      <div class="search__field">
+        <span class="search__icon" aria-hidden="true">⌕</span>
+        <input
+          id="einsaetze-suche"
+          class="search__input"
+          type="search"
+          inputmode="search"
+          autocomplete="off"
+          placeholder="Einsatz- oder Auftragsnummer, Auftragstitel"
+          (input)="onSearch($any($event.target).value)"
+        />
+      </div>
+    </div>
+
+    <div class="segment" role="group" aria-label="Nach Status filtern">
+      @for (seg of segments; track seg.label) {
+        <button
+          type="button"
+          class="segment__btn"
+          [class.is-active]="status() === seg.value"
+          [attr.aria-pressed]="status() === seg.value"
+          (click)="selectSegment(seg.value)"
+        >
+          {{ seg.label }}
+        </button>
+      }
+    </div>
+  </div>
+
+  <p class="sr-only" role="status">{{ resultSummary() }}</p>
+
+  @switch (state().kind) {
+    @case ('loading') {
+      <ul class="rows" aria-hidden="true">
+        @for (s of skeletons; track $index) {
+          <li class="row row--skeleton">
+            <span class="sk sk--box"></span>
+            <span class="sk-block">
+              <span class="sk sk--line"></span>
+              <span class="sk sk--chips"></span>
+            </span>
+          </li>
+        }
+      </ul>
+    }
+
+    @case ('error') {
+      <div class="note note--error" role="alert">
+        <h2 class="note__titel">Verbindung zur Planungsschnittstelle unterbrochen</h2>
+        <p class="note__text">Die Einsätze ließen sich nicht laden. Prüfe die Verbindung und lade den Bereich erneut.</p>
+        <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
+      </div>
+    }
+
+    @case ('ready') {
+      @if (state().kind === 'ready' && $any(state()).data.items.length === 0) {
+        <div class="note note--empty">
+          <h2 class="note__titel">Keine Einsätze für diese Auswahl</h2>
+          <p class="note__text">Neue Einsätze entstehen über die KI-gestützte Disposition und die API.</p>
+        </div>
+      } @else {
+        <ul class="rows">
+          @for (e of $any(state()).data.items; track e.id) {
+            <li class="row">
+              <a class="row__link" [routerLink]="['/planung', e.id]">
+                <span class="row__body">
+                  <span class="row__title">{{ e.work_order.title }}</span>
+                  <span class="row__meta">
+                    <span class="row__num">{{ e.job_number }}</span>
+                    <span class="row__plan" [class.row__plan--offen]="!e.scheduled_start">
+                      ◷ {{ planLabel(e.scheduled_start) }}
+                    </span>
+                    @if (e.property) {
+                      <span class="row__prop">▤ {{ e.property.name }} · {{ e.property.city }}</span>
+                    }
+                    @if (e.assignee_count > 0) {
+                      <span class="row__assignees">◍ {{ e.assignee_count }} zugewiesen</span>
+                    }
+                  </span>
+                </span>
+                <span class="stamp {{ statusClass(e.status) }}">{{ statusLabel(e.status) }}</span>
+              </a>
+            </li>
+          }
+        </ul>
+
+        <nav class="pager" aria-label="Blättern">
+          <button type="button" class="btn" (click)="prev()" [disabled]="page() <= 1">Zurück</button>
+          <span class="pager__pos" aria-hidden="true">Seite {{ page() }} von {{ totalPages() }}</span>
+          <button type="button" class="btn" (click)="next()" [disabled]="page() >= totalPages()">Weiter</button>
+        </nav>
+      }
+    }
+  }
+</section>

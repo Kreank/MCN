@@ -56,6 +56,18 @@ export const routes: Routes = [
       import('./features/auftrag-detail/auftrag-detail').then((m) => m.AuftragDetail),
   },
   {
+    path: 'planung',
+    pathMatch: 'full',
+    title: 'Planung — MCN Leitstand',
+    loadComponent: () => import('./features/einsaetze/einsaetze').then((m) => m.Einsaetze),
+  },
+  {
+    path: 'planung/:id',
+    title: 'Einsatz — MCN Leitstand',
+    loadComponent: () =>
+      import('./features/einsatz-detail/einsatz-detail').then((m) => m.EinsatzDetail),
+  },
+  {
     path: 'dokumente',
     title: 'Dokumente — MCN Leitstand',
     loadComponent: () => import('./features/dokumente/dokumente').then((m) => m.Dokumente),

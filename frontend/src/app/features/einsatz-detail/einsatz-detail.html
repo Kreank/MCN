@@ -1,0 +1,140 @@
+@switch (state().kind) {
+  @case ('loading') {
+    <p class="lade-hinweis" role="status">Einsatz wird geladen …</p>
+  }
+
+  @case ('error') {
+    <div class="note note--error" role="alert">
+      <h2 class="note__titel">Einsatz konnte nicht geladen werden</h2>
+      <p class="note__text">Die Schnittstelle war nicht erreichbar oder der Einsatz existiert nicht.</p>
+      <div class="note__aktionen">
+        <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
+        <a class="btn" routerLink="/planung">Zu den Einsätzen</a>
+      </div>
+    </div>
+  }
+
+  @case ('ready') {
+    <app-mappe
+      kicker="Einsatz {{ daten()!.job_number }}"
+      [titel]="daten()!.work_order.title"
+      backLink="/planung"
+      backLabel="Einsätze"
+      [tabs]="tabs"
+      [(aktiv)]="tab"
+    >
+      <span mappe-kopf class="stamp {{ statusClass(daten()!.status) }}">{{ statusLabel(daten()!.status) }}</span>
+
+      @if (tab() === 'uebersicht') {
+        <dl class="feld-raster">
+          <div class="feld"><dt class="feld__label">Einsatznummer</dt><dd class="feld__wert">{{ daten()!.job_number }}</dd></div>
+          <div class="feld"><dt class="feld__label">Status</dt><dd class="feld__wert">{{ statusLabel(daten()!.status) }}</dd></div>
+          <div class="feld"><dt class="feld__label">Planbeginn</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.scheduled_start">{{ dt(daten()!.scheduled_start) }}</dd></div>
+          <div class="feld"><dt class="feld__label">Planende</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.scheduled_end">{{ dt(daten()!.scheduled_end) }}</dd></div>
+          <div class="feld"><dt class="feld__label">Ist-Beginn</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.actual_start">{{ dt(daten()!.actual_start) }}</dd></div>
+          <div class="feld"><dt class="feld__label">Ist-Ende</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.actual_end">{{ dt(daten()!.actual_end) }}</dd></div>
+          <div class="feld"><dt class="feld__label">Ansprechpartner vor Ort</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.on_site_contact">{{ daten()!.on_site_contact || '—' }}</dd></div>
+          <div class="feld"><dt class="feld__label">Zutritt</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.access_instructions">{{ daten()!.access_instructions || '—' }}</dd></div>
+        </dl>
+
+        @if (daten()!.completion_notes) {
+          <p class="beschreibung">{{ daten()!.completion_notes }}</p>
+        }
+
+        <div class="bezug">
+          <a class="bezug__item" [routerLink]="['/auftraege', daten()!.work_order.id]">
+            <span class="bezug__label">Auftrag</span>
+            <span class="bezug__wert">{{ daten()!.work_order.order_number }} · {{ daten()!.work_order.title }}</span>
+            <span class="bezug__zusatz">{{ orderStatusLabel(daten()!.work_order.status) }}</span>
+          </a>
+          @if (daten()!.property; as p) {
+            <a class="bezug__item" [routerLink]="['/liegenschaften', p.id]">
+              <span class="bezug__label">Liegenschaft</span>
+              <span class="bezug__wert">{{ p.name }} · {{ p.city }}</span>
+            </a>
+          }
+        </div>
+      }
+
+      @if (tab() === 'zuweisungen') {
+        @if (daten()!.assignments.length === 0) {
+          <div class="tab-platzhalter"><p>Diesem Einsatz sind noch keine Mitarbeiter zugewiesen.</p></div>
+        } @else {
+          <ul class="ref-liste">
+            @for (a of daten()!.assignments; track a.assignee_id) {
+              <li>
+                <div class="ref ref--static">
+                  <span class="ref__name">{{ a.display_name }}</span>
+                  <span class="ref__stamps">
+                    <span class="stamp stamp--type">{{ roleLabel(a.role) }}</span>
+                  </span>
+                </div>
+              </li>
+            }
+          </ul>
+        }
+      }
+
+      @if (tab() === 'erfassung') {
+        @if (daten()!.time_entries.length === 0 && daten()!.material_entries.length === 0) {
+          <div class="tab-platzhalter"><p>Für diesen Einsatz sind noch keine Zeiten oder Materialien erfasst.</p></div>
+        } @else {
+          @if (daten()!.time_entries.length > 0) {
+            <h3 class="erfassung__titel">Zeiten</h3>
+            <ul class="erfassung-liste">
+              @for (t of daten()!.time_entries; track $index) {
+                <li class="erfassung-zeile">
+                  <span class="erfassung-zeile__kopf">
+                    <span class="stamp stamp--type">{{ timeTypeLabel(t.time_type) }}</span>
+                    @if (t.user) { <span class="erfassung-zeile__akteur">{{ t.user }}</span> }
+                  </span>
+                  <span class="erfassung-zeile__zeit">{{ dt(t.started_at) }} – {{ dt(t.ended_at) }}</span>
+                  @if (t.note) { <span class="erfassung-zeile__note">{{ t.note }}</span> }
+                </li>
+              }
+            </ul>
+          }
+          @if (daten()!.material_entries.length > 0) {
+            <h3 class="erfassung__titel">Material</h3>
+            <ul class="erfassung-liste">
+              @for (m of daten()!.material_entries; track $index) {
+                <li class="erfassung-zeile">
+                  <span class="erfassung-zeile__kopf">
+                    <span class="erfassung-zeile__menge">{{ m.quantity }} {{ m.unit }}</span>
+                    <span class="erfassung-zeile__akteur">{{ m.description }}</span>
+                  </span>
+                  @if (m.note) { <span class="erfassung-zeile__note">{{ m.note }}</span> }
+                </li>
+              }
+            </ul>
+          }
+        }
+      }
+
+      @if (tab() === 'verlauf') {
+        @if (daten()!.history.length === 0) {
+          <div class="tab-platzhalter"><p>Für diesen Einsatz ist noch kein Statusverlauf protokolliert.</p></div>
+        } @else {
+          <ol class="verlauf">
+            @for (h of daten()!.history; track $index) {
+              <li class="verlauf__eintrag">
+                <span class="verlauf__punkt" aria-hidden="true"></span>
+                <div class="verlauf__inhalt">
+                  <span class="verlauf__wechsel">
+                    {{ statusLabelStr(h.from_status) }}
+                    <span class="verlauf__pfeil" aria-hidden="true">→</span>
+                    <strong>{{ statusLabelStr(h.to_status) }}</strong>
+                  </span>
+                  <span class="verlauf__meta">
+                    {{ dt(h.occurred_at) }}@if (h.changed_by) { · {{ h.changed_by }} }
+                  </span>
+                  @if (h.reason) { <span class="verlauf__grund">„{{ h.reason }}"</span> }
+                </div>
+              </li>
+            }
+          </ol>
+        }
+      }
+    </app-mappe>
+  }
+}

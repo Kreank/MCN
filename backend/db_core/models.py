@@ -51,6 +51,10 @@ class WorkOrderNumberDefault(_NextNumber):
     template = "workflow.next_number('AU')"
 
 
+class ServiceJobNumberDefault(_NextNumber):
+    template = "workflow.next_number('E')"
+
+
 class AppUser(models.Model):
     """security.app_user — fachliches Referenzziel für Audit/Trigger."""
 
@@ -1101,3 +1105,153 @@ class WorkOrderParty(models.Model):
 
     def __str__(self):
         return f"{self.role} @ {self.work_order_id}"
+
+
+class ServiceJob(models.Model):
+    """workflow.service_job — Einsatz/Termin (Migration 0014).
+
+    Statusautomat UNGEPLANT → GEPLANT → BESTAETIGT → UNTERWEGS → VOR_ORT →
+    (PAUSIERT ↔ VOR_ORT) → ABGESCHLOSSEN → NACHARBEIT; jederzeit AUSGEFALLEN
+    (Sackgasse). Übergänge validiert workflow.validate_status_change; Ausführung
+    ab UNTERWEGS setzt einen freigegebenen Auftrag voraus (DB-Gate). Einsatznummer
+    (E-…) vergibt die DB über workflow.next_number (db_default). Kein Titel-Feld —
+    der Titel kommt vom zugehörigen work_order. Kein physisches Löschen
+    (Schutzstandard 0015); „Storno" = Status AUSGEFALLEN.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    job_number = models.TextField(db_default=ServiceJobNumberDefault())
+    work_order = models.ForeignKey(
+        WorkOrder,
+        models.DO_NOTHING,
+        db_column="work_order_id",
+        related_name="service_jobs",
+    )
+    # UNGEPLANT|GEPLANT|BESTAETIGT|UNTERWEGS|VOR_ORT|PAUSIERT|ABGESCHLOSSEN|
+    # NACHARBEIT|AUSGEFALLEN
+    status = models.TextField()
+    scheduled_start = models.DateTimeField(null=True, blank=True)
+    scheduled_end = models.DateTimeField(null=True, blank=True)
+    actual_start = models.DateTimeField(null=True, blank=True)
+    actual_end = models.DateTimeField(null=True, blank=True)
+    on_site_contact_party = models.ForeignKey(
+        Party,
+        models.DO_NOTHING,
+        db_column="on_site_contact_party_id",
+        null=True,
+        blank=True,
+        related_name="on_site_service_jobs",
+    )
+    access_instructions = models.TextField(null=True, blank=True)
+    completion_notes = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'workflow"."service_job'
+
+    def __str__(self):
+        return f"{self.job_number} ({self.status})"
+
+
+class JobAssignment(models.Model):
+    """workflow.job_assignment — Zuordnung Mitarbeiter ↔ Einsatz (Migration 0014).
+
+    Höchstens ein Eintrag je (Einsatz, Mitarbeiter) (UNIQUE). Rolle TECHNICIAN
+    (Standard) oder LEAD. Der Zugewiesene ist ein security.app_user (interne
+    Person), nicht eine identity.party.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    service_job = models.ForeignKey(
+        ServiceJob,
+        models.DO_NOTHING,
+        db_column="service_job_id",
+        related_name="assignments",
+    )
+    assignee = models.ForeignKey(
+        AppUser,
+        models.DO_NOTHING,
+        db_column="assignee_user_id",
+        related_name="job_assignments",
+    )
+    role = models.TextField(db_default=models.Value("TECHNICIAN"))  # TECHNICIAN|LEAD
+    created_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'workflow"."job_assignment'
+
+    def __str__(self):
+        return f"{self.role} {self.assignee_id} @ {self.service_job_id}"
+
+
+class TimeEntry(models.Model):
+    """workflow.time_entry — Zeiterfassung am Einsatz (Migration 0017).
+
+    Zeitarten B-27; INTERNE_ZEIT darf ohne Einsatzbezug erfasst werden, sonst ist
+    service_job Pflicht. Korrekturfenster B-28 setzt die DB durch.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    service_job = models.ForeignKey(
+        ServiceJob,
+        models.DO_NOTHING,
+        db_column="service_job_id",
+        null=True,
+        blank=True,
+        related_name="time_entries",
+    )
+    user = models.ForeignKey(
+        AppUser, models.DO_NOTHING, db_column="user_id", related_name="time_entries"
+    )
+    # ARBEITSZEIT|FAHRTZEIT|PAUSE|BEREITSCHAFT|NACHARBEIT|INTERNE_ZEIT
+    time_type = models.TextField()
+    started_at = models.DateTimeField()
+    ended_at = models.DateTimeField()
+    note = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'workflow"."time_entry'
+
+    def __str__(self):
+        return f"{self.time_type} {self.started_at:%Y-%m-%d}"
+
+
+class MaterialEntry(models.Model):
+    """workflow.material_entry — Materialverbrauch am Einsatz (Migration 0017).
+
+    Reine Verbrauchserfassung (B-26: keine Bestandsführung). service_job ist
+    Pflicht. Korrekturfenster B-28 setzt die DB durch.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    service_job = models.ForeignKey(
+        ServiceJob,
+        models.DO_NOTHING,
+        db_column="service_job_id",
+        related_name="material_entries",
+    )
+    description = models.TextField()
+    quantity = models.DecimalField(max_digits=15, decimal_places=3)
+    unit = models.TextField()
+    note = models.TextField(null=True, blank=True)
+    recorded_by = models.ForeignKey(
+        AppUser,
+        models.DO_NOTHING,
+        db_column="recorded_by",
+        related_name="material_entries",
+    )
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'workflow"."material_entry'
+
+    def __str__(self):
+        return f"{self.description} {self.quantity} {self.unit}"

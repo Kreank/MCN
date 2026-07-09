@@ -8,7 +8,8 @@ gehen über die Service-Schicht, also durch business_transaction
 (Benutzerkontext, Audit).
 """
 import uuid
-from datetime import date
+from datetime import date, datetime, timezone as dt_timezone
+from decimal import Decimal
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
@@ -22,6 +23,7 @@ from db_core.services import artikel as artikel_service
 from db_core.services import aufgabe as aufgabe_service
 from db_core.services import auftrag as auftrag_service
 from db_core.services import beleg as beleg_service
+from db_core.services import einsatz as einsatz_service
 from db_core.services import identity as identity_service
 from db_core.services import projekt as projekt_service
 from db_core.services import property as property_service
@@ -558,6 +560,105 @@ class Command(BaseCommand):
             )
             angelegt += 1
             self.stdout.write("Projekt-Cockpit (Logbuch + Checkliste) angelegt.")
+
+        # Demo-Einsatz (workflow.service_job) am Fassaden-Projekt. Braucht einen
+        # freigegebenen/in Ausführung befindlichen Auftrag (Ausführungs-Gate ab
+        # UNTERWEGS, B-01/A-23) und einen Auftrag, der NICHT kaufmännisch geprüft
+        # ist (sonst sperrt B-28 die Zeit-/Materialerfassung). Deshalb ein eigener
+        # Auftrag bis IN_AUSFUEHRUNG. Idempotent: nur, wenn das Projekt noch keinen
+        # Auftrag trägt.
+        ein_proj = Project.objects.filter(name="Fassadeninstandsetzung Rheinpassage").first()
+        ein_obj = Property.objects.filter(name="Geschäftshaus Rheinpassage").first()
+        ein_principal = Party.objects.filter(display_name="Thomas Bergmann").first()
+        if (
+            ein_proj is not None and ein_obj is not None and ein_principal is not None
+            and not WorkOrder.objects.filter(project_id=ein_proj.id).exists()
+        ):
+            ein_order = auftrag_service.create_work_order(
+                actor.id, property_id=ein_obj.id,
+                title="Sockelrisse Rheinpassage instand setzen",
+                project_id=ein_proj.id,
+                description="Risse in der Sockelzone öffnen, verpressen und schließen.",
+            )
+            auftrag_service.set_order_evidence(
+                actor.id, work_order_id=ein_order.id,
+                reference="Auftrag Eigentümer vom 05.06.",
+            )
+            auftrag_service.confirm_responsibility(
+                actor.id, work_order_id=ein_order.id, scope="PRIVATE_UNIT"
+            )
+            auftrag_service.add_work_order_party(
+                actor.id, work_order_id=ein_order.id, party_id=ein_principal.id,
+                role="PRINCIPAL", is_primary=True, source="OWNERSHIP",
+            )
+            auftrag_service.add_work_order_party(
+                actor.id, work_order_id=ein_order.id, party_id=ein_principal.id,
+                role="INVOICE_DEBTOR", is_primary=True, source="BILLING_INSTRUCTION",
+            )
+            for to_status in ("FREIGEGEBEN", "IN_PLANUNG", "IN_AUSFUEHRUNG"):
+                auftrag_service.advance_status(
+                    actor.id, work_order_id=ein_order.id, to_status=to_status
+                )
+
+            # Einsatz 1: läuft gerade vor Ort — mit Zuweisung, Zeiten, Material.
+            job = einsatz_service.create_service_job(
+                actor.id, work_order_id=ein_order.id,
+                scheduled_start=datetime(2026, 7, 13, 8, 0, tzinfo=dt_timezone.utc),
+                scheduled_end=datetime(2026, 7, 13, 16, 0, tzinfo=dt_timezone.utc),
+                on_site_contact_party_id=ein_principal.id,
+                access_instructions="Schlüssel beim Hausmeister EG rechts abholen.",
+            )
+            for to_status in ("GEPLANT", "BESTAETIGT", "UNTERWEGS", "VOR_ORT"):
+                einsatz_service.advance_status(
+                    actor.id, service_job_id=job.id, to_status=to_status
+                )
+            einsatz_service.assign_user(
+                actor.id, service_job_id=job.id,
+                assignee_user_id=actor.id, role="LEAD",
+            )
+            einsatz_service.log_time(
+                actor.id, service_job_id=job.id, user_id=actor.id,
+                time_type="FAHRTZEIT",
+                started_at=datetime(2026, 7, 13, 7, 30, tzinfo=dt_timezone.utc),
+                ended_at=datetime(2026, 7, 13, 8, 0, tzinfo=dt_timezone.utc),
+            )
+            einsatz_service.log_time(
+                actor.id, service_job_id=job.id, user_id=actor.id,
+                time_type="ARBEITSZEIT",
+                started_at=datetime(2026, 7, 13, 8, 0, tzinfo=dt_timezone.utc),
+                ended_at=datetime(2026, 7, 13, 12, 0, tzinfo=dt_timezone.utc),
+                note="Sockelrisse geöffnet und verpresst.",
+            )
+            einsatz_service.log_material(
+                actor.id, service_job_id=job.id,
+                description="Injektionsharz 2K", quantity=Decimal("3.500"),
+                unit="kg", recorded_by=actor.id,
+            )
+            job.refresh_from_db()
+            angelegt += 1
+            self.stdout.write(
+                f"Einsatz angelegt: {job.job_number} ({job.status})"
+            )
+
+            # Einsatz 2: anstehend (nur geplant) — für Listen-Variation.
+            job2 = einsatz_service.create_service_job(
+                actor.id, work_order_id=ein_order.id,
+                scheduled_start=datetime(2026, 7, 20, 9, 0, tzinfo=dt_timezone.utc),
+                scheduled_end=datetime(2026, 7, 20, 13, 0, tzinfo=dt_timezone.utc),
+                access_instructions="Nachkontrolle der verpressten Risse.",
+            )
+            einsatz_service.advance_status(
+                actor.id, service_job_id=job2.id, to_status="GEPLANT"
+            )
+            einsatz_service.assign_user(
+                actor.id, service_job_id=job2.id,
+                assignee_user_id=actor.id, role="TECHNICIAN",
+            )
+            job2.refresh_from_db()
+            angelegt += 1
+            self.stdout.write(
+                f"Einsatz angelegt: {job2.job_number} ({job2.status})"
+            )
 
         self.stdout.write(
             self.style.SUCCESS(
