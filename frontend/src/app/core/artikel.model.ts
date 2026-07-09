@@ -97,3 +97,37 @@ export interface StammQuery {
   line_type?: ArticleLineType | null;
   status?: StammStatus | null;
 }
+
+// --- Anlage / Preis (POST/PUT /api/pricing/...) ----------------------------
+export interface ArticleIn {
+  article_number: string;
+  description: string;
+  unit: string;
+  line_type?: ArticleLineType;
+  list_price?: string | null;
+  long_description?: string | null;
+  manufacturer_name?: string | null;
+  product_group?: string | null;
+}
+
+export interface AssemblyIn {
+  assembly_number: string;
+  name: string;
+  unit: string;
+  description?: string | null;
+}
+
+export interface ArticleSalePriceIn {
+  label?: string;
+  sale_price_group_id?: string | null;
+  fixed_price?: string | null;
+  is_standard?: boolean;
+}
+
+export interface ArticleSalePrice {
+  id: string;
+  label: string;
+  sale_price_group_id: string | null;
+  fixed_price: string | null;
+  is_standard: boolean;
+}

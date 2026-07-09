@@ -19,6 +19,20 @@
   }
 
   @case ('ready') {
+    @if (meldung(); as m) {
+      <div
+        class="melde melde--{{ m.art === 'erfolg' ? 'erfolg' : 'fehler' }} einsatz-detail__melde"
+        [attr.role]="m.art === 'fehler' ? 'alert' : 'status'"
+      >
+        <span class="melde__mark" aria-hidden="true">{{ m.art === 'fehler' ? '!' : '✓' }}</span>
+        <span class="melde__text">
+          <strong>{{ m.art === 'fehler' ? 'Fehler:' : 'Erledigt:' }}</strong> {{ m.text }}
+        </span>
+        <button type="button" class="melde__zu" (click)="meldungSchliessen()" aria-label="Meldung schließen">
+          <span aria-hidden="true">✕</span>
+        </button>
+      </div>
+    }
     <app-mappe
       kicker="Einsatz {{ daten()!.job_number }}"
       [titel]="daten()!.work_order.title"
@@ -30,6 +44,12 @@
       <span mappe-kopf class="stamp {{ statusClass(daten()!.status) }}">{{ statusLabel(daten()!.status) }}</span>
 
       @if (tab() === 'uebersicht') {
+        @if (darfDispo()) {
+          <div class="tab-toolbar">
+            <button type="button" class="btn" (click)="dialogOeffnen('termin')">Termin setzen</button>
+            <button type="button" class="btn" (click)="dialogOeffnen('status')">Status ändern</button>
+          </div>
+        }
         <dl class="feld-raster">
           <div class="feld"><dt class="feld__label">Einsatznummer</dt><dd class="feld__wert">{{ daten()!.job_number }}</dd></div>
           <div class="feld"><dt class="feld__label">Status</dt><dd class="feld__wert">{{ statusLabel(daten()!.status) }}</dd></div>
@@ -62,7 +82,7 @@
 
       @if (tab() === 'zuweisungen') {
         @if (daten()!.assignments.length === 0) {
-          <div class="tab-platzhalter"><p>Diesem Einsatz sind noch keine Mitarbeiter zugewiesen.</p></div>
+          <div class="tab-platzhalter"><p>Diesem Einsatz sind noch keine Mitarbeiter zugewiesen. Zuweisungen laufen über die Disposition (KI/API).</p></div>
         } @else {
           <ul class="ref-liste">
             @for (a of daten()!.assignments; track a.assignee_id) {
@@ -80,6 +100,16 @@
       }
 
       @if (tab() === 'erfassung') {
+        @if (darfErfassen()) {
+          <div class="tab-toolbar">
+            <button type="button" class="btn btn--primary" (click)="dialogOeffnen('zeit')">
+              <span aria-hidden="true">＋</span> Zeit buchen
+            </button>
+            <button type="button" class="btn btn--primary" (click)="dialogOeffnen('material')">
+              <span aria-hidden="true">＋</span> Material buchen
+            </button>
+          </div>
+        }
         @if (daten()!.time_entries.length === 0 && daten()!.material_entries.length === 0) {
           <div class="tab-platzhalter"><p>Für diesen Einsatz sind noch keine Zeiten oder Materialien erfasst.</p></div>
         } @else {
@@ -140,5 +170,110 @@
         }
       }
     </app-mappe>
+
+    <!-- ---------------------------- Termin-Dialog ------------------------- -->
+    <app-dialog [offen]="dialogOffen() === 'termin'" titel="Termin setzen" (schliessen)="dialogSchliessen()">
+      <form id="termin-form" class="dialog-form" (submit)="$event.preventDefault(); terminAbsenden()" novalidate>
+        @if (formularMeldung(); as fm) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+          </div>
+        }
+        <div class="feld-gruppe">
+          <label class="feld-gruppe__label" for="termin-start">Planbeginn <span class="feld-gruppe__stern" aria-hidden="true">*</span><span class="sr-only">(Pflichtfeld)</span></label>
+          <input id="termin-start" class="feld-gruppe__input" type="datetime-local" [formControl]="terminForm.controls.scheduled_start" />
+        </div>
+        <div class="feld-gruppe">
+          <label class="feld-gruppe__label" for="termin-ende">Planende</label>
+          <p class="feld-gruppe__hinweis">Optional — muss nach dem Planbeginn liegen.</p>
+          <input id="termin-ende" class="feld-gruppe__input" type="datetime-local" [formControl]="terminForm.controls.scheduled_end" />
+        </div>
+      </form>
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="dialogLaedt()" (click)="dialogSchliessen()">Abbrechen</button>
+        <button type="submit" form="termin-form" class="btn btn--primary" [disabled]="dialogLaedt()" [attr.aria-busy]="dialogLaedt()">
+          {{ dialogLaedt() ? 'Wird gespeichert …' : 'Termin setzen' }}
+        </button>
+      </div>
+    </app-dialog>
+
+    <!-- ---------------------------- Status-Dialog ------------------------- -->
+    <app-dialog [offen]="dialogOffen() === 'status'" titel="Status ändern" (schliessen)="dialogSchliessen()">
+      <form id="ej-status-form" class="dialog-form" (submit)="$event.preventDefault(); statusAbsenden()" novalidate>
+        @if (formularMeldung(); as fm) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+          </div>
+        }
+        <app-feld
+          [control]="statusForm.controls.to_status"
+          label="Neuer Status"
+          typ="select"
+          [pflicht]="true"
+          platzhalter="Bitte wählen"
+          hinweis="Unzulässige Übergänge lehnt der Server mit einer Meldung ab."
+          [optionen]="statusOptionen()"
+        />
+        <app-feld [control]="statusForm.controls.reason" label="Begründung" typ="textarea" hinweis="Optional; bei manchen Übergängen verlangt der Server eine." />
+      </form>
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="dialogLaedt()" (click)="dialogSchliessen()">Abbrechen</button>
+        <button type="submit" form="ej-status-form" class="btn btn--primary" [disabled]="dialogLaedt()" [attr.aria-busy]="dialogLaedt()">
+          {{ dialogLaedt() ? 'Wird geändert …' : 'Status ändern' }}
+        </button>
+      </div>
+    </app-dialog>
+
+    <!-- ---------------------------- Zeit-Dialog --------------------------- -->
+    <app-dialog [offen]="dialogOffen() === 'zeit'" titel="Zeit buchen" (schliessen)="dialogSchliessen()">
+      <form id="zeit-form" class="dialog-form" (submit)="$event.preventDefault(); zeitAbsenden()" novalidate>
+        @if (formularMeldung(); as fm) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+          </div>
+        }
+        <app-feld [control]="zeitForm.controls.time_type" label="Art" typ="select" [pflicht]="true" [optionen]="zeitarten" />
+        <div class="feld-gruppe">
+          <label class="feld-gruppe__label" for="zeit-start">Beginn <span class="feld-gruppe__stern" aria-hidden="true">*</span><span class="sr-only">(Pflichtfeld)</span></label>
+          <input id="zeit-start" class="feld-gruppe__input" type="datetime-local" [formControl]="zeitForm.controls.started_at" />
+        </div>
+        <div class="feld-gruppe">
+          <label class="feld-gruppe__label" for="zeit-ende">Ende <span class="feld-gruppe__stern" aria-hidden="true">*</span><span class="sr-only">(Pflichtfeld)</span></label>
+          <input id="zeit-ende" class="feld-gruppe__input" type="datetime-local" [formControl]="zeitForm.controls.ended_at" />
+        </div>
+        <app-feld [control]="zeitForm.controls.note" label="Notiz" typ="textarea" hinweis="Optional." />
+      </form>
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="dialogLaedt()" (click)="dialogSchliessen()">Abbrechen</button>
+        <button type="submit" form="zeit-form" class="btn btn--primary" [disabled]="dialogLaedt()" [attr.aria-busy]="dialogLaedt()">
+          {{ dialogLaedt() ? 'Wird gebucht …' : 'Zeit buchen' }}
+        </button>
+      </div>
+    </app-dialog>
+
+    <!-- ---------------------------- Material-Dialog ----------------------- -->
+    <app-dialog [offen]="dialogOffen() === 'material'" titel="Material buchen" (schliessen)="dialogSchliessen()">
+      <form id="material-form" class="dialog-form" (submit)="$event.preventDefault(); materialAbsenden()" novalidate>
+        @if (formularMeldung(); as fm) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+          </div>
+        }
+        <app-feld [control]="materialForm.controls.description" label="Bezeichnung" [pflicht]="true" platzhalter="z. B. Kupferrohr 15 mm" />
+        <app-feld [control]="materialForm.controls.quantity" label="Menge" typ="zahl" [pflicht]="true" hinweis="z. B. 2,5" />
+        <app-feld [control]="materialForm.controls.unit" label="Einheit" [pflicht]="true" platzhalter="z. B. m, Stk, kg" />
+        <app-feld [control]="materialForm.controls.note" label="Notiz" typ="textarea" hinweis="Optional." />
+      </form>
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="dialogLaedt()" (click)="dialogSchliessen()">Abbrechen</button>
+        <button type="submit" form="material-form" class="btn btn--primary" [disabled]="dialogLaedt()" [attr.aria-busy]="dialogLaedt()">
+          {{ dialogLaedt() ? 'Wird gebucht …' : 'Material buchen' }}
+        </button>
+      </div>
+    </app-dialog>
   }
 }

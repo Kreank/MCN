@@ -9,8 +9,6 @@ from datetime import date
 
 import pytest
 
-from django.db import Error
-
 from db_core.db_context import business_transaction
 from db_core.models import Building, Party, Property, PropertyPartyRole, Unit
 from db_core.services import identity as identity_service
@@ -142,8 +140,9 @@ def test_add_party_role_ungueltige_rolle(app_user):
 
 @pytest.mark.django_db
 def test_add_party_role_merged_party_abgelehnt(app_user):
-    """Der DB-Trigger trg_property_role_no_merged verbietet Referenzen auf
-    zusammengeführte Parties — das muss als DB-Fehler durchschlagen."""
+    """Referenzen auf zusammengeführte Parties sind unzulässig
+    (trg_property_role_no_merged). Der Service prüft das vorab und wirft einen
+    klaren ValueError (→422) statt eines DB-Fehlers (→500)."""
     prop = property_service.create_property(
         app_user.id, name="Objekt", property_type="WEG",
         street="S", postal_code="1", city="C",
@@ -158,7 +157,7 @@ def test_add_party_role_merged_party_abgelehnt(app_user):
         Party.objects.filter(id=dublette.id).update(
             status="MERGED", merged_into_party_id=ziel.id
         )
-    with pytest.raises(Error):
+    with pytest.raises(ValueError, match="zusammengeführt"):
         property_service.add_party_role(
             app_user.id, property_id=prop.id, party_id=dublette.id,
             role="OPERATOR", valid_from=date(2020, 1, 1),

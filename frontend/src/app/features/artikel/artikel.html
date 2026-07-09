@@ -6,12 +6,37 @@
         Artikelstamm
       </p>
       <h1 id="artikel-titel" class="page-head__titel">Artikel &amp; Leistungen</h1>
+      <p class="page-head__hint">
+        Materialartikel und Leistungen (Stücklisten aus Material und Lohn) als
+        Bausteine für Angebote.
+      </p>
     </div>
-    <p class="page-head__hint">
-      Materialartikel und Leistungen (Stücklisten aus Material und Lohn) als
-      Bausteine für Angebote. Pflege und Import laufen über die KI und die API.
-    </p>
+    @if (darfAnlegen()) {
+      <div class="page-head__aktionen">
+        <button type="button" class="btn btn--primary" (click)="artikelOeffnen()">
+          <span aria-hidden="true">＋</span> Neuer Artikel
+        </button>
+        <button type="button" class="btn" (click)="leistungOeffnen()">
+          <span aria-hidden="true">＋</span> Neue Leistung
+        </button>
+      </div>
+    }
   </header>
+
+  @if (meldung(); as m) {
+    <div
+      class="melde melde--{{ m.art === 'erfolg' ? 'erfolg' : 'fehler' }} artikel__melde"
+      [attr.role]="m.art === 'fehler' ? 'alert' : 'status'"
+    >
+      <span class="melde__mark" aria-hidden="true">{{ m.art === 'fehler' ? '!' : '✓' }}</span>
+      <span class="melde__text">
+        <strong>{{ m.art === 'fehler' ? 'Fehler:' : 'Angelegt:' }}</strong> {{ m.text }}
+      </span>
+      <button type="button" class="melde__zu" (click)="meldungSchliessen()" aria-label="Meldung schließen">
+        <span aria-hidden="true">✕</span>
+      </button>
+    </div>
+  }
 
   <div class="controls">
     <div class="search">
@@ -134,4 +159,56 @@
       }
     }
   }
+
+  <!-- ------------------------------ Artikel anlegen ------------------------ -->
+  <app-dialog [offen]="artikelOffen()" titel="Neuer Artikel" (schliessen)="artikelSchliessen()">
+    <form id="neu-artikel-form" class="dialog-form" (submit)="$event.preventDefault(); artikelAbsenden()" novalidate>
+      @if (formularMeldung(); as fm) {
+        <div class="melde melde--fehler" role="alert">
+          <span class="melde__mark" aria-hidden="true">!</span>
+          <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+        </div>
+      }
+      <app-feld [control]="artikelForm.controls.article_number" label="Artikelnummer" [pflicht]="true" hinweis="Eindeutig; keine automatische Vergabe." />
+      <app-feld [control]="artikelForm.controls.description" label="Bezeichnung" [pflicht]="true" />
+      <app-feld [control]="artikelForm.controls.unit" label="Einheit" [pflicht]="true" hinweis="z. B. Stk, m, h, Pauschal." />
+      <app-feld [control]="artikelForm.controls.line_type" label="Typ" typ="select" [optionen]="lineTypOptionen" />
+      <app-feld [control]="artikelForm.controls.list_price" label="Listenpreis" typ="zahl" hinweis="Optional. Betrag in Euro, z. B. 1.234,56." />
+      <app-feld [control]="artikelForm.controls.long_description" label="Langtext" typ="textarea" hinweis="Optional." />
+      <app-feld [control]="artikelForm.controls.manufacturer_name" label="Hersteller" hinweis="Optional." />
+      <app-feld [control]="artikelForm.controls.product_group" label="Warengruppe" hinweis="Optional." />
+    </form>
+    <div dialog-aktionen class="dialog__aktionen">
+      <button type="button" class="btn" [disabled]="neuLaedt()" (click)="artikelSchliessen()">Abbrechen</button>
+      <button type="submit" form="neu-artikel-form" class="btn btn--primary" [disabled]="neuLaedt()" [attr.aria-busy]="neuLaedt()">
+        {{ neuLaedt() ? 'Wird angelegt …' : 'Artikel anlegen' }}
+      </button>
+    </div>
+  </app-dialog>
+
+  <!-- ------------------------------ Leistung anlegen ---------------------- -->
+  <app-dialog [offen]="leistungOffen()" titel="Neue Leistung" (schliessen)="leistungSchliessen()">
+    <form id="neu-leistung-form" class="dialog-form" (submit)="$event.preventDefault(); leistungAbsenden()" novalidate>
+      @if (formularMeldung(); as fm) {
+        <div class="melde melde--fehler" role="alert">
+          <span class="melde__mark" aria-hidden="true">!</span>
+          <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+        </div>
+      }
+      <app-feld [control]="leistungForm.controls.assembly_number" label="Leistungsnummer" [pflicht]="true" hinweis="Eindeutig; keine automatische Vergabe." />
+      <app-feld [control]="leistungForm.controls.name" label="Name" [pflicht]="true" />
+      <app-feld [control]="leistungForm.controls.unit" label="Einheit" [pflicht]="true" hinweis="z. B. Stk, m, Pauschal." />
+      <app-feld [control]="leistungForm.controls.description" label="Beschreibung" typ="textarea" hinweis="Optional." />
+      <p class="dialog-form__hinweis">
+        Die Leistung wird als Kopf angelegt. Die Stückliste (Material- und
+        Lohnpositionen) folgt, sobald der Positions-Editor bereitsteht.
+      </p>
+    </form>
+    <div dialog-aktionen class="dialog__aktionen">
+      <button type="button" class="btn" [disabled]="neuLaedt()" (click)="leistungSchliessen()">Abbrechen</button>
+      <button type="submit" form="neu-leistung-form" class="btn btn--primary" [disabled]="neuLaedt()" [attr.aria-busy]="neuLaedt()">
+        {{ neuLaedt() ? 'Wird angelegt …' : 'Leistung anlegen' }}
+      </button>
+    </div>
+  </app-dialog>
 </section>

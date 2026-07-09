@@ -1,16 +1,26 @@
 import { Component, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { RouterLink } from '@angular/router';
+import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Subject, debounceTime, distinctUntilChanged } from 'rxjs';
 import { PropertyService } from '../../core/property.service';
+import { AuthService } from '../../core/auth.service';
 import {
   Property,
+  PropertyIn,
   PropertyPage,
   PropertyStatus,
   PropertyType,
 } from '../../core/property.model';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { VerbotenState, fehlerState } from '../../shared/http-fehler';
+import { Dialog } from '../../shared/dialog/dialog';
+import { Feld, FeldOption } from '../../shared/formular/feld';
+import { apiFehlerZuweisen } from '../../shared/formular/api-fehler';
+import {
+  felderAlsBeruehrtMarkieren,
+  serverFehlerZuruecksetzen,
+} from '../../shared/formular/formular.util';
 
 type ViewState =
   | { kind: 'loading' }
@@ -19,15 +29,18 @@ type ViewState =
   | { kind: 'error' };
 
 type Segment = { value: PropertyType | null; label: string };
+type Meldung = { art: 'erfolg' | 'fehler'; text: string };
 
 @Component({
   selector: 'app-liegenschaften',
-  imports: [RouterLink, KeinZugriff],
+  imports: [RouterLink, ReactiveFormsModule, KeinZugriff, Dialog, Feld],
   templateUrl: './liegenschaften.html',
   styleUrl: './liegenschaften.scss',
 })
 export class Liegenschaften {
   private readonly svc = inject(PropertyService);
+  private readonly auth = inject(AuthService);
+  private readonly fb = inject(FormBuilder);
 
   protected readonly pageSize = 20;
   protected readonly segments: Segment[] = [
@@ -39,6 +52,14 @@ export class Liegenschaften {
     { value: 'OTHER', label: 'Sonstige' },
   ];
 
+  protected readonly typOptionen: FeldOption[] = [
+    { wert: 'WEG', label: 'WEG' },
+    { wert: 'RENTAL_PROPERTY', label: 'Mietobjekt' },
+    { wert: 'COMMERCIAL', label: 'Gewerbe' },
+    { wert: 'MIXED', label: 'Gemischt' },
+    { wert: 'OTHER', label: 'Sonstige' },
+  ];
+
   protected readonly query = signal('');
   protected readonly propertyType = signal<PropertyType | null>(null);
   protected readonly page = signal(1);
@@ -46,6 +67,43 @@ export class Liegenschaften {
 
   // Fuer das Laden-Skelett.
   protected readonly skeletons = Array.from({ length: 6 });
+
+  // --- Rechte (nur UI-Sichtbarkeit; der Server setzt sie durch) -----------
+  protected readonly darfAnlegen = computed(() => this.auth.darf('property', 'ANLEGEN'));
+
+  // --- Meldung + Anlage-Dialog --------------------------------------------
+  protected readonly meldung = signal<Meldung | null>(null);
+  protected readonly neuOffen = signal(false);
+  protected readonly neuLaedt = signal(false);
+  protected readonly formularMeldung = signal<string | null>(null);
+  protected readonly neuForm = this.fb.group({
+    name: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.required, Validators.maxLength(300)],
+    }),
+    property_type: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.required],
+    }),
+    street: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.required],
+    }),
+    house_number: this.fb.control('', { nonNullable: true }),
+    address_addition: this.fb.control('', { nonNullable: true }),
+    postal_code: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.required],
+    }),
+    city: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.required],
+    }),
+    country_code: this.fb.control('DE', {
+      nonNullable: true,
+      validators: [Validators.required, Validators.maxLength(2)],
+    }),
+  });
 
   private readonly searchInput$ = new Subject<string>();
   private reqId = 0;
@@ -102,6 +160,69 @@ export class Liegenschaften {
 
   retry(): void {
     this.fetch();
+  }
+
+  meldungSchliessen(): void {
+    this.meldung.set(null);
+  }
+
+  // ---- Anlegen ------------------------------------------------------------
+  neuOeffnen(): void {
+    this.neuForm.reset({
+      name: '',
+      property_type: '',
+      street: '',
+      house_number: '',
+      address_addition: '',
+      postal_code: '',
+      city: '',
+      country_code: 'DE',
+    });
+    this.formularMeldung.set(null);
+    this.neuOffen.set(true);
+  }
+
+  neuSchliessen(): void {
+    if (this.neuLaedt()) return;
+    this.neuOffen.set(false);
+  }
+
+  neuAbsenden(): void {
+    if (this.neuLaedt()) return;
+    serverFehlerZuruecksetzen(this.neuForm);
+    this.formularMeldung.set(null);
+    felderAlsBeruehrtMarkieren(this.neuForm);
+    if (this.neuForm.invalid) return;
+
+    const v = this.neuForm.getRawValue();
+    const payload: PropertyIn = {
+      name: v.name.trim(),
+      property_type: v.property_type as PropertyType,
+      street: v.street.trim(),
+      postal_code: v.postal_code.trim(),
+      city: v.city.trim(),
+      house_number: v.house_number.trim() || null,
+      address_addition: v.address_addition.trim() || null,
+      country_code: v.country_code.trim().toUpperCase() || 'DE',
+    };
+
+    this.neuLaedt.set(true);
+    this.svc.create(payload).subscribe({
+      next: (prop) => {
+        this.neuLaedt.set(false);
+        this.neuOffen.set(false);
+        this.meldung.set({
+          art: 'erfolg',
+          text: `Liegenschaft „${prop.name}“ (Nr. ${prop.property_number}) wurde angelegt.`,
+        });
+        this.page.set(1);
+        this.fetch();
+      },
+      error: (err) => {
+        this.neuLaedt.set(false);
+        this.formularMeldung.set(apiFehlerZuweisen(err, this.neuForm).formular);
+      },
+    });
   }
 
   private fetch(): void {

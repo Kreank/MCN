@@ -69,6 +69,51 @@ export interface MaterialEntry {
   note: string | null;
 }
 
+// --- Schreib-Payloads ------------------------------------------------------
+// POST /api/planung/einsaetze
+export interface ServiceJobCreate {
+  work_order_id: string;
+  scheduled_start?: string | null;
+  scheduled_end?: string | null;
+  on_site_contact_party_id?: string | null;
+  access_instructions?: string | null;
+}
+
+// POST /api/planung/einsaetze/{id}/schedule
+export interface ScheduleInput {
+  scheduled_start: string;
+  scheduled_end?: string | null;
+}
+
+// POST /api/planung/einsaetze/{id}/status
+export interface JobStatusInput {
+  to_status: ServiceJobStatus;
+  reason?: string | null;
+}
+
+// POST /api/planung/einsaetze/{id}/assignments
+export interface JobAssignmentInput {
+  assignee_user_id: string;
+  role: string;
+}
+
+// POST /api/planung/einsaetze/{id}/times — Zeiten als ISO-Datetime.
+export interface TimeLogInput {
+  time_type: string;
+  started_at: string;
+  ended_at: string;
+  user_id?: string | null;
+  note?: string | null;
+}
+
+// POST /api/planung/einsaetze/{id}/materials — Menge als Dezimal-String.
+export interface MaterialLogInput {
+  description: string;
+  quantity: string;
+  unit: string;
+  note?: string | null;
+}
+
 // --- Plantafel-Board -------------------------------------------------------
 export interface BoardResource {
   id: string;

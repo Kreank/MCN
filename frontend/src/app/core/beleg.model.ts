@@ -144,3 +144,53 @@ export interface InvoiceDetail extends Invoice {
   parties: InvoiceParty[];
   lines: QuoteLine[];
 }
+
+// --- Schreib-Verträge (POST-Payloads) --------------------------------------
+// Alle Decimal-Felder sind Punkt-Strings (deZuApiDezimal), niemals number.
+
+export interface QuoteLineInput {
+  line_type: LineType;
+  description: string;
+  quantity?: string | null;
+  unit?: string | null;
+  unit_price?: string | null;
+  discount_percent?: string | null;
+  tax_code?: string | null;
+}
+
+export interface QuoteCreate {
+  property_id: string;
+  title: string;
+  project_id?: string | null;
+  quote_date?: string | null;
+  valid_until_date?: string | null;
+  lines: QuoteLineInput[];
+}
+
+export interface InvoiceCreate {
+  property_id: string;
+  invoice_type?: InvoiceType;
+  project_id?: string | null;
+  work_order_id?: string | null;
+  reference_invoice_id?: string | null;
+  invoice_date?: string | null;
+  due_date?: string | null;
+  lines: QuoteLineInput[];
+}
+
+export interface InvoicePartyCreate {
+  party_id: string;
+  role: string;
+  is_primary?: boolean;
+  allocation_percent?: string | null;
+  liability_group?: string | null;
+  liability_basis?: string | null;
+}
+
+/** Kurzreferenz auf einen Folgebeleg (Storno/Gutschrift), CreditRefOut. */
+export interface CreditRef {
+  id: string;
+  invoice_number: string | null;
+  invoice_type: InvoiceType;
+  gross_total: string | null;
+}

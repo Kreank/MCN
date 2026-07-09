@@ -3,9 +3,13 @@ import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import {
   ArticleDetail,
+  ArticleIn,
   ArticleKalkulation,
   ArticlePage,
+  ArticleSalePrice,
+  ArticleSalePriceIn,
   AssemblyDetail,
+  AssemblyIn,
   AssemblyPage,
   StammQuery,
 } from './artikel.model';
@@ -49,5 +53,26 @@ export class ArtikelService {
 
   getAssembly(id: string): Observable<AssemblyDetail> {
     return this.http.get<AssemblyDetail>(`${this.base}/assemblies/${id}`);
+  }
+
+  /** Artikel anlegen. Erfordert Recht pricing.ANLEGEN. */
+  createArticle(payload: ArticleIn): Observable<ArticleDetail> {
+    return this.http.post<ArticleDetail>(`${this.base}/articles`, payload);
+  }
+
+  /** Leistung/Baugruppe anlegen. Erfordert Recht pricing.ANLEGEN. */
+  createAssembly(payload: AssemblyIn): Observable<AssemblyDetail> {
+    return this.http.post<AssemblyDetail>(`${this.base}/assemblies`, payload);
+  }
+
+  /** VK-Variante eines Artikels setzen. Erfordert Recht pricing.AENDERN. */
+  setSalePrice(
+    articleId: string,
+    payload: ArticleSalePriceIn,
+  ): Observable<ArticleSalePrice> {
+    return this.http.put<ArticleSalePrice>(
+      `${this.base}/articles/${articleId}/sale_price`,
+      payload,
+    );
   }
 }

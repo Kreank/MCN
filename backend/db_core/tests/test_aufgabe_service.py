@@ -70,12 +70,13 @@ def test_task_no_delete(app_user):
 
 @pytest.mark.django_db
 def test_task_merged_party_abgelehnt(app_user):
-    """trg_task_no_merged verbietet Referenz auf zusammengeführte Party."""
+    """Referenz auf zusammengeführte Party ist unzulässig (trg_task_no_merged);
+    der Service prüft vorab und wirft ValueError (→422) statt DB-Fehler (→500)."""
     ziel = identity_service.create_person(app_user.id, first_name="Z", last_name="P")
     dub = identity_service.create_person(app_user.id, first_name="Alt", last_name="Dub")
     with business_transaction(app_user.id):
         Party.objects.filter(id=dub.id).update(
             status="MERGED", merged_into_party_id=ziel.id
         )
-    with pytest.raises(Error):
+    with pytest.raises(ValueError, match="zusammengeführt"):
         aufgabe_service.create_task(app_user.id, title="X", party_id=dub.id)

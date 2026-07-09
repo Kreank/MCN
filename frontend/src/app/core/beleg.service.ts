@@ -2,9 +2,12 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import {
+  InvoiceCreate,
   InvoiceDetail,
   InvoicePage,
+  InvoicePartyCreate,
   InvoiceQuery,
+  QuoteCreate,
   QuoteDetail,
   QuotePage,
   QuoteQuery,
@@ -47,5 +50,33 @@ export class BelegService {
 
   getInvoice(id: string): Observable<InvoiceDetail> {
     return this.http.get<InvoiceDetail>(`/api/invoicing/invoices/${id}`);
+  }
+
+  // --- Schreibend (Session-Auth Pflicht) -----------------------------------
+
+  /** Neues Angebot (Status ENTWURF) mit Positionen anlegen. */
+  createQuote(payload: QuoteCreate): Observable<QuoteDetail> {
+    return this.http.post<QuoteDetail>(this.base, payload);
+  }
+
+  /** Angebot versenden — unumkehrbar: DB vergibt die AN-Nummer und friert ein. */
+  sendQuote(id: string): Observable<QuoteDetail> {
+    return this.http.post<QuoteDetail>(`${this.base}/${id}/send`, {});
+  }
+
+  /** Neue Rechnung/Gutschrift (Status ENTWURF) mit Positionen anlegen. */
+  createInvoice(payload: InvoiceCreate): Observable<InvoiceDetail> {
+    return this.http.post<InvoiceDetail>('/api/invoicing/invoices', payload);
+  }
+
+  /** Beteiligten (Schuldner/Empfänger …) am Rechnungsentwurf ergänzen. */
+  addInvoiceParty(id: string, payload: InvoicePartyCreate): Observable<InvoiceDetail> {
+    return this.http.post<InvoiceDetail>(`/api/invoicing/invoices/${id}/parties`, payload);
+  }
+
+  /** Rechnung veröffentlichen — unumkehrbar: DB vergibt die Belegnummer,
+   *  friert ein und prüft die Freigabe-Tore (422 bei Verstoß). */
+  publishInvoice(id: string): Observable<InvoiceDetail> {
+    return this.http.post<InvoiceDetail>(`/api/invoicing/invoices/${id}/publish`, {});
   }
 }

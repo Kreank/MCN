@@ -1,16 +1,20 @@
 <section class="einsaetze" aria-labelledby="einsaetze-titel">
   <header class="page-head">
-    <div>
+    <div class="page-head__text">
       <p class="page-head__kicker">
         <span class="page-head__scale" aria-hidden="true"></span>
         Planung · Einsätze
       </p>
       <h1 id="einsaetze-titel" class="page-head__titel">Einsätze</h1>
+      <p class="page-head__hint">
+        Termine und Einsätze zu den Aufträgen — mit Zuweisung, Planzeitraum und Status.
+      </p>
     </div>
-    <p class="page-head__hint">
-      Termine und Einsätze zu den Aufträgen — mit Zuweisung, Planzeitraum und
-      Status. Disposition und Anlage laufen über die KI und die API.
-    </p>
+    @if (darfAnlegen()) {
+      <button type="button" class="btn btn--primary page-head__neu" (click)="neuOeffnen()">
+        <span aria-hidden="true">＋</span> Neuer Einsatz
+      </button>
+    }
   </header>
 
   <app-planung-nav />
@@ -48,6 +52,21 @@
   </div>
 
   <p class="sr-only" role="status">{{ resultSummary() }}</p>
+
+  @if (meldung(); as m) {
+    <div
+      class="melde melde--{{ m.art === 'erfolg' ? 'erfolg' : 'fehler' }} einsaetze__melde"
+      [attr.role]="m.art === 'fehler' ? 'alert' : 'status'"
+    >
+      <span class="melde__mark" aria-hidden="true">{{ m.art === 'fehler' ? '!' : '✓' }}</span>
+      <span class="melde__text">
+        <strong>{{ m.art === 'fehler' ? 'Fehler:' : 'Erledigt:' }}</strong> {{ m.text }}
+      </span>
+      <button type="button" class="melde__zu" (click)="meldungSchliessen()" aria-label="Meldung schließen">
+        <span aria-hidden="true">✕</span>
+      </button>
+    </div>
+  }
 
   @switch (state().kind) {
     @case ('loading') {
@@ -116,4 +135,72 @@
       }
     }
   }
+
+  <!-- ------------------------------ Anlage-Dialog ------------------------- -->
+  <app-dialog [offen]="neuOffen()" titel="Neuer Einsatz" (schliessen)="neuSchliessen()">
+    <form id="neu-einsatz-form" class="dialog-form" (submit)="$event.preventDefault(); neuAbsenden()" novalidate>
+      @if (formularMeldung(); as fm) {
+        <div class="melde melde--fehler" role="alert">
+          <span class="melde__mark" aria-hidden="true">!</span>
+          <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+        </div>
+      }
+
+      <app-referenz-wahl
+        [control]="neuForm.controls.work_order_id"
+        label="Auftrag"
+        [pflicht]="true"
+        platzhalter="Auftrag suchen (Titel oder Nummer)"
+        [suche]="auftragSuche"
+      />
+
+      <div class="feld-gruppe">
+        <label class="feld-gruppe__label" for="einsatz-start">Planbeginn</label>
+        <p class="feld-gruppe__hinweis">Optional — Datum und Uhrzeit.</p>
+        <input
+          id="einsatz-start"
+          class="feld-gruppe__input"
+          type="datetime-local"
+          [formControl]="neuForm.controls.scheduled_start"
+        />
+      </div>
+      <div class="feld-gruppe">
+        <label class="feld-gruppe__label" for="einsatz-ende">Planende</label>
+        <p class="feld-gruppe__hinweis">Optional — muss nach dem Planbeginn liegen.</p>
+        <input
+          id="einsatz-ende"
+          class="feld-gruppe__input"
+          type="datetime-local"
+          [formControl]="neuForm.controls.scheduled_end"
+        />
+      </div>
+
+      <app-referenz-wahl
+        [control]="neuForm.controls.on_site_contact_party_id"
+        label="Ansprechpartner vor Ort"
+        hinweis="Optional — ein Kontakt."
+        platzhalter="Kontakt suchen"
+        [suche]="partySuche"
+      />
+      <app-feld
+        [control]="neuForm.controls.access_instructions"
+        label="Zutritt"
+        typ="textarea"
+        hinweis="Optional — Hinweise zum Zutritt."
+      />
+    </form>
+
+    <div dialog-aktionen class="dialog__aktionen">
+      <button type="button" class="btn" [disabled]="neuLaedt()" (click)="neuSchliessen()">Abbrechen</button>
+      <button
+        type="submit"
+        form="neu-einsatz-form"
+        class="btn btn--primary"
+        [disabled]="neuLaedt()"
+        [attr.aria-busy]="neuLaedt()"
+      >
+        {{ neuLaedt() ? 'Wird angelegt …' : 'Einsatz anlegen' }}
+      </button>
+    </div>
+  </app-dialog>
 </section>

@@ -19,8 +19,9 @@ from datetime import date, timedelta
 
 from db_core.db_context import business_transaction
 from db_core.gate_errors import as_business_error
-from db_core.models import MaintenanceContract, MaintenanceEvent
+from db_core.models import MaintenanceContract, MaintenanceEvent, Project, Property
 from db_core.services import aufgabe as aufgabe_service
+from db_core.services._validation import ensure_exists, ensure_party_usable
 
 INTERVAL_KINDS = ("JAEHRLICH", "MONATLICH", "WOECHENTLICH", "TAGE", "FESTES_DATUM")
 DUE_ACTIONS = ("PROJEKT", "AUFTRAG", "AUFGABE", "BENACHRICHTIGUNG")
@@ -100,6 +101,9 @@ def create_contract(
         raise ValueError("interval_kind 'FESTES_DATUM' erfordert fixed_date.")
     if lead_time_days is not None and lead_time_days < 0:
         raise ValueError("lead_time_days darf nicht negativ sein.")
+    ensure_exists(Property, property_id, "Liegenschaft")
+    ensure_party_usable(party_id, "Kunde")
+    ensure_exists(Project, project_id, "Projekt")
 
     next_due = _initial_due(
         start_date=start_date, interval_kind=interval_kind, fixed_date=fixed_date

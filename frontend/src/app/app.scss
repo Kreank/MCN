@@ -285,6 +285,18 @@
   flex-direction: column;
   line-height: 1.2;
   text-align: right;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  transition: background-color 0.15s ease;
+
+  &:hover {
+    background: var(--command-2);
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring-on-command);
+    outline-offset: 2px;
+  }
 }
 .userchip__name {
   font-weight: 600;

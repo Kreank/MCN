@@ -3,9 +3,11 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { Mappe, MappeTab } from '../../shared/mappe/mappe';
 import { BelegService } from '../../core/beleg.service';
+import { AuthService } from '../../core/auth.service';
 import { LineType, QuoteDetail, QuoteStatus } from '../../core/beleg.model';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
-import { VerbotenState, fehlerState } from '../../shared/http-fehler';
+import { Bestaetigung } from '../../shared/bestaetigung/bestaetigung';
+import { VerbotenState, fehlerDetail, fehlerState, istVerboten } from '../../shared/http-fehler';
 
 type ViewState =
   | { kind: 'loading' }
@@ -13,19 +15,35 @@ type ViewState =
   | VerbotenState
   | { kind: 'error' };
 
+type Meldung = { art: 'erfolg' | 'fehler'; text: string };
+
 @Component({
   selector: 'app-beleg-detail',
-  imports: [Mappe, RouterLink, KeinZugriff],
+  imports: [Mappe, RouterLink, KeinZugriff, Bestaetigung],
   templateUrl: './beleg-detail.html',
   styleUrl: './beleg-detail.scss',
 })
 export class BelegDetail {
   private readonly route = inject(ActivatedRoute);
   private readonly svc = inject(BelegService);
+  private readonly auth = inject(AuthService);
 
   protected readonly tab = signal('positionen');
   protected readonly state = signal<ViewState>({ kind: 'loading' });
   private reqId = 0;
+
+  // --- Versenden (unumkehrbar) --------------------------------------------
+  protected readonly darfVersenden = computed(() => this.auth.darf('invoicing', 'VERSENDEN'));
+  protected readonly meldung = signal<Meldung | null>(null);
+  protected readonly versendenOffen = signal(false);
+  protected readonly versendenLaedt = signal(false);
+
+  /** Versenden ist nur vor dem Versand sinnvoll (Server setzt die Tore durch). */
+  protected readonly kannVersenden = computed(() => {
+    const d = this.daten();
+    if (!d) return false;
+    return d.status === 'ENTWURF' || d.status === 'INTERN_GEPRUEFT' || d.status === 'FREIGEGEBEN';
+  });
 
   protected readonly tabs: MappeTab[] = [
     { id: 'positionen', label: 'Positionen' },
@@ -65,6 +83,47 @@ export class BelegDetail {
         if (rid === this.reqId) this.state.set(fehlerState(err));
       },
     });
+  }
+
+  // ---- Versenden ----------------------------------------------------------
+  versendenFragen(): void {
+    this.meldung.set(null);
+    this.versendenOffen.set(true);
+  }
+
+  versendenAbbrechen(): void {
+    if (!this.versendenLaedt()) this.versendenOffen.set(false);
+  }
+
+  versendenBestaetigen(): void {
+    const d = this.daten();
+    if (!d || this.versendenLaedt()) return;
+    this.versendenLaedt.set(true);
+    this.svc.sendQuote(d.id).subscribe({
+      next: (aktualisiert) => {
+        this.versendenLaedt.set(false);
+        this.versendenOffen.set(false);
+        this.state.set({ kind: 'ready', data: aktualisiert });
+        this.meldung.set({
+          art: 'erfolg',
+          text: `Angebot versendet. Belegnummer ${aktualisiert.quote_number ?? '—'} wurde vergeben.`,
+        });
+      },
+      error: (err) => {
+        this.versendenLaedt.set(false);
+        this.versendenOffen.set(false);
+        this.meldung.set({ art: 'fehler', text: this.fehlerText(err) });
+      },
+    });
+  }
+
+  meldungSchliessen(): void {
+    this.meldung.set(null);
+  }
+
+  private fehlerText(err: unknown): string {
+    if (istVerboten(err)) return fehlerDetail(err) ?? 'Keine Berechtigung für diese Aktion.';
+    return fehlerDetail(err) ?? 'Die Aktion ist fehlgeschlagen. Bitte erneut versuchen.';
   }
 
   // ---- Darstellungshelfer -------------------------------------------------

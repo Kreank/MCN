@@ -61,6 +61,21 @@ export class AuthService {
   }
 
   /**
+   * Ändert das eigene Passwort. Der Server hält die Sitzung gültig
+   * (update_session_auth_hash) — kein erneutes Anmelden nötig. Passwörter
+   * werden nie geloggt oder gespeichert.
+   *
+   * Fehler: 400 (altes Passwort falsch), 422 (neues Passwort zu schwach, mit
+   * deutschen Validator-Meldungen).
+   */
+  passwortAendern(oldPassword: string, newPassword: string): Observable<{ detail: string }> {
+    return this.http.post<{ detail: string }>('/api/auth/password', {
+      old_password: oldPassword,
+      new_password: newPassword,
+    });
+  }
+
+  /**
    * Prüft, ob das angemeldete Konto ein Recht besitzt. Dient nur dazu, im UI
    * Aktionen auszublenden, die der Server ohnehin mit 403 ablehnen würde — die
    * Durchsetzung liegt beim Server, nicht hier.

@@ -10,8 +10,11 @@ damit Fehleingaben schon vor dem DB-CHECK eine klare Meldung bekommen.
 """
 import uuid
 
+from django.db.models import Q
+
 from db_core.db_context import business_transaction
 from db_core.models import Address, Building, Property, PropertyPartyRole, Unit
+from db_core.services._validation import ensure_exists, ensure_party_usable
 
 # Beschlossene Codelisten (Migration 0004_property.sql).
 PROPERTY_TYPES = ("WEG", "RENTAL_PROPERTY", "COMMERCIAL", "MIXED", "OTHER")
@@ -99,6 +102,8 @@ def add_building(
     """Legt ein property.building an einer bestehenden Liegenschaft an."""
     if not building_number or not building_number.strip():
         raise ValueError("building_number darf nicht leer sein.")
+    ensure_exists(Property, property_id, "Liegenschaft")
+    ensure_exists(Address, address_id, "Adresse")
     with business_transaction(actor_app_user_id):
         building = Building.objects.create(
             id=uuid.uuid4(),
@@ -130,6 +135,18 @@ def add_unit(
         )
     if not unit_number or not unit_number.strip():
         raise ValueError("unit_number darf nicht leer sein.")
+    ensure_exists(Property, property_id, "Liegenschaft")
+    # Der zusammengesetzte FK (building_id, property_id) → building verlangt, dass
+    # das Gebäude zur angegebenen Liegenschaft gehört; sonst IntegrityError (500).
+    building_property_id = (
+        Building.objects.filter(pk=building_id)
+        .values_list("property_id", flat=True)
+        .first()
+    )
+    if building_property_id is None:
+        raise ValueError(f"Gebäude {building_id} existiert nicht")
+    if building_property_id != property_id:
+        raise ValueError("Das Gebäude gehört nicht zur angegebenen Liegenschaft")
     with business_transaction(actor_app_user_id):
         unit = Unit.objects.create(
             id=uuid.uuid4(),
@@ -159,6 +176,21 @@ def add_party_role(
     if role not in PARTY_ROLES:
         raise ValueError(
             f"Ungültige role '{role}'. Erlaubt: {', '.join(PARTY_ROLES)}."
+        )
+    ensure_exists(Property, property_id, "Liegenschaft")
+    # party_id muss existieren und darf nicht MERGED sein (trg_property_role_no_merged).
+    ensure_party_usable(party_id, "Partei")
+    # Zeitlich überlappende Doppelrolle verletzt sonst excl_property_party_role_dup
+    # (IntegrityError → 500). Overlap zweier daterange('[)') = ef < nu UND nf < eu.
+    overlap = PropertyPartyRole.objects.filter(
+        property_id=property_id, party_id=party_id, role=role
+    ).filter(Q(valid_until__isnull=True) | Q(valid_until__gt=valid_from))
+    if valid_until is not None:
+        overlap = overlap.filter(valid_from__lt=valid_until)
+    if overlap.exists():
+        raise ValueError(
+            "Für diese Partei besteht in diesem Zeitraum bereits dieselbe Rolle "
+            "an der Liegenschaft"
         )
     with business_transaction(actor_app_user_id):
         entry = PropertyPartyRole.objects.create(

@@ -1,9 +1,14 @@
 import { Component, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { RouterLink } from '@angular/router';
-import { Subject, debounceTime, distinctUntilChanged } from 'rxjs';
+import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
+import { Subject, debounceTime, distinctUntilChanged, map } from 'rxjs';
 import { EinsatzService } from '../../core/einsatz.service';
+import { AuftragService } from '../../core/auftrag.service';
+import { PartyService } from '../../core/party.service';
+import { AuthService } from '../../core/auth.service';
 import {
+  ServiceJobCreate,
   ServiceJobPage,
   ServiceJobStatus,
   serviceJobStatusClass,
@@ -12,6 +17,14 @@ import {
 import { PlanungNav } from '../planung-nav/planung-nav';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { VerbotenState, fehlerState } from '../../shared/http-fehler';
+import { Dialog } from '../../shared/dialog/dialog';
+import { Feld } from '../../shared/formular/feld';
+import { ReferenzWahl, RefSuche } from '../../shared/formular/referenz-wahl';
+import { apiFehlerZuweisen } from '../../shared/formular/api-fehler';
+import {
+  felderAlsBeruehrtMarkieren,
+  serverFehlerZuruecksetzen,
+} from '../../shared/formular/formular.util';
 
 type ViewState =
   | { kind: 'loading' }
@@ -20,15 +33,51 @@ type ViewState =
   | { kind: 'error' };
 
 type Segment = { value: ServiceJobStatus | null; label: string };
+type Meldung = { art: 'erfolg' | 'fehler'; text: string };
 
 @Component({
   selector: 'app-einsaetze',
-  imports: [RouterLink, PlanungNav, KeinZugriff],
+  imports: [RouterLink, PlanungNav, KeinZugriff, ReactiveFormsModule, Dialog, Feld, ReferenzWahl],
   templateUrl: './einsaetze.html',
   styleUrl: './einsaetze.scss',
 })
 export class Einsaetze {
   private readonly svc = inject(EinsatzService);
+  private readonly auftragSvc = inject(AuftragService);
+  private readonly partySvc = inject(PartyService);
+  private readonly auth = inject(AuthService);
+  private readonly fb = inject(FormBuilder);
+
+  /** Einsätze anlegen ist Dispositionssache: Recht ANLEGEN mit Scope ALLE. */
+  protected readonly darfAnlegen = computed(() => {
+    const u = this.auth.user();
+    return (
+      u?.permissions.some(
+        (p) => p.module === 'workflow' && p.action === 'ANLEGEN' && p.row_scope === 'ALLE',
+      ) ?? false
+    );
+  });
+
+  protected readonly meldung = signal<Meldung | null>(null);
+  protected readonly neuOffen = signal(false);
+  protected readonly neuLaedt = signal(false);
+  protected readonly formularMeldung = signal<string | null>(null);
+  protected readonly neuForm = this.fb.group({
+    work_order_id: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
+    scheduled_start: this.fb.control('', { nonNullable: true }),
+    scheduled_end: this.fb.control('', { nonNullable: true }),
+    on_site_contact_party_id: this.fb.control('', { nonNullable: true }),
+    access_instructions: this.fb.control('', { nonNullable: true }),
+  });
+
+  protected readonly auftragSuche: RefSuche = (q) =>
+    this.auftragSvc.list({ page: 1, page_size: 20, q }).pipe(
+      map((p) => p.items.map((o) => ({ id: o.id, label: o.title, sub: o.order_number }))),
+    );
+  protected readonly partySuche: RefSuche = (q) =>
+    this.partySvc.list({ page: 1, page_size: 20, q }).pipe(
+      map((p) => p.items.map((x) => ({ id: x.id, label: x.display_name }))),
+    );
 
   protected readonly pageSize = 20;
   protected readonly segments: Segment[] = [
@@ -128,6 +177,60 @@ export class Einsaetze {
           if (id === this.reqId) this.state.set(fehlerState(err));
         },
       });
+  }
+
+  // ---- Anlegen ------------------------------------------------------------
+  neuOeffnen(): void {
+    this.neuForm.reset({
+      work_order_id: '',
+      scheduled_start: '',
+      scheduled_end: '',
+      on_site_contact_party_id: '',
+      access_instructions: '',
+    });
+    this.formularMeldung.set(null);
+    this.neuOffen.set(true);
+  }
+
+  neuSchliessen(): void {
+    if (this.neuLaedt()) return;
+    this.neuOffen.set(false);
+  }
+
+  neuAbsenden(): void {
+    if (this.neuLaedt()) return;
+    serverFehlerZuruecksetzen(this.neuForm);
+    this.formularMeldung.set(null);
+    felderAlsBeruehrtMarkieren(this.neuForm);
+    if (this.neuForm.invalid) return;
+
+    const v = this.neuForm.getRawValue();
+    const payload: ServiceJobCreate = {
+      work_order_id: v.work_order_id,
+      scheduled_start: v.scheduled_start || null,
+      scheduled_end: v.scheduled_end || null,
+      on_site_contact_party_id: v.on_site_contact_party_id || null,
+      access_instructions: v.access_instructions.trim() || null,
+    };
+
+    this.neuLaedt.set(true);
+    this.svc.create(payload).subscribe({
+      next: () => {
+        this.neuLaedt.set(false);
+        this.neuOffen.set(false);
+        this.meldung.set({ art: 'erfolg', text: 'Einsatz angelegt.' });
+        this.page.set(1);
+        this.fetch();
+      },
+      error: (err) => {
+        this.neuLaedt.set(false);
+        this.formularMeldung.set(apiFehlerZuweisen(err, this.neuForm).formular);
+      },
+    });
+  }
+
+  meldungSchliessen(): void {
+    this.meldung.set(null);
   }
 
   // ---- Darstellungshelfer -------------------------------------------------

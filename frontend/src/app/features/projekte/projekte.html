@@ -1,16 +1,20 @@
 <section class="projekte" aria-labelledby="projekte-titel">
   <header class="page-head">
-    <div>
+    <div class="page-head__text">
       <p class="page-head__kicker">
         <span class="page-head__scale" aria-hidden="true"></span>
         Projektregister
       </p>
       <h1 id="projekte-titel" class="page-head__titel">Projekte</h1>
+      <p class="page-head__hint">
+        Projekte bündeln Vorgänge, Aufträge und Einsätze zu einer Maßnahme.
+      </p>
     </div>
-    <p class="page-head__hint">
-      Projekte bündeln Vorgänge, Aufträge und Einsätze zu einer Maßnahme.
-      Anlage und Pflege laufen über die KI und die API.
-    </p>
+    @if (darfAnlegen()) {
+      <button type="button" class="btn btn--primary page-head__neu" (click)="neuOeffnen()">
+        <span aria-hidden="true">＋</span> Neues Projekt
+      </button>
+    }
   </header>
 
   <div class="controls">
@@ -46,6 +50,21 @@
   </div>
 
   <p class="sr-only" role="status">{{ resultSummary() }}</p>
+
+  @if (meldung(); as m) {
+    <div
+      class="melde melde--{{ m.art === 'erfolg' ? 'erfolg' : 'fehler' }} projekte__melde"
+      [attr.role]="m.art === 'fehler' ? 'alert' : 'status'"
+    >
+      <span class="melde__mark" aria-hidden="true">{{ m.art === 'fehler' ? '!' : '✓' }}</span>
+      <span class="melde__text">
+        <strong>{{ m.art === 'fehler' ? 'Fehler:' : 'Erledigt:' }}</strong> {{ m.text }}
+      </span>
+      <button type="button" class="melde__zu" (click)="meldungSchliessen()" aria-label="Meldung schließen">
+        <span aria-hidden="true">✕</span>
+      </button>
+    </div>
+  }
 
   @switch (state().kind) {
     @case ('loading') {
@@ -127,4 +146,50 @@
       }
     }
   }
+
+  <!-- ------------------------------ Anlage-Dialog ------------------------- -->
+  <app-dialog [offen]="neuOffen()" titel="Neues Projekt" (schliessen)="neuSchliessen()">
+    <form id="neu-projekt-form" class="dialog-form" (submit)="$event.preventDefault(); neuAbsenden()" novalidate>
+      @if (formularMeldung(); as fm) {
+        <div class="melde melde--fehler" role="alert">
+          <span class="melde__mark" aria-hidden="true">!</span>
+          <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+        </div>
+      }
+
+      <app-feld
+        [control]="neuForm.controls.name"
+        label="Projektname"
+        [pflicht]="true"
+        platzhalter="z. B. Dachsanierung Musterstraße 1"
+      />
+      <app-referenz-wahl
+        [control]="neuForm.controls.property_id"
+        label="Liegenschaft"
+        hinweis="Optional — verknüpft das Projekt mit einer Liegenschaft."
+        platzhalter="Name oder Objektnummer suchen"
+        [suche]="liegenschaftSuche"
+      />
+      <app-feld [control]="neuForm.controls.start_date" label="Beginn" typ="datum" hinweis="Optional." />
+      <app-feld
+        [control]="neuForm.controls.target_end_date"
+        label="Zieltermin"
+        typ="datum"
+        hinweis="Optional."
+      />
+    </form>
+
+    <div dialog-aktionen class="dialog__aktionen">
+      <button type="button" class="btn" [disabled]="neuLaedt()" (click)="neuSchliessen()">Abbrechen</button>
+      <button
+        type="submit"
+        form="neu-projekt-form"
+        class="btn btn--primary"
+        [disabled]="neuLaedt()"
+        [attr.aria-busy]="neuLaedt()"
+      >
+        {{ neuLaedt() ? 'Wird angelegt …' : 'Projekt anlegen' }}
+      </button>
+    </div>
+  </app-dialog>
 </section>

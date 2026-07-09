@@ -22,6 +22,11 @@ export const routes: Routes = [
         loadComponent: () => import('./features/uebersicht/uebersicht').then((m) => m.Uebersicht),
       },
       {
+        path: 'profil',
+        title: 'Mein Profil — MCN Leitstand',
+        loadComponent: () => import('./features/profil/profil').then((m) => m.Profil),
+      },
+      {
         path: 'kein-zugriff',
         title: 'Kein Zugriff — MCN Leitstand',
         loadComponent: () =>

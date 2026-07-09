@@ -40,10 +40,18 @@
   font-size: var(--step-3);
 }
 .page-head__hint {
-  margin: 0;
+  margin: var(--space-2) 0 0;
   max-width: 26rem;
   font-size: var(--step--1);
   color: var(--ink-muted);
+}
+.page-head__neu {
+  flex: none;
+  white-space: nowrap;
+}
+
+.liegenschaften__melde {
+  margin-bottom: var(--space-5);
 }
 
 // ============================== Steuerung ===================================

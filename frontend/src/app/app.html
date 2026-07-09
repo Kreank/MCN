@@ -55,10 +55,10 @@
       <div class="header__actions">
         @if (auth.istAngemeldet(); as _) {
           <div class="userchip">
-            <span class="userchip__ident">
+            <a class="userchip__ident" routerLink="/profil" title="Mein Profil">
               <span class="userchip__name">{{ auth.user()!.display_name }}</span>
               <span class="userchip__roles">{{ rollenText() }}</span>
-            </span>
+            </a>
             <button type="button" class="userchip__logout" (click)="abmelden()">
               Abmelden
             </button>

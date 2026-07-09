@@ -28,6 +28,24 @@
       [(aktiv)]="tab"
     >
       <span mappe-kopf class="stamp {{ statusClass(daten()!.status) }}">{{ statusLabel(daten()!.status) }}</span>
+      @if (darfAendern() && daten()!.status !== 'AUSGETRETEN') {
+        <button mappe-kopf type="button" class="btn" (click)="statusOeffnen()">Status ändern</button>
+      }
+
+      @if (meldung(); as m) {
+        <div
+          class="melde melde--{{ m.art }} detail-melde"
+          [attr.role]="m.art === 'fehler' ? 'alert' : 'status'"
+        >
+          <span class="melde__mark" aria-hidden="true">{{ m.art === 'fehler' ? '!' : '✓' }}</span>
+          <span class="melde__text">
+            <strong>{{ m.art === 'fehler' ? 'Fehler:' : 'Erledigt:' }}</strong> {{ m.text }}
+          </span>
+          <button type="button" class="melde__zu" (click)="meldungSchliessen()" aria-label="Meldung schließen">
+            <span aria-hidden="true">✕</span>
+          </button>
+        </div>
+      }
 
       <!-- ==================== Persönliches ==================== -->
       @if (tab() === 'persoenliches') {
@@ -47,6 +65,13 @@
 
       <!-- ==================== Vertrag ==================== -->
       @if (tab() === 'vertrag') {
+        @if (darfAnlegen()) {
+          <div class="tab-aktionen">
+            <button type="button" class="btn btn--primary" (click)="vertragOeffnen()">
+              <span aria-hidden="true">＋</span> Neuer Vertrag
+            </button>
+          </div>
+        }
         @if (daten()!.contracts.length === 0) {
           <div class="tab-platzhalter"><p>Für diesen Mitarbeiter ist kein Arbeitsvertrag hinterlegt.</p></div>
         } @else {
@@ -62,6 +87,9 @@
                       <span class="stamp stamp--positive">✔ Aktuell</span>
                     }
                     <span class="stamp {{ contractStatusClass(c.status) }}">{{ contractStatusLabel(c.status) }}</span>
+                    @if (darfAendern() && c.status === 'AKTIV') {
+                      <button type="button" class="mini mini--warn" (click)="kuendigenOeffnen(c)">Kündigen</button>
+                    }
                   </span>
                 </div>
 
@@ -113,6 +141,13 @@
 
       <!-- ==================== Abwesenheiten ==================== -->
       @if (tab() === 'abwesenheiten') {
+        @if (darfAnlegen()) {
+          <div class="tab-aktionen">
+            <button type="button" class="btn btn--primary" (click)="abwOeffnen()">
+              <span aria-hidden="true">＋</span> Neue Abwesenheit
+            </button>
+          </div>
+        }
         @if (daten()!.absences.length === 0) {
           <div class="tab-platzhalter"><p>Für diesen Mitarbeiter sind keine Abwesenheiten erfasst.</p></div>
         } @else {
@@ -134,6 +169,21 @@
                 @if (a.decision_note) {
                   <p class="abw__entscheid"><span class="abw__entscheid-label">Entscheidung:</span> {{ a.decision_note }}</p>
                 }
+
+                @if (a.status === 'ENTWURF' || a.status === 'EINGEREICHT') {
+                  <div class="abw__aktionen">
+                    @if (a.status === 'ENTWURF' && darfAendern()) {
+                      <button type="button" class="mini" [disabled]="aktionBusyId() === a.id" (click)="einreichen(a)">Einreichen</button>
+                    }
+                    @if (a.status === 'EINGEREICHT' && darfFreigeben()) {
+                      <button type="button" class="mini" [disabled]="aktionBusyId() === a.id" (click)="genehmigen(a)">Genehmigen</button>
+                      <button type="button" class="mini mini--warn" [disabled]="aktionBusyId() === a.id" (click)="ablehnenFragen(a)">Ablehnen</button>
+                    }
+                    @if (darfAendern()) {
+                      <button type="button" class="mini" [disabled]="aktionBusyId() === a.id" (click)="zurueckziehen(a)">Zurückziehen</button>
+                    }
+                  </div>
+                }
               </li>
             }
           </ul>
@@ -143,6 +193,11 @@
       <!-- ==================== Urlaub ==================== -->
       @if (tab() === 'urlaub') {
         @let konto = daten()!.vacation_account;
+        @if (darfAendern()) {
+          <div class="tab-aktionen">
+            <button type="button" class="btn btn--primary" (click)="urlaubOeffnen()">Urlaubskonto setzen</button>
+          </div>
+        }
         <p class="urlaub__jahr">Urlaubskonto {{ konto.year }}</p>
         <dl class="feld-raster">
           <div class="feld"><dt class="feld__label">Anspruch</dt><dd class="feld__wert">{{ num(konto.entitlement_days) }} Tage</dd></div>
@@ -167,5 +222,202 @@
         </div>
       }
     </app-mappe>
+
+    <!-- ============================ Status ändern ==================== -->
+    <app-dialog [offen]="statusOffen()" titel="Status ändern" (schliessen)="statusSchliessen()">
+      <form id="status-form" class="dialog-form" (submit)="$event.preventDefault(); statusAbsenden()" novalidate>
+        @if (statusMeldung(); as fm) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+          </div>
+        }
+        <app-feld
+          [control]="statusForm.controls.status"
+          label="Neuer Status"
+          typ="select"
+          [optionen]="statusOptionen"
+        />
+        @if (statusIstAustritt()) {
+          <p class="dialog-warnung" role="note">
+            <strong>Achtung:</strong> „Ausgetreten" ist endgültig und lässt sich nicht
+            zurücknehmen. Ein Austrittsdatum ist erforderlich.
+          </p>
+          <app-feld
+            [control]="statusForm.controls.left_on"
+            label="Austrittsdatum"
+            typ="datum"
+            [pflicht]="true"
+          />
+        }
+      </form>
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="statusLaedt()" (click)="statusSchliessen()">Abbrechen</button>
+        <button
+          type="submit"
+          form="status-form"
+          class="btn"
+          [class.btn--primary]="!statusIstAustritt()"
+          [class.btn--gefahr]="statusIstAustritt()"
+          [disabled]="statusLaedt()"
+          [attr.aria-busy]="statusLaedt()"
+        >
+          {{ statusLaedt() ? 'Wird gespeichert …' : 'Status setzen' }}
+        </button>
+      </div>
+    </app-dialog>
+
+    <!-- ============================ Vertrag anlegen ================== -->
+    <app-dialog [offen]="vertragOffen()" titel="Arbeitsvertrag anlegen" (schliessen)="vertragSchliessen()">
+      <form id="vertrag-form" class="dialog-form" (submit)="$event.preventDefault(); vertragAbsenden()" novalidate>
+        @if (vertragMeldung(); as fm) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+          </div>
+        }
+        <p class="dialog-hinweis">
+          Ein laufender Vorgängervertrag wird automatisch am Vortag beendet.
+        </p>
+        <div class="dialog-raster">
+          <app-feld [control]="vertragForm.controls.valid_from" label="Gültig ab" typ="datum" [pflicht]="true" />
+          <app-feld [control]="vertragForm.controls.valid_to" label="Gültig bis" typ="datum" hinweis="Optional (unbefristet)." />
+        </div>
+        <app-feld
+          [control]="vertragForm.controls.vacation_days_per_year"
+          label="Urlaubsanspruch (Tage/Jahr)"
+          typ="zahl"
+          [pflicht]="true"
+        />
+
+        <fieldset class="wochen-raster">
+          <legend class="wochen-raster__legende">Sollstunden je Wochentag (Mo–So)</legend>
+          <div class="dialog-raster dialog-raster--wochen">
+            <app-feld [control]="vertragForm.controls.hours_monday" label="Mo" typ="zahl" />
+            <app-feld [control]="vertragForm.controls.hours_tuesday" label="Di" typ="zahl" />
+            <app-feld [control]="vertragForm.controls.hours_wednesday" label="Mi" typ="zahl" />
+            <app-feld [control]="vertragForm.controls.hours_thursday" label="Do" typ="zahl" />
+            <app-feld [control]="vertragForm.controls.hours_friday" label="Fr" typ="zahl" />
+            <app-feld [control]="vertragForm.controls.hours_saturday" label="Sa" typ="zahl" />
+            <app-feld [control]="vertragForm.controls.hours_sunday" label="So" typ="zahl" />
+          </div>
+        </fieldset>
+
+        <app-feld [control]="vertragForm.controls.notes" label="Notizen" typ="textarea" hinweis="Optional." />
+      </form>
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="vertragLaedt()" (click)="vertragSchliessen()">Abbrechen</button>
+        <button type="submit" form="vertrag-form" class="btn btn--primary" [disabled]="vertragLaedt()" [attr.aria-busy]="vertragLaedt()">
+          {{ vertragLaedt() ? 'Wird angelegt …' : 'Vertrag anlegen' }}
+        </button>
+      </div>
+    </app-dialog>
+
+    <!-- ============================ Vertrag kündigen ================= -->
+    <app-dialog [offen]="kuendigenContract() !== null" titel="Vertrag kündigen" (schliessen)="kuendigenSchliessen()">
+      <form id="kuendigen-form" class="dialog-form" (submit)="$event.preventDefault(); kuendigenAbsenden()" novalidate>
+        @if (kuendigenMeldung(); as fm) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+          </div>
+        }
+        <p class="dialog-warnung" role="note">
+          <strong>Achtung:</strong> Die Kündigung setzt das Vertragsende und ist
+          begründungspflichtig.
+        </p>
+        <app-feld [control]="kuendigenForm.controls.valid_to" label="Vertragsende" typ="datum" [pflicht]="true" />
+        <app-feld
+          [control]="kuendigenForm.controls.reason"
+          label="Kündigungsgrund"
+          typ="textarea"
+          [pflicht]="true"
+        />
+      </form>
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="kuendigenLaedt()" (click)="kuendigenSchliessen()">Abbrechen</button>
+        <button type="submit" form="kuendigen-form" class="btn btn--gefahr" [disabled]="kuendigenLaedt()" [attr.aria-busy]="kuendigenLaedt()">
+          {{ kuendigenLaedt() ? 'Wird gekündigt …' : 'Vertrag kündigen' }}
+        </button>
+      </div>
+    </app-dialog>
+
+    <!-- ============================ Abwesenheit anlegen ============== -->
+    <app-dialog [offen]="abwOffen()" titel="Abwesenheit anlegen" (schliessen)="abwSchliessen()">
+      <form id="abw-form" class="dialog-form" (submit)="$event.preventDefault(); abwAbsenden()" novalidate>
+        @if (abwMeldung(); as fm) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+          </div>
+        }
+        <p class="dialog-hinweis">Die Anzahl der Tage berechnet der Server aus dem Vertrag.</p>
+        <app-feld
+          [control]="abwForm.controls.absence_type"
+          label="Art"
+          typ="select"
+          [optionen]="absenceTypes"
+        />
+        <div class="dialog-raster">
+          <app-feld [control]="abwForm.controls.start_date" label="Von" typ="datum" [pflicht]="true" />
+          <app-feld [control]="abwForm.controls.end_date" label="Bis" typ="datum" [pflicht]="true" />
+        </div>
+        <app-feld [control]="abwForm.controls.half_day_start" label="Erster Tag ist ein halber Tag" typ="checkbox" />
+        <app-feld [control]="abwForm.controls.half_day_end" label="Letzter Tag ist ein halber Tag" typ="checkbox" />
+        <app-feld [control]="abwForm.controls.reason" label="Begründung" typ="textarea" hinweis="Optional." />
+      </form>
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="abwLaedt()" (click)="abwSchliessen()">Abbrechen</button>
+        <button type="submit" form="abw-form" class="btn btn--primary" [disabled]="abwLaedt()" [attr.aria-busy]="abwLaedt()">
+          {{ abwLaedt() ? 'Wird angelegt …' : 'Abwesenheit anlegen' }}
+        </button>
+      </div>
+    </app-dialog>
+
+    <!-- ============================ Urlaubskonto setzen ============== -->
+    <app-dialog [offen]="urlaubOffen()" titel="Urlaubskonto setzen" (schliessen)="urlaubSchliessen()">
+      <form id="urlaub-form" class="dialog-form" (submit)="$event.preventDefault(); urlaubAbsenden()" novalidate>
+        @if (urlaubMeldung(); as fm) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+          </div>
+        }
+        <div class="dialog-raster">
+          <app-feld [control]="urlaubForm.controls.year" label="Jahr" typ="zahl" [pflicht]="true" inputmode="numeric" />
+          <app-feld [control]="urlaubForm.controls.entitlement_days" label="Anspruch (Tage)" typ="zahl" [pflicht]="true" />
+        </div>
+        <div class="dialog-raster">
+          <app-feld [control]="urlaubForm.controls.carryover_days" label="Übertrag (Tage)" typ="zahl" />
+          <app-feld [control]="urlaubForm.controls.adjustment_days" label="Anpassung (Tage)" typ="zahl" />
+        </div>
+        <app-feld
+          [control]="urlaubForm.controls.adjustment_reason"
+          label="Grund der Anpassung"
+          typ="textarea"
+          hinweis="Pflicht, sobald die Anpassung ungleich 0 ist (Server-Prüfung)."
+        />
+      </form>
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="urlaubLaedt()" (click)="urlaubSchliessen()">Abbrechen</button>
+        <button type="submit" form="urlaub-form" class="btn btn--primary" [disabled]="urlaubLaedt()" [attr.aria-busy]="urlaubLaedt()">
+          {{ urlaubLaedt() ? 'Wird gespeichert …' : 'Urlaubskonto setzen' }}
+        </button>
+      </div>
+    </app-dialog>
+
+    <!-- ============================ Abwesenheit ablehnen ============= -->
+    <app-bestaetigung
+      [offen]="ablehnenAbsence() !== null"
+      titel="Antrag ablehnen?"
+      text="Der Abwesenheitsantrag wird abgelehnt. Bitte begründen Sie die Entscheidung."
+      bestaetigenLabel="Ablehnen"
+      [gefahr]="true"
+      [begruendungPflicht]="true"
+      begruendungLabel="Ablehnungsgrund"
+      [laedt]="ablehnenLaedt()"
+      (bestaetigen)="ablehnenBestaetigen($event)"
+      (abbrechen)="ablehnenAbbrechen()"
+    />
   }
 }

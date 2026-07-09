@@ -1,0 +1,87 @@
+<div class="feld-gruppe ref-wahl">
+  <label class="feld-gruppe__label" [for]="id">
+    {{ label() }}
+    @if (pflicht()) {
+      <span class="feld-gruppe__stern" aria-hidden="true">*</span>
+      <span class="sr-only">(Pflichtfeld)</span>
+    }
+  </label>
+
+  @if (hinweis(); as h) {
+    <p class="feld-gruppe__hinweis" [id]="hinweisId">{{ h }}</p>
+  }
+
+  @if (gewaehlt(); as g) {
+    <div class="ref-wahl__chip">
+      <span class="ref-wahl__chip-text">
+        <span class="ref-wahl__chip-label">{{ g.label }}</span>
+        @if (g.sub) {
+          <span class="ref-wahl__chip-sub">{{ g.sub }}</span>
+        }
+      </span>
+      <button
+        type="button"
+        class="ref-wahl__aendern"
+        (click)="zuruecksetzen()"
+      >
+        Ändern
+      </button>
+    </div>
+  } @else {
+    <div class="ref-wahl__box">
+      <input
+        #sucheInput
+        class="feld-gruppe__input ref-wahl__input"
+        [id]="id"
+        type="text"
+        role="combobox"
+        autocomplete="off"
+        [attr.aria-expanded]="offen()"
+        [attr.aria-controls]="listboxId"
+        [attr.aria-activedescendant]="offen() ? aktivOptionId() : null"
+        [attr.aria-required]="pflicht() ? true : null"
+        [attr.aria-describedby]="beschriebenVon()"
+        [attr.aria-invalid]="fehlerText() ? true : null"
+        [attr.placeholder]="platzhalter()"
+        [value]="suchtext()"
+        (input)="onEingabe($any($event.target).value)"
+        (focus)="onFokus()"
+        (blur)="onBlur()"
+        (keydown)="onTaste($event)"
+      />
+
+      @if (offen()) {
+        <ul class="ref-wahl__liste" role="listbox" [id]="listboxId">
+          @if (ladend()) {
+            <li class="ref-wahl__hinweis" role="presentation">Suche läuft …</li>
+          } @else if (optionen().length === 0) {
+            <li class="ref-wahl__hinweis" role="presentation">{{ leerText() }}</li>
+          } @else {
+            @for (o of optionen(); track o.id; let i = $index) {
+              <li
+                class="ref-wahl__opt"
+                role="option"
+                [id]="id + '-opt-' + i"
+                [class.is-aktiv]="aktivIndex() === i"
+                [attr.aria-selected]="aktivIndex() === i"
+                (mousedown)="waehlen(o); $event.preventDefault()"
+                (mousemove)="aktivIndex.set(i)"
+              >
+                <span class="ref-wahl__opt-label">{{ o.label }}</span>
+                @if (o.sub) {
+                  <span class="ref-wahl__opt-sub">{{ o.sub }}</span>
+                }
+              </li>
+            }
+          }
+        </ul>
+      }
+    </div>
+  }
+
+  @if (fehlerText(); as f) {
+    <p class="feld-gruppe__fehler" [id]="fehlerId" role="alert">
+      <span class="feld-gruppe__fehler-mark" aria-hidden="true">▲</span>{{ f }}
+    </p>
+  }
+</div>

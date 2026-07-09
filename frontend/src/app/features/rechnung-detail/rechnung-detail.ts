@@ -3,9 +3,11 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { Mappe, MappeTab } from '../../shared/mappe/mappe';
 import { BelegService } from '../../core/beleg.service';
+import { AuthService } from '../../core/auth.service';
 import { InvoiceDetail, InvoiceStatus, InvoiceType, LineType } from '../../core/beleg.model';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
-import { VerbotenState, fehlerState } from '../../shared/http-fehler';
+import { Bestaetigung } from '../../shared/bestaetigung/bestaetigung';
+import { VerbotenState, fehlerDetail, fehlerState, istVerboten } from '../../shared/http-fehler';
 
 type ViewState =
   | { kind: 'loading' }
@@ -13,19 +15,31 @@ type ViewState =
   | VerbotenState
   | { kind: 'error' };
 
+type Meldung = { art: 'erfolg' | 'fehler'; text: string };
+
 @Component({
   selector: 'app-rechnung-detail',
-  imports: [Mappe, RouterLink, KeinZugriff],
+  imports: [Mappe, RouterLink, KeinZugriff, Bestaetigung],
   templateUrl: './rechnung-detail.html',
   styleUrl: './rechnung-detail.scss',
 })
 export class RechnungDetail {
   private readonly route = inject(ActivatedRoute);
   private readonly svc = inject(BelegService);
+  private readonly auth = inject(AuthService);
 
   protected readonly tab = signal('positionen');
   protected readonly state = signal<ViewState>({ kind: 'loading' });
   private reqId = 0;
+
+  // --- Veröffentlichen (unumkehrbar) --------------------------------------
+  protected readonly darfFreigeben = computed(() => this.auth.darf('invoicing', 'FREIGEBEN'));
+  protected readonly meldung = signal<Meldung | null>(null);
+  protected readonly publishOffen = signal(false);
+  protected readonly publishLaedt = signal(false);
+
+  /** Nur Entwürfe lassen sich veröffentlichen (Server setzt die Tore durch). */
+  protected readonly kannVeroeffentlichen = computed(() => this.daten()?.status === 'ENTWURF');
 
   protected readonly tabs: MappeTab[] = [
     { id: 'positionen', label: 'Positionen' },
@@ -66,6 +80,48 @@ export class RechnungDetail {
         if (rid === this.reqId) this.state.set(fehlerState(err));
       },
     });
+  }
+
+  // ---- Veröffentlichen ----------------------------------------------------
+  publishFragen(): void {
+    this.meldung.set(null);
+    this.publishOffen.set(true);
+  }
+
+  publishAbbrechen(): void {
+    if (!this.publishLaedt()) this.publishOffen.set(false);
+  }
+
+  publishBestaetigen(): void {
+    const d = this.daten();
+    if (!d || this.publishLaedt()) return;
+    this.publishLaedt.set(true);
+    this.svc.publishInvoice(d.id).subscribe({
+      next: (aktualisiert) => {
+        this.publishLaedt.set(false);
+        this.publishOffen.set(false);
+        this.state.set({ kind: 'ready', data: aktualisiert });
+        this.meldung.set({
+          art: 'erfolg',
+          text: `Rechnung veröffentlicht. Belegnummer ${aktualisiert.invoice_number ?? '—'} wurde vergeben.`,
+        });
+      },
+      error: (err) => {
+        this.publishLaedt.set(false);
+        this.publishOffen.set(false);
+        // Die DB-Tore liefern präzise 422-Meldungen — wörtlich zeigen.
+        this.meldung.set({ art: 'fehler', text: this.fehlerText(err) });
+      },
+    });
+  }
+
+  meldungSchliessen(): void {
+    this.meldung.set(null);
+  }
+
+  private fehlerText(err: unknown): string {
+    if (istVerboten(err)) return fehlerDetail(err) ?? 'Keine Berechtigung für diese Aktion.';
+    return fehlerDetail(err) ?? 'Die Aktion ist fehlgeschlagen. Bitte erneut versuchen.';
   }
 
   // ---- Darstellungshelfer -------------------------------------------------

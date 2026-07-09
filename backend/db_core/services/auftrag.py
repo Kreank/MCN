@@ -21,7 +21,8 @@ from django.utils import timezone
 
 from db_core.db_context import business_transaction
 from db_core.gate_errors import as_business_error
-from db_core.models import WorkOrder, WorkOrderParty
+from db_core.models import Project, Property, ServiceCase, WorkOrder, WorkOrderParty
+from db_core.services._validation import ensure_exists, ensure_party_usable
 
 PRIORITIES = ("NORMAL", "DRINGEND", "NOTFALL")
 RESPONSIBILITY_SCOPES = ("UNKNOWN", "COMMON_PROPERTY", "PRIVATE_UNIT", "MIXED")
@@ -90,6 +91,9 @@ def create_work_order(
         raise ValueError(
             f"Ungültige priority '{priority}'. Erlaubt: {', '.join(PRIORITIES)}."
         )
+    ensure_exists(Property, property_id, "Liegenschaft")
+    ensure_exists(Project, project_id, "Projekt")
+    ensure_exists(ServiceCase, service_case_id, "Vorgang")
 
     with business_transaction(actor_app_user_id):
         order = WorkOrder.objects.create(
@@ -135,6 +139,9 @@ def add_work_order_party(
         raise ValueError(
             f"Ungültige source '{source}'. Erlaubt: {', '.join(PARTY_SOURCES)}."
         )
+    ensure_exists(WorkOrder, work_order_id, "Auftrag")
+    # party_id muss existieren und darf nicht MERGED sein (trg_work_order_party_no_merged).
+    ensure_party_usable(party_id, "Partei")
     with business_transaction(actor_app_user_id):
         party = WorkOrderParty.objects.create(
             id=uuid.uuid4(),

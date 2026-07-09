@@ -1,0 +1,165 @@
+<section class="profil" aria-labelledby="profil-titel">
+  <header class="page-head">
+    <div class="page-head__text">
+      <p class="page-head__kicker">
+        <span class="page-head__scale" aria-hidden="true"></span>
+        Mein Konto
+      </p>
+      <h1 id="profil-titel" class="page-head__titel">Mein Profil</h1>
+      <p class="page-head__hint">
+        Ihre Kontodaten und der Wechsel des Passworts. Rollen und Rechte vergibt
+        die Administration.
+      </p>
+    </div>
+  </header>
+
+  @if (user(); as u) {
+    <!-- ===================== Stammdaten (read-only) ===================== -->
+    <div class="karte">
+      <h2 class="karte__titel">Kontodaten</h2>
+      <dl class="feld-raster">
+        <div class="feld">
+          <dt class="feld__label">Anzeigename</dt>
+          <dd class="feld__wert">{{ u.display_name }}</dd>
+        </div>
+        <div class="feld">
+          <dt class="feld__label">E-Mail</dt>
+          <dd class="feld__wert">{{ u.email }}</dd>
+        </div>
+        <div class="feld feld--breit">
+          <dt class="feld__label">Rollen</dt>
+          <dd class="feld__wert" [class.feld__wert--leer]="(u.roles?.length ?? 0) === 0">
+            {{ rollenText() }}
+          </dd>
+        </div>
+      </dl>
+    </div>
+
+    <!-- ===================== Passwort ändern ===================== -->
+    <div class="karte">
+      <h2 class="karte__titel">Passwort ändern</h2>
+      <p class="karte__hint">
+        Das neue Passwort muss mindestens 12 Zeichen lang sein. Nach dem Wechsel
+        bleiben Sie angemeldet.
+      </p>
+
+      @if (erfolg(); as e) {
+        <div class="melde melde--erfolg" role="status">
+          <span class="melde__mark" aria-hidden="true">✓</span>
+          <span class="melde__text"><strong>Erledigt:</strong> {{ e }}</span>
+        </div>
+      }
+      @if (formularMeldung(); as fm) {
+        <div class="melde melde--fehler" role="alert">
+          <span class="melde__mark" aria-hidden="true">!</span>
+          <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+        </div>
+      }
+
+      <form
+        class="pw-form"
+        [formGroup]="form"
+        (submit)="$event.preventDefault(); absenden()"
+        novalidate
+      >
+        <div class="feld-gruppe">
+          <label class="feld-gruppe__label" for="pw-alt">
+            Aktuelles Passwort
+            <span class="feld-gruppe__stern" aria-hidden="true">*</span>
+            <span class="sr-only">(Pflichtfeld)</span>
+          </label>
+          <input
+            id="pw-alt"
+            class="feld-gruppe__input"
+            type="password"
+            autocomplete="current-password"
+            formControlName="old_password"
+            [attr.aria-required]="true"
+            [attr.aria-invalid]="fehler('old_password') ? true : null"
+            [attr.aria-describedby]="fehler('old_password') ? 'pw-alt-fehler' : null"
+            (input)="serverFehlerLoeschen('old_password')"
+          />
+          @if (fehler('old_password'); as f) {
+            <p class="feld-gruppe__fehler" id="pw-alt-fehler" role="alert">
+              <span class="feld-gruppe__fehler-mark" aria-hidden="true">▲</span>{{ f }}
+            </p>
+          }
+        </div>
+
+        <div class="feld-gruppe">
+          <label class="feld-gruppe__label" for="pw-neu">
+            Neues Passwort
+            <span class="feld-gruppe__stern" aria-hidden="true">*</span>
+            <span class="sr-only">(Pflichtfeld)</span>
+          </label>
+          <p class="feld-gruppe__hinweis" id="pw-neu-hinweis">Mindestens 12 Zeichen.</p>
+          <input
+            id="pw-neu"
+            class="feld-gruppe__input"
+            type="password"
+            autocomplete="new-password"
+            formControlName="new_password"
+            [attr.aria-required]="true"
+            [attr.aria-invalid]="fehler('new_password') ? true : null"
+            [attr.aria-describedby]="
+              fehler('new_password') ? 'pw-neu-hinweis pw-neu-fehler' : 'pw-neu-hinweis'
+            "
+            (input)="serverFehlerLoeschen('new_password')"
+          />
+          @if (fehler('new_password'); as f) {
+            <p class="feld-gruppe__fehler" id="pw-neu-fehler" role="alert">
+              <span class="feld-gruppe__fehler-mark" aria-hidden="true">▲</span>{{ f }}
+            </p>
+          }
+        </div>
+
+        <div class="feld-gruppe">
+          <label class="feld-gruppe__label" for="pw-wdh">
+            Neues Passwort wiederholen
+            <span class="feld-gruppe__stern" aria-hidden="true">*</span>
+            <span class="sr-only">(Pflichtfeld)</span>
+          </label>
+          <input
+            id="pw-wdh"
+            class="feld-gruppe__input"
+            type="password"
+            autocomplete="new-password"
+            formControlName="new_password_repeat"
+            [attr.aria-required]="true"
+            [attr.aria-invalid]="fehler('new_password_repeat') || ungleichSichtbar() ? true : null"
+            [attr.aria-describedby]="
+              fehler('new_password_repeat') || ungleichSichtbar() ? 'pw-wdh-fehler' : null
+            "
+            (input)="serverFehlerLoeschen('new_password_repeat')"
+          />
+          @if (fehler('new_password_repeat'); as f) {
+            <p class="feld-gruppe__fehler" id="pw-wdh-fehler" role="alert">
+              <span class="feld-gruppe__fehler-mark" aria-hidden="true">▲</span>{{ f }}
+            </p>
+          } @else if (ungleichSichtbar()) {
+            <p class="feld-gruppe__fehler" id="pw-wdh-fehler" role="alert">
+              <span class="feld-gruppe__fehler-mark" aria-hidden="true">▲</span>Die Passwörter
+              stimmen nicht überein.
+            </p>
+          }
+        </div>
+
+        <div class="pw-form__aktionen">
+          <button
+            type="submit"
+            class="btn btn--primary"
+            [disabled]="laedt()"
+            [attr.aria-busy]="laedt()"
+          >
+            {{ laedt() ? 'Wird geändert …' : 'Passwort ändern' }}
+          </button>
+        </div>
+      </form>
+    </div>
+  } @else {
+    <div class="note note--error" role="alert">
+      <h2 class="note__titel">Profil nicht verfügbar</h2>
+      <p class="note__text">Es liegt kein angemeldetes Konto vor. Bitte neu anmelden.</p>
+    </div>
+  }
+</section>

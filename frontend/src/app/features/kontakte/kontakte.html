@@ -6,12 +6,36 @@
         Register
       </p>
       <h1 id="kontakte-titel" class="page-head__titel">Kontakte</h1>
+      <p class="page-head__hint">
+        Personen und Organisationen aus dem Identitätsregister.
+      </p>
     </div>
-    <p class="page-head__hint">
-      Personen und Organisationen aus dem Identitätsregister. Anlage und Pflege
-      laufen über die KI und die API.
-    </p>
+    @if (darfAnlegen()) {
+      <div class="page-head__aktionen">
+        <button type="button" class="btn btn--primary" (click)="personOeffnen()">
+          <span aria-hidden="true">＋</span> Neue Person
+        </button>
+        <button type="button" class="btn" (click)="orgOeffnen()">
+          <span aria-hidden="true">＋</span> Neue Organisation
+        </button>
+      </div>
+    }
   </header>
+
+  @if (meldung(); as m) {
+    <div
+      class="melde melde--{{ m.art === 'erfolg' ? 'erfolg' : 'fehler' }} kontakte__melde"
+      [attr.role]="m.art === 'fehler' ? 'alert' : 'status'"
+    >
+      <span class="melde__mark" aria-hidden="true">{{ m.art === 'fehler' ? '!' : '✓' }}</span>
+      <span class="melde__text">
+        <strong>{{ m.art === 'fehler' ? 'Fehler:' : 'Angelegt:' }}</strong> {{ m.text }}
+      </span>
+      <button type="button" class="melde__zu" (click)="meldungSchliessen()" aria-label="Meldung schließen">
+        <span aria-hidden="true">✕</span>
+      </button>
+    </div>
+  }
 
   <!-- Steuerung: Suche + Segmentfilter -->
   <div class="controls">
@@ -149,4 +173,52 @@
       }
     }
   }
+
+  <!-- ------------------------------ Person anlegen -------------------------- -->
+  <app-dialog [offen]="personOffen()" titel="Neue Person" (schliessen)="personSchliessen()">
+    <form id="neu-person-form" class="dialog-form" (submit)="$event.preventDefault(); personAbsenden()" novalidate>
+      @if (formularMeldung(); as fm) {
+        <div class="melde melde--fehler" role="alert">
+          <span class="melde__mark" aria-hidden="true">!</span>
+          <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+        </div>
+      }
+      <app-feld [control]="personForm.controls.first_name" label="Vorname" [pflicht]="true" autocomplete="given-name" />
+      <app-feld [control]="personForm.controls.last_name" label="Nachname" [pflicht]="true" autocomplete="family-name" />
+      <app-feld [control]="personForm.controls.salutation" label="Anrede" hinweis="Optional, z. B. Herr, Frau." />
+      <app-feld [control]="personForm.controls.title" label="Titel" hinweis="Optional, z. B. Dr., Prof." />
+      <app-feld [control]="personForm.controls.birth_date" label="Geburtsdatum" typ="datum" hinweis="Optional." />
+    </form>
+    <div dialog-aktionen class="dialog__aktionen">
+      <button type="button" class="btn" [disabled]="neuLaedt()" (click)="personSchliessen()">Abbrechen</button>
+      <button type="submit" form="neu-person-form" class="btn btn--primary" [disabled]="neuLaedt()" [attr.aria-busy]="neuLaedt()">
+        {{ neuLaedt() ? 'Wird angelegt …' : 'Person anlegen' }}
+      </button>
+    </div>
+  </app-dialog>
+
+  <!-- --------------------------- Organisation anlegen ---------------------- -->
+  <app-dialog [offen]="orgOffen()" titel="Neue Organisation" (schliessen)="orgSchliessen()">
+    <form id="neu-org-form" class="dialog-form" (submit)="$event.preventDefault(); orgAbsenden()" novalidate>
+      @if (formularMeldung(); as fm) {
+        <div class="melde melde--fehler" role="alert">
+          <span class="melde__mark" aria-hidden="true">!</span>
+          <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+        </div>
+      }
+      <app-feld [control]="orgForm.controls.legal_name" label="Name (rechtlich)" [pflicht]="true" autocomplete="organization" />
+      <app-feld [control]="orgForm.controls.organization_type" label="Organisationstyp" typ="select" [pflicht]="true" platzhalter="Bitte wählen" [optionen]="orgTypen" />
+      <app-feld [control]="orgForm.controls.display_name" label="Anzeigename" hinweis="Optional. Ohne Angabe wird der rechtliche Name verwendet." />
+      <app-feld [control]="orgForm.controls.legal_form" label="Rechtsform" hinweis="Optional, z. B. GmbH, e. V." />
+      <app-feld [control]="orgForm.controls.registration_number" label="Registernummer" hinweis="Optional, z. B. HRB 12345." />
+      <app-feld [control]="orgForm.controls.tax_number" label="Steuernummer" hinweis="Optional." />
+      <app-feld [control]="orgForm.controls.vat_id" label="USt-IdNr." hinweis="Optional." />
+    </form>
+    <div dialog-aktionen class="dialog__aktionen">
+      <button type="button" class="btn" [disabled]="neuLaedt()" (click)="orgSchliessen()">Abbrechen</button>
+      <button type="submit" form="neu-org-form" class="btn btn--primary" [disabled]="neuLaedt()" [attr.aria-busy]="neuLaedt()">
+        {{ neuLaedt() ? 'Wird angelegt …' : 'Organisation anlegen' }}
+      </button>
+    </div>
+  </app-dialog>
 </section>

@@ -30,6 +30,21 @@
       <span mappe-kopf class="stamp stamp--type">{{ typeLabel(daten()!.property_type) }}</span>
       <span mappe-kopf class="stamp {{ statusClass(daten()!.status) }}">{{ statusLabel(daten()!.status) }}</span>
 
+      @if (meldung(); as m) {
+        <div
+          class="melde melde--{{ m.art === 'erfolg' ? 'erfolg' : 'fehler' }} detail__melde"
+          [attr.role]="m.art === 'fehler' ? 'alert' : 'status'"
+        >
+          <span class="melde__mark" aria-hidden="true">{{ m.art === 'fehler' ? '!' : '✓' }}</span>
+          <span class="melde__text">
+            <strong>{{ m.art === 'fehler' ? 'Fehler:' : 'Erledigt:' }}</strong> {{ m.text }}
+          </span>
+          <button type="button" class="melde__zu" (click)="meldungSchliessen()" aria-label="Meldung schließen">
+            <span aria-hidden="true">✕</span>
+          </button>
+        </div>
+      }
+
       <!-- ------------------------------ Übersicht ------------------------- -->
       @if (tab() === 'uebersicht') {
         <dl class="feld-raster">
@@ -47,6 +62,13 @@
 
       <!-- ------------------------------ Struktur -------------------------- -->
       @if (tab() === 'struktur') {
+        @if (darfAnlegen()) {
+          <div class="tab-aktionen">
+            <button type="button" class="btn btn--primary" (click)="gebaeudeOeffnen()">
+              <span aria-hidden="true">＋</span> Gebäude
+            </button>
+          </div>
+        }
         @if (daten()!.buildings.length === 0) {
           <div class="tab-platzhalter"><p>Für diese Liegenschaft sind noch keine Gebäude erfasst.</p></div>
         } @else {
@@ -57,6 +79,15 @@
                   <span class="baum__marke" aria-hidden="true">{{ b.building_number }}</span>
                   <span class="baum__name">{{ b.name || 'Gebäude ' + b.building_number }}</span>
                   <span class="baum__zahl">{{ b.units.length }} {{ b.units.length === 1 ? 'Einheit' : 'Einheiten' }}</span>
+                  @if (darfAnlegen()) {
+                    <button
+                      type="button"
+                      class="mini"
+                      (click)="einheitOeffnen(b.id, b.name || 'Gebäude ' + b.building_number)"
+                    >
+                      ＋ Einheit
+                    </button>
+                  }
                 </div>
                 @if (b.units.length > 0) {
                   <ul class="einheiten">
@@ -76,6 +107,13 @@
 
       <!-- ------------------------------ Beteiligte ------------------------ -->
       @if (tab() === 'beteiligte') {
+        @if (darfAendern()) {
+          <div class="tab-aktionen">
+            <button type="button" class="btn btn--primary" (click)="beteiligtOeffnen()">
+              <span aria-hidden="true">＋</span> Beteiligte(r)
+            </button>
+          </div>
+        }
         @if (daten()!.party_roles.length === 0) {
           <div class="tab-platzhalter"><p>Für diese Liegenschaft sind noch keine Party-Rollen erfasst.</p></div>
         } @else {
@@ -115,5 +153,78 @@
         </div>
       }
     </app-mappe>
+
+    <!-- ---------------------------- Gebäude anlegen ----------------------- -->
+    <app-dialog [offen]="gebaeudeOffen()" titel="Gebäude anlegen" (schliessen)="gebaeudeSchliessen()">
+      <form id="neu-gebaeude-form" class="dialog-form" (submit)="$event.preventDefault(); gebaeudeAbsenden()" novalidate>
+        @if (formularMeldung(); as fm) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+          </div>
+        }
+        <app-feld [control]="gebaeudeForm.controls.building_number" label="Gebäudenummer" [pflicht]="true" hinweis="Je Liegenschaft eindeutig." />
+        <app-feld [control]="gebaeudeForm.controls.name" label="Bezeichnung" hinweis="Optional, z. B. Vorderhaus." />
+      </form>
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="dialogLaedt()" (click)="gebaeudeSchliessen()">Abbrechen</button>
+        <button type="submit" form="neu-gebaeude-form" class="btn btn--primary" [disabled]="dialogLaedt()" [attr.aria-busy]="dialogLaedt()">
+          {{ dialogLaedt() ? 'Wird angelegt …' : 'Gebäude anlegen' }}
+        </button>
+      </div>
+    </app-dialog>
+
+    <!-- ---------------------------- Einheit anlegen ----------------------- -->
+    <app-dialog [offen]="einheitOffen()" titel="Einheit anlegen" (schliessen)="einheitSchliessen()">
+      <form id="neu-einheit-form" class="dialog-form" (submit)="$event.preventDefault(); einheitAbsenden()" novalidate>
+        @if (einheitGebaeude(); as geb) {
+          <p class="dialog-form__kontext">Gebäude: <strong>{{ geb.label }}</strong></p>
+        }
+        @if (formularMeldung(); as fm) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+          </div>
+        }
+        <app-feld [control]="einheitForm.controls.unit_type" label="Einheitstyp" typ="select" [pflicht]="true" platzhalter="Bitte wählen" [optionen]="unitTypOptionen" />
+        <app-feld [control]="einheitForm.controls.unit_number" label="Einheitsnummer" [pflicht]="true" hinweis="Je Liegenschaft eindeutig." />
+      </form>
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="dialogLaedt()" (click)="einheitSchliessen()">Abbrechen</button>
+        <button type="submit" form="neu-einheit-form" class="btn btn--primary" [disabled]="dialogLaedt()" [attr.aria-busy]="dialogLaedt()">
+          {{ dialogLaedt() ? 'Wird angelegt …' : 'Einheit anlegen' }}
+        </button>
+      </div>
+    </app-dialog>
+
+    <!-- -------------------------- Beteiligte(r) zuordnen ------------------ -->
+    <app-dialog [offen]="beteiligtOffen()" titel="Beteiligte(r) zuordnen" (schliessen)="beteiligtSchliessen()">
+      <form id="neu-beteiligt-form" class="dialog-form" (submit)="$event.preventDefault(); beteiligtAbsenden()" novalidate>
+        @if (formularMeldung(); as fm) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+          </div>
+        }
+        <app-feld
+          [control]="beteiligtForm.controls.party_id"
+          label="Kontakt"
+          typ="select"
+          [pflicht]="true"
+          [platzhalter]="parteienLaedt() ? 'Kontakte werden geladen …' : 'Bitte wählen'"
+          [optionen]="parteiOptionen()"
+          hinweis="Auswahl aus den ersten 100 Kontakten (alphabetisch)."
+        />
+        <app-feld [control]="beteiligtForm.controls.role" label="Rolle" typ="select" [pflicht]="true" platzhalter="Bitte wählen" [optionen]="rolleOptionen" />
+        <app-feld [control]="beteiligtForm.controls.valid_from" label="Gültig ab" typ="datum" [pflicht]="true" />
+        <app-feld [control]="beteiligtForm.controls.valid_until" label="Gültig bis" typ="datum" hinweis="Optional. Leer = unbefristet." />
+      </form>
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="dialogLaedt()" (click)="beteiligtSchliessen()">Abbrechen</button>
+        <button type="submit" form="neu-beteiligt-form" class="btn btn--primary" [disabled]="dialogLaedt()" [attr.aria-busy]="dialogLaedt()">
+          {{ dialogLaedt() ? 'Wird zugeordnet …' : 'Zuordnen' }}
+        </button>
+      </div>
+    </app-dialog>
   }
 }

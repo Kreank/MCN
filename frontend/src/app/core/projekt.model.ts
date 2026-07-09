@@ -127,3 +127,34 @@ export interface Checklist {
   name: string;
   items: ChecklistItem[];
 }
+
+// --- Schreib-Payloads ------------------------------------------------------
+// POST /api/workflow/projects
+export interface ProjectCreate {
+  name: string;
+  category_id?: string | null;
+  property_ids?: string[];
+  start_date?: string | null;
+  target_end_date?: string | null;
+}
+
+// POST /api/workflow/projects/{id}/log
+export interface LogEntryCreate {
+  entry: string;
+  category: LogCategory;
+}
+
+// POST /api/workflow/projects/{id}/checklists
+export interface ChecklistCreate {
+  name: string;
+  items: string[];
+}
+
+// POST /api/workflow/projects/{id}/service_cases
+export interface ServiceCaseCreate {
+  property_id: string;
+  subject: string;
+  description?: string | null;
+  reported_by_party_id?: string | null;
+  priority: CasePriority;
+}

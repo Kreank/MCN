@@ -22,7 +22,15 @@ import uuid
 
 from db_core.db_context import business_transaction
 from db_core.gate_errors import as_business_error
-from db_core.models import JobAssignment, MaterialEntry, ServiceJob, TimeEntry
+from db_core.models import (
+    AppUser,
+    JobAssignment,
+    MaterialEntry,
+    ServiceJob,
+    TimeEntry,
+    WorkOrder,
+)
+from db_core.services._validation import ensure_exists, ensure_party_usable
 
 ASSIGNMENT_ROLES = ("TECHNICIAN", "LEAD")
 TIME_TYPES = (
@@ -65,6 +73,8 @@ def create_service_job(
     Planungszeitraum darf gleich mitgegeben werden (für den späteren Wechsel nach
     GEPLANT ist scheduled_start ohnehin Pflicht).
     """
+    ensure_exists(WorkOrder, work_order_id, "Auftrag")
+    ensure_party_usable(on_site_contact_party_id, "Ansprechpartner vor Ort")
     with as_business_error():
         with business_transaction(actor_app_user_id):
             job = ServiceJob.objects.create(
@@ -142,6 +152,13 @@ def assign_user(actor_app_user_id, *, service_job_id, assignee_user_id, role="TE
         raise ValueError(
             f"Ungültige role '{role}'. Erlaubt: {', '.join(ASSIGNMENT_ROLES)}."
         )
+    ensure_exists(ServiceJob, service_job_id, "Einsatz")
+    ensure_exists(AppUser, assignee_user_id, "Mitarbeiter")
+    # Doppelzuweisung verletzt sonst den UNIQUE(service_job_id, assignee_user_id).
+    if JobAssignment.objects.filter(
+        service_job_id=service_job_id, assignee_id=assignee_user_id
+    ).exists():
+        raise ValueError("Dieser Mitarbeiter ist dem Einsatz bereits zugewiesen.")
     with as_business_error():
         with business_transaction(actor_app_user_id):
             assignment = JobAssignment.objects.create(
@@ -174,6 +191,8 @@ def log_time(
         )
     if ended_at <= started_at:
         raise ValueError("ended_at muss nach started_at liegen.")
+    ensure_exists(ServiceJob, service_job_id, "Einsatz")
+    ensure_exists(AppUser, user_id, "Mitarbeiter")
     with as_business_error():
         with business_transaction(actor_app_user_id):
             entry = TimeEntry.objects.create(
@@ -207,6 +226,8 @@ def log_material(
         raise ValueError("unit darf nicht leer sein.")
     if quantity is None or quantity <= 0:
         raise ValueError("quantity muss größer als 0 sein.")
+    ensure_exists(ServiceJob, service_job_id, "Einsatz")
+    ensure_exists(AppUser, recorded_by, "Erfasser")
     with as_business_error():
         with business_transaction(actor_app_user_id):
             entry = MaterialEntry.objects.create(

@@ -13,12 +13,20 @@ import uuid
 
 from db_core.db_context import business_transaction
 from db_core.models import (
+    AppUser,
     Checklist,
     ChecklistItem,
     Project,
+    ProjectCategory,
     ProjectLog,
     ProjectProperty,
+    Property,
     ServiceCase,
+)
+from db_core.services._validation import (
+    ensure_all_exist,
+    ensure_exists,
+    ensure_party_usable,
 )
 
 LOG_CATEGORIES = ("NOTIZ", "ANRUF", "ABSPRACHE", "ENTSCHEIDUNG", "SYSTEM")
@@ -42,6 +50,9 @@ def create_project(
     """
     if not name or not name.strip():
         raise ValueError("name darf nicht leer sein.")
+    ensure_exists(ProjectCategory, category_id, "Kategorie")
+    ensure_exists(AppUser, responsible_user_id, "Benutzer")
+    ensure_all_exist(Property, property_ids, "Liegenschaft")
 
     with business_transaction(actor_app_user_id):
         project = Project.objects.create(
@@ -70,6 +81,7 @@ def add_project_log(actor_app_user_id, *, project_id, entry, category="NOTIZ"):
         )
     if not entry or not entry.strip():
         raise ValueError("entry darf nicht leer sein.")
+    ensure_exists(Project, project_id, "Projekt")
     with business_transaction(actor_app_user_id):
         log = ProjectLog.objects.create(
             id=uuid.uuid4(),
@@ -88,6 +100,7 @@ def create_checklist(actor_app_user_id, *, project_id, name, items=None):
     """
     if not name or not name.strip():
         raise ValueError("name darf nicht leer sein.")
+    ensure_exists(Project, project_id, "Projekt")
     with business_transaction(actor_app_user_id):
         checklist = Checklist.objects.create(
             id=uuid.uuid4(),
@@ -126,6 +139,9 @@ def create_service_case(
         raise ValueError(
             f"Ungültige priority '{priority}'. Erlaubt: {', '.join(PRIORITIES)}."
         )
+    ensure_exists(Property, property_id, "Liegenschaft")
+    ensure_exists(Project, project_id, "Projekt")
+    ensure_party_usable(reported_by_party_id, "Melder")
     with business_transaction(actor_app_user_id):
         case = ServiceCase.objects.create(
             id=uuid.uuid4(),

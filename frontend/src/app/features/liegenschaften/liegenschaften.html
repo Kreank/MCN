@@ -6,12 +6,32 @@
         Objektregister
       </p>
       <h1 id="liegenschaften-titel" class="page-head__titel">Liegenschaften</h1>
+      <p class="page-head__hint">
+        Objekte mit Gebäuden, Einheiten und ihren Party-Rollen (Eigentum,
+        Betrieb, Hausmeisterei).
+      </p>
     </div>
-    <p class="page-head__hint">
-      Objekte mit Gebäuden, Einheiten und ihren Party-Rollen (Eigentum,
-      Betrieb, Hausmeisterei). Anlage und Pflege laufen über die KI und die API.
-    </p>
+    @if (darfAnlegen()) {
+      <button type="button" class="btn btn--primary page-head__neu" (click)="neuOeffnen()">
+        <span aria-hidden="true">＋</span> Neue Liegenschaft
+      </button>
+    }
   </header>
+
+  @if (meldung(); as m) {
+    <div
+      class="melde melde--{{ m.art === 'erfolg' ? 'erfolg' : 'fehler' }} liegenschaften__melde"
+      [attr.role]="m.art === 'fehler' ? 'alert' : 'status'"
+    >
+      <span class="melde__mark" aria-hidden="true">{{ m.art === 'fehler' ? '!' : '✓' }}</span>
+      <span class="melde__text">
+        <strong>{{ m.art === 'fehler' ? 'Fehler:' : 'Angelegt:' }}</strong> {{ m.text }}
+      </span>
+      <button type="button" class="melde__zu" (click)="meldungSchliessen()" aria-label="Meldung schließen">
+        <span aria-hidden="true">✕</span>
+      </button>
+    </div>
+  }
 
   <!-- Steuerung: Suche + Segmentfilter -->
   <div class="controls">
@@ -150,4 +170,30 @@
       }
     }
   }
+
+  <!-- ------------------------- Liegenschaft anlegen ------------------------ -->
+  <app-dialog [offen]="neuOffen()" titel="Neue Liegenschaft" (schliessen)="neuSchliessen()">
+    <form id="neu-property-form" class="dialog-form" (submit)="$event.preventDefault(); neuAbsenden()" novalidate>
+      @if (formularMeldung(); as fm) {
+        <div class="melde melde--fehler" role="alert">
+          <span class="melde__mark" aria-hidden="true">!</span>
+          <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+        </div>
+      }
+      <app-feld [control]="neuForm.controls.name" label="Name" [pflicht]="true" platzhalter="z. B. WEG Musterstraße 1" />
+      <app-feld [control]="neuForm.controls.property_type" label="Objekttyp" typ="select" [pflicht]="true" platzhalter="Bitte wählen" [optionen]="typOptionen" />
+      <app-feld [control]="neuForm.controls.street" label="Straße" [pflicht]="true" autocomplete="address-line1" />
+      <app-feld [control]="neuForm.controls.house_number" label="Hausnummer" hinweis="Optional." />
+      <app-feld [control]="neuForm.controls.address_addition" label="Adresszusatz" hinweis="Optional, z. B. Hinterhaus." />
+      <app-feld [control]="neuForm.controls.postal_code" label="PLZ" [pflicht]="true" autocomplete="postal-code" />
+      <app-feld [control]="neuForm.controls.city" label="Ort" [pflicht]="true" autocomplete="address-level2" />
+      <app-feld [control]="neuForm.controls.country_code" label="Ländercode" hinweis="ISO-Code, z. B. DE." />
+    </form>
+    <div dialog-aktionen class="dialog__aktionen">
+      <button type="button" class="btn" [disabled]="neuLaedt()" (click)="neuSchliessen()">Abbrechen</button>
+      <button type="submit" form="neu-property-form" class="btn btn--primary" [disabled]="neuLaedt()" [attr.aria-busy]="neuLaedt()">
+        {{ neuLaedt() ? 'Wird angelegt …' : 'Liegenschaft anlegen' }}
+      </button>
+    </div>
+  </app-dialog>
 </section>

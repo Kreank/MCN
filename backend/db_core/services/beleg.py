@@ -26,10 +26,14 @@ from db_core.models import (
     Invoice,
     InvoiceLine,
     InvoiceParty,
+    Project,
+    Property,
     Quote,
     QuoteLine,
     TaxCode,
+    WorkOrder,
 )
+from db_core.services._validation import ensure_exists, ensure_party_usable
 
 INVOICE_PARTY_ROLES = (
     "INVOICE_DEBTOR",
@@ -160,6 +164,8 @@ def create_quote(
     """Legt ein Angebot (Status ENTWURF) mit Positionen an."""
     if not title or not title.strip():
         raise ValueError("title darf nicht leer sein.")
+    ensure_exists(Property, property_id, "Liegenschaft")
+    ensure_exists(Project, project_id, "Projekt")
     prepared, net_total, tax_total, gross_total = _prepare_lines(lines)
 
     with business_transaction(actor_app_user_id):
@@ -214,6 +220,10 @@ def create_invoice(
             f"{invoice_type} wird nicht direkt angelegt, sondern über "
             "create_cancellation/create_correction erzeugt."
         )
+    ensure_exists(Property, property_id, "Liegenschaft")
+    ensure_exists(Project, project_id, "Projekt")
+    ensure_exists(WorkOrder, work_order_id, "Auftrag")
+    ensure_exists(Invoice, reference_invoice_id, "Referenzrechnung")
     prepared, net_total, tax_total, gross_total = _prepare_lines(lines)
 
     with business_transaction(actor_app_user_id):
@@ -262,6 +272,9 @@ def add_invoice_party(
         raise ValueError(
             "liability_group erfordert eine dokumentierte liability_basis (A-29)."
         )
+    ensure_exists(Invoice, invoice_id, "Rechnung")
+    # party_id muss existieren und darf nicht MERGED sein (trg_invoice_party_no_merged).
+    ensure_party_usable(party_id, "Partei")
     with business_transaction(actor_app_user_id):
         party = InvoiceParty.objects.create(
             id=uuid.uuid4(),

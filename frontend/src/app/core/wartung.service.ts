@@ -1,7 +1,15 @@
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { ContractDetail, ContractPage, ContractQuery } from './wartung.model';
+import {
+  ContractCreate,
+  ContractDetail,
+  ContractPage,
+  ContractQuery,
+  ContractStatusInput,
+  ContractTriggerInput,
+  MaintenanceContract,
+} from './wartung.model';
 
 /** Typisierter Zugriff auf die Wartungs-API (dev-Proxy: /api -> :8000). */
 @Injectable({ providedIn: 'root' })
@@ -23,5 +31,21 @@ export class WartungService {
 
   get(id: string): Observable<ContractDetail> {
     return this.http.get<ContractDetail>(`${this.base}/${id}`);
+  }
+
+  // --- Schreiben (Session-Auth Pflicht) ------------------------------------
+  /** Neuen Wartungsvertrag anlegen (Status AKTIV; Recht workflow.ANLEGEN). */
+  create(payload: ContractCreate): Observable<MaintenanceContract> {
+    return this.http.post<MaintenanceContract>(this.base, payload);
+  }
+
+  /** Vertragsstatus wechseln (Recht workflow.AENDERN). */
+  setStatus(id: string, payload: ContractStatusInput): Observable<MaintenanceContract> {
+    return this.http.post<MaintenanceContract>(`${this.base}/${id}/status`, payload);
+  }
+
+  /** Fälligkeits-Aktion auslösen (Recht workflow.AENDERN; erzeugt Folgeobjekte). */
+  trigger(id: string, payload: ContractTriggerInput): Observable<MaintenanceContract> {
+    return this.http.post<MaintenanceContract>(`${this.base}/${id}/trigger`, payload);
   }
 }

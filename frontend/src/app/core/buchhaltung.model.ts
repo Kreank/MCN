@@ -100,6 +100,44 @@ export interface DunningList {
   levels: DunningLevelInfo[];
 }
 
+// --- Schreib-Verträge (POST-Payloads) --------------------------------------
+// amount/Beträge sind Punkt-Strings (Decimal), niemals number.
+
+export interface PaymentRecord {
+  amount: string;
+  paid_at: string;
+  payment_type?: string;
+  external_reference?: string | null;
+  currency?: string;
+}
+
+/** Antwort auf Zahlungserfassung/-storno (PaymentDetailOut). */
+export interface PaymentDetail extends Payment {
+  id: string;
+  invoice_id: string;
+  external_reference: string;
+}
+
+export interface DunningIssue {
+  level: number;
+  issued_at: string;
+  note?: string | null;
+}
+
+/** Rechnungskorrektur über ausgewählte Positionsnummern. */
+export interface CorrectionInput {
+  positions: number[];
+}
+
+/** Erlaubte Zahlungsarten der manuellen Erfassung (positiv wirkend).
+ *  STORNO_BUCHUNG entsteht nur systemseitig über den Storno-Endpunkt. */
+export const PAYMENT_TYPES: { wert: string; label: string }[] = [
+  { wert: 'ZAHLUNG', label: 'Zahlung' },
+  { wert: 'TEILZAHLUNG', label: 'Teilzahlung' },
+  { wert: 'UEBERZAHLUNG', label: 'Überzahlung' },
+  { wert: 'RUECKERSTATTUNG', label: 'Rückerstattung' },
+];
+
 // --- Darstellung -----------------------------------------------------------
 const PAYMENT_STATUS_LABELS: Record<PaymentStatus, string> = {
   OFFEN: 'Offen',

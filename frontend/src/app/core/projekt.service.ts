@@ -3,11 +3,16 @@ import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import {
   Checklist,
+  ChecklistCreate,
   LogEntry,
+  LogEntryCreate,
+  ProjectCreate,
   ProjectDetail,
   ProjectPage,
   ProjectQuery,
+  ServiceCaseCreate,
   ServiceCaseDetail,
+  ServiceCaseRef,
 } from './projekt.model';
 
 /** Typisierter Zugriff auf die Projekt-API (dev-Proxy: /api -> :8000). */
@@ -43,6 +48,27 @@ export class ProjektService {
 
   getChecklists(id: string): Observable<Checklist[]> {
     return this.http.get<Checklist[]>(`${this.base}/${id}/checklists`);
+  }
+
+  // --- Schreiben (Session-Auth Pflicht) ------------------------------------
+  /** Neues Projekt anlegen (Recht workflow.ANLEGEN). */
+  create(payload: ProjectCreate): Observable<ProjectDetail> {
+    return this.http.post<ProjectDetail>(this.base, payload);
+  }
+
+  /** Logbuch-Eintrag anlegen (Recht workflow.AENDERN). */
+  addLog(id: string, payload: LogEntryCreate): Observable<LogEntry> {
+    return this.http.post<LogEntry>(`${this.base}/${id}/log`, payload);
+  }
+
+  /** Checkliste anlegen (Recht workflow.ANLEGEN). */
+  createChecklist(id: string, payload: ChecklistCreate): Observable<Checklist> {
+    return this.http.post<Checklist>(`${this.base}/${id}/checklists`, payload);
+  }
+
+  /** Vorgang unter dem Projekt anlegen (Recht workflow.ANLEGEN). */
+  createServiceCase(id: string, payload: ServiceCaseCreate): Observable<ServiceCaseRef> {
+    return this.http.post<ServiceCaseRef>(`${this.base}/${id}/service_cases`, payload);
   }
 }
 

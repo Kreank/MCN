@@ -72,3 +72,42 @@ export interface PropertyDetail extends Property {
   buildings: Building[];
   party_roles: PartyRole[];
 }
+
+// --- Anlage (POST /api/property/...) ---------------------------------------
+export interface PropertyIn {
+  name: string;
+  property_type: PropertyType;
+  street: string;
+  postal_code: string;
+  city: string;
+  house_number?: string | null;
+  address_addition?: string | null;
+  country_code?: string;
+}
+
+export interface BuildingIn {
+  building_number: string;
+  name?: string | null;
+}
+
+export type UnitTypeCode =
+  | 'APARTMENT'
+  | 'COMMERCIAL'
+  | 'GARAGE'
+  | 'PARKING'
+  | 'STORAGE'
+  | 'COMMON_AREA'
+  | 'TECHNICAL_ROOM'
+  | 'OTHER';
+
+export interface UnitIn {
+  unit_type: UnitTypeCode;
+  unit_number: string;
+}
+
+export interface PartyRoleIn {
+  party_id: string;
+  role: PropertyRoleCode;
+  valid_from: string;
+  valid_until?: string | null;
+}

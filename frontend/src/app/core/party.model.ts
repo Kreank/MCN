@@ -45,3 +45,30 @@ export interface PartyDetail extends Party {
   person: Person | null;
   organization: Organization | null;
 }
+
+// --- Anlage (POST /api/identity/parties/person | /organization) ------------
+export interface PersonIn {
+  first_name: string;
+  last_name: string;
+  salutation?: string | null;
+  title?: string | null;
+  birth_date?: string | null;
+}
+
+export type OrganizationTypeCode =
+  | 'PROPERTY_MANAGEMENT'
+  | 'WEG'
+  | 'COMPANY'
+  | 'AUTHORITY'
+  | 'INSURER'
+  | 'OTHER';
+
+export interface OrganizationIn {
+  legal_name: string;
+  organization_type: OrganizationTypeCode;
+  display_name?: string | null;
+  legal_form?: string | null;
+  registration_number?: string | null;
+  tax_number?: string | null;
+  vat_id?: string | null;
+}

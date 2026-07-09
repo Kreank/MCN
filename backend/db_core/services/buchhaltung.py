@@ -22,7 +22,8 @@ from datetime import date
 
 from db_core.db_context import business_transaction
 from db_core.gate_errors import as_business_error
-from db_core.models import DunningNotice, Payment
+from db_core.models import DunningNotice, Invoice, Payment
+from db_core.services._validation import ensure_exists
 
 # Beitrag je payment_type zum bezahlten Betrag (+1 = Geldeingang reduziert den
 # offenen Posten, -1 = Rückfluss/Storno erhöht ihn wieder). Einzige Quelle der
@@ -63,6 +64,7 @@ def record_payment(
         )
     if amount is None or amount <= 0:
         raise ValueError("amount muss ein positiver Betrag sein.")
+    ensure_exists(Invoice, invoice_id, "Rechnung")
     ref = external_reference or f"{import_source}:{uuid.uuid4()}"
     with as_business_error():
         with business_transaction(actor_app_user_id):
@@ -129,6 +131,7 @@ def issue_dunning_notice(
     """
     if level is None or level <= 0:
         raise ValueError("level muss eine positive Stufennummer sein.")
+    ensure_exists(Invoice, invoice_id, "Rechnung")
     with as_business_error():
         with business_transaction(actor_app_user_id):
             notice = DunningNotice.objects.create(

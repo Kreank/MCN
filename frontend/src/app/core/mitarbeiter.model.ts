@@ -106,6 +106,73 @@ export interface EmployeeDetail extends Employee {
   vacation_account: VacationAccount;
 }
 
+// --- Schreib-Verträge (POST/PUT-Payloads) ----------------------------------
+// Decimal-Felder (Stunden, Urlaubstage) sind Punkt-Strings, niemals number.
+
+export interface EmployeeCreate {
+  app_user_id: string;
+  party_id: string;
+  hired_on: string;
+  wage_group_id?: string | null;
+  notes?: string | null;
+}
+
+export interface EmployeeStatusChange {
+  status: EmployeeStatus;
+  left_on?: string | null;
+}
+
+export interface ContractCreate {
+  valid_from: string;
+  vacation_days_per_year: string;
+  hours_monday: string;
+  hours_tuesday: string;
+  hours_wednesday: string;
+  hours_thursday: string;
+  hours_friday: string;
+  hours_saturday: string;
+  hours_sunday: string;
+  valid_to?: string | null;
+  wage_group_id?: string | null;
+  notes?: string | null;
+}
+
+export interface ContractTerminate {
+  valid_to: string;
+  reason: string;
+}
+
+export interface AbsenceCreate {
+  absence_type: AbsenceType;
+  start_date: string;
+  end_date: string;
+  half_day_start?: boolean;
+  half_day_end?: boolean;
+  reason?: string | null;
+}
+
+export interface AbsenceDecision {
+  note?: string | null;
+}
+
+export interface VacationBudget {
+  year: number;
+  entitlement_days: string;
+  carryover_days?: string;
+  adjustment_days?: string;
+  adjustment_reason?: string | null;
+}
+
+/** Abwesenheitsarten für Auswahlfelder. */
+export const ABSENCE_TYPES: { wert: AbsenceType; label: string }[] = [
+  { wert: 'URLAUB', label: 'Urlaub' },
+  { wert: 'KRANKHEIT', label: 'Krankheit' },
+  { wert: 'ELTERNZEIT', label: 'Elternzeit' },
+  { wert: 'SONDERURLAUB', label: 'Sonderurlaub' },
+  { wert: 'UNBEZAHLT', label: 'Unbezahlt' },
+  { wert: 'FORTBILDUNG', label: 'Fortbildung' },
+];
+
 // Ein Wochentag des Sollstunden-Rasters (Mo–So).
 export interface WeekdayHours {
   key: keyof Pick<

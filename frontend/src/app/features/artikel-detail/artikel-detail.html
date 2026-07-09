@@ -30,6 +30,21 @@
       <span mappe-kopf class="stamp stamp--type">{{ lineTypeLabel(daten()!.line_type) }}</span>
       <span mappe-kopf class="stamp {{ statusClass(daten()!.status) }}">{{ statusLabel(daten()!.status) }}</span>
 
+      @if (meldung(); as m) {
+        <div
+          class="melde melde--{{ m.art === 'erfolg' ? 'erfolg' : 'fehler' }} detail__melde"
+          [attr.role]="m.art === 'fehler' ? 'alert' : 'status'"
+        >
+          <span class="melde__mark" aria-hidden="true">{{ m.art === 'fehler' ? '!' : '✓' }}</span>
+          <span class="melde__text">
+            <strong>{{ m.art === 'fehler' ? 'Fehler:' : 'Erledigt:' }}</strong> {{ m.text }}
+          </span>
+          <button type="button" class="melde__zu" (click)="meldungSchliessen()" aria-label="Meldung schließen">
+            <span aria-hidden="true">✕</span>
+          </button>
+        </div>
+      }
+
       @if (tab() === 'stammdaten') {
         <dl class="feld-raster">
           <div class="feld"><dt class="feld__label">Artikelnummer</dt><dd class="feld__wert">{{ daten()!.article_number }}</dd></div>
@@ -75,6 +90,14 @@
               <div class="feld"><dt class="feld__label">Einkaufspreis (aktuell)</dt><dd class="feld__wert" [class.feld__wert--leer]="!$any(kalk()).data.ek">{{ euro($any(kalk()).data.ek) }}</dd></div>
             </dl>
 
+            @if (darfAendern()) {
+              <div class="tab-aktionen">
+                <button type="button" class="btn btn--primary" (click)="vkOeffnen()">
+                  <span aria-hidden="true">＋</span> VK-Festpreis setzen
+                </button>
+              </div>
+            }
+
             @if ($any(kalk()).data.variants.length === 0) {
               <div class="tab-platzhalter"><p>Für diesen Artikel ist noch keine VK-Variante hinterlegt.</p></div>
             } @else {
@@ -100,5 +123,26 @@
         }
       }
     </app-mappe>
+
+    <!-- ---------------------------- VK-Festpreis setzen ------------------- -->
+    <app-dialog [offen]="vkOffen()" titel="VK-Festpreis setzen" (schliessen)="vkSchliessen()">
+      <form id="vk-festpreis-form" class="dialog-form" (submit)="$event.preventDefault(); vkAbsenden()" novalidate>
+        @if (formularMeldung(); as fm) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+          </div>
+        }
+        <app-feld [control]="vkForm.controls.label" label="Bezeichnung" [pflicht]="true" hinweis="z. B. Standard." />
+        <app-feld [control]="vkForm.controls.fixed_price" label="Festpreis (netto)" typ="zahl" [pflicht]="true" hinweis="Betrag in Euro, z. B. 199,90." />
+        <app-feld [control]="vkForm.controls.is_standard" label="Als Standard-VK verwenden" typ="checkbox" />
+      </form>
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="vkLaedt()" (click)="vkSchliessen()">Abbrechen</button>
+        <button type="submit" form="vk-festpreis-form" class="btn btn--primary" [disabled]="vkLaedt()" [attr.aria-busy]="vkLaedt()">
+          {{ vkLaedt() ? 'Wird gesetzt …' : 'Festpreis setzen' }}
+        </button>
+      </div>
+    </app-dialog>
   }
 }

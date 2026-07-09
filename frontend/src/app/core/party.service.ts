@@ -1,7 +1,13 @@
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { PartyDetail, PartyPage, PartyQuery } from './party.model';
+import {
+  OrganizationIn,
+  PartyDetail,
+  PartyPage,
+  PartyQuery,
+  PersonIn,
+} from './party.model';
 
 /** Typisierter Zugriff auf die Kontakte-API (dev-Proxy: /api -> :8000). */
 @Injectable({ providedIn: 'root' })
@@ -25,5 +31,15 @@ export class PartyService {
 
   get(id: string): Observable<PartyDetail> {
     return this.http.get<PartyDetail>(`${this.base}/${id}`);
+  }
+
+  /** Neue Person anlegen. Erfordert Recht identity.ANLEGEN. */
+  createPerson(payload: PersonIn): Observable<PartyDetail> {
+    return this.http.post<PartyDetail>(`${this.base}/person`, payload);
+  }
+
+  /** Neue Organisation anlegen. Erfordert Recht identity.ANLEGEN. */
+  createOrganization(payload: OrganizationIn): Observable<PartyDetail> {
+    return this.http.post<PartyDetail>(`${this.base}/organization`, payload);
   }
 }

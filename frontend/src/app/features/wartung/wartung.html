@@ -1,16 +1,21 @@
 <section class="wartung" aria-labelledby="wartung-titel">
   <header class="page-head">
-    <div>
+    <div class="page-head__text">
       <p class="page-head__kicker">
         <span class="page-head__scale" aria-hidden="true"></span>
         Wartung · Verträge
       </p>
       <h1 id="wartung-titel" class="page-head__titel">Wartungsverträge</h1>
+      <p class="page-head__hint">
+        Wiederkehrende Wartungs- und Prüfleistungen je Liegenschaft mit Intervall,
+        nächster Fälligkeit und Fälligkeits-Aktion.
+      </p>
     </div>
-    <p class="page-head__hint">
-      Wiederkehrende Wartungs- und Prüfleistungen je Liegenschaft mit Intervall,
-      nächster Fälligkeit und Fälligkeits-Aktion. Auslösen läuft über die API.
-    </p>
+    @if (darfAnlegen()) {
+      <button type="button" class="btn btn--primary page-head__neu" (click)="neuOeffnen()">
+        <span aria-hidden="true">＋</span> Neuer Wartungsvertrag
+      </button>
+    }
   </header>
 
   <div class="controls">
@@ -46,6 +51,21 @@
   </div>
 
   <p class="sr-only" role="status">{{ resultSummary() }}</p>
+
+  @if (meldung(); as m) {
+    <div
+      class="melde melde--{{ m.art === 'erfolg' ? 'erfolg' : 'fehler' }} wartung__melde"
+      [attr.role]="m.art === 'fehler' ? 'alert' : 'status'"
+    >
+      <span class="melde__mark" aria-hidden="true">{{ m.art === 'fehler' ? '!' : '✓' }}</span>
+      <span class="melde__text">
+        <strong>{{ m.art === 'fehler' ? 'Fehler:' : 'Erledigt:' }}</strong> {{ m.text }}
+      </span>
+      <button type="button" class="melde__zu" (click)="meldungSchliessen()" aria-label="Meldung schließen">
+        <span aria-hidden="true">✕</span>
+      </button>
+    </div>
+  }
 
   @switch (state().kind) {
     @case ('loading') {
@@ -115,4 +135,75 @@
       }
     }
   }
+
+  <!-- ------------------------------ Anlage-Dialog ------------------------- -->
+  <app-dialog [offen]="neuOffen()" titel="Neuer Wartungsvertrag" (schliessen)="neuSchliessen()">
+    <form id="neu-wartung-form" class="dialog-form" (submit)="$event.preventDefault(); neuAbsenden()" novalidate>
+      @if (formularMeldung(); as fm) {
+        <div class="melde melde--fehler" role="alert">
+          <span class="melde__mark" aria-hidden="true">!</span>
+          <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+        </div>
+      }
+
+      <app-referenz-wahl
+        [control]="neuForm.controls.property_id"
+        label="Liegenschaft"
+        [pflicht]="true"
+        platzhalter="Name oder Objektnummer suchen"
+        [suche]="liegenschaftSuche"
+      />
+      <app-feld [control]="neuForm.controls.name" label="Bezeichnung" [pflicht]="true" platzhalter="z. B. Aufzugswartung" />
+      <app-feld [control]="neuForm.controls.start_date" label="Startdatum" typ="datum" [pflicht]="true" />
+      <app-feld
+        [control]="neuForm.controls.interval_kind"
+        label="Intervall"
+        typ="select"
+        [pflicht]="true"
+        [optionen]="intervalle"
+      />
+      @if (intervalKind() === 'TAGE') {
+        <app-feld [control]="neuForm.controls.interval_days" label="Intervall (Tage)" typ="zahl" hinweis="Anzahl Tage zwischen den Fälligkeiten." />
+      }
+      @if (intervalKind() === 'FESTES_DATUM') {
+        <app-feld [control]="neuForm.controls.fixed_date" label="Festes Datum" typ="datum" hinweis="Wiederkehrender Stichtag (Tag/Monat)." />
+      }
+      <app-feld
+        [control]="neuForm.controls.due_action"
+        label="Fälligkeits-Aktion"
+        typ="select"
+        [pflicht]="true"
+        [optionen]="aktionen"
+      />
+      <app-feld [control]="neuForm.controls.lead_time_days" label="Vorlauf (Tage)" typ="zahl" hinweis="Optional — Erinnerung vor der Fälligkeit." />
+      <app-referenz-wahl
+        [control]="neuForm.controls.party_id"
+        label="Kunde"
+        hinweis="Optional."
+        platzhalter="Kontakt suchen"
+        [suche]="partySuche"
+      />
+      <app-referenz-wahl
+        [control]="neuForm.controls.project_id"
+        label="Projekt"
+        hinweis="Optional."
+        platzhalter="Projekt suchen"
+        [suche]="projektSuche"
+      />
+      <app-feld [control]="neuForm.controls.notes" label="Notizen" typ="textarea" hinweis="Optional." />
+    </form>
+
+    <div dialog-aktionen class="dialog__aktionen">
+      <button type="button" class="btn" [disabled]="neuLaedt()" (click)="neuSchliessen()">Abbrechen</button>
+      <button
+        type="submit"
+        form="neu-wartung-form"
+        class="btn btn--primary"
+        [disabled]="neuLaedt()"
+        [attr.aria-busy]="neuLaedt()"
+      >
+        {{ neuLaedt() ? 'Wird angelegt …' : 'Vertrag anlegen' }}
+      </button>
+    </div>
+  </app-dialog>
 </section>

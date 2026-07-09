@@ -60,6 +60,32 @@ export interface ContractDetail extends MaintenanceContract {
   events: MaintenanceEvent[];
 }
 
+// --- Schreib-Payloads ------------------------------------------------------
+// POST /api/maintenance/contracts
+export interface ContractCreate {
+  property_id: string;
+  name: string;
+  start_date: string;
+  interval_kind: IntervalKind;
+  due_action: DueAction;
+  interval_days?: number | null;
+  fixed_date?: string | null;
+  party_id?: string | null;
+  project_id?: string | null;
+  lead_time_days?: number | null;
+  notes?: string | null;
+}
+
+// POST /api/maintenance/contracts/{id}/status
+export interface ContractStatusInput {
+  to_status: ContractStatus;
+}
+
+// POST /api/maintenance/contracts/{id}/trigger
+export interface ContractTriggerInput {
+  note?: string | null;
+}
+
 // --- Darstellung -----------------------------------------------------------
 const STATUS_LABELS: Record<ContractStatus, string> = {
   AKTIV: 'Aktiv',

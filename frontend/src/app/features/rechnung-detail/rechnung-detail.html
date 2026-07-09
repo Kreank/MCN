@@ -32,6 +32,26 @@
       @if (daten()!.status === 'VEROEFFENTLICHT') {
         <a mappe-kopf class="btn kopf-pdf" [href]="pdfUrl(daten()!.id)" target="_blank" rel="noopener" aria-label="PDF ansehen (öffnet in neuem Tab)">PDF ansehen ↗</a>
       }
+      @if (darfFreigeben() && kannVeroeffentlichen()) {
+        <button mappe-kopf type="button" class="btn btn--primary" (click)="publishFragen()">
+          Rechnung veröffentlichen
+        </button>
+      }
+
+      @if (meldung(); as m) {
+        <div
+          class="melde melde--{{ m.art }} detail-melde"
+          [attr.role]="m.art === 'fehler' ? 'alert' : 'status'"
+        >
+          <span class="melde__mark" aria-hidden="true">{{ m.art === 'fehler' ? '!' : '✓' }}</span>
+          <span class="melde__text">
+            <strong>{{ m.art === 'fehler' ? 'Fehler:' : 'Erledigt:' }}</strong> {{ m.text }}
+          </span>
+          <button type="button" class="melde__zu" (click)="meldungSchliessen()" aria-label="Meldung schließen">
+            <span aria-hidden="true">✕</span>
+          </button>
+        </div>
+      }
 
       @if (tab() === 'positionen') {
         @if (daten()!.lines.length === 0) {
@@ -128,5 +148,16 @@
         </div>
       }
     </app-mappe>
+
+    <app-bestaetigung
+      [offen]="publishOffen()"
+      titel="Rechnung veröffentlichen?"
+      text="Die Rechnung erhält eine Belegnummer, wird als Snapshot mit Prüf-Hash festgeschrieben und kann danach nur noch storniert werden. Dieser Schritt ist unumkehrbar."
+      bestaetigenLabel="Verbindlich veröffentlichen"
+      [gefahr]="true"
+      [laedt]="publishLaedt()"
+      (bestaetigen)="publishBestaetigen()"
+      (abbrechen)="publishAbbrechen()"
+    />
   }
 }

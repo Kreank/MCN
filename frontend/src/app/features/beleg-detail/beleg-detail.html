@@ -29,6 +29,26 @@
     >
       <span mappe-kopf class="stamp {{ statusClass(daten()!.status) }}">{{ statusLabel(daten()!.status) }}</span>
       <span mappe-kopf class="kopf-summe">{{ euro(daten()!.gross_total) }}</span>
+      @if (darfVersenden() && kannVersenden()) {
+        <button mappe-kopf type="button" class="btn btn--primary" (click)="versendenFragen()">
+          Angebot versenden
+        </button>
+      }
+
+      @if (meldung(); as m) {
+        <div
+          class="melde melde--{{ m.art }} detail-melde"
+          [attr.role]="m.art === 'fehler' ? 'alert' : 'status'"
+        >
+          <span class="melde__mark" aria-hidden="true">{{ m.art === 'fehler' ? '!' : '✓' }}</span>
+          <span class="melde__text">
+            <strong>{{ m.art === 'fehler' ? 'Fehler:' : 'Erledigt:' }}</strong> {{ m.text }}
+          </span>
+          <button type="button" class="melde__zu" (click)="meldungSchliessen()" aria-label="Meldung schließen">
+            <span aria-hidden="true">✕</span>
+          </button>
+        </div>
+      }
 
       <!-- ------------------------------ Positionen ----------------------- -->
       @if (tab() === 'positionen') {
@@ -105,5 +125,16 @@
         </div>
       }
     </app-mappe>
+
+    <app-bestaetigung
+      [offen]="versendenOffen()"
+      titel="Angebot versenden?"
+      text="Das Angebot erhält eine Belegnummer, wird als Snapshot mit Prüf-Hash festgeschrieben und kann danach nicht mehr geändert werden. Dieser Schritt ist unumkehrbar."
+      bestaetigenLabel="Verbindlich versenden"
+      [gefahr]="true"
+      [laedt]="versendenLaedt()"
+      (bestaetigen)="versendenBestaetigen()"
+      (abbrechen)="versendenAbbrechen()"
+    />
   }
 }

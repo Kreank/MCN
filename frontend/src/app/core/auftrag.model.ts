@@ -65,6 +65,45 @@ export interface WorkOrderDetail extends WorkOrder {
   history: StatusChangeEntry[];
 }
 
+// --- Schreib-Payloads ------------------------------------------------------
+// POST /api/workflow/work_orders
+export interface WorkOrderCreate {
+  property_id: string;
+  title: string;
+  project_id?: string | null;
+  service_case_id?: string | null;
+  description?: string | null;
+  priority: OrderPriority;
+  desired_date?: string | null;
+  customer_reference?: string | null;
+  is_emergency: boolean;
+}
+
+// POST /api/workflow/work_orders/{id}/parties
+export interface WorkOrderPartyCreate {
+  party_id: string;
+  role: string;
+  is_primary: boolean;
+  allocation_percent?: string | null;
+  source?: string;
+}
+
+// POST /api/workflow/work_orders/{id}/responsibility
+export interface ResponsibilityInput {
+  scope: string;
+}
+
+// POST /api/workflow/work_orders/{id}/evidence
+export interface EvidenceInput {
+  reference: string;
+}
+
+// POST /api/workflow/work_orders/{id}/status
+export interface WorkOrderStatusInput {
+  to_status: WorkOrderStatus;
+  reason?: string | null;
+}
+
 // --- Darstellung (eine Quelle für Auftrag-Detail und Projektmappe) ---------
 const WORK_ORDER_STATUS_LABELS: Record<WorkOrderStatus, string> = {
   ENTWURF: 'Entwurf',

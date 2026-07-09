@@ -19,6 +19,20 @@
   }
 
   @case ('ready') {
+    @if (meldung(); as m) {
+      <div
+        class="melde melde--{{ m.art === 'erfolg' ? 'erfolg' : 'fehler' }} wartung-detail__melde"
+        [attr.role]="m.art === 'fehler' ? 'alert' : 'status'"
+      >
+        <span class="melde__mark" aria-hidden="true">{{ m.art === 'fehler' ? '!' : '✓' }}</span>
+        <span class="melde__text">
+          <strong>{{ m.art === 'fehler' ? 'Fehler:' : 'Erledigt:' }}</strong> {{ m.text }}
+        </span>
+        <button type="button" class="melde__zu" (click)="meldungSchliessen()" aria-label="Meldung schließen">
+          <span aria-hidden="true">✕</span>
+        </button>
+      </div>
+    }
     <app-mappe
       kicker="Wartungsvertrag {{ daten()!.contract_number }}"
       [titel]="daten()!.name"
@@ -33,6 +47,20 @@
       <span mappe-kopf class="stamp {{ statusClass(daten()!.status) }}">{{ statusLabel(daten()!.status) }}</span>
 
       @if (tab() === 'details') {
+        @if (darfAendern() && daten()!.status !== 'ARCHIVIERT') {
+          <div class="tab-toolbar">
+            @if (daten()!.status === 'AKTIV' && daten()!.is_due) {
+              <button type="button" class="btn btn--primary" [disabled]="aktionBusy()" (click)="triggerFragen_()">Fälligkeit auslösen</button>
+            }
+            @if (daten()!.status === 'AKTIV') {
+              <button type="button" class="btn" [disabled]="aktionBusy()" (click)="statusSetzen('INAKTIV', 'Vertrag deaktiviert.')">Deaktivieren</button>
+            }
+            @if (daten()!.status === 'INAKTIV') {
+              <button type="button" class="btn" [disabled]="aktionBusy()" (click)="statusSetzen('AKTIV', 'Vertrag aktiviert.')">Aktivieren</button>
+              <button type="button" class="btn btn--gefahr" [disabled]="aktionBusy()" (click)="archivFragen_()">Archivieren</button>
+            }
+          </div>
+        }
         <dl class="feld-raster">
           <div class="feld"><dt class="feld__label">Vertragsnummer</dt><dd class="feld__wert">{{ daten()!.contract_number }}</dd></div>
           <div class="feld"><dt class="feld__label">Status</dt><dd class="feld__wert">{{ statusLabel(daten()!.status) }}</dd></div>
@@ -98,5 +126,29 @@
         }
       }
     </app-mappe>
+
+    <!-- ---------------------------- Archivieren (Bestätigung) ------------- -->
+    <app-bestaetigung
+      [offen]="archivFragen()"
+      titel="Vertrag archivieren?"
+      text="Archivieren ist endgültig: Der Vertrag wird stillgelegt und kann nicht wieder aktiviert werden. Es entstehen keine neuen Fälligkeiten mehr."
+      bestaetigenLabel="Archivieren"
+      [gefahr]="true"
+      [laedt]="archivLaedt()"
+      (bestaetigen)="archivBestaetigen()"
+      (abbrechen)="archivAbbrechen()"
+    />
+
+    <!-- ---------------------------- Fälligkeit auslösen (Bestätigung) ----- -->
+    <app-bestaetigung
+      [offen]="triggerFragen()"
+      titel="Fälligkeit auslösen?"
+      text="Die Fälligkeits-Aktion wird jetzt ausgeführt: Es entsteht ein Folgeobjekt (z. B. Auftrag oder Aufgabe), und die nächste Fälligkeit rückt vor. Das lässt sich nicht rückgängig machen."
+      bestaetigenLabel="Auslösen"
+      [gefahr]="true"
+      [laedt]="triggerLaedt()"
+      (bestaetigen)="triggerBestaetigen()"
+      (abbrechen)="triggerAbbrechen()"
+    />
   }
 }

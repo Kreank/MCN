@@ -10,7 +10,8 @@ import uuid
 from django.utils import timezone
 
 from db_core.db_context import business_transaction
-from db_core.models import Task
+from db_core.models import AppUser, Project, Task
+from db_core.services._validation import ensure_exists, ensure_party_usable
 
 
 def create_task(
@@ -26,6 +27,9 @@ def create_task(
     """Legt eine Aufgabe im Status OFFEN an (created_by = Akteur)."""
     if not title or not title.strip():
         raise ValueError("title darf nicht leer sein.")
+    ensure_exists(AppUser, assigned_to_user_id, "Benutzer")
+    ensure_exists(Project, project_id, "Projekt")
+    ensure_party_usable(party_id, "Kontakt")
     with business_transaction(actor_app_user_id):
         task = Task.objects.create(
             id=uuid.uuid4(),

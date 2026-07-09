@@ -32,7 +32,16 @@ from django.db.models import Q
 
 from db_core.db_context import business_transaction
 from db_core.gate_errors import as_business_error
-from db_core.models import Absence, Employee, EmploymentContract, VacationBudget
+from db_core.models import (
+    Absence,
+    AppUser,
+    Employee,
+    EmploymentContract,
+    Person,
+    VacationBudget,
+    WageGroup,
+)
+from db_core.services._validation import ensure_exists
 
 EMPLOYEE_STATUS = ("AKTIV", "INAKTIV", "AUSGETRETEN")
 ABSENCE_TYPES = (
@@ -150,6 +159,9 @@ def create_employee(
     notes=None,
 ):
     """Legt einen Personalsatz an. party_id muss eine identity.person sein (FK)."""
+    ensure_exists(AppUser, app_user_id, "Benutzerkonto")
+    ensure_exists(Person, party_id, "Person")
+    ensure_exists(WageGroup, wage_group_id, "Lohngruppe")
     if Employee.objects.filter(app_user_id=app_user_id).exists():
         raise ValueError("Für dieses Benutzerkonto existiert bereits ein Personalsatz")
     if Employee.objects.filter(party_id=party_id).exists():
@@ -218,6 +230,7 @@ def create_contract(
     die einen bereits beendeten Zeitraum überlappen, lehnt der Service ab.
     """
     employee = _get_employee(employee_id)
+    ensure_exists(WageGroup, wage_group_id, "Lohngruppe")
     if employee.status == "AUSGETRETEN":
         raise ValueError("Für einen ausgetretenen Mitarbeiter kann kein Vertrag angelegt werden")
 

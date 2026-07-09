@@ -2,6 +2,19 @@
   display: block;
 }
 
+.projekt-detail__melde {
+  max-width: 64rem;
+  margin: 0 auto var(--space-4);
+}
+
+.tab-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
 .ref-liste {
   list-style: none;
   margin: 0;

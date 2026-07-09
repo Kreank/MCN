@@ -1,11 +1,22 @@
 import { Component, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { RouterLink } from '@angular/router';
-import { Subject, debounceTime, distinctUntilChanged } from 'rxjs';
+import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
+import { Subject, debounceTime, distinctUntilChanged, map } from 'rxjs';
 import { ProjektService } from '../../core/projekt.service';
-import { Project, ProjectPage, ProjectStatus } from '../../core/projekt.model';
+import { PropertyService } from '../../core/property.service';
+import { AuthService } from '../../core/auth.service';
+import { Project, ProjectCreate, ProjectPage, ProjectStatus } from '../../core/projekt.model';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { VerbotenState, fehlerState } from '../../shared/http-fehler';
+import { Dialog } from '../../shared/dialog/dialog';
+import { Feld } from '../../shared/formular/feld';
+import { ReferenzWahl, RefSuche } from '../../shared/formular/referenz-wahl';
+import { apiFehlerZuweisen } from '../../shared/formular/api-fehler';
+import {
+  felderAlsBeruehrtMarkieren,
+  serverFehlerZuruecksetzen,
+} from '../../shared/formular/formular.util';
 
 type ViewState =
   | { kind: 'loading' }
@@ -14,15 +25,19 @@ type ViewState =
   | { kind: 'error' };
 
 type Segment = { value: ProjectStatus | null; label: string };
+type Meldung = { art: 'erfolg' | 'fehler'; text: string };
 
 @Component({
   selector: 'app-projekte',
-  imports: [RouterLink, KeinZugriff],
+  imports: [RouterLink, ReactiveFormsModule, KeinZugriff, Dialog, Feld, ReferenzWahl],
   templateUrl: './projekte.html',
   styleUrl: './projekte.scss',
 })
 export class Projekte {
   private readonly svc = inject(ProjektService);
+  private readonly propertySvc = inject(PropertyService);
+  private readonly auth = inject(AuthService);
+  private readonly fb = inject(FormBuilder);
 
   protected readonly pageSize = 20;
   protected readonly segments: Segment[] = [
@@ -37,6 +52,31 @@ export class Projekte {
   protected readonly state = signal<ViewState>({ kind: 'loading' });
 
   protected readonly skeletons = Array.from({ length: 6 });
+
+  protected readonly darfAnlegen = computed(() => this.auth.darf('workflow', 'ANLEGEN'));
+
+  // --- Anlage-Dialog ------------------------------------------------------
+  protected readonly meldung = signal<Meldung | null>(null);
+  protected readonly neuOffen = signal(false);
+  protected readonly neuLaedt = signal(false);
+  protected readonly formularMeldung = signal<string | null>(null);
+  protected readonly neuForm = this.fb.group({
+    name: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.required, Validators.maxLength(200)],
+    }),
+    property_id: this.fb.control('', { nonNullable: true }),
+    start_date: this.fb.control('', { nonNullable: true }),
+    target_end_date: this.fb.control('', { nonNullable: true }),
+  });
+
+  /** Liegenschaftssuche für den optionalen Objektbezug. */
+  protected readonly liegenschaftSuche: RefSuche = (q) =>
+    this.propertySvc.list({ page: 1, page_size: 20, q }).pipe(
+      map((p) =>
+        p.items.map((o) => ({ id: o.id, label: o.name, sub: `${o.property_number} · ${o.city}` })),
+      ),
+    );
 
   private readonly searchInput$ = new Subject<string>();
   private reqId = 0;
@@ -113,6 +153,53 @@ export class Projekte {
           if (id === this.reqId) this.state.set(fehlerState(err));
         },
       });
+  }
+
+  // ---- Anlegen ------------------------------------------------------------
+  neuOeffnen(): void {
+    this.neuForm.reset({ name: '', property_id: '', start_date: '', target_end_date: '' });
+    this.formularMeldung.set(null);
+    this.neuOffen.set(true);
+  }
+
+  neuSchliessen(): void {
+    if (this.neuLaedt()) return;
+    this.neuOffen.set(false);
+  }
+
+  neuAbsenden(): void {
+    if (this.neuLaedt()) return;
+    serverFehlerZuruecksetzen(this.neuForm);
+    this.formularMeldung.set(null);
+    felderAlsBeruehrtMarkieren(this.neuForm);
+    if (this.neuForm.invalid) return;
+
+    const v = this.neuForm.getRawValue();
+    const payload: ProjectCreate = {
+      name: v.name.trim(),
+      property_ids: v.property_id ? [v.property_id] : [],
+      start_date: v.start_date || null,
+      target_end_date: v.target_end_date || null,
+    };
+
+    this.neuLaedt.set(true);
+    this.svc.create(payload).subscribe({
+      next: () => {
+        this.neuLaedt.set(false);
+        this.neuOffen.set(false);
+        this.meldung.set({ art: 'erfolg', text: `Projekt „${payload.name}“ wurde angelegt.` });
+        this.page.set(1);
+        this.fetch();
+      },
+      error: (err) => {
+        this.neuLaedt.set(false);
+        this.formularMeldung.set(apiFehlerZuweisen(err, this.neuForm).formular);
+      },
+    });
+  }
+
+  meldungSchliessen(): void {
+    this.meldung.set(null);
   }
 
   // ---- Darstellungshelfer -------------------------------------------------

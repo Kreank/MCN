@@ -35,6 +35,42 @@
       }
       <span mappe-kopf class="stamp {{ statusClass(daten()!.payment_status) }}">{{ statusLabel(daten()!.payment_status) }}</span>
 
+      @if (darfZahlung()) {
+        <button mappe-kopf type="button" class="btn btn--primary" (click)="zahlungOeffnen()">
+          Zahlung erfassen
+        </button>
+      }
+      @if (darfMahnung() && daten()!.is_overdue) {
+        <button mappe-kopf type="button" class="btn" (click)="mahnungOeffnen()">
+          Mahnung erzeugen
+        </button>
+      }
+      @if (darfStornieren()) {
+        <button mappe-kopf type="button" class="btn" (click)="korrekturOeffnen()">
+          Rechnungskorrektur
+        </button>
+      }
+      @if (darfStornieren() && !hatStorno()) {
+        <button mappe-kopf type="button" class="btn btn--gefahr" (click)="stornoFragen()">
+          Rechnung stornieren
+        </button>
+      }
+
+      @if (meldung(); as m) {
+        <div
+          class="melde melde--{{ m.art }} detail-melde"
+          [attr.role]="m.art === 'fehler' ? 'alert' : 'status'"
+        >
+          <span class="melde__mark" aria-hidden="true">{{ m.art === 'fehler' ? '!' : '✓' }}</span>
+          <span class="melde__text">
+            <strong>{{ m.art === 'fehler' ? 'Fehler:' : 'Erledigt:' }}</strong> {{ m.text }}
+          </span>
+          <button type="button" class="melde__zu" (click)="meldungSchliessen()" aria-label="Meldung schließen">
+            <span aria-hidden="true">✕</span>
+          </button>
+        </div>
+      }
+
       @if (tab() === 'uebersicht') {
         <dl class="feld-raster">
           <div class="feld"><dt class="feld__label">Rechnungsnummer</dt><dd class="feld__wert">{{ daten()!.invoice_number }}</dd></div>
@@ -129,5 +165,137 @@
         }
       }
     </app-mappe>
+
+    <!-- ============================ Zahlung erfassen ==================== -->
+    <app-dialog [offen]="zahlungOffen()" titel="Zahlung erfassen" (schliessen)="zahlungSchliessen()">
+      <form id="zahlung-form" class="dialog-form" (submit)="$event.preventDefault(); zahlungAbsenden()" novalidate>
+        @if (zahlungMeldung(); as fm) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+          </div>
+        }
+        <app-feld
+          [control]="zahlungForm.controls.amount"
+          label="Betrag"
+          typ="zahl"
+          [pflicht]="true"
+          hinweis="Betrag in Euro, z. B. 1.234,56. Stets positiv — das Vorzeichen ergibt die Zahlungsart."
+        />
+        <app-feld
+          [control]="zahlungForm.controls.paid_at"
+          label="Zahlungsdatum"
+          typ="datum"
+          [pflicht]="true"
+        />
+        <app-feld
+          [control]="zahlungForm.controls.payment_type"
+          label="Zahlungsart"
+          typ="select"
+          [optionen]="paymentTypes"
+        />
+        <app-feld
+          [control]="zahlungForm.controls.external_reference"
+          label="Verwendungszweck / Referenz"
+          hinweis="Optional, z. B. Buchungstext des Kontoauszugs."
+        />
+      </form>
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="zahlungLaedt()" (click)="zahlungSchliessen()">Abbrechen</button>
+        <button type="submit" form="zahlung-form" class="btn btn--primary" [disabled]="zahlungLaedt()" [attr.aria-busy]="zahlungLaedt()">
+          {{ zahlungLaedt() ? 'Wird erfasst …' : 'Zahlung erfassen' }}
+        </button>
+      </div>
+    </app-dialog>
+
+    <!-- ============================ Mahnung erzeugen =================== -->
+    <app-dialog [offen]="mahnungOffen()" titel="Mahnung erzeugen" (schliessen)="mahnungSchliessen()">
+      <form id="mahnung-form" class="dialog-form" (submit)="$event.preventDefault(); mahnungAbsenden()" novalidate>
+        @if (mahnungMeldung(); as fm) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+          </div>
+        }
+        <p class="dialog-hinweis">
+          Es wird die nächste Mahnstufe erzeugt: <strong>Stufe {{ naechsteStufe() }}</strong>.
+          Die Mahnung wirkt nach außen (Kundenkommunikation).
+        </p>
+        <app-feld
+          [control]="mahnungForm.controls.issued_at"
+          label="Mahndatum"
+          typ="datum"
+          [pflicht]="true"
+        />
+        <app-feld
+          [control]="mahnungForm.controls.note"
+          label="Notiz"
+          typ="textarea"
+          hinweis="Optionaler Vermerk zur Mahnung."
+        />
+      </form>
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="mahnungLaedt()" (click)="mahnungSchliessen()">Abbrechen</button>
+        <button type="submit" form="mahnung-form" class="btn btn--primary" [disabled]="mahnungLaedt()" [attr.aria-busy]="mahnungLaedt()">
+          {{ mahnungLaedt() ? 'Wird erzeugt …' : 'Mahnung erzeugen' }}
+        </button>
+      </div>
+    </app-dialog>
+
+    <!-- ============================ Rechnungskorrektur ================= -->
+    <app-dialog [offen]="korrekturOffen()" titel="Rechnungskorrektur (Gutschrift)" (schliessen)="korrekturSchliessen()">
+      <form id="korrektur-form" class="dialog-form" (submit)="$event.preventDefault(); korrekturAbsenden()" novalidate>
+        @if (korrekturMeldung(); as fm) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+          </div>
+        }
+        <p class="dialog-hinweis">
+          Für die gewählten Positionen entsteht eine <strong>Gutschrift</strong> als Folgebeleg.
+          Dieser Schritt lässt sich nicht rückgängig machen.
+        </p>
+        @if (korrekturLinesLaden()) {
+          <p class="lade-hinweis" role="status">Positionen werden geladen …</p>
+        } @else if (korrekturLines().length === 0) {
+          <p class="dialog-hinweis">Keine korrigierbaren Positionen vorhanden.</p>
+        } @else {
+          <fieldset class="pos-wahl">
+            <legend class="sr-only">Zu korrigierende Positionen wählen</legend>
+            @for (l of korrekturLines(); track l.position_number) {
+              <label class="pos-wahl__zeile">
+                <input
+                  type="checkbox"
+                  class="pos-wahl__box"
+                  [checked]="korrekturAuswahl().has(l.position_number)"
+                  (change)="korrekturUmschalten(l.position_number, $any($event.target).checked)"
+                />
+                <span class="pos-wahl__nr">{{ l.position_number }}</span>
+                <span class="pos-wahl__desc">{{ l.description }}</span>
+                <span class="pos-wahl__betrag">{{ euro(l.net_amount) }}</span>
+              </label>
+            }
+          </fieldset>
+        }
+      </form>
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="korrekturLaedt()" (click)="korrekturSchliessen()">Abbrechen</button>
+        <button type="submit" form="korrektur-form" class="btn btn--gefahr" [disabled]="korrekturLaedt() || korrekturLinesLaden()" [attr.aria-busy]="korrekturLaedt()">
+          {{ korrekturLaedt() ? 'Wird erzeugt …' : 'Gutschrift erzeugen' }}
+        </button>
+      </div>
+    </app-dialog>
+
+    <!-- ============================ Storno bestätigen ================= -->
+    <app-bestaetigung
+      [offen]="stornoOffen()"
+      titel="Rechnung stornieren?"
+      text="Es wird ein Stornobeleg erzeugt, der die Rechnung vollständig ausgleicht. Der Vorgang lässt sich nicht rückgängig machen."
+      bestaetigenLabel="Rechnung stornieren"
+      [gefahr]="true"
+      [laedt]="stornoLaedt()"
+      (bestaetigen)="stornoBestaetigen()"
+      (abbrechen)="stornoAbbrechen()"
+    />
   }
 }

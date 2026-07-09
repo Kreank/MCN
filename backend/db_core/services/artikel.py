@@ -17,6 +17,7 @@ from db_core.models import (
     SalePriceGroup,
     WageGroup,
 )
+from db_core.services._validation import ensure_all_exist, ensure_exists
 
 SALE_CALC_BASES = ("EK", "LISTENPREIS")
 SALE_OPERATORS = ("AUFSCHLAG", "ABSCHLAG")
@@ -103,6 +104,14 @@ def create_assembly(
         if not wert or not str(wert).strip():
             raise ValueError(f"{feld} darf nicht leer sein.")
     components = components or []
+    # Artikel-/Lohngruppen-FKs je Komponente vorab prüfen — mit je EINER Query
+    # (kein N+1), damit ein unbekannter FK ein klarer 422 statt IntegrityError wird.
+    ensure_all_exist(
+        Article, [c.get("article_id") for c in components], "Artikel"
+    )
+    ensure_all_exist(
+        WageGroup, [c.get("wage_group_id") for c in components], "Lohngruppe"
+    )
     with business_transaction(actor_app_user_id):
         assembly = Assembly.objects.create(
             id=uuid.uuid4(),
@@ -195,6 +204,8 @@ def set_article_sale_price(
         raise ValueError(
             "Genau eines von sale_price_group_id oder fixed_price ist zu setzen."
         )
+    ensure_exists(Article, article_id, "Artikel")
+    ensure_exists(SalePriceGroup, sale_price_group_id, "Kalkulationsgruppe")
     with business_transaction(actor_app_user_id):
         asp = ArticleSalePrice.objects.create(
             id=uuid.uuid4(),

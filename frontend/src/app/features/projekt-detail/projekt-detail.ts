@@ -1,13 +1,18 @@
 import { Component, computed, effect, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, RouterLink } from '@angular/router';
+import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
+import { map } from 'rxjs';
 import { Mappe, MappeTab } from '../../shared/mappe/mappe';
 import { ProjektService } from '../../core/projekt.service';
 import { AufgabeService } from '../../core/aufgabe.service';
 import { AuftragService } from '../../core/auftrag.service';
+import { PartyService } from '../../core/party.service';
+import { AuthService } from '../../core/auth.service';
 import { Task, TaskStatus } from '../../core/aufgabe.model';
 import {
   WorkOrder,
+  WorkOrderCreate,
   WorkOrderStatus,
   workOrderStatusClass,
   workOrderStatusLabel,
@@ -15,14 +20,28 @@ import {
 import {
   CasePriority,
   Checklist,
+  ChecklistCreate,
   LogCategory,
   LogEntry,
+  LogEntryCreate,
   ProjectDetail,
   ProjectStatus,
+  ServiceCaseCreate,
   ServiceCaseStatus,
 } from '../../core/projekt.model';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { VerbotenState, fehlerState } from '../../shared/http-fehler';
+import { Dialog } from '../../shared/dialog/dialog';
+import { Feld, FeldOption } from '../../shared/formular/feld';
+import { ReferenzWahl, RefSuche } from '../../shared/formular/referenz-wahl';
+import { apiFehlerZuweisen } from '../../shared/formular/api-fehler';
+import {
+  felderAlsBeruehrtMarkieren,
+  serverFehlerZuruecksetzen,
+} from '../../shared/formular/formular.util';
+
+type Meldung = { art: 'erfolg' | 'fehler'; text: string };
+type DialogArt = 'log' | 'checkliste' | 'vorgang' | 'auftrag';
 
 type ViewState =
   | { kind: 'loading' }
@@ -46,7 +65,7 @@ type LazyState<T> =
 
 @Component({
   selector: 'app-projekt-detail',
-  imports: [Mappe, RouterLink, KeinZugriff],
+  imports: [Mappe, RouterLink, KeinZugriff, ReactiveFormsModule, Dialog, Feld, ReferenzWahl],
   templateUrl: './projekt-detail.html',
   styleUrl: './projekt-detail.scss',
 })
@@ -55,6 +74,12 @@ export class ProjektDetail {
   private readonly svc = inject(ProjektService);
   private readonly aufgabeSvc = inject(AufgabeService);
   private readonly auftragSvc = inject(AuftragService);
+  private readonly partySvc = inject(PartyService);
+  private readonly auth = inject(AuthService);
+  private readonly fb = inject(FormBuilder);
+
+  protected readonly darfAnlegen = computed(() => this.auth.darf('workflow', 'ANLEGEN'));
+  protected readonly darfAendern = computed(() => this.auth.darf('workflow', 'AENDERN'));
 
   protected readonly tab = signal('uebersicht');
   protected readonly state = signal<ViewState>({ kind: 'loading' });
@@ -78,6 +103,68 @@ export class ProjektDetail {
   protected readonly daten = computed(() => {
     const s = this.state();
     return s.kind === 'ready' ? s.data : null;
+  });
+
+  // --- Schreibaktionen (Dialoge) ------------------------------------------
+  protected readonly meldung = signal<Meldung | null>(null);
+  protected readonly dialogOffen = signal<DialogArt | null>(null);
+  protected readonly dialogLaedt = signal(false);
+  protected readonly formularMeldung = signal<string | null>(null);
+
+  protected readonly kategorien: FeldOption[] = [
+    { wert: 'NOTIZ', label: 'Notiz' },
+    { wert: 'ANRUF', label: 'Anruf' },
+    { wert: 'ABSPRACHE', label: 'Absprache' },
+    { wert: 'ENTSCHEIDUNG', label: 'Entscheidung' },
+  ];
+  protected readonly prioritaeten: FeldOption[] = [
+    { wert: 'NORMAL', label: 'Normal' },
+    { wert: 'DRINGEND', label: 'Dringend' },
+    { wert: 'NOTFALL', label: 'Notfall' },
+  ];
+
+  /** Liegenschaften des Projekts als Select-Optionen (für Vorgang/Auftrag). */
+  protected readonly liegenschaftOptionen = computed<FeldOption[]>(() => {
+    const d = this.daten();
+    if (!d) return [];
+    return d.properties.map((o) => ({ wert: o.id, label: `${o.name} · ${o.city}` }));
+  });
+
+  /** Kontaktsuche für den optionalen Melder eines Vorgangs. */
+  protected readonly partySuche: RefSuche = (q) =>
+    this.partySvc.list({ page: 1, page_size: 20, q }).pipe(
+      map((p) => p.items.map((x) => ({ id: x.id, label: x.display_name }))),
+    );
+
+  protected readonly logForm = this.fb.group({
+    entry: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
+    category: this.fb.control('NOTIZ', { nonNullable: true, validators: [Validators.required] }),
+  });
+  protected readonly checklistForm = this.fb.group({
+    name: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.required, Validators.maxLength(200)],
+    }),
+    items: this.fb.control('', { nonNullable: true }),
+  });
+  protected readonly vorgangForm = this.fb.group({
+    property_id: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
+    subject: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
+    priority: this.fb.control('NORMAL', { nonNullable: true, validators: [Validators.required] }),
+    description: this.fb.control('', { nonNullable: true }),
+    reported_by_party_id: this.fb.control('', { nonNullable: true }),
+  });
+  protected readonly auftragForm = this.fb.group({
+    property_id: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
+    title: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.required, Validators.maxLength(200)],
+    }),
+    priority: this.fb.control('NORMAL', { nonNullable: true, validators: [Validators.required] }),
+    desired_date: this.fb.control('', { nonNullable: true }),
+    customer_reference: this.fb.control('', { nonNullable: true }),
+    description: this.fb.control('', { nonNullable: true }),
+    is_emergency: this.fb.control(false, { nonNullable: true }),
   });
 
   constructor() {
@@ -138,6 +225,160 @@ export class ProjektDetail {
     this.svc.getChecklists(projectId).subscribe({
       next: (items) => this.checklistsState.set({ kind: 'ready', items }),
       error: (err) => this.checklistsState.set(fehlerState(err)),
+    });
+  }
+
+  // --- Dialoge öffnen/schließen -------------------------------------------
+  dialogOeffnen(art: DialogArt): void {
+    this.formularMeldung.set(null);
+    switch (art) {
+      case 'log':
+        this.logForm.reset({ entry: '', category: 'NOTIZ' });
+        break;
+      case 'checkliste':
+        this.checklistForm.reset({ name: '', items: '' });
+        break;
+      case 'vorgang':
+        this.vorgangForm.reset({
+          property_id: '',
+          subject: '',
+          priority: 'NORMAL',
+          description: '',
+          reported_by_party_id: '',
+        });
+        break;
+      case 'auftrag':
+        this.auftragForm.reset({
+          property_id: '',
+          title: '',
+          priority: 'NORMAL',
+          desired_date: '',
+          customer_reference: '',
+          description: '',
+          is_emergency: false,
+        });
+        break;
+    }
+    this.dialogOffen.set(art);
+  }
+
+  dialogSchliessen(): void {
+    if (this.dialogLaedt()) return;
+    this.dialogOffen.set(null);
+  }
+
+  meldungSchliessen(): void {
+    this.meldung.set(null);
+  }
+
+  private nichtBereit(form: Parameters<typeof serverFehlerZuruecksetzen>[0]): boolean {
+    if (this.dialogLaedt()) return true;
+    serverFehlerZuruecksetzen(form);
+    this.formularMeldung.set(null);
+    felderAlsBeruehrtMarkieren(form);
+    return form.invalid;
+  }
+
+  // --- Logbuch-Eintrag -----------------------------------------------------
+  logAbsenden(): void {
+    const d = this.daten();
+    if (!d || this.nichtBereit(this.logForm)) return;
+    const v = this.logForm.getRawValue();
+    const payload: LogEntryCreate = { entry: v.entry.trim(), category: v.category as LogCategory };
+    this.dialogLaedt.set(true);
+    this.svc.addLog(d.id, payload).subscribe({
+      next: () => {
+        this.dialogLaedt.set(false);
+        this.dialogOffen.set(null);
+        this.meldung.set({ art: 'erfolg', text: 'Logbuch-Eintrag hinzugefügt.' });
+        this.loadLog(d.id);
+      },
+      error: (err) => {
+        this.dialogLaedt.set(false);
+        this.formularMeldung.set(apiFehlerZuweisen(err, this.logForm).formular);
+      },
+    });
+  }
+
+  // --- Checkliste ----------------------------------------------------------
+  checklistAbsenden(): void {
+    const d = this.daten();
+    if (!d || this.nichtBereit(this.checklistForm)) return;
+    const v = this.checklistForm.getRawValue();
+    const items = v.items
+      .split('\n')
+      .map((z) => z.trim())
+      .filter((z) => z.length > 0);
+    const payload: ChecklistCreate = { name: v.name.trim(), items };
+    this.dialogLaedt.set(true);
+    this.svc.createChecklist(d.id, payload).subscribe({
+      next: () => {
+        this.dialogLaedt.set(false);
+        this.dialogOffen.set(null);
+        this.meldung.set({ art: 'erfolg', text: `Checkliste „${payload.name}“ angelegt.` });
+        this.loadChecklists(d.id);
+      },
+      error: (err) => {
+        this.dialogLaedt.set(false);
+        this.formularMeldung.set(apiFehlerZuweisen(err, this.checklistForm).formular);
+      },
+    });
+  }
+
+  // --- Vorgang -------------------------------------------------------------
+  vorgangAbsenden(): void {
+    const d = this.daten();
+    if (!d || this.nichtBereit(this.vorgangForm)) return;
+    const v = this.vorgangForm.getRawValue();
+    const payload: ServiceCaseCreate = {
+      property_id: v.property_id,
+      subject: v.subject.trim(),
+      priority: v.priority as CasePriority,
+      description: v.description.trim() || null,
+      reported_by_party_id: v.reported_by_party_id || null,
+    };
+    this.dialogLaedt.set(true);
+    this.svc.createServiceCase(d.id, payload).subscribe({
+      next: () => {
+        this.dialogLaedt.set(false);
+        this.dialogOffen.set(null);
+        this.meldung.set({ art: 'erfolg', text: 'Vorgang angelegt.' });
+        this.load(d.id); // Projektdetail (service_cases) neu laden
+      },
+      error: (err) => {
+        this.dialogLaedt.set(false);
+        this.formularMeldung.set(apiFehlerZuweisen(err, this.vorgangForm).formular);
+      },
+    });
+  }
+
+  // --- Auftrag -------------------------------------------------------------
+  auftragAbsenden(): void {
+    const d = this.daten();
+    if (!d || this.nichtBereit(this.auftragForm)) return;
+    const v = this.auftragForm.getRawValue();
+    const payload: WorkOrderCreate = {
+      property_id: v.property_id,
+      title: v.title.trim(),
+      project_id: d.id,
+      priority: v.priority as WorkOrder['priority'],
+      desired_date: v.desired_date || null,
+      customer_reference: v.customer_reference.trim() || null,
+      description: v.description.trim() || null,
+      is_emergency: v.is_emergency,
+    };
+    this.dialogLaedt.set(true);
+    this.auftragSvc.create(payload).subscribe({
+      next: () => {
+        this.dialogLaedt.set(false);
+        this.dialogOffen.set(null);
+        this.meldung.set({ art: 'erfolg', text: `Auftrag „${payload.title}“ angelegt.` });
+        this.loadOrders(d.id);
+      },
+      error: (err) => {
+        this.dialogLaedt.set(false);
+        this.formularMeldung.set(apiFehlerZuweisen(err, this.auftragForm).formular);
+      },
     });
   }
 
