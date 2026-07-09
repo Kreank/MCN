@@ -30,6 +30,18 @@ class PropertyNumberDefault(Func):
     output_field = models.TextField()
 
 
+class EmployeeNumberDefault(Func):
+    """DB-seitiger Default für hr.employee.employee_number (Migration 0019).
+
+    Eigene Sequenz statt workflow.next_number(): die Personalnummer ist kein
+    Beleg und gehört deshalb in keinen GoBD-Belegkreis.
+    """
+
+    function = ""
+    template = "'MA-' || lpad(nextval('hr.employee_number_seq')::text, 5, '0')"
+    output_field = models.TextField()
+
+
 class _NextNumber(Func):
     """DB-seitiger Default über workflow.next_number(prefix) — vergibt fortlaufende
     Fachnummern (Format PREFIX-JJJJ-NNNNNN) in der DB (Migration 0010). Subklassen
@@ -1571,3 +1583,209 @@ class ArticleSupplierReference(models.Model):
 
     def __str__(self):
         return f"{self.supplier_article_number} @ {self.article_id}"
+
+
+# ---------------------------------------------------------------------------
+# hr.* — Personalstamm, Arbeitsvertrag, Abwesenheit, Urlaubskonto (0019)
+# ---------------------------------------------------------------------------
+
+
+class Employee(models.Model):
+    """hr.employee — Beschäftigungsverhältnis zu einer natürlichen Person.
+
+    Trägt selbst keine Personendaten: Name/Adresse hängen an identity.person,
+    der Login an security.app_user. Status AUSGETRETEN ist final (Trigger).
+    """
+
+    id = models.UUIDField(primary_key=True)
+    employee_number = models.TextField(db_default=EmployeeNumberDefault())
+    app_user = models.OneToOneField(
+        "AppUser",
+        models.DO_NOTHING,
+        db_column="app_user_id",
+        related_name="employee",
+    )
+    party = models.OneToOneField(
+        Person,
+        models.DO_NOTHING,
+        db_column="party_id",
+        related_name="employee",
+    )
+    wage_group = models.ForeignKey(
+        "WageGroup",
+        models.DO_NOTHING,
+        db_column="wage_group_id",
+        null=True,
+        blank=True,
+        related_name="employees",
+    )
+    status = models.TextField()  # AKTIV | INAKTIV | AUSGETRETEN
+    hired_on = models.DateField()
+    left_on = models.DateField(null=True, blank=True)
+    notes = models.TextField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        "AppUser",
+        models.DO_NOTHING,
+        db_column="created_by",
+        related_name="created_employees",
+    )
+    version = models.IntegerField(db_default=models.Value(1))
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'hr"."employee'
+
+    def __str__(self):
+        return self.employee_number
+
+
+class EmploymentContract(models.Model):
+    """hr.employment_contract — versionierter Arbeitsvertrag.
+
+    Beginn, Sollstunden-Raster, Urlaubsanspruch und Lohngruppe sind nach dem
+    INSERT unveränderlich (Trigger hr.enforce_contract_immutable); eine
+    Änderung erzeugt einen Folgevertrag. Verträge eines Mitarbeiters dürfen
+    sich zeitlich nicht überlappen (EXCLUDE-Constraint).
+    """
+
+    id = models.UUIDField(primary_key=True)
+    employee = models.ForeignKey(
+        Employee,
+        models.DO_NOTHING,
+        db_column="employee_id",
+        related_name="contracts",
+    )
+    valid_from = models.DateField()
+    valid_to = models.DateField(null=True, blank=True)
+    hours_monday = models.DecimalField(max_digits=4, decimal_places=2)
+    hours_tuesday = models.DecimalField(max_digits=4, decimal_places=2)
+    hours_wednesday = models.DecimalField(max_digits=4, decimal_places=2)
+    hours_thursday = models.DecimalField(max_digits=4, decimal_places=2)
+    hours_friday = models.DecimalField(max_digits=4, decimal_places=2)
+    hours_saturday = models.DecimalField(max_digits=4, decimal_places=2)
+    hours_sunday = models.DecimalField(max_digits=4, decimal_places=2)
+    vacation_days_per_year = models.DecimalField(max_digits=5, decimal_places=2)
+    wage_group = models.ForeignKey(
+        "WageGroup",
+        models.DO_NOTHING,
+        db_column="wage_group_id",
+        null=True,
+        blank=True,
+        related_name="contracts",
+    )
+    status = models.TextField()  # AKTIV | GEKUENDIGT
+    termination_reason = models.TextField(null=True, blank=True)
+    notes = models.TextField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        "AppUser",
+        models.DO_NOTHING,
+        db_column="created_by",
+        related_name="created_contracts",
+    )
+    version = models.IntegerField(db_default=models.Value(1))
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'hr"."employment_contract'
+
+    def __str__(self):
+        return f"Vertrag ab {self.valid_from}"
+
+
+class Absence(models.Model):
+    """hr.absence — Abwesenheitsantrag mit Statusautomat.
+
+    days_count sind die angerechneten Arbeitstage; sie werden vom Service aus
+    dem Sollstunden-Raster des gültigen Vertrags berechnet, nicht vom Client
+    geliefert.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    employee = models.ForeignKey(
+        Employee,
+        models.DO_NOTHING,
+        db_column="employee_id",
+        related_name="absences",
+    )
+    # URLAUB | KRANKHEIT | ELTERNZEIT | SONDERURLAUB | UNBEZAHLT | FORTBILDUNG
+    absence_type = models.TextField()
+    start_date = models.DateField()
+    end_date = models.DateField()
+    half_day_start = models.BooleanField(db_default=models.Value(False))
+    half_day_end = models.BooleanField(db_default=models.Value(False))
+    days_count = models.DecimalField(max_digits=5, decimal_places=2)
+    # ENTWURF | EINGEREICHT | GENEHMIGT | ABGELEHNT | ZURUECKGEZOGEN
+    status = models.TextField()
+    reason = models.TextField(null=True, blank=True)
+    decided_by = models.ForeignKey(
+        "AppUser",
+        models.DO_NOTHING,
+        db_column="decided_by",
+        null=True,
+        blank=True,
+        related_name="decided_absences",
+    )
+    decided_at = models.DateTimeField(null=True, blank=True)
+    decision_note = models.TextField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        "AppUser",
+        models.DO_NOTHING,
+        db_column="created_by",
+        related_name="created_absences",
+    )
+    version = models.IntegerField(db_default=models.Value(1))
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'hr"."absence'
+
+    def __str__(self):
+        return f"{self.absence_type} {self.start_date}–{self.end_date}"
+
+
+class VacationBudget(models.Model):
+    """hr.vacation_budget — Urlaubskonto je Mitarbeiter und Jahr.
+
+    Der Verbrauch ist bewusst NICHT gespeichert, sondern wird aus genehmigten
+    URLAUB-Abwesenheiten des Jahres abgeleitet (gleiche Konvention wie der
+    offene Betrag in der Buchhaltung).
+    """
+
+    id = models.UUIDField(primary_key=True)
+    employee = models.ForeignKey(
+        Employee,
+        models.DO_NOTHING,
+        db_column="employee_id",
+        related_name="vacation_budgets",
+    )
+    year = models.IntegerField()
+    entitlement_days = models.DecimalField(max_digits=5, decimal_places=2)
+    carryover_days = models.DecimalField(
+        max_digits=5, decimal_places=2, db_default=models.Value(0)
+    )
+    adjustment_days = models.DecimalField(
+        max_digits=5, decimal_places=2, db_default=models.Value(0)
+    )
+    adjustment_reason = models.TextField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        "AppUser",
+        models.DO_NOTHING,
+        db_column="created_by",
+        related_name="created_vacation_budgets",
+    )
+    version = models.IntegerField(db_default=models.Value(1))
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'hr"."vacation_budget'
+
+    def __str__(self):
+        return f"Urlaubskonto {self.year} ({self.employee_id})"

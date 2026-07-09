@@ -101,6 +101,21 @@ export const routes: Routes = [
     loadComponent: () => import('./features/aufgaben/aufgaben').then((m) => m.Aufgaben),
   },
   {
+    path: 'mitarbeiter',
+    pathMatch: 'full',
+    title: 'Mitarbeiter — MCN Leitstand',
+    loadComponent: () =>
+      import('./features/mitarbeiter/mitarbeiter').then((m) => m.Mitarbeiter),
+  },
+  {
+    path: 'mitarbeiter/:id',
+    title: 'Mitarbeiter — MCN Leitstand',
+    loadComponent: () =>
+      import('./features/mitarbeiter-detail/mitarbeiter-detail').then(
+        (m) => m.MitarbeiterDetail,
+      ),
+  },
+  {
     path: 'wartung',
     pathMatch: 'full',
     title: 'Wartung — MCN Leitstand',

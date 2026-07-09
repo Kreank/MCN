@@ -33,6 +33,10 @@ export class App {
     // Einsätze) → Zwischenschritt 55 statt Renummerierung der Folgepunkte.
     { path: '/wartung', label: 'Wartung', mark: '55' },
     { path: '/aufgaben', label: 'Aufgaben', mark: '60' },
+    // Personal/HR liegt fachlich zwischen interner Arbeitsorganisation (Aufgaben)
+    // und dem Stammdaten-Cluster (Artikel) → Zwischenschritt 65 statt
+    // Renummerierung der Folgepunkte.
+    { path: '/mitarbeiter', label: 'Mitarbeiter', mark: '65' },
     { path: '/artikel', label: 'Artikel', mark: '70' },
     { path: '/buchhaltung', label: 'Buchhaltung', mark: '80' },
     { path: '/auswertungen', label: 'Auswertungen', mark: '90' },

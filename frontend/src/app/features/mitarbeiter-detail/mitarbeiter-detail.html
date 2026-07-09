@@ -1,0 +1,167 @@
+@switch (state().kind) {
+  @case ('loading') {
+    <p class="lade-hinweis" role="status">Mitarbeiter wird geladen …</p>
+  }
+
+  @case ('error') {
+    <div class="note note--error" role="alert">
+      <h2 class="note__titel">Mitarbeiter konnte nicht geladen werden</h2>
+      <p class="note__text">Die Schnittstelle war nicht erreichbar oder der Personalsatz existiert nicht.</p>
+      <div class="note__aktionen">
+        <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
+        <a class="btn" routerLink="/mitarbeiter">Zu den Mitarbeitern</a>
+      </div>
+    </div>
+  }
+
+  @case ('ready') {
+    <app-mappe
+      kicker="Mitarbeiter Nr. {{ daten()!.employee_number }}"
+      [titel]="daten()!.display_name"
+      backLink="/mitarbeiter"
+      backLabel="Mitarbeiter"
+      [tabs]="tabs"
+      [(aktiv)]="tab"
+    >
+      <span mappe-kopf class="stamp {{ statusClass(daten()!.status) }}">{{ statusLabel(daten()!.status) }}</span>
+
+      <!-- ==================== Persönliches ==================== -->
+      @if (tab() === 'persoenliches') {
+        <dl class="feld-raster">
+          <div class="feld"><dt class="feld__label">Anrede</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.salutation">{{ daten()!.salutation || '—' }}</dd></div>
+          <div class="feld"><dt class="feld__label">Name</dt><dd class="feld__wert">{{ daten()!.first_name }} {{ daten()!.last_name }}</dd></div>
+          <div class="feld"><dt class="feld__label">Geburtsdatum</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.birth_date">{{ d(daten()!.birth_date) }}</dd></div>
+          <div class="feld"><dt class="feld__label">Personalnummer</dt><dd class="feld__wert">{{ daten()!.employee_number }}</dd></div>
+          <div class="feld"><dt class="feld__label">Eintritt</dt><dd class="feld__wert">{{ d(daten()!.hired_on) }}</dd></div>
+          <div class="feld"><dt class="feld__label">Austritt</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.left_on">{{ d(daten()!.left_on) }}</dd></div>
+          <div class="feld"><dt class="feld__label">Lohngruppe</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.wage_group">{{ daten()!.wage_group ? daten()!.wage_group!.name + ' · ' + rate(daten()!.wage_group!.hourly_rate) : '—' }}</dd></div>
+        </dl>
+        @if (daten()!.notes) {
+          <p class="beschreibung">{{ daten()!.notes }}</p>
+        }
+      }
+
+      <!-- ==================== Vertrag ==================== -->
+      @if (tab() === 'vertrag') {
+        @if (daten()!.contracts.length === 0) {
+          <div class="tab-platzhalter"><p>Für diesen Mitarbeiter ist kein Arbeitsvertrag hinterlegt.</p></div>
+        } @else {
+          <ul class="vertraege">
+            @for (c of daten()!.contracts; track c.id) {
+              <li class="vertrag" [class.vertrag--aktuell]="c.is_current">
+                <div class="vertrag__kopf">
+                  <span class="vertrag__gueltig">
+                    {{ d(c.valid_from) }} – {{ c.valid_to ? d(c.valid_to) : 'unbefristet' }}
+                  </span>
+                  <span class="vertrag__stempel">
+                    @if (c.is_current) {
+                      <span class="stamp stamp--positive">✔ Aktuell</span>
+                    }
+                    <span class="stamp {{ contractStatusClass(c.status) }}">{{ contractStatusLabel(c.status) }}</span>
+                  </span>
+                </div>
+
+                <dl class="feld-raster">
+                  <div class="feld feld--stark"><dt class="feld__label">Wochenstunden</dt><dd class="feld__wert">{{ num(c.weekly_hours) }} h</dd></div>
+                  <div class="feld"><dt class="feld__label">Urlaubsanspruch</dt><dd class="feld__wert">{{ num(c.vacation_days_per_year) }} Tage / Jahr</dd></div>
+                  @if (c.wage_group) {
+                    <div class="feld"><dt class="feld__label">Lohngruppe</dt><dd class="feld__wert">{{ c.wage_group.name }} · {{ rate(c.wage_group.hourly_rate) }}</dd></div>
+                  }
+                </dl>
+
+                <div class="raster" role="group" aria-label="Sollstunden je Wochentag">
+                  <span class="raster__titel">Sollstunden Mo–So</span>
+                  <table class="raster__tab">
+                    <caption class="sr-only">Sollstunden je Wochentag in Stunden</caption>
+                    <thead>
+                      <tr>
+                        @for (w of weekdays; track w.key) {
+                          <th scope="col">{{ w.short }}</th>
+                        }
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        @for (w of weekdays; track w.key) {
+                          <td>
+                            <span class="raster__bar" aria-hidden="true">
+                              <span class="raster__fill" [style.height.%]="weekdayPercent(c, w.key)"></span>
+                            </span>
+                            <span class="raster__wert">{{ weekdayHours(c, w.key) }}</span>
+                          </td>
+                        }
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                @if (c.termination_reason) {
+                  <p class="vertrag__grund"><span class="vertrag__grund-label">Kündigungsgrund:</span> {{ c.termination_reason }}</p>
+                }
+                @if (c.notes) {
+                  <p class="beschreibung">{{ c.notes }}</p>
+                }
+              </li>
+            }
+          </ul>
+        }
+      }
+
+      <!-- ==================== Abwesenheiten ==================== -->
+      @if (tab() === 'abwesenheiten') {
+        @if (daten()!.absences.length === 0) {
+          <div class="tab-platzhalter"><p>Für diesen Mitarbeiter sind keine Abwesenheiten erfasst.</p></div>
+        } @else {
+          <ul class="abwesenheiten">
+            @for (a of daten()!.absences; track a.id) {
+              <li class="abw">
+                <div class="abw__zeile">
+                  <span class="abw__art">{{ absenceTypeLabel(a.absence_type) }}</span>
+                  <span class="abw__zeitraum">
+                    {{ d(a.start_date) }}@if (a.half_day_start) { <span class="abw__halb">½</span> }
+                    – {{ d(a.end_date) }}@if (a.half_day_end) { <span class="abw__halb">½</span> }
+                  </span>
+                  <span class="abw__tage">{{ num(a.days_count) }} Tage</span>
+                  <span class="stamp {{ absenceStatusClass(a.status) }}">{{ absenceStatusLabel(a.status) }}</span>
+                </div>
+                @if (a.reason) {
+                  <p class="abw__grund">„{{ a.reason }}"</p>
+                }
+                @if (a.decision_note) {
+                  <p class="abw__entscheid"><span class="abw__entscheid-label">Entscheidung:</span> {{ a.decision_note }}</p>
+                }
+              </li>
+            }
+          </ul>
+        }
+      }
+
+      <!-- ==================== Urlaub ==================== -->
+      @if (tab() === 'urlaub') {
+        @let konto = daten()!.vacation_account;
+        <p class="urlaub__jahr">Urlaubskonto {{ konto.year }}</p>
+        <dl class="feld-raster">
+          <div class="feld"><dt class="feld__label">Anspruch</dt><dd class="feld__wert">{{ num(konto.entitlement_days) }} Tage</dd></div>
+          <div class="feld"><dt class="feld__label">Übertrag</dt><dd class="feld__wert">{{ num(konto.carryover_days) }} Tage</dd></div>
+          <div class="feld"><dt class="feld__label">Anpassung</dt><dd class="feld__wert">{{ num(konto.adjustment_days) }} Tage</dd></div>
+          <div class="feld feld--stark"><dt class="feld__label">Summe</dt><dd class="feld__wert">{{ num(konto.total_days) }} Tage</dd></div>
+          <div class="feld"><dt class="feld__label">Verbraucht</dt><dd class="feld__wert">{{ num(konto.used_days) }} Tage</dd></div>
+          <div class="feld feld--stark"><dt class="feld__label">Rest</dt><dd class="feld__wert">{{ num(konto.remaining_days) }} Tage</dd></div>
+        </dl>
+        @if (konto.adjustment_reason) {
+          <p class="urlaub__anpassung"><span class="urlaub__anpassung-label">Grund der Anpassung:</span> {{ konto.adjustment_reason }}</p>
+        }
+
+        <div class="urlaub__balken">
+          <div class="urlaub__balken-kopf">
+            <span class="urlaub__balken-titel">Verbraucht / Summe</span>
+            <span class="urlaub__balken-wert">{{ num(konto.used_days) }} / {{ num(konto.total_days) }} Tage · Rest {{ num(konto.remaining_days) }}</span>
+          </div>
+          <div class="urlaub__track" role="img" [attr.aria-label]="vacationAria(konto)">
+            <div class="urlaub__level" [style.width.%]="vacationPercent(konto)"></div>
+          </div>
+        </div>
+      }
+    </app-mappe>
+  }
+}

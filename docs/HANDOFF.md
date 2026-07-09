@@ -8,9 +8,9 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 > Django 5 + django-ninja. Frontend Angular „Leitstand". Es wird in **vertikalen
 > Slices** gebaut (DB→Service→API→UI→Verifikation→Review). Aktuell **~16 Bereiche
 > read-only live** (Kontakte, Liegenschaften, Projekte, Dokumente, Planung inkl.
-> Plantafel/Kalender, Wartung, Aufgaben, Artikel inkl. VK-Kalkulation, Buchhaltung
-> inkl. Mahnwesen + Storno/Korrektur + Beleg-PDF, Auswertungen). **247 Backend-
-> Tests grün**, db_core-Migrationen bis **0018**.
+> Plantafel/Kalender, Wartung, Aufgaben, **Mitarbeiter/HR**, Artikel inkl.
+> VK-Kalkulation, Buchhaltung inkl. Mahnwesen + Storno/Korrektur + Beleg-PDF,
+> Auswertungen). **298 Backend-Tests grün**, db_core-Migrationen bis **0020**.
 
 ---
 
@@ -19,8 +19,10 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 Der breite **read-only-Ausbau ist abgeschlossen**: fast alle Hero-Nav-Bereiche
 haben Liste+Detail, und für praktisch jede Aktion existiert bereits ein
 **getesteter Schreib-Service** (create/status/publish/storno/zahlung/mahnung/
-wartung-trigger/kalkulation …) — nur **nicht im UI verdrahtet**. Damit steht die
-eigentliche strategische Weiche an. Es gibt drei Töpfe:
+wartung-trigger/kalkulation/**personal** …) — nur **nicht im UI verdrahtet**.
+
+**Der HR-Slice (Migration 0019) ist erledigt** — er war der größte offene
+Schema-Entwurf. Damit ist Topf B nur noch klein. Es bleiben:
 
 **A) Auth/Login + Schreib-UIs — der größte Hebel, KEIN neues Schema.**
 - *Was:* Django-Session-Login + Angular-Auth (Guard/Interceptor), Verdrahtung der
@@ -30,18 +32,22 @@ eigentliche strategische Weiche an. Es gibt drei Töpfe:
   System** (größter spürbarer Tiefensprung), ohne DB-Arbeit. `accounts.User` trägt
   bereits `app_user_id`; `django_auth` ist auf allen Schreib-Endpunkten aktiv
   (CSRF automatisch an). Größe: **L** (Auth-Infra + viele kleine Formular-Slices).
-- *Achtung:* bisherige Notiz „Auth ganz zuletzt" war eine frühe Entscheidung, als
-  kaum etwas gebaut war — inzwischen würde Auth **alle** Bereiche gleichzeitig
-  aktivieren. **Das ist die zu treffende Entscheidung: Auth jetzt vorziehen oder
-  weiter read-only Schema-Bereiche bauen?** (User-Entscheidung.)
+- *Erstmaßnahme beim Auth-Slice:* `GET /api/hr/employees/{id}` absichern. Der
+  Endpunkt liefert Geburtsdatum und die volle Abwesenheitshistorie inkl.
+  Krankheitszeiten (DSGVO Art. 9). `GET /api/hr/absences` ist deshalb **schon
+  jetzt** der einzige Lese-Endpunkt mit `auth=django_auth`.
+- *Achtung:* die alte Notiz „Auth ganz zuletzt" (Abschnitt 7) stammt aus einer
+  Zeit, als kaum etwas gebaut war. Inzwischen würde Auth **alle** Bereiche
+  gleichzeitig aktivieren.
 
-**B) Neue Schema-Bereiche (read-only, brauchen Hand-SQL-Migrationen).**
-Muster: `migrations/0016_maintenance_wartung.py` (RunSQL + Schutzstandard). Jede
-braucht eine kurze fachliche Feld-Entscheidung mit dem User:
+**B) Verbleibende Schema-Bereiche (read-only, Hand-SQL-Migrationen).**
+Muster: `migrations/0019_hr_personal.py` bzw. `0016_maintenance_wartung.py`
+(RunSQL + Schutzstandard). Jede braucht eine kurze fachliche Feld-Entscheidung:
 - **Firmeneinstellungen** (`company_profile`/branch/gewerk/email_template fehlen) —
   klein & wertvoll: ersetzt u.a. den Aussteller-Platzhalter im Beleg-PDF.
-- **Mitarbeiter/Profil** (HR-Schema: Vertrag/Urlaub/Bank fehlen; `security.app_user`
-  ist minimal) — größter Schema-Entwurf.
+- **HR-Nachzügler** (aus 0019 bewusst ausgeklammert, siehe Abschnitt 8):
+  Steuer-/Bankdaten (DSGVO, Vier-Augen), Zeitkategorien/Pausenregeln/
+  Stundenausgleich, Niederlassung (`security.branch`).
 - **Belegerfassung/Eingangsrechnungen** (eigene `receipt`-Tabelle vs. gerichtete
   `invoice` — entscheiden) + `ledger_account`/`cost_center` (Buchhaltung-Ausbau).
 - **Ressourcen + Terminkategorien** (Planung) — schaltet die Ressourcen-Bahnen der
@@ -56,8 +62,7 @@ braucht eine kurze fachliche Feld-Entscheidung mit dem User:
 
 **Empfehlung des bisherigen Standes:** **A (Auth) als nächstes** — es ist der
 einzige Schritt, der das viele bereits Gebaute *nutzbar* macht, und braucht kein
-Schema. Falls der User lieber erst die Breite komplett read-only will: mit **B →
-Firmeneinstellungen** starten (kleinster Schema-Slice, sofort sichtbarer Nutzen).
+Schema. Falls doch erst Schema: **Firmeneinstellungen** (kleinster Slice).
 Details/Gotchas je Bereich in `docs/roadmap/09/11/12/13/14` + Abschnitt 8 unten.
 
 ---
@@ -214,15 +219,17 @@ Nav-Reihenfolge (Marks 00–60), alle committet, je Tests + Browser + Review:
 | Planung (50) | **Einsätze** (`workflow.service_job`): Liste + Einsatz-Mappe (Übersicht, Zuweisungen, Zeiten & Material, Verlauf) + **Plantafel** (Schwimmbahnen-Board) + **Kalender** (Monatsansicht), Subnav. Read-only | `/api/planung/einsaetze`, `/api/planung/plantafel` |
 | Wartung (55) | **Wartungsverträge** (`maintenance.*`, NEUES Schema): Liste + Detail-Mappe (Details/Erinnerung/Verlauf), Fälligkeits-Aktionen. Write-Service (create/status/trigger) existiert + getestet | `/api/maintenance/contracts` |
 | Aufgaben (60) | Liste + Statusaktionen; **neue Tabelle `workflow.task`** | `/api/workflow/tasks` |
+| Mitarbeiter (65) | **Personalstamm** (`hr.*`, NEUES Schema 0019): Liste + Mappe (Persönliches/Vertrag/Abwesenheiten/Urlaub). Write-Service (employee/contract/absence/urlaubskonto) existiert + getestet | `/api/hr/employees` |
 | Artikel (70) | Artikel + Leistungen (Stücklisten), Liste + Detail + **VK-Kalkulation** (Verkaufspreis-Formel je Artikel) | `/api/pricing`, `/articles/{id}/kalkulation` |
 | Buchhaltung (80) | **Offene Posten** + Detail-Mappe (Übersicht/Zahlungen/Mahnverlauf, **Storno-/Gutschrift-Referenzen**) + **Mahnwesen-Screen**. Services: Zahlung/Mahnung + **Storno/Rechnungskorrektur** (STORNO/GUTSCHRIFT, `POST …/cancel`,`/correction`) getestet | `/api/buchhaltung` |
 | Auswertungen (90) | Landing + **Umsatz-/Projektübersicht** (KPIs, Umsatzverlauf, Projekte nach Gewerk) | `/api/auswertungen/…` |
 
 Nav-Marks: Planung=50, Wartung=55 (bewusst nicht-rund, Service-Cluster),
-Aufgaben=60, Artikel=70, Buchhaltung=80, Auswertungen=90.
+Aufgaben=60, Mitarbeiter=65, Artikel=70, Buchhaltung=80, Auswertungen=90.
 
-Backend: **247 Tests grün**, db_core-Migrationen bis **0018** (0016 = Hand-SQL
-`maintenance`-Schema; 0017/0018 = State-only Models). Neue Dependency **fpdf2**
+Backend: **298 Tests grün**, db_core-Migrationen bis **0020** (0016 = Hand-SQL
+`maintenance`-Schema, 0019 = Hand-SQL `hr`-Schema; 0017/0018/0020 = State-only
+Models). Neue Dependency **fpdf2**
 (Beleg-PDF). `seed_demo` deckt
 alle Bereiche ab (Kontakte, Liegenschaften, Projekte+Vorgänge, **durchgeschalteter
 Auftrag**, Aufgaben, Angebot [versendet], **veröffentlichte Rechnung**, Artikel,
@@ -248,9 +255,12 @@ gültiges Szenario (geprüfter Auftrag + Beteiligte).
 
 ## 7. Fixierte Entscheidungen (nicht erneut aufmachen)
 
-- **Auth ganz zuletzt** (User-Wunsch). Folge: UI ist read-only; Schreib-Endpunkte
-  existieren + sind getestet, aber ohne Login nicht im UI verdrahtet. „+ Neu"-
-  Buttons/Formulare kommen zusammen mit dem Auth-Slice.
+- **Auth spät** (User-Wunsch; zuletzt bestätigt, als HR vorgezogen wurde). Folge:
+  UI ist read-only; Schreib-Endpunkte existieren + sind getestet, aber ohne Login
+  nicht im UI verdrahtet. „+ Neu"-Buttons/Formulare kommen mit dem Auth-Slice.
+  **Ausnahme:** Lese-Endpunkte mit Gesundheitsdaten (`GET /api/hr/absences`)
+  tragen bereits `django_auth` — die Dev-Phasen-Konvention „Lesen ohne Auth"
+  gilt für DSGVO-Art.-9-Daten ausdrücklich nicht.
 - **Nav-Begriffe Hero-nah:** „Projekte"/„Dokumente" (nicht Vorgänge/Belege).
 - **Liegenschaften** eigener Nav-Punkt (nicht Reiter in Kontakten).
 - **Kein Löschen** (GoBD/Audit): Rechnungen nur Storno; Projekte nur verschieben/
@@ -312,8 +322,45 @@ Veröffentlichung (invoice→VEROEFFENTLICHT / quote→VERSENDET, ohne PDF).
     (content.document + file_link) noch offen.
   **Noch offen (kleinere Reste):** weitere Dashboards (Projekte/Artikel/Mitarbeitende),
   DATANORM-Import-Wizard (Schreib-Flow, mit Auth), Beleg-PDF-Archivierung (MinIO).
-  Danach: **Schema-Bereiche** (HR/Mitarbeiter, Belegerfassung, Ressourcen/
-  Terminkategorien, Firmeneinstellungen) + **Auth/Login** + alle Anlege-Formulare.
+  Danach: **Schema-Bereiche** (Belegerfassung, Ressourcen/Terminkategorien,
+  Firmeneinstellungen) + **Auth/Login** + alle Anlege-Formulare.
+- ✔ **Mitarbeiter/HR** (`hr.*` — **zweites selbst angelegtes Fachschema**, Hand-SQL
+  0019). Grundsatzentscheidung: eigenes Schema statt `security` erweitern —
+  `security` beantwortet „darf dieser Account etwas?", `hr` „welche
+  arbeitsrechtliche Beziehung besteht?". Personendaten werden **nicht** dupliziert:
+  `hr.employee` ankert per FK auf `security.app_user` (Login) und
+  `identity.person` (Stammdaten), beide 1:1.
+  - `hr.employee` — Personalnummer `MA-00001` aus **eigener Sequenz** (kein
+    GoBD-Belegkreis!), Statusautomat AKTIV↔INAKTIV→AUSGETRETEN (final;
+    Wiedereintritt = neuer Personalsatz).
+  - `hr.employment_contract` — versioniert, **überlappungsfrei** je Mitarbeiter
+    (EXCLUDE über `daterange`). Beginn, Sollstunden-Raster (Mo–So),
+    Urlaubsanspruch und Lohngruppe sind nach dem INSERT **physisch
+    unveränderlich** (Trigger) — Arbeitszeitänderung = Folgevertrag, der den
+    laufenden automatisch am Vortag beendet.
+  - `hr.absence` — Statusautomat ENTWURF→EINGEREICHT→GENEHMIGT|ABGELEHNT
+    (+ZURUECKGEZOGEN); Ablehnung begründungspflichtig (CHECK). Überlappungsfrei
+    für ENTWURF/EINGEREICHT/GENEHMIGT.
+  - `hr.vacation_budget` — Anspruch/Übertrag/Anpassung je Jahr. **Verbrauch ist
+    nicht gespeichert**, sondern aus genehmigten URLAUB-Abwesenheiten abgeleitet
+    (gleiche Konvention wie der offene Betrag in der Buchhaltung).
+  - **Kernregel:** `days_count` einer Abwesenheit berechnet der Service aus dem
+    Sollstunden-Raster des am jeweiligen Tag gültigen Vertrags — Wochenenden und
+    0-Stunden-Tage zählen nicht, halbe Randtage ziehen 0,5 ab. Der Client liefert
+    `days_count` nie selbst.
+  - **Bewusste Lücken:** kein Feiertagskalender (Feiertage zählen als Arbeitstage,
+    wenn der Wochentag ein Soll hat); jahresübergreifende Urlaube werden komplett
+    dem Startjahr zugerechnet; unterjähriger Eintritt kürzt den Anspruch nicht
+    automatisch (dafür ist die begründungspflichtige Anpassung da) — Hero verhält
+    sich genauso.
+  - **Ausgeklammert (eigene Migration):** Steuer-/Bankdaten (DSGVO Art. 9/32;
+    `security.four_eyes_action` kennt bereits 'BANKDATEN', app-seitig nicht
+    durchgesetzt — hängt an Auth), Zeitkategorien/Pausenregeln/Stundenausgleich
+    (erst Abgrenzung zur operativen `workflow.time_entry` klären), Niederlassung.
+  - **DSGVO-Merkposten:** `GET /api/hr/absences` ist der **einzige** Lese-Endpunkt
+    mit `auth=django_auth` (Krankheitsdaten über den ganzen Bestand).
+    `GET /api/hr/employees/{id}` liefert ebenfalls Krankheitshistorie und ist
+    noch offen — beim Auth-Slice zuerst absichern.
 
 Empfohlene nächste Reihenfolge:
 
@@ -331,9 +378,9 @@ Empfohlene nächste Reihenfolge:
    3 Stufen, Hero braucht 6 → ausbauen), DATEV/Lexware-Export. Baut auf Rechnungen.
 7. **Wartung**: kein Schema vorhanden → neues `maintenance.*` (Hand-SQL) nötig
    (siehe `docs/roadmap/11`).
-8. **Mitarbeiter · Einstellungen · Profil**: `security.role/role_permission`
-   (0026) existiert (Rechtematrix, app-seitig durchzusetzen). HR-Daten (Vertrag/
-   Urlaub) haben KEIN Schema → eigenes HR-Fachschema empfohlen.
+8. **Einstellungen · Profil**: `security.role/role_permission` (0026) existiert
+   (Rechtematrix, app-seitig durchzusetzen). HR-Kern ist mit `hr.*` (0019)
+   erledigt; offen bleiben Steuer-/Bankdaten, Zeitwirtschaft und Niederlassung.
 9. **Auth/Login + alle Anlege-Formulare** — ganz zum Schluss (siehe Entscheidung).
 
 Kleinere offene Enden: Datei-/Bild-Upload (`content.file`/`file_link`) für den

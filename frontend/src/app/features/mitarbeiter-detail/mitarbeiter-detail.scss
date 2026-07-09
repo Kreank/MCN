@@ -1,0 +1,245 @@
+:host {
+  display: block;
+}
+
+// ============================ Notiz / Beschreibung ==========================
+.beschreibung {
+  margin: var(--space-4) 0 0;
+  max-width: 44rem;
+  color: var(--ink-muted);
+  white-space: pre-line;
+}
+
+// ============================ Verträge ======================================
+.vertraege {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.vertrag {
+  padding: var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-1);
+}
+// Aktueller Vertrag klar hervorgehoben — Akzentkante PLUS „Aktuell"-Stempel
+// im Kopf (der Text trägt die Bedeutung, nicht die Farbe allein).
+.vertrag--aktuell {
+  border-left-color: var(--accent);
+  border-left-width: 4px;
+  background: color-mix(in srgb, var(--accent) 5%, var(--surface));
+}
+.vertrag__kopf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+.vertrag__gueltig {
+  font-family: var(--font-mono);
+  font-size: var(--step-0);
+  font-weight: 600;
+  color: var(--ink);
+}
+.vertrag__stempel {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.vertrag__grund {
+  margin: var(--space-4) 0 0;
+  color: var(--ink-muted);
+}
+.vertrag__grund-label {
+  font-weight: 600;
+  color: var(--warn-ink);
+}
+
+// ============================ Wochentag-Raster ==============================
+.raster {
+  margin-top: var(--space-4);
+}
+.raster__titel {
+  display: block;
+  margin-bottom: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.raster__tab {
+  width: 100%;
+  max-width: 26rem;
+  border-collapse: collapse;
+  table-layout: fixed;
+
+  th {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+    padding-bottom: var(--space-2);
+  }
+  td {
+    text-align: center;
+    vertical-align: bottom;
+    padding: 0 2px;
+  }
+}
+.raster__bar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  height: 3rem;
+  padding: 0 0.15rem;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+.raster__fill {
+  display: block;
+  width: 100%;
+  min-height: 2px;
+  background: var(--accent-ink);
+  border-radius: 2px 2px 0 0;
+}
+.raster__wert {
+  display: block;
+  margin-top: 0.3rem;
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  color: var(--ink);
+}
+
+// ============================ Abwesenheiten =================================
+.abwesenheiten {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.abw {
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--radius);
+}
+.abw__zeile {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+.abw__art {
+  font-weight: 600;
+  color: var(--ink);
+}
+.abw__zeitraum {
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+.abw__halb {
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.abw__tage {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1em 0.5em;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+.abw__grund {
+  margin: var(--space-2) 0 0;
+  font-size: var(--step--1);
+  font-style: italic;
+  color: var(--ink-muted);
+}
+.abw__entscheid {
+  margin: var(--space-2) 0 0;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+.abw__entscheid-label {
+  font-weight: 600;
+}
+
+// ============================ Urlaubskonto ==================================
+.urlaub__jahr {
+  margin: 0 0 var(--space-4);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.urlaub__anpassung {
+  margin: var(--space-4) 0 0;
+  color: var(--ink-muted);
+}
+.urlaub__anpassung-label {
+  font-weight: 600;
+}
+.urlaub__balken {
+  margin-top: var(--space-5);
+  max-width: 34rem;
+}
+.urlaub__balken-kopf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.urlaub__balken-titel {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.urlaub__balken-wert {
+  font-size: var(--step--1);
+  font-weight: 600;
+  color: var(--ink);
+}
+.urlaub__track {
+  height: 0.85rem;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.urlaub__level {
+  height: 100%;
+  min-width: 2px;
+  background: var(--accent-ink);
+  // Diagonal-Schraffur, damit „verbraucht" nicht nur über Farbe lesbar ist.
+  background-image: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 4px,
+    color-mix(in srgb, var(--surface) 30%, transparent) 4px,
+    color-mix(in srgb, var(--surface) 30%, transparent) 8px
+  );
+}

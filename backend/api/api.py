@@ -13,6 +13,7 @@ from api.beleg import router as beleg_router
 from api.buchhaltung import router as buchhaltung_router
 from api.identity import router as identity_router
 from api.maintenance import router as maintenance_router
+from api.mitarbeiter import router as mitarbeiter_router
 from api.planung import router as planung_router
 from api.projekt import router as projekt_router
 from api.property import router as property_router
@@ -36,5 +37,6 @@ api.add_router("/planung", planung_router, tags=["planung"])
 api.add_router("/invoicing", beleg_router, tags=["invoicing"])
 api.add_router("/buchhaltung", buchhaltung_router, tags=["buchhaltung"])
 api.add_router("/maintenance", maintenance_router, tags=["maintenance"])
+api.add_router("/hr", mitarbeiter_router, tags=["hr"])
 api.add_router("/pricing", artikel_router, tags=["pricing"])
 api.add_router("/auswertungen", auswertungen_router, tags=["auswertungen"])

@@ -8,7 +8,7 @@ gehen über die Service-Schicht, also durch business_transaction
 (Benutzerkontext, Audit).
 """
 import uuid
-from datetime import date, datetime, timezone as dt_timezone
+from datetime import date, datetime, timedelta, timezone as dt_timezone
 from decimal import Decimal
 
 from django.conf import settings
@@ -16,9 +16,9 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
 from db_core.models import (
-    AppUser, Article, ArticleSalePrice, Assembly, DunningNotice, Invoice,
-    MaintenanceContract, Party, Payment, Project, ProjectLog, Property, Quote,
-    SalePriceGroup, Task, WageGroup, WorkOrder,
+    AppUser, Article, ArticleSalePrice, Assembly, DunningNotice, Employee,
+    Invoice, MaintenanceContract, Party, Payment, Project, ProjectLog, Property,
+    Quote, SalePriceGroup, Task, WageGroup, WorkOrder,
 )
 from db_core.services import artikel as artikel_service
 from db_core.services import aufgabe as aufgabe_service
@@ -28,6 +28,7 @@ from db_core.services import buchhaltung as buchhaltung_service
 from db_core.services import einsatz as einsatz_service
 from db_core.services import wartung as wartung_service
 from db_core.services import identity as identity_service
+from db_core.services import mitarbeiter as mitarbeiter_service
 from db_core.services import projekt as projekt_service
 from db_core.services import property as property_service
 
@@ -210,10 +211,69 @@ DEMO_ASSEMBLIES = [
 ]
 
 
+# Demo-Personal (hr.*). Jeder Mitarbeiter braucht eine eigene identity.person,
+# ein eigenes security.app_user (Login-Konto, feste UUID → idempotent) und einen
+# Personalsatz. Sollstunden-Raster als Wochentag-Feld → Stunden. Abwesenheiten
+# werden zur Laufzeit auf Arbeitstage (Montage) des laufenden Jahres gelegt.
+VOLLZEIT_HOURS = {
+    "hours_monday": Decimal("8"),
+    "hours_tuesday": Decimal("8"),
+    "hours_wednesday": Decimal("8"),
+    "hours_thursday": Decimal("8"),
+    "hours_friday": Decimal("8"),
+}
+TEILZEIT_HOURS = {
+    "hours_monday": Decimal("6"),
+    "hours_tuesday": Decimal("6"),
+    "hours_wednesday": Decimal("6"),
+}
+
+DEMO_EMPLOYEES = [
+    {
+        "person": {"salutation": "Herr", "first_name": "Jörg", "last_name": "Feldmann"},
+        "account_id": uuid.UUID("00000000-0000-4000-8000-000000000101"),
+        "hired_on": date(2021, 3, 1),
+        "hours": VOLLZEIT_HOURS,
+        "vacation_days": Decimal("30"),
+        "status": "AKTIV",
+        # (Startmonat, Länge in Arbeitstagen Mo–Fr, genehmigen?)
+        "absences": [
+            {"month": 3, "weekdays": 5, "approve": True},   # genehmigt
+            {"month": 4, "weekdays": 3, "approve": False},  # eingereicht (offen)
+        ],
+    },
+    {
+        "person": {"salutation": "Frau", "first_name": "Petra", "last_name": "Lindqvist"},
+        "account_id": uuid.UUID("00000000-0000-4000-8000-000000000102"),
+        "hired_on": date(2022, 9, 1),
+        "hours": TEILZEIT_HOURS,
+        "vacation_days": Decimal("18"),
+        "status": "AKTIV",
+        "absences": [],
+    },
+    {
+        "person": {"salutation": "Herr", "first_name": "Sven", "last_name": "Ostmann"},
+        "account_id": uuid.UUID("00000000-0000-4000-8000-000000000103"),
+        "hired_on": date(2019, 1, 15),
+        "hours": VOLLZEIT_HOURS,
+        "vacation_days": Decimal("30"),
+        "status": "AUSGETRETEN",
+        "left_on": date(2024, 6, 30),
+        "absences": [],
+    },
+]
+
+
+def _first_monday(year, month):
+    """Der erste Montag des angegebenen Monats (garantiert ein Werktag)."""
+    d = date(year, month, 1)
+    return d + timedelta(days=(0 - d.weekday()) % 7)
+
+
 class Command(BaseCommand):
     help = (
         "Legt Demo-Kontakte, -Liegenschaften, -Projekte (mit Vorgängen), "
-        "-Aufgaben, -Angebote und -Artikelstamm für die Entwicklung an."
+        "-Aufgaben, -Angebote, -Artikelstamm und -Personal für die Entwicklung an."
     )
 
     def handle(self, *args, **options):
@@ -770,6 +830,78 @@ class Command(BaseCommand):
             self.stdout.write(
                 f"Wartungsvertrag angelegt: {contract.contract_number} "
                 f"(nächste Fälligkeit {contract.next_due_date})"
+            )
+
+        # Personal (hr.*): Mitarbeiter mit Login-Konto, Personalsatz, Vertrag,
+        # Urlaubskonto und Abwesenheiten. Idempotent je Person (existiert bereits
+        # ein Personalsatz zur Person, wird der Mitarbeiter übersprungen). Das
+        # Login-Konto hat eine feste UUID, damit ein nach Teilerfolg abgebrochener
+        # Lauf nicht mehrere Konten anlegt.
+        current_year = date.today().year
+        for emp in DEMO_EMPLOYEES:
+            expected = f"{emp['person']['first_name']} {emp['person']['last_name']}"
+            person = Party.objects.filter(display_name=expected).first()
+            if person is not None and Employee.objects.filter(party_id=person.id).exists():
+                uebersprungen += 1
+                continue
+            if person is None:
+                person = identity_service.create_person(actor.id, **emp["person"])
+
+            account, _ = AppUser.objects.get_or_create(
+                id=emp["account_id"],
+                defaults={
+                    "display_name": f"{expected} (Login)",
+                    "status": "ACTIVE",
+                    "version": 1,
+                },
+            )
+            employee = mitarbeiter_service.create_employee(
+                actor.id,
+                app_user_id=account.id,
+                party_id=person.id,
+                hired_on=emp["hired_on"],
+            )
+            mitarbeiter_service.create_contract(
+                actor.id,
+                employee_id=employee.id,
+                valid_from=emp["hired_on"],
+                hours=emp["hours"],
+                vacation_days_per_year=emp["vacation_days"],
+            )
+            mitarbeiter_service.set_vacation_budget(
+                actor.id,
+                employee_id=employee.id,
+                year=current_year,
+                entitlement_days=emp["vacation_days"],
+            )
+            for ab in emp["absences"]:
+                monday = _first_monday(current_year, ab["month"])
+                absence = mitarbeiter_service.create_absence(
+                    actor.id,
+                    employee_id=employee.id,
+                    absence_type="URLAUB",
+                    start_date=monday,
+                    end_date=monday + timedelta(days=ab["weekdays"] - 1),
+                )
+                mitarbeiter_service.submit_absence(actor.id, absence_id=absence.id)
+                if ab["approve"]:
+                    mitarbeiter_service.approve_absence(
+                        actor.id, absence_id=absence.id, note="Genehmigt (Demo)."
+                    )
+            # Statuswechsel zuletzt: für einen Ausgetretenen lehnt der Service
+            # sonst den Vertrag ab (Reihenfolge!).
+            if emp["status"] != "AKTIV":
+                mitarbeiter_service.set_employee_status(
+                    actor.id,
+                    employee_id=employee.id,
+                    status=emp["status"],
+                    left_on=emp.get("left_on"),
+                )
+            employee.refresh_from_db()
+            angelegt += 1
+            self.stdout.write(
+                f"Mitarbeiter angelegt: {employee.employee_number} {expected} "
+                f"({employee.status})"
             )
 
         self.stdout.write(
