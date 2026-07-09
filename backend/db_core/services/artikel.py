@@ -8,6 +8,8 @@ gesetzt werden. Kein Löschen — nur status AKTIV/INAKTIV.
 import uuid
 from decimal import Decimal
 
+from django.db.models import Max
+
 from db_core.db_context import business_transaction
 from db_core.models import (
     Article,
@@ -86,6 +88,35 @@ def create_article(
     return article
 
 
+def _prepare_component(comp, pos):
+    """Validiert eine Stücklisten-Position und liefert die DB-Spaltenwerte.
+
+    Genau eine Seite je Position: Material (article_id + quantity > 0) ODER Lohn
+    (wage_group_id + minutes > 0), nie beides (spiegelt den DB-XOR-CHECK). Der
+    Pflicht-/Positiv-Check hier verhindert, dass ein leerer/0-Betrag erst als
+    DB-CHECK (500) statt als sauberer 422 auffällt. Fehlermeldungen nennen die
+    fachliche Positionsnummer, keine Tabellen-/Spaltennamen.
+    """
+    is_material = comp.get("article_id") is not None
+    is_labour = comp.get("wage_group_id") is not None
+    if is_material == is_labour:
+        raise ValueError(
+            f"Position {pos}: genau eines von Material (article_id+quantity) "
+            "oder Lohn (wage_group_id+minutes) angeben."
+        )
+    if is_material and not (comp.get("quantity") and Decimal(str(comp["quantity"])) > 0):
+        raise ValueError(f"Position {pos}: quantity (> 0) Pflicht für Material.")
+    if is_labour and not (comp.get("minutes") and Decimal(str(comp["minutes"])) > 0):
+        raise ValueError(f"Position {pos}: minutes (> 0) Pflicht für Lohn.")
+    return {
+        "article_id": comp.get("article_id"),
+        "wage_group_id": comp.get("wage_group_id"),
+        "quantity": comp.get("quantity") if is_material else None,
+        "minutes": comp.get("minutes") if is_labour else None,
+        "note": comp.get("note"),
+    }
+
+
 def create_assembly(
     actor_app_user_id,
     *,
@@ -112,6 +143,7 @@ def create_assembly(
     ensure_all_exist(
         WageGroup, [c.get("wage_group_id") for c in components], "Lohngruppe"
     )
+    prepared = [_prepare_component(comp, pos) for pos, comp in enumerate(components, start=1)]
     with business_transaction(actor_app_user_id):
         assembly = Assembly.objects.create(
             id=uuid.uuid4(),
@@ -122,30 +154,48 @@ def create_assembly(
             status="AKTIV",
             version=1,
         )
-        for pos, comp in enumerate(components, start=1):
-            is_material = comp.get("article_id") is not None
-            is_labour = comp.get("wage_group_id") is not None
-            if is_material == is_labour:
-                raise ValueError(
-                    f"Position {pos}: genau eines von Material (article_id+quantity) "
-                    "oder Lohn (wage_group_id+minutes) angeben."
-                )
-            # Betrag der jeweiligen Seite ist Pflicht und > 0 (sonst DB-CHECK/500).
-            if is_material and not (comp.get("quantity") and Decimal(str(comp["quantity"])) > 0):
-                raise ValueError(f"Position {pos}: quantity (> 0) Pflicht für Material.")
-            if is_labour and not (comp.get("minutes") and Decimal(str(comp["minutes"])) > 0):
-                raise ValueError(f"Position {pos}: minutes (> 0) Pflicht für Lohn.")
+        for pos, cols in enumerate(prepared, start=1):
             AssemblyComponent.objects.create(
-                id=uuid.uuid4(),
-                assembly_id=assembly.id,
-                position=pos,
-                article_id=comp.get("article_id"),
-                wage_group_id=comp.get("wage_group_id"),
-                quantity=comp.get("quantity") if is_material else None,
-                minutes=comp.get("minutes") if is_labour else None,
-                note=comp.get("note"),
+                id=uuid.uuid4(), assembly_id=assembly.id, position=pos, **cols
             )
     return assembly
+
+
+def add_assembly_components(actor_app_user_id, *, assembly_id, components):
+    """Hängt einer bestehenden Leistung weitere Positionen an.
+
+    Die Stückliste ist nach der Anlage änderbar — pricing.assembly_component trägt
+    keinen Unveränderlichkeits-/Einfrier-Trigger (Migration 0033 hat nur
+    updated_at/Audit/kein-TRUNCATE, aber keine INSERT-Sperre). Neue Positionen
+    werden hinter der höchsten bestehenden Positionsnummer eingereiht; bestehende
+    bleiben unberührt. FKs werden vorab je EINER Query geprüft (kein N+1, klarer
+    422 statt IntegrityError).
+    """
+    ensure_exists(Assembly, assembly_id, "Leistung")
+    if not components:
+        raise ValueError("Mindestens eine Position ist anzugeben.")
+    ensure_all_exist(Article, [c.get("article_id") for c in components], "Artikel")
+    ensure_all_exist(WageGroup, [c.get("wage_group_id") for c in components], "Lohngruppe")
+    current_max = (
+        AssemblyComponent.objects.filter(assembly_id=assembly_id).aggregate(m=Max("position"))["m"]
+        or 0
+    )
+    prepared = [
+        _prepare_component(comp, current_max + offset)
+        for offset, comp in enumerate(components, start=1)
+    ]
+    created = []
+    with business_transaction(actor_app_user_id):
+        for offset, cols in enumerate(prepared, start=1):
+            created.append(
+                AssemblyComponent.objects.create(
+                    id=uuid.uuid4(),
+                    assembly_id=assembly_id,
+                    position=current_max + offset,
+                    **cols,
+                )
+            )
+    return created
 
 
 def create_sale_price_group(

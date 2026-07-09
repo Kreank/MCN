@@ -302,3 +302,100 @@
     padding-left: calc(2.5rem + var(--space-4));
   }
 }
+
+// ============================== Anlegen (Dialog) ============================
+.page-head__aktionen {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+.dokumente__melde {
+  margin-bottom: var(--space-5);
+}
+.dialog-hinweis {
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+.datum-paar {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+@media (max-width: 520px) {
+  .datum-paar {
+    grid-template-columns: 1fr;
+  }
+}
+
+.pos-editor {
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.pos-editor__legende {
+  padding: 0 var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+}
+.pos-zeile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  background: var(--surface-sunken, var(--surface));
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--radius);
+}
+.pos-zeile__kopf {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.pos-zeile__nr {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--ink-muted);
+}
+.pos-zeile__weg {
+  min-height: 32px;
+  min-width: 32px;
+  border: 1.5px solid color-mix(in srgb, var(--warn-ink) 45%, var(--line-strong));
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--warn-ink);
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    border-color: var(--warn-ink);
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+  &:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+}
+.pos-zeile__zahlen {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+@media (max-width: 520px) {
+  .pos-zeile__zahlen {
+    grid-template-columns: 1fr;
+  }
+}
+.pos-editor__add {
+  align-self: flex-start;
+}

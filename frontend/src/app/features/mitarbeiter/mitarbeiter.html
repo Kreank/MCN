@@ -1,17 +1,36 @@
 <section class="mitarbeiter" aria-labelledby="mitarbeiter-titel">
   <header class="page-head">
-    <div>
+    <div class="page-head__text">
       <p class="page-head__kicker">
         <span class="page-head__scale" aria-hidden="true"></span>
         Personal · Mitarbeiter
       </p>
       <h1 id="mitarbeiter-titel" class="page-head__titel">Mitarbeiter</h1>
+      <p class="page-head__hint">
+        Personalstamm mit Arbeitsverträgen, Abwesenheiten und Urlaubskonto.
+      </p>
     </div>
-    <p class="page-head__hint">
-      Personalstamm mit Arbeitsverträgen, Abwesenheiten und Urlaubskonto.
-      Anlegen und Genehmigungen laufen über die API.
-    </p>
+    @if (darfAnlegen()) {
+      <button type="button" class="btn btn--primary page-head__neu" (click)="neuOeffnen()">
+        <span aria-hidden="true">＋</span> Neuer Mitarbeiter
+      </button>
+    }
   </header>
+
+  @if (meldung(); as m) {
+    <div
+      class="melde melde--{{ m.art }} mitarbeiter__melde"
+      [attr.role]="m.art === 'fehler' ? 'alert' : 'status'"
+    >
+      <span class="melde__mark" aria-hidden="true">{{ m.art === 'fehler' ? '!' : '✓' }}</span>
+      <span class="melde__text">
+        <strong>{{ m.art === 'fehler' ? 'Fehler:' : 'Erledigt:' }}</strong> {{ m.text }}
+      </span>
+      <button type="button" class="melde__zu" (click)="meldungSchliessen()" aria-label="Meldung schließen">
+        <span aria-hidden="true">✕</span>
+      </button>
+    </div>
+  }
 
   <div class="controls">
     <div class="search">
@@ -115,4 +134,66 @@
       }
     }
   }
+
+  <!-- ------------------------------ Anlage-Dialog ------------------------- -->
+  <app-dialog [offen]="neuOffen()" titel="Neuer Mitarbeiter" (schliessen)="neuSchliessen()">
+    <form id="neu-mitarbeiter-form" class="dialog-form" (submit)="$event.preventDefault(); neuAbsenden()" novalidate>
+      @if (formularMeldung(); as fm) {
+        <div class="melde melde--fehler" role="alert">
+          <span class="melde__mark" aria-hidden="true">!</span>
+          <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+        </div>
+      }
+
+      <app-referenz-wahl
+        [control]="neuForm.controls.app_user_id"
+        label="Benutzerkonto"
+        [pflicht]="true"
+        platzhalter="Name des Kontos suchen"
+        hinweis="Das Leitstellen-Login, das zu diesem Mitarbeiter gehört."
+        [suche]="benutzerSuche"
+      />
+      <app-referenz-wahl
+        [control]="neuForm.controls.party_id"
+        label="Person"
+        [pflicht]="true"
+        platzhalter="Name der Person suchen"
+        hinweis="Die Personendaten (Name, Anrede) stammen aus dem Kontaktstamm — nur natürliche Personen."
+        [suche]="personSuche"
+      />
+      <app-feld
+        [control]="neuForm.controls.hired_on"
+        label="Eintrittsdatum"
+        typ="datum"
+        [pflicht]="true"
+      />
+      <app-feld
+        [control]="neuForm.controls.wage_group_id"
+        label="Lohngruppe"
+        typ="select"
+        platzhalter="Keine Lohngruppe"
+        [optionen]="lohngruppen()"
+        [hinweis]="lohngruppen().length === 0 ? 'Optional. Keine Lohngruppen verfügbar (ggf. fehlt das Leserecht am Artikelstamm).' : 'Optional.'"
+      />
+      <app-feld
+        [control]="neuForm.controls.notes"
+        label="Notiz"
+        typ="textarea"
+        hinweis="Optionaler interner Vermerk."
+      />
+    </form>
+
+    <div dialog-aktionen class="dialog__aktionen">
+      <button type="button" class="btn" [disabled]="neuLaedt()" (click)="neuSchliessen()">Abbrechen</button>
+      <button
+        type="submit"
+        form="neu-mitarbeiter-form"
+        class="btn btn--primary"
+        [disabled]="neuLaedt()"
+        [attr.aria-busy]="neuLaedt()"
+      >
+        {{ neuLaedt() ? 'Wird angelegt …' : 'Mitarbeiter anlegen' }}
+      </button>
+    </div>
+  </app-dialog>
 </section>

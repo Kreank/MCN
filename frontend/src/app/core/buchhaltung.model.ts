@@ -37,11 +37,18 @@ export interface OpenItemQuery {
 }
 
 export interface Payment {
+  id: string;
   payment_type: string;
   amount: string;
   currency: string;
   paid_at: string;
   import_source: string;
+  /** Selbst eine Stornobuchung (payment_type STORNO_BUCHUNG). */
+  is_reversal: boolean;
+  /** Bereits durch eine Gegenbuchung storniert. */
+  is_reversed: boolean;
+  /** Eingehende Zahlung, noch nicht storniert → Storno möglich. */
+  is_reversible: boolean;
 }
 
 export interface DunningNotice {

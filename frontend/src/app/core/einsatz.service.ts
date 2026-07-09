@@ -2,6 +2,7 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import {
+  AssignableUser,
   JobAssignment,
   JobAssignmentInput,
   JobStatusInput,
@@ -37,6 +38,18 @@ export class EinsatzService {
 
   get(id: string): Observable<ServiceJobDetail> {
     return this.http.get<ServiceJobDetail>(`${this.base}/${id}`);
+  }
+
+  /**
+   * Aktive Benutzer als schlanke Zuweisungs-Auswahlliste (id + Name). Speist
+   * Einsatz-Zuweisung und Mitarbeiter-Anlage (app_user_id). Recht workflow.LESEN;
+   * ein Monteur (Scope EIGENE) bekommt bewusst 403.
+   */
+  listUsers(q?: string): Observable<AssignableUser[]> {
+    let params = new HttpParams();
+    const needle = q?.trim();
+    if (needle) params = params.set('q', needle);
+    return this.http.get<AssignableUser[]>('/api/planung/users', { params });
   }
 
   /** Plantafel-Board für einen Zeitraum (Bahnen + verplante Einsätze). */

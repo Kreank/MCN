@@ -1,12 +1,29 @@
 import { Component, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, RouterLink } from '@angular/router';
+import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
+import { map } from 'rxjs';
 import { Mappe, MappeTab } from '../../shared/mappe/mappe';
 import { BelegService } from '../../core/beleg.service';
+import { PartyService } from '../../core/party.service';
 import { AuthService } from '../../core/auth.service';
-import { InvoiceDetail, InvoiceStatus, InvoiceType, LineType } from '../../core/beleg.model';
+import {
+  InvoiceDetail,
+  InvoicePartyCreate,
+  InvoiceStatus,
+  InvoiceType,
+  LineType,
+} from '../../core/beleg.model';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { Bestaetigung } from '../../shared/bestaetigung/bestaetigung';
+import { Dialog } from '../../shared/dialog/dialog';
+import { Feld, FeldOption } from '../../shared/formular/feld';
+import { ReferenzWahl, RefSuche } from '../../shared/formular/referenz-wahl';
+import { apiFehlerZuweisen } from '../../shared/formular/api-fehler';
+import {
+  felderAlsBeruehrtMarkieren,
+  serverFehlerZuruecksetzen,
+} from '../../shared/formular/formular.util';
 import { VerbotenState, fehlerDetail, fehlerState, istVerboten } from '../../shared/http-fehler';
 
 type ViewState =
@@ -19,14 +36,16 @@ type Meldung = { art: 'erfolg' | 'fehler'; text: string };
 
 @Component({
   selector: 'app-rechnung-detail',
-  imports: [Mappe, RouterLink, KeinZugriff, Bestaetigung],
+  imports: [Mappe, RouterLink, KeinZugriff, Bestaetigung, ReactiveFormsModule, Dialog, Feld, ReferenzWahl],
   templateUrl: './rechnung-detail.html',
   styleUrl: './rechnung-detail.scss',
 })
 export class RechnungDetail {
   private readonly route = inject(ActivatedRoute);
   private readonly svc = inject(BelegService);
+  private readonly partySvc = inject(PartyService);
   private readonly auth = inject(AuthService);
+  private readonly fb = inject(FormBuilder);
 
   protected readonly tab = signal('positionen');
   protected readonly state = signal<ViewState>({ kind: 'loading' });
@@ -40,6 +59,34 @@ export class RechnungDetail {
 
   /** Nur Entwürfe lassen sich veröffentlichen (Server setzt die Tore durch). */
   protected readonly kannVeroeffentlichen = computed(() => this.daten()?.status === 'ENTWURF');
+
+  // --- Beteiligten hinzufügen (nur im Entwurf) ----------------------------
+  protected readonly darfAendern = computed(() => this.auth.darf('invoicing', 'AENDERN'));
+  /** Beteiligte lassen sich nur am Entwurf ergänzen (Server erzwingt es). */
+  protected readonly kannBeteiligen = computed(() => this.daten()?.status === 'ENTWURF');
+  protected readonly beteiligtOffen = signal(false);
+  protected readonly beteiligtLaedt = signal(false);
+  protected readonly beteiligtMeldung = signal<string | null>(null);
+  protected readonly rollen: FeldOption[] = [
+    { wert: 'INVOICE_DEBTOR', label: 'Rechnungsschuldner' },
+    { wert: 'INVOICE_RECIPIENT', label: 'Rechnungsempfänger' },
+    { wert: 'REPRESENTATIVE', label: 'Vertretung' },
+    { wert: 'COST_BEARER', label: 'Kostenträger' },
+  ];
+  protected readonly beteiligtForm = this.fb.group({
+    party_id: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
+    role: this.fb.control('INVOICE_DEBTOR', {
+      nonNullable: true,
+      validators: [Validators.required],
+    }),
+    is_primary: this.fb.control(false, { nonNullable: true }),
+  });
+
+  /** Kontaktsuche (Personen und Organisationen) für den Beteiligten. */
+  protected readonly kontaktSuche: RefSuche = (q) =>
+    this.partySvc.list({ page: 1, page_size: 20, q }).pipe(
+      map((p) => p.items.map((o) => ({ id: o.id, label: o.display_name }))),
+    );
 
   protected readonly tabs: MappeTab[] = [
     { id: 'positionen', label: 'Positionen' },
@@ -111,6 +158,47 @@ export class RechnungDetail {
         this.publishOffen.set(false);
         // Die DB-Tore liefern präzise 422-Meldungen — wörtlich zeigen.
         this.meldung.set({ art: 'fehler', text: this.fehlerText(err) });
+      },
+    });
+  }
+
+  // ---- Beteiligten hinzufügen ---------------------------------------------
+  beteiligtOeffnen(): void {
+    this.beteiligtForm.reset({ party_id: '', role: 'INVOICE_DEBTOR', is_primary: false });
+    this.beteiligtMeldung.set(null);
+    this.meldung.set(null);
+    this.beteiligtOffen.set(true);
+  }
+
+  beteiligtSchliessen(): void {
+    if (!this.beteiligtLaedt()) this.beteiligtOffen.set(false);
+  }
+
+  beteiligtAbsenden(): void {
+    const d = this.daten();
+    if (!d || this.beteiligtLaedt()) return;
+    serverFehlerZuruecksetzen(this.beteiligtForm);
+    this.beteiligtMeldung.set(null);
+    felderAlsBeruehrtMarkieren(this.beteiligtForm);
+    if (this.beteiligtForm.invalid) return;
+
+    const v = this.beteiligtForm.getRawValue();
+    const payload: InvoicePartyCreate = {
+      party_id: v.party_id,
+      role: v.role,
+      is_primary: v.is_primary,
+    };
+    this.beteiligtLaedt.set(true);
+    this.svc.addInvoiceParty(d.id, payload).subscribe({
+      next: (aktualisiert) => {
+        this.beteiligtLaedt.set(false);
+        this.beteiligtOffen.set(false);
+        this.state.set({ kind: 'ready', data: aktualisiert });
+        this.meldung.set({ art: 'erfolg', text: 'Beteiligter wurde ergänzt.' });
+      },
+      error: (err) => {
+        this.beteiligtLaedt.set(false);
+        this.beteiligtMeldung.set(apiFehlerZuweisen(err, this.beteiligtForm).formular);
       },
     });
   }

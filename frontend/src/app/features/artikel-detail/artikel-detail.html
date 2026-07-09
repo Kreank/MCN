@@ -93,7 +93,7 @@
             @if (darfAendern()) {
               <div class="tab-aktionen">
                 <button type="button" class="btn btn--primary" (click)="vkOeffnen()">
-                  <span aria-hidden="true">＋</span> VK-Festpreis setzen
+                  <span aria-hidden="true">＋</span> Verkaufspreis setzen
                 </button>
               </div>
             }
@@ -124,9 +124,9 @@
       }
     </app-mappe>
 
-    <!-- ---------------------------- VK-Festpreis setzen ------------------- -->
-    <app-dialog [offen]="vkOffen()" titel="VK-Festpreis setzen" (schliessen)="vkSchliessen()">
-      <form id="vk-festpreis-form" class="dialog-form" (submit)="$event.preventDefault(); vkAbsenden()" novalidate>
+    <!-- ---------------------------- Verkaufspreis setzen ------------------ -->
+    <app-dialog [offen]="vkOffen()" titel="Verkaufspreis setzen" (schliessen)="vkSchliessen()">
+      <form id="vk-form" class="dialog-form" (submit)="$event.preventDefault(); vkAbsenden()" novalidate>
         @if (formularMeldung(); as fm) {
           <div class="melde melde--fehler" role="alert">
             <span class="melde__mark" aria-hidden="true">!</span>
@@ -134,13 +134,33 @@
           </div>
         }
         <app-feld [control]="vkForm.controls.label" label="Bezeichnung" [pflicht]="true" hinweis="z. B. Standard." />
-        <app-feld [control]="vkForm.controls.fixed_price" label="Festpreis (netto)" typ="zahl" [pflicht]="true" hinweis="Betrag in Euro, z. B. 199,90." />
+        <app-feld
+          [control]="vkForm.controls.modus"
+          label="Preisart"
+          typ="select"
+          [pflicht]="true"
+          hinweis="Entweder ein fester Verkaufspreis oder eine Kalkulationsgruppe (Formel) — nicht beides."
+          [optionen]="preisArten"
+        />
+        @if (vkForm.controls.modus.value === 'festpreis') {
+          <app-feld [control]="vkForm.controls.fixed_price" label="Festpreis (netto)" typ="zahl" [pflicht]="true" hinweis="Betrag in Euro, z. B. 199,90." />
+        } @else {
+          <app-feld
+            [control]="vkForm.controls.sale_price_group_id"
+            label="Kalkulationsgruppe"
+            typ="select"
+            [pflicht]="true"
+            platzhalter="Gruppe wählen"
+            [optionen]="preisgruppen()"
+            [hinweis]="preisgruppen().length === 0 ? 'Keine Kalkulationsgruppen verfügbar.' : 'Auf-/Abschlag auf EK oder Listenpreis.'"
+          />
+        }
         <app-feld [control]="vkForm.controls.is_standard" label="Als Standard-VK verwenden" typ="checkbox" />
       </form>
       <div dialog-aktionen class="dialog__aktionen">
         <button type="button" class="btn" [disabled]="vkLaedt()" (click)="vkSchliessen()">Abbrechen</button>
-        <button type="submit" form="vk-festpreis-form" class="btn btn--primary" [disabled]="vkLaedt()" [attr.aria-busy]="vkLaedt()">
-          {{ vkLaedt() ? 'Wird gesetzt …' : 'Festpreis setzen' }}
+        <button type="submit" form="vk-form" class="btn btn--primary" [disabled]="vkLaedt()" [attr.aria-busy]="vkLaedt()">
+          {{ vkLaedt() ? 'Wird gesetzt …' : 'Verkaufspreis setzen' }}
         </button>
       </div>
     </app-dialog>

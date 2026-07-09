@@ -131,3 +131,39 @@ export interface ArticleSalePrice {
   fixed_price: string | null;
   is_standard: boolean;
 }
+
+// --- Stammdaten-Listen (Auswahllisten für Schreib-UIs) ---------------------
+/** Lohn-/Maschinengruppe (GET /api/pricing/wage_groups). */
+export interface WageGroup {
+  id: string;
+  name: string;
+  kind: string;
+  hourly_rate: string;
+  cost_rate: string | null;
+  status: StammStatus;
+}
+
+/** VK-Kalkulationsgruppe (GET /api/pricing/sale_price_groups). */
+export interface SalePriceGroup {
+  id: string;
+  name: string;
+  calc_basis: string;
+  operator: string;
+  percent_change: string | null;
+  amount_change: string | null;
+  status: StammStatus;
+}
+
+/** Eine Stücklisten-Position: Material (article_id + quantity) ODER Lohn
+ *  (wage_group_id + minutes). Dezimalwerte als Punkt-String. */
+export interface ComponentIn {
+  article_id?: string | null;
+  quantity?: string | null;
+  wage_group_id?: string | null;
+  minutes?: string | null;
+  note?: string | null;
+}
+
+export interface AssemblyComponentsInput {
+  components: ComponentIn[];
+}

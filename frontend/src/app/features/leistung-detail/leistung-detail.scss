@@ -2,6 +2,16 @@
   display: block;
 }
 
+.detail__melde {
+  margin-bottom: var(--space-5);
+}
+.tab-aktionen {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin: var(--space-4) 0;
+}
+
 .langtext {
   margin-top: var(--space-4);
   max-width: 44rem;

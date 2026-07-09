@@ -21,6 +21,7 @@ import { QuoteLine } from '../../core/beleg.model';
 import {
   OpenItemDetail,
   PAYMENT_TYPES,
+  Payment,
   PaymentStatus,
   euro,
   invoiceTypeLabel,
@@ -107,9 +108,13 @@ export class BuchhaltungDetail {
   /** Nächste (lückenlose) Mahnstufe = aktuelle + 1; die DB erzwingt max+1. */
   protected readonly naechsteStufe = computed(() => (this.daten()?.dunning_level ?? 0) + 1);
 
-  // --- Storno --------------------------------------------------------------
+  // --- Storno (Rechnung) ---------------------------------------------------
   protected readonly stornoOffen = signal(false);
   protected readonly stornoLaedt = signal(false);
+
+  // --- Zahlung stornieren --------------------------------------------------
+  protected readonly zStornoZahlung = signal<Payment | null>(null);
+  protected readonly zStornoLaedt = signal(false);
 
   // --- Rechnungskorrektur --------------------------------------------------
   protected readonly korrekturOffen = signal(false);
@@ -294,6 +299,36 @@ export class BuchhaltungDetail {
       error: (err) => {
         this.stornoLaedt.set(false);
         this.stornoOffen.set(false);
+        this.meldung.set({ art: 'fehler', text: this.aktionsFehler(err) });
+      },
+    });
+  }
+
+  // ---- Zahlung stornieren -------------------------------------------------
+  zStornoFragen(p: Payment): void {
+    if (!p.is_reversible) return;
+    this.meldung.set(null);
+    this.zStornoZahlung.set(p);
+  }
+
+  zStornoAbbrechen(): void {
+    if (!this.zStornoLaedt()) this.zStornoZahlung.set(null);
+  }
+
+  zStornoBestaetigen(): void {
+    const p = this.zStornoZahlung();
+    if (!p || this.zStornoLaedt()) return;
+    this.zStornoLaedt.set(true);
+    this.svc.reversePayment(p.id).subscribe({
+      next: () => {
+        this.zStornoLaedt.set(false);
+        this.zStornoZahlung.set(null);
+        this.meldung.set({ art: 'erfolg', text: 'Die Zahlung wurde durch eine Gegenbuchung storniert.' });
+        this.neuLaden();
+      },
+      error: (err) => {
+        this.zStornoLaedt.set(false);
+        this.zStornoZahlung.set(null);
         this.meldung.set({ art: 'fehler', text: this.aktionsFehler(err) });
       },
     });

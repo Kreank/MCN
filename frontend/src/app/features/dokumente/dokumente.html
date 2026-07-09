@@ -1,17 +1,42 @@
 <section class="dokumente" aria-labelledby="dokumente-titel">
   <header class="page-head">
-    <div>
+    <div class="page-head__text">
       <p class="page-head__kicker">
         <span class="page-head__scale" aria-hidden="true"></span>
         Belegregister
       </p>
       <h1 id="dokumente-titel" class="page-head__titel">Dokumente</h1>
+      <p class="page-head__hint">
+        Angebote und Rechnungen (GoBD-relevant). Beträge und Summen berechnet
+        der Server verbindlich.
+      </p>
     </div>
-    <p class="page-head__hint">
-      Angebote und Rechnungen (GoBD-relevant). Erstellung und Versand laufen
-      über die KI und die API.
-    </p>
+    @if (darfAnlegen()) {
+      <div class="page-head__aktionen">
+        <button type="button" class="btn btn--primary" (click)="neuOeffnen('angebot')">
+          <span aria-hidden="true">＋</span> Neues Angebot
+        </button>
+        <button type="button" class="btn btn--primary" (click)="neuOeffnen('rechnung')">
+          <span aria-hidden="true">＋</span> Neue Rechnung
+        </button>
+      </div>
+    }
   </header>
+
+  @if (meldung(); as m) {
+    <div
+      class="melde melde--{{ m.art }} dokumente__melde"
+      [attr.role]="m.art === 'fehler' ? 'alert' : 'status'"
+    >
+      <span class="melde__mark" aria-hidden="true">{{ m.art === 'fehler' ? '!' : '✓' }}</span>
+      <span class="melde__text">
+        <strong>{{ m.art === 'fehler' ? 'Fehler:' : 'Erledigt:' }}</strong> {{ m.text }}
+      </span>
+      <button type="button" class="melde__zu" (click)="meldungSchliessen()" aria-label="Meldung schließen">
+        <span aria-hidden="true">✕</span>
+      </button>
+    </div>
+  }
 
   <div class="controls">
     <div class="search">
@@ -136,4 +161,126 @@
       }
     }
   }
+
+  <!-- ---------------------------- Beleg anlegen ------------------------- -->
+  <app-dialog
+    [offen]="neuArt() !== null"
+    [titel]="neuArt() === 'angebot' ? 'Neues Angebot' : 'Neue Rechnung'"
+    (schliessen)="neuSchliessen()"
+  >
+    <form id="neu-beleg-form" class="dialog-form" (submit)="$event.preventDefault(); neuAbsenden()" novalidate>
+      @if (formularMeldung(); as fm) {
+        <div class="melde melde--fehler" role="alert">
+          <span class="melde__mark" aria-hidden="true">!</span>
+          <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+        </div>
+      }
+
+      <p class="dialog-hinweis">
+        Der Beleg entsteht als <strong>Entwurf</strong>. Netto, Steuer und Brutto
+        rechnet der Server verbindlich — hier werden keine Summen vorweggenommen.
+      </p>
+
+      @if (neuArt() === 'angebot') {
+        <app-feld
+          [control]="neuForm.controls.title"
+          label="Titel"
+          [pflicht]="true"
+          platzhalter="z. B. Angebot Heizungswartung"
+        />
+      } @else {
+        <app-feld
+          [control]="neuForm.controls.invoice_type"
+          label="Belegart"
+          typ="select"
+          [optionen]="invoiceTypeOptionen"
+        />
+      }
+
+      <app-referenz-wahl
+        [control]="neuForm.controls.property_id"
+        label="Liegenschaft"
+        [pflicht]="true"
+        platzhalter="Name oder Objektnummer suchen"
+        hinweis="Pflicht-Objektbezug des Belegs."
+        [suche]="liegenschaftSuche"
+      />
+      <app-referenz-wahl
+        [control]="neuForm.controls.project_id"
+        label="Projekt"
+        platzhalter="Projekt suchen"
+        hinweis="Optional."
+        [suche]="projektSuche"
+      />
+      @if (neuArt() === 'rechnung') {
+        <app-referenz-wahl
+          [control]="neuForm.controls.work_order_id"
+          label="Auftrag"
+          platzhalter="Auftrag suchen"
+          hinweis="Optional beim Anlegen; für die Veröffentlichung nötig."
+          [suche]="auftragSuche"
+        />
+      }
+
+      <div class="datum-paar">
+        @if (neuArt() === 'angebot') {
+          <app-feld [control]="neuForm.controls.quote_date" label="Angebotsdatum" typ="datum" hinweis="Optional." />
+          <app-feld [control]="neuForm.controls.valid_until_date" label="Gültig bis" typ="datum" hinweis="Optional." />
+        } @else {
+          <app-feld [control]="neuForm.controls.invoice_date" label="Rechnungsdatum" typ="datum" hinweis="Optional." />
+          <app-feld [control]="neuForm.controls.due_date" label="Fällig bis" typ="datum" hinweis="Optional." />
+        }
+      </div>
+
+      <fieldset class="pos-editor">
+        <legend class="pos-editor__legende">Positionen</legend>
+        @for (zeile of zeilen(); track $index; let i = $index) {
+          <div class="pos-zeile">
+            <div class="pos-zeile__kopf">
+              <span class="pos-zeile__nr" aria-hidden="true">{{ i + 1 }}</span>
+              <button
+                type="button"
+                class="pos-zeile__weg"
+                (click)="zeileEntfernen(i)"
+                [disabled]="zeilen().length <= 1"
+                [attr.aria-label]="'Position ' + (i + 1) + ' entfernen'"
+              >
+                <span aria-hidden="true">✕</span>
+              </button>
+            </div>
+            <app-feld [control]="$any(zeile).controls.line_type" label="Art" typ="select" [optionen]="lineTypeOptionen" />
+            <app-feld [control]="$any(zeile).controls.description" label="Bezeichnung" [pflicht]="true" platzhalter="z. B. Anfahrt" />
+            @if (!istTextZeile(zeile)) {
+              <div class="pos-zeile__zahlen">
+                <app-feld [control]="$any(zeile).controls.quantity" label="Menge" typ="zahl" [pflicht]="true" hinweis="z. B. 2,5" />
+                <app-feld [control]="$any(zeile).controls.unit" label="Einheit" platzhalter="z. B. Stk" />
+                <app-feld [control]="$any(zeile).controls.unit_price" label="Einzelpreis (netto)" typ="zahl" [pflicht]="true" hinweis="z. B. 49,90" />
+                <app-feld [control]="$any(zeile).controls.tax_code" label="Steuersatz" typ="select" [optionen]="taxCodeOptionen" />
+              </div>
+            }
+          </div>
+        }
+        <button type="button" class="btn pos-editor__add" (click)="zeileHinzufuegen()">
+          <span aria-hidden="true">＋</span> Position hinzufügen
+        </button>
+      </fieldset>
+    </form>
+
+    <div dialog-aktionen class="dialog__aktionen">
+      <button type="button" class="btn" [disabled]="neuLaedt()" (click)="neuSchliessen()">Abbrechen</button>
+      <button
+        type="submit"
+        form="neu-beleg-form"
+        class="btn btn--primary"
+        [disabled]="neuLaedt()"
+        [attr.aria-busy]="neuLaedt()"
+      >
+        @if (neuLaedt()) {
+          Wird angelegt …
+        } @else {
+          {{ neuArt() === 'angebot' ? 'Angebot anlegen' : 'Rechnung anlegen' }}
+        }
+      </button>
+    </div>
+  </app-dialog>
 </section>

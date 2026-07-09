@@ -20,8 +20,10 @@ import {
   ArticleKalkulation,
   ArticleLineType,
   ArticleSalePriceIn,
+  SalePriceGroup,
   StammStatus,
 } from '../../core/artikel.model';
+import { FeldOption } from '../../shared/formular/feld';
 
 type KalkState =
   | { kind: 'idle' }
@@ -71,24 +73,40 @@ export class ArtikelDetail {
   // --- Rechte (nur UI-Sichtbarkeit; der Server setzt sie durch) -----------
   protected readonly darfAendern = computed(() => this.auth.darf('pricing', 'AENDERN'));
 
-  // --- VK-Festpreis setzen (Dialog) ---------------------------------------
+  // --- VK-Preis setzen (Dialog): Festpreis ODER Formelgruppe (XOR) ---------
   protected readonly meldung = signal<Meldung | null>(null);
   protected readonly vkOffen = signal(false);
   protected readonly vkLaedt = signal(false);
   protected readonly formularMeldung = signal<string | null>(null);
+  /** VK-Kalkulationsgruppen als Auswahl (Formel-Modus); leer bis geladen. */
+  protected readonly preisgruppen = signal<FeldOption[]>([]);
+  protected readonly preisgruppenGeladen = signal(false);
+  protected readonly preisArten: FeldOption[] = [
+    { wert: 'festpreis', label: 'Festpreis' },
+    { wert: 'formel', label: 'Kalkulationsgruppe (Formel)' },
+  ];
   protected readonly vkForm = this.fb.group({
     label: this.fb.control('Standard', {
       nonNullable: true,
       validators: [Validators.required],
     }),
+    modus: this.fb.control<'festpreis' | 'formel'>('festpreis', { nonNullable: true }),
     fixed_price: this.fb.control('', {
       nonNullable: true,
       validators: [Validators.required, dezimalValidator],
     }),
+    sale_price_group_id: this.fb.control('', { nonNullable: true }),
     is_standard: this.fb.control(true, { nonNullable: true }),
   });
 
   constructor() {
+    // Modus-Umschaltung: die Pflicht-Validatoren wandern auf das aktive Feld,
+    // damit immer genau eines von Festpreis / Formelgruppe gefüllt sein muss
+    // (der Server erzwingt das XOR ohnehin).
+    this.vkForm.controls.modus.valueChanges
+      .pipe(takeUntilDestroyed())
+      .subscribe((m) => this.vkValidatoren(m));
+
     this.route.paramMap.pipe(takeUntilDestroyed()).subscribe((pm) => {
       const id = pm.get('id');
       this.tab.set('stammdaten');
@@ -136,16 +154,60 @@ export class ArtikelDetail {
     this.meldung.set(null);
   }
 
-  // ---- VK-Festpreis setzen ------------------------------------------------
+  // ---- VK-Preis setzen ----------------------------------------------------
+  private vkValidatoren(modus: 'festpreis' | 'formel'): void {
+    const preis = this.vkForm.controls.fixed_price;
+    const gruppe = this.vkForm.controls.sale_price_group_id;
+    if (modus === 'festpreis') {
+      preis.setValidators([Validators.required, dezimalValidator]);
+      gruppe.clearValidators();
+      gruppe.setValue('');
+    } else {
+      preis.setValidators([dezimalValidator]);
+      preis.setValue('');
+      gruppe.setValidators([Validators.required]);
+    }
+    preis.updateValueAndValidity();
+    gruppe.updateValueAndValidity();
+  }
+
   vkOeffnen(): void {
-    this.vkForm.reset({ label: 'Standard', fixed_price: '', is_standard: true });
+    this.vkForm.reset({
+      label: 'Standard',
+      modus: 'festpreis',
+      fixed_price: '',
+      sale_price_group_id: '',
+      is_standard: true,
+    });
+    this.vkValidatoren('festpreis');
     this.formularMeldung.set(null);
     this.vkOffen.set(true);
+    if (!this.preisgruppenGeladen()) this.ladePreisgruppen();
   }
 
   vkSchliessen(): void {
     if (this.vkLaedt()) return;
     this.vkOffen.set(false);
+  }
+
+  private ladePreisgruppen(): void {
+    this.preisgruppenGeladen.set(true);
+    this.svc.listSalePriceGroups().subscribe({
+      next: (gruppen) =>
+        this.preisgruppen.set(
+          gruppen.map((g) => ({ wert: g.id, label: `${g.name} · ${this.gruppenFormel(g)}` })),
+        ),
+      error: () => this.preisgruppen.set([]),
+    });
+  }
+
+  /** Kurzbeschreibung der Formel einer VK-Gruppe (nur zur Anzeige). */
+  private gruppenFormel(g: SalePriceGroup): string {
+    const change =
+      g.percent_change !== null
+        ? `${Number(g.percent_change)} %`
+        : this.euro(g.amount_change);
+    return `${this.basisLabel(g.calc_basis)} ${this.operatorLabel(g.operator)} ${change}`;
   }
 
   vkAbsenden(): void {
@@ -157,18 +219,25 @@ export class ArtikelDetail {
     if (this.vkForm.invalid) return;
 
     const v = this.vkForm.getRawValue();
-    const payload: ArticleSalePriceIn = {
-      label: v.label.trim() || 'Standard',
-      fixed_price: deZuApiDezimal(v.fixed_price),
-      is_standard: v.is_standard,
-    };
+    const payload: ArticleSalePriceIn =
+      v.modus === 'festpreis'
+        ? {
+            label: v.label.trim() || 'Standard',
+            fixed_price: deZuApiDezimal(v.fixed_price),
+            is_standard: v.is_standard,
+          }
+        : {
+            label: v.label.trim() || 'Standard',
+            sale_price_group_id: v.sale_price_group_id,
+            is_standard: v.is_standard,
+          };
 
     this.vkLaedt.set(true);
     this.svc.setSalePrice(art.id, payload).subscribe({
       next: () => {
         this.vkLaedt.set(false);
         this.vkOffen.set(false);
-        this.meldung.set({ art: 'erfolg', text: 'VK-Festpreis wurde gesetzt.' });
+        this.meldung.set({ art: 'erfolg', text: 'Der Verkaufspreis wurde gesetzt.' });
         // Kalkulation neu berechnen lassen.
         this.loadKalk(art.id);
       },

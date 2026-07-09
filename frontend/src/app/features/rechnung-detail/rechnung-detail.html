@@ -102,6 +102,13 @@
       }
 
       @if (tab() === 'beteiligte') {
+        @if (darfAendern() && kannBeteiligen()) {
+          <div class="tab-toolbar">
+            <button type="button" class="btn btn--primary" (click)="beteiligtOeffnen()">
+              <span aria-hidden="true">＋</span> Beteiligten hinzufügen
+            </button>
+          </div>
+        }
         @if (daten()!.parties.length === 0) {
           <div class="tab-platzhalter"><p>Dieser Rechnung sind noch keine Beteiligten zugeordnet. Für die Veröffentlichung sind Rechnungsschuldner und ein primärer Empfänger erforderlich (A-27/A-28).</p></div>
         } @else {
@@ -148,6 +155,45 @@
         </div>
       }
     </app-mappe>
+
+    <!-- ---------------------------- Beteiligten hinzufügen ---------------- -->
+    <app-dialog [offen]="beteiligtOffen()" titel="Beteiligten hinzufügen" (schliessen)="beteiligtSchliessen()">
+      <form id="beteiligt-form" class="dialog-form" (submit)="$event.preventDefault(); beteiligtAbsenden()" novalidate>
+        @if (beteiligtMeldung(); as fm) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+          </div>
+        }
+        <app-referenz-wahl
+          [control]="beteiligtForm.controls.party_id"
+          label="Kontakt"
+          [pflicht]="true"
+          platzhalter="Name suchen"
+          hinweis="Person oder Organisation aus dem Kontaktstamm."
+          [suche]="kontaktSuche"
+        />
+        <app-feld
+          [control]="beteiligtForm.controls.role"
+          label="Rolle"
+          typ="select"
+          [pflicht]="true"
+          [optionen]="rollen"
+        />
+        <app-feld
+          [control]="beteiligtForm.controls.is_primary"
+          label="Primärer Beteiligter dieser Rolle"
+          typ="checkbox"
+          hinweis="Für die Veröffentlichung ist je ein primärer Schuldner und Empfänger erforderlich."
+        />
+      </form>
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="beteiligtLaedt()" (click)="beteiligtSchliessen()">Abbrechen</button>
+        <button type="submit" form="beteiligt-form" class="btn btn--primary" [disabled]="beteiligtLaedt()" [attr.aria-busy]="beteiligtLaedt()">
+          {{ beteiligtLaedt() ? 'Wird ergänzt …' : 'Beteiligten hinzufügen' }}
+        </button>
+      </div>
+    </app-dialog>
 
     <app-bestaetigung
       [offen]="publishOffen()"

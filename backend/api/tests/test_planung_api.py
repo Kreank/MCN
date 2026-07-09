@@ -11,7 +11,7 @@ from uuid import uuid4
 import pytest
 from django.test import Client
 
-from db_core.models import TimeEntry
+from db_core.models import AppUser, TimeEntry
 from db_core.services import auftrag as auftrag_service
 from db_core.services import einsatz as einsatz_service
 from db_core.services import identity as identity_service
@@ -360,4 +360,53 @@ def test_monteur_darf_nicht_zuweisen_403(seeded, app_user):
         data={"assignee_user_id": str(monteur.id)},
         content_type="application/json",
     )
+    assert r.status_code == 403
+
+
+# --- Benutzer-Auswahlliste (Zuweisung) -------------------------------------
+
+def _make_app_user(display_name, status="ACTIVE"):
+    return AppUser.objects.create(
+        id=uuid4(), display_name=display_name, status=status, version=1
+    )
+
+
+@pytest.mark.django_db
+def test_users_liste_nur_id_und_name(admin_client, db):
+    """Happy Path + Datenminimierung: die Auswahlliste liefert ausschließlich
+    id + display_name (keine E-Mail, kein Status, keine Personendaten)."""
+    _make_app_user("Anna Anker")
+    r = admin_client.get("/api/planung/users")
+    assert r.status_code == 200
+    body = r.json()
+    assert any(u["display_name"] == "Anna Anker" for u in body)
+    # Jedes Element trägt exakt die zwei erlaubten Felder.
+    for u in body:
+        assert set(u.keys()) == {"id", "display_name"}
+
+
+@pytest.mark.django_db
+def test_users_suche(admin_client, db):
+    _make_app_user("Bernd Bohrer")
+    _make_app_user("Carla Klemme")
+    r = admin_client.get("/api/planung/users?q=bohrer")
+    namen = {u["display_name"] for u in r.json()}
+    assert "Bernd Bohrer" in namen
+    assert "Carla Klemme" not in namen
+
+
+@pytest.mark.django_db
+def test_users_inaktive_ausgeblendet(admin_client, db):
+    inaktiv = _make_app_user("Detlef Disabled", status="DISABLED")
+    r = admin_client.get("/api/planung/users")
+    ids = {u["id"] for u in r.json()}
+    assert str(inaktiv.id) not in ids
+
+
+@pytest.mark.django_db
+def test_users_monteur_403(seeded, app_user):
+    """Fail-closed: MONTEUR hat workflow.LESEN nur als Scope EIGENE → 403 (er darf
+    ohnehin nur sich selbst zuweisen)."""
+    c, _monteur = _monteur_client(seeded, app_user, assigned=False)
+    r = c.get("/api/planung/users")
     assert r.status_code == 403

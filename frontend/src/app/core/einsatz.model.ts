@@ -54,6 +54,18 @@ export interface JobAssignment {
   role: string;
 }
 
+/** Schlanke Zuweisungs-Auswahlliste (GET /api/planung/users): nur id + Name. */
+export interface AssignableUser {
+  id: string;
+  display_name: string;
+}
+
+/** Rollen einer Einsatz-Zuweisung (workflow.job_assignment). */
+export const ASSIGNMENT_ROLES: { wert: string; label: string }[] = [
+  { wert: 'TECHNICIAN', label: 'Techniker' },
+  { wert: 'LEAD', label: 'Einsatzleitung' },
+];
+
 export interface TimeEntry {
   time_type: string;
   started_at: string;

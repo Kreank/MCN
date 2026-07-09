@@ -374,3 +374,42 @@ def test_mahnung_ohne_recht_403(client_with_role, seeded):
         content_type="application/json",
     )
     assert r.status_code == 403
+
+
+# --- payment_id + Storno-Kennzeichnung (UI: was ist stornierbar?) ----------
+
+@pytest.mark.django_db
+def test_detail_payment_id_und_storno_flags(admin_client, seeded):
+    """Detail liefert je Zahlung id + Storno-Flags; Storno über die id
+    funktioniert und schlägt beim zweiten Versuch als 422 fehl."""
+    inv = seeded["inv"]
+    detail = admin_client.get(f"/api/buchhaltung/invoices/{inv.id}").json()
+    pay = detail["payments"][0]
+    assert pay["id"]  # id ist jetzt Bestandteil von PaymentOut
+    assert pay["is_reversal"] is False
+    assert pay["is_reversed"] is False
+    assert pay["is_reversible"] is True
+
+    # Storno über die aus dem Detail adressierbare id.
+    r = admin_client.post(
+        f"/api/buchhaltung/payments/{pay['id']}/reverse",
+        data={}, content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    storno = r.json()
+    assert storno["is_reversal"] is True
+    assert storno["is_reversible"] is False
+
+    # Detail danach: Ursprungszahlung storniert, die Gegenbuchung als reversal.
+    detail2 = admin_client.get(f"/api/buchhaltung/invoices/{inv.id}").json()
+    by_id = {p["id"]: p for p in detail2["payments"]}
+    assert by_id[pay["id"]]["is_reversed"] is True
+    assert by_id[pay["id"]]["is_reversible"] is False
+    assert any(p["is_reversal"] and not p["is_reversible"] for p in detail2["payments"])
+
+    # Doppeltes Storno über dieselbe id → 422.
+    r2 = admin_client.post(
+        f"/api/buchhaltung/payments/{pay['id']}/reverse",
+        data={}, content_type="application/json",
+    )
+    assert r2.status_code == 422

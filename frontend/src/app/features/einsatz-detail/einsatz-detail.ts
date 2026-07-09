@@ -8,6 +8,7 @@ import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 import { AuthService } from '../../core/auth.service';
 import { EinsatzService } from '../../core/einsatz.service';
 import {
+  ASSIGNMENT_ROLES,
   MaterialLogInput,
   ServiceJobDetail,
   ServiceJobStatus,
@@ -22,7 +23,9 @@ import {
 import { WorkOrderStatus } from '../../core/auftrag.model';
 import { Dialog } from '../../shared/dialog/dialog';
 import { Feld, FeldOption } from '../../shared/formular/feld';
+import { ReferenzWahl, RefSuche } from '../../shared/formular/referenz-wahl';
 import { apiFehlerZuweisen } from '../../shared/formular/api-fehler';
+import { map } from 'rxjs';
 import { deZuApiDezimal, dezimalValidator } from '../../shared/formular/dezimal';
 import {
   felderAlsBeruehrtMarkieren,
@@ -36,7 +39,7 @@ type ViewState =
   | { kind: 'error' };
 
 type Meldung = { art: 'erfolg' | 'fehler'; text: string };
-type DialogArt = 'termin' | 'status' | 'zeit' | 'material';
+type DialogArt = 'termin' | 'status' | 'zeit' | 'material' | 'zuweisung';
 
 const JOB_STATUSES: ServiceJobStatus[] = [
   'UNGEPLANT',
@@ -52,7 +55,7 @@ const JOB_STATUSES: ServiceJobStatus[] = [
 
 @Component({
   selector: 'app-einsatz-detail',
-  imports: [Mappe, RouterLink, KeinZugriff, ReactiveFormsModule, Dialog, Feld],
+  imports: [Mappe, RouterLink, KeinZugriff, ReactiveFormsModule, Dialog, Feld, ReferenzWahl],
   templateUrl: './einsatz-detail.html',
   styleUrl: './einsatz-detail.scss',
 })
@@ -104,6 +107,14 @@ export class EinsatzDetail {
   protected readonly dialogLaedt = signal(false);
   protected readonly formularMeldung = signal<string | null>(null);
 
+  protected readonly rollen: FeldOption[] = ASSIGNMENT_ROLES;
+
+  /** Benutzersuche (aktive app_user) für die Einsatz-Zuweisung. */
+  protected readonly benutzerSuche: RefSuche = (q) =>
+    this.svc.listUsers(q).pipe(
+      map((users) => users.map((u) => ({ id: u.id, label: u.display_name }))),
+    );
+
   protected readonly zeitarten: FeldOption[] = [
     { wert: 'ARBEITSZEIT', label: 'Arbeitszeit' },
     { wert: 'FAHRTZEIT', label: 'Fahrtzeit' },
@@ -146,6 +157,13 @@ export class EinsatzDetail {
     }),
     unit: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
     note: this.fb.control('', { nonNullable: true }),
+  });
+  protected readonly zuweisungForm = this.fb.group({
+    assignee_user_id: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.required],
+    }),
+    role: this.fb.control('TECHNICIAN', { nonNullable: true, validators: [Validators.required] }),
   });
 
   constructor() {
@@ -197,6 +215,9 @@ export class EinsatzDetail {
         break;
       case 'material':
         this.materialForm.reset({ description: '', quantity: '', unit: '', note: '' });
+        break;
+      case 'zuweisung':
+        this.zuweisungForm.reset({ assignee_user_id: '', role: 'TECHNICIAN' });
         break;
     }
     this.dialogOffen.set(art);
@@ -295,6 +316,20 @@ export class EinsatzDetail {
       error: (err) => {
         this.dialogLaedt.set(false);
         this.formularMeldung.set(apiFehlerZuweisen(err, this.materialForm).formular);
+      },
+    });
+  }
+
+  zuweisungAbsenden(): void {
+    const d = this.daten();
+    if (!d || this.nichtBereit(this.zuweisungForm)) return;
+    const v = this.zuweisungForm.getRawValue();
+    this.dialogLaedt.set(true);
+    this.svc.assign(d.id, { assignee_user_id: v.assignee_user_id, role: v.role }).subscribe({
+      next: () => this.nachSchreiben('Mitarbeiter zugewiesen.'),
+      error: (err) => {
+        this.dialogLaedt.set(false);
+        this.formularMeldung.set(apiFehlerZuweisen(err, this.zuweisungForm).formular);
       },
     });
   }

@@ -284,3 +284,114 @@ def test_set_article_sale_price_ohne_recht_403(client_with_role, seeded):
         content_type="application/json",
     )
     assert r.status_code == 403
+
+
+# --- Stammdaten-Auswahllisten (Lohn-/VK-Gruppen) ---------------------------
+
+@pytest.mark.django_db
+def test_wage_groups_liste(admin_client, seeded):
+    r = admin_client.get("/api/pricing/wage_groups")
+    assert r.status_code == 200
+    body = r.json()
+    namen = {g["name"] for g in body}
+    assert "Monteur" in namen
+    # nur aktive standardmäßig, alle Felder vorhanden
+    g = next(g for g in body if g["name"] == "Monteur")
+    assert g["status"] == "AKTIV"
+    assert g["kind"] == "LOHN"
+    assert g["hourly_rate"] == "58.00"
+
+
+@pytest.mark.django_db
+def test_wage_groups_ohne_recht_403(client_with_role, seeded):
+    """MONTEUR hat kein pricing-Recht → 403."""
+    c = client_with_role("MONTEUR")
+    r = c.get("/api/pricing/wage_groups")
+    assert r.status_code == 403
+
+
+@pytest.mark.django_db
+def test_sale_price_groups_liste_und_filter(admin_client, seeded):
+    grp = artikel_service.create_sale_price_group(
+        seeded["app_user"].id, name="Auf40", calc_basis="EK",
+        operator="AUFSCHLAG", percent_change="40.000",
+    )
+    r = admin_client.get("/api/pricing/sale_price_groups")
+    assert r.status_code == 200
+    ids = {g["id"] for g in r.json()}
+    assert str(grp.id) in ids
+    # Statusfilter: INAKTIV liefert die AKTIVE Gruppe nicht.
+    r2 = admin_client.get("/api/pricing/sale_price_groups?status=INAKTIV")
+    assert str(grp.id) not in {g["id"] for g in r2.json()}
+
+
+@pytest.mark.django_db
+def test_sale_price_groups_ohne_recht_403(client_with_role, seeded):
+    c = client_with_role("MONTEUR")
+    r = c.get("/api/pricing/sale_price_groups")
+    assert r.status_code == 403
+
+
+# --- Positions-Editor für Leistungen (Stückliste erweitern) ----------------
+
+@pytest.mark.django_db
+def test_add_assembly_components_happy(admin_client, seeded):
+    """Weitere Position anhängen: Stückliste wächst, Position wird fortgezählt."""
+    asm = seeded["assembly"]
+    r = admin_client.post(
+        f"/api/pricing/assemblies/{asm.id}/components",
+        data={"components": [
+            {"article_id": str(seeded["mat"].id), "quantity": "5.000"},
+        ]},
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    comps = r.json()["components"]
+    # Seeded: 2 Positionen; jetzt 3, die neue hinten (position 3).
+    assert len(comps) == 3
+    assert [c["position"] for c in comps] == [1, 2, 3]
+    assert comps[2]["kind"] == "MATERIAL"
+
+
+@pytest.mark.django_db
+def test_add_assembly_components_xor_422(admin_client, seeded):
+    """Position mit Material UND Lohn verletzt das XOR → 422 (kein DB-500)."""
+    r = admin_client.post(
+        f"/api/pricing/assemblies/{seeded['assembly'].id}/components",
+        data={"components": [{"article_id": str(seeded["mat"].id)}]},  # ohne quantity
+        content_type="application/json",
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.django_db
+def test_add_assembly_components_unbekannter_artikel_422(admin_client, seeded):
+    """Unbekannter Artikel-FK → sauberer 422 (Vorab-Validierung)."""
+    r = admin_client.post(
+        f"/api/pricing/assemblies/{seeded['assembly'].id}/components",
+        data={"components": [{"article_id": str(uuid.uuid4()), "quantity": "1.000"}]},
+        content_type="application/json",
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.django_db
+def test_add_assembly_components_unbekannte_leistung_404(admin_client, seeded):
+    r = admin_client.post(
+        f"/api/pricing/assemblies/{uuid.uuid4()}/components",
+        data={"components": [{"article_id": str(seeded["mat"].id), "quantity": "1.000"}]},
+        content_type="application/json",
+    )
+    assert r.status_code == 404
+
+
+@pytest.mark.django_db
+def test_add_assembly_components_ohne_recht_403(client_with_role, seeded):
+    """TECHNISCHE_LEITUNG hat pricing.LESEN, aber nicht AENDERN → 403."""
+    c = client_with_role("TECHNISCHE_LEITUNG")
+    r = c.post(
+        f"/api/pricing/assemblies/{seeded['assembly'].id}/components",
+        data={"components": [{"article_id": str(seeded["mat"].id), "quantity": "1.000"}]},
+        content_type="application/json",
+    )
+    assert r.status_code == 403

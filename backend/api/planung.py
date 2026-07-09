@@ -21,6 +21,7 @@ from ninja.security import django_auth
 
 from api.permissions import require, require_scoped
 from db_core.models import (
+    AppUser,
     JobAssignment,
     MaterialEntry,
     ServiceJob,
@@ -353,6 +354,41 @@ def get_einsatz(request, job_id: UUID):
         time_entries=time_entries,
         material_entries=material_entries,
     )
+
+
+# --- Benutzer-Auswahlliste (Zuweisung) -------------------------------------
+
+class AssignableUserOut(Schema):
+    id: UUID
+    display_name: str
+
+
+@router.get("/users", response=list[AssignableUserOut])
+def list_assignable_users(request, q: str | None = Query(None)):
+    """Aktive Benutzer (security.app_user) als schlanke Zuweisungs-Auswahlliste.
+
+    Speist die Zuweisung von Einsätzen (assignee_user_id) und Aufgaben sowie das
+    Buchen von Zeit für eine andere Person. Deshalb liegt der Endpunkt beim
+    Modul `workflow` (Aktion LESEN) — es ist eine Arbeits-Zuweisungsliste, KEIN
+    Personalstammsatz (kein `hr`): ein Disponent ohne hr-Recht muss Monteure
+    einplanen können, hat aber hier über sein `workflow`-LESEN Zugriff.
+
+    Torfunktion `require` (fail-closed): Ein MONTEUR hat `workflow`/LESEN nur als
+    Scope 'EIGENE' und bekommt bewusst 403 — das ist konsistent, denn er darf
+    ohnehin nur sich selbst zuweisen (siehe log_time) und braucht keine
+    Fremd-Auswahlliste.
+
+    Datenminimierung: Ausgabe strikt auf id + display_name beschränkt — keine
+    E-Mail, kein Status, keine sonstigen Personendaten.
+    """
+    require(request, "workflow", "LESEN")
+    qs = AppUser.objects.filter(status="ACTIVE")
+    if q:
+        qs = qs.filter(display_name__icontains=q.strip())
+    return [
+        AssignableUserOut(id=u.id, display_name=u.display_name)
+        for u in qs.order_by("display_name", "id")[:200]
+    ]
 
 
 # --- Schreibende Endpoints (Session-Auth Pflicht) --------------------------

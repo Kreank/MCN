@@ -30,7 +30,29 @@
       <span mappe-kopf class="stamp {{ statusClass(daten()!.status) }}">{{ statusLabel(daten()!.status) }}</span>
       <span mappe-kopf class="stamp stamp--type">je {{ daten()!.unit }}</span>
 
+      @if (meldung(); as m) {
+        <div
+          class="melde melde--{{ m.art === 'erfolg' ? 'erfolg' : 'fehler' }} detail__melde"
+          [attr.role]="m.art === 'fehler' ? 'alert' : 'status'"
+        >
+          <span class="melde__mark" aria-hidden="true">{{ m.art === 'fehler' ? '!' : '✓' }}</span>
+          <span class="melde__text">
+            <strong>{{ m.art === 'fehler' ? 'Fehler:' : 'Erledigt:' }}</strong> {{ m.text }}
+          </span>
+          <button type="button" class="melde__zu" (click)="meldungSchliessen()" aria-label="Meldung schließen">
+            <span aria-hidden="true">✕</span>
+          </button>
+        </div>
+      }
+
       @if (tab() === 'stueckliste') {
+        @if (darfAendern()) {
+          <div class="tab-aktionen">
+            <button type="button" class="btn btn--primary" (click)="posOeffnen()">
+              <span aria-hidden="true">＋</span> Position anhängen
+            </button>
+          </div>
+        }
         @if (daten()!.components.length === 0) {
           <div class="tab-platzhalter"><p>Diese Leistung hat noch keine Positionen (Material oder Lohn).</p></div>
         } @else {
@@ -70,5 +92,69 @@
         }
       }
     </app-mappe>
+
+    <!-- ---------------------------- Position anhängen --------------------- -->
+    <app-dialog [offen]="posOffen()" titel="Position anhängen" (schliessen)="posSchliessen()">
+      <form id="pos-form" class="dialog-form" (submit)="$event.preventDefault(); posAbsenden()" novalidate>
+        @if (formularMeldung(); as fm) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+          </div>
+        }
+        <app-feld
+          [control]="posForm.controls.kind"
+          label="Art der Position"
+          typ="select"
+          [pflicht]="true"
+          [optionen]="posArten"
+        />
+        @if (posForm.controls.kind.value === 'MATERIAL') {
+          <app-referenz-wahl
+            [control]="posForm.controls.article_id"
+            label="Artikel"
+            [pflicht]="true"
+            platzhalter="Nummer oder Bezeichnung suchen"
+            [suche]="artikelSuche"
+          />
+          <app-feld
+            [control]="posForm.controls.quantity"
+            label="Menge"
+            typ="zahl"
+            [pflicht]="true"
+            hinweis="Menge je Leistungseinheit, z. B. 2,5."
+          />
+        } @else {
+          <app-feld
+            [control]="posForm.controls.wage_group_id"
+            label="Lohngruppe"
+            typ="select"
+            [pflicht]="true"
+            platzhalter="Lohngruppe wählen"
+            [optionen]="lohngruppen()"
+            [hinweis]="lohngruppen().length === 0 ? 'Keine Lohngruppen verfügbar.' : null"
+          />
+          <app-feld
+            [control]="posForm.controls.minutes"
+            label="Zeit (Minuten)"
+            typ="zahl"
+            [pflicht]="true"
+            hinweis="Sollzeit je Leistungseinheit, z. B. 30."
+          />
+        }
+        <app-feld
+          [control]="posForm.controls.note"
+          label="Notiz"
+          typ="textarea"
+          hinweis="Optionaler Vermerk zur Position."
+        />
+      </form>
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="posLaedt()" (click)="posSchliessen()">Abbrechen</button>
+        <button type="submit" form="pos-form" class="btn btn--primary" [disabled]="posLaedt()" [attr.aria-busy]="posLaedt()">
+          {{ posLaedt() ? 'Wird angehängt …' : 'Position anhängen' }}
+        </button>
+      </div>
+    </app-dialog>
   }
 }

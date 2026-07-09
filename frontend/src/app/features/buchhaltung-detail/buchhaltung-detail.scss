@@ -130,6 +130,55 @@
   font-size: var(--step--1);
   color: var(--ink-faint);
 }
+// Stornierte Zahlung: gedämpft und durchgestrichener Betrag (Text-Marke „Storniert"
+// trägt die Aussage zusätzlich — Status nie nur über Farbe).
+.buchung--storniert {
+  opacity: 0.72;
+  border-left-color: var(--warn-ink);
+
+  .buchung__betrag {
+    text-decoration: line-through;
+  }
+}
+.buchung__aktionen {
+  flex: none;
+  display: flex;
+  gap: var(--space-2);
+}
+.mini {
+  min-height: 34px;
+  padding: 0 var(--space-3);
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+
+  &:hover:not(:disabled) {
+    border-color: var(--ink);
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+  &:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+}
+.mini--warn {
+  color: var(--warn-ink);
+  border-color: color-mix(in srgb, var(--warn-ink) 45%, var(--line-strong));
+
+  &:hover:not(:disabled) {
+    border-color: var(--warn-ink);
+  }
+}
 
 // ============================ Mahnverlauf ===================================
 .verlauf {

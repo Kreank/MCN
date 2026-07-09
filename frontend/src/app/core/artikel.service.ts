@@ -8,10 +8,13 @@ import {
   ArticlePage,
   ArticleSalePrice,
   ArticleSalePriceIn,
+  AssemblyComponentsInput,
   AssemblyDetail,
   AssemblyIn,
   AssemblyPage,
+  SalePriceGroup,
   StammQuery,
+  WageGroup,
 } from './artikel.model';
 
 /** Typisierter Zugriff auf die Artikel-/Leistungs-API (dev-Proxy: /api -> :8000). */
@@ -72,6 +75,31 @@ export class ArtikelService {
   ): Observable<ArticleSalePrice> {
     return this.http.put<ArticleSalePrice>(
       `${this.base}/articles/${articleId}/sale_price`,
+      payload,
+    );
+  }
+
+  /** Lohn-/Maschinengruppen als Auswahlliste (Standard: nur AKTIV). */
+  listWageGroups(status?: string | null): Observable<WageGroup[]> {
+    let params = new HttpParams();
+    if (status) params = params.set('status', status);
+    return this.http.get<WageGroup[]>(`${this.base}/wage_groups`, { params });
+  }
+
+  /** VK-Kalkulationsgruppen als Auswahlliste (Standard: nur AKTIV). */
+  listSalePriceGroups(status?: string | null): Observable<SalePriceGroup[]> {
+    let params = new HttpParams();
+    if (status) params = params.set('status', status);
+    return this.http.get<SalePriceGroup[]>(`${this.base}/sale_price_groups`, { params });
+  }
+
+  /** Stückliste einer Leistung erweitern. Erfordert Recht pricing.AENDERN. */
+  addAssemblyComponents(
+    assemblyId: string,
+    payload: AssemblyComponentsInput,
+  ): Observable<AssemblyDetail> {
+    return this.http.post<AssemblyDetail>(
+      `${this.base}/assemblies/${assemblyId}/components`,
       payload,
     );
   }

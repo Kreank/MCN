@@ -456,3 +456,67 @@ def set_article_sale_price(request, article_id: UUID, payload: ArticleSalePriceI
     except ValueError as exc:
         raise HttpError(422, str(exc))
     return ArticleSalePrice.objects.get(id=asp.id)
+
+
+# --- Stammdaten-Listen (Auswahllisten für Schreib-UIs) ---------------------
+# Lohn- und VK-Preisgruppen als schlanke Auswahllisten für die Leistungs-
+# Stückliste (Lohnpositionen) bzw. den VK-Formelpreis (Preisgruppen-Wahl).
+# Recht `pricing`/LESEN, `require` (fail-closed): `pricing` kennt keine
+# 'EIGENE'-Rolle, ein Scope-Konflikt kann hier also gar nicht auftreten.
+
+@router.get("/wage_groups", response=list[WageGroupOut])
+def list_wage_groups(request, status: str | None = Query(None)):
+    """Lohn-/Maschinengruppen auflisten (Standard: nur AKTIV). status-Filter
+    optional (z. B. INAKTIV zum Aufräumen)."""
+    require(request, "pricing", "LESEN")
+    qs = WageGroup.objects.all()
+    qs = qs.filter(status=status) if status else qs.filter(status="AKTIV")
+    return list(qs.order_by("name", "id"))
+
+
+@router.get("/sale_price_groups", response=list[SalePriceGroupOut])
+def list_sale_price_groups(request, status: str | None = Query(None)):
+    """VK-Kalkulationsgruppen auflisten (Standard: nur AKTIV). status-Filter
+    optional."""
+    require(request, "pricing", "LESEN")
+    qs = SalePriceGroup.objects.all()
+    qs = qs.filter(status=status) if status else qs.filter(status="AKTIV")
+    return list(qs.order_by("name", "id"))
+
+
+class AssemblyComponentsIn(Schema):
+    components: list[ComponentIn]
+
+
+@router.post(
+    "/assemblies/{assembly_id}/components", response=AssemblyDetailOut, auth=django_auth
+)
+def add_assembly_components(request, assembly_id: UUID, payload: AssemblyComponentsIn):
+    """Fügt einer bestehenden Leistung Positionen hinzu (Recht `pricing`/AENDERN).
+
+    Die Stückliste ist nach der Anlage änderbar: pricing.assembly_component trägt
+    keinen Unveränderlichkeits-Trigger (anders als eingefrorene Belegpositionen).
+    Neue Positionen werden hinten angehängt; die FKs (Artikel/Lohngruppe) prüft
+    der Service vorab (klarer 422 statt DB-IntegrityError). Antwort: die
+    aktualisierte Leistung inkl. vollständiger Stückliste.
+    """
+    actor, _ = require(request, "pricing", "AENDERN")
+    if not Assembly.objects.filter(id=assembly_id).exists():
+        raise HttpError(404, "Leistung nicht gefunden.")
+    components = [
+        {
+            "article_id": c.article_id,
+            "quantity": _quantize(c.quantity, 3),
+            "wage_group_id": c.wage_group_id,
+            "minutes": _quantize(c.minutes, 2),
+            "note": c.note,
+        }
+        for c in payload.components
+    ]
+    try:
+        artikel_service.add_assembly_components(
+            actor, assembly_id=assembly_id, components=components
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _assembly_detail(assembly_id)

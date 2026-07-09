@@ -123,15 +123,19 @@ class OpenItemListOut(Schema):
 
 
 class PaymentOut(Schema):
+    id: UUID
     payment_type: str
     amount: Decimal
     currency: str
     paid_at: date
     import_source: str
+    # Storno-Kennzeichnung für das UI (was ist noch stornierbar?):
+    is_reversal: bool  # selbst eine Stornobuchung (payment_type STORNO_BUCHUNG)
+    is_reversed: bool  # bereits durch eine Gegenbuchung storniert
+    is_reversible: bool  # eingehende Zahlung, noch nicht storniert → reverse möglich
 
 
 class PaymentDetailOut(PaymentOut):
-    id: UUID
     invoice_id: UUID
     external_reference: str
 
@@ -219,7 +223,58 @@ class OpenItemFilter(Schema):
 
 # --- Mapper ----------------------------------------------------------------
 
+# Storno-Buchungen tragen die Referenz 'STORNO:<id-der-Ursprungszahlung>'
+# (buchhaltung-Service, es gibt keinen FK). Daraus leitet das UI ab, welche
+# Zahlung schon storniert ist.
+_STORNO_PREFIX = "STORNO:"
+
+
+def _reversed_ids(payments):
+    """IDs (als str) der Zahlungen, zu denen bereits eine Stornobuchung existiert."""
+    out = set()
+    for p in payments:
+        ref = p.external_reference or ""
+        if ref.startswith(_STORNO_PREFIX):
+            out.add(ref[len(_STORNO_PREFIX):])
+    return out
+
+
+def _payment_flags(p, reversed_ids):
+    """(is_reversal, is_reversed, is_reversible) — Stornierbarkeit fürs UI.
+
+    is_reversible spiegelt exakt die Service-Regel (reverse_payment): nur eine
+    eingehende (positiv gewertete) Zahlung, die nicht bereits storniert wurde,
+    lässt sich stornieren. Rückerstattungen und Storno-Buchungen (negativ) nicht.
+    """
+    is_reversal = p.payment_type == "STORNO_BUCHUNG"
+    is_reversed = str(p.id) in reversed_ids
+    is_reversible = PAYMENT_SIGN.get(p.payment_type, 0) > 0 and not is_reversed
+    return is_reversal, is_reversed, is_reversible
+
+
+def _payment_out(p, reversed_ids):
+    is_reversal, is_reversed, is_reversible = _payment_flags(p, reversed_ids)
+    return PaymentOut(
+        id=p.id,
+        payment_type=p.payment_type,
+        amount=p.amount,
+        currency=p.currency,
+        paid_at=p.paid_at,
+        import_source=p.import_source,
+        is_reversal=is_reversal,
+        is_reversed=is_reversed,
+        is_reversible=is_reversible,
+    )
+
+
 def _payment_detail(p):
+    # Einzelzahlung (Schreib-Antwort): den Storno-Status je Rechnung frisch laden.
+    reversed_ids = _reversed_ids(
+        Payment.objects.filter(
+            invoice_id=p.invoice_id, external_reference__startswith=_STORNO_PREFIX
+        )
+    )
+    is_reversal, is_reversed, is_reversible = _payment_flags(p, reversed_ids)
     return PaymentDetailOut(
         id=p.id,
         invoice_id=p.invoice_id,
@@ -229,6 +284,9 @@ def _payment_detail(p):
         paid_at=p.paid_at,
         import_source=p.import_source,
         external_reference=p.external_reference,
+        is_reversal=is_reversal,
+        is_reversed=is_reversed,
+        is_reversible=is_reversible,
     )
 
 
@@ -336,16 +394,11 @@ def get_open_item(request, invoice_id: UUID):
     if inv is None:
         raise HttpError(404, "Veröffentlichte Rechnung nicht gefunden.")
 
-    payments = [
-        PaymentOut(
-            payment_type=p.payment_type,
-            amount=p.amount,
-            currency=p.currency,
-            paid_at=p.paid_at,
-            import_source=p.import_source,
-        )
-        for p in Payment.objects.filter(invoice_id=inv.id).order_by("paid_at", "imported_at")
-    ]
+    payment_rows = list(
+        Payment.objects.filter(invoice_id=inv.id).order_by("paid_at", "imported_at")
+    )
+    reversed_ids = _reversed_ids(payment_rows)
+    payments = [_payment_out(p, reversed_ids) for p in payment_rows]
     notices = [
         DunningNoticeOut(
             level=n.level_id,

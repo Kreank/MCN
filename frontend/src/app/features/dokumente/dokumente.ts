@@ -1,19 +1,44 @@
 import { Component, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { RouterLink } from '@angular/router';
-import { Subject, debounceTime, distinctUntilChanged } from 'rxjs';
-import { BelegService } from '../../core/beleg.service';
 import {
+  FormArray,
+  FormBuilder,
+  FormGroup,
+  ReactiveFormsModule,
+  Validators,
+} from '@angular/forms';
+import { Subject, debounceTime, distinctUntilChanged, map } from 'rxjs';
+import { BelegService } from '../../core/beleg.service';
+import { PropertyService } from '../../core/property.service';
+import { ProjektService } from '../../core/projekt.service';
+import { AuftragService } from '../../core/auftrag.service';
+import { AuthService } from '../../core/auth.service';
+import {
+  InvoiceCreate,
   InvoicePage,
   InvoiceStatus,
   InvoiceType,
+  LineType,
+  QuoteCreate,
+  QuoteLineInput,
   QuotePage,
   QuoteStatus,
 } from '../../core/beleg.model';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { VerbotenState, fehlerState } from '../../shared/http-fehler';
+import { Dialog } from '../../shared/dialog/dialog';
+import { Feld, FeldOption } from '../../shared/formular/feld';
+import { ReferenzWahl, RefSuche } from '../../shared/formular/referenz-wahl';
+import { apiFehlerZuweisen } from '../../shared/formular/api-fehler';
+import {
+  felderAlsBeruehrtMarkieren,
+  serverFehlerZuruecksetzen,
+} from '../../shared/formular/formular.util';
+import { deZuApiDezimal, dezimalValidator } from '../../shared/formular/dezimal';
 
 type Modus = 'angebote' | 'rechnungen';
+type Meldung = { art: 'erfolg' | 'fehler'; text: string };
 
 type ViewState =
   | { kind: 'loading' }
@@ -22,14 +47,21 @@ type ViewState =
   | VerbotenState
   | { kind: 'error' };
 
+const TEXT_LINE_TYPES: LineType[] = ['TEXT', 'ZWISCHENSUMME'];
+
 @Component({
   selector: 'app-dokumente',
-  imports: [RouterLink, KeinZugriff],
+  imports: [RouterLink, KeinZugriff, ReactiveFormsModule, Dialog, Feld, ReferenzWahl],
   templateUrl: './dokumente.html',
   styleUrl: './dokumente.scss',
 })
 export class Dokumente {
   private readonly svc = inject(BelegService);
+  private readonly propertySvc = inject(PropertyService);
+  private readonly projektSvc = inject(ProjektService);
+  private readonly auftragSvc = inject(AuftragService);
+  private readonly auth = inject(AuthService);
+  private readonly fb = inject(FormBuilder);
 
   protected readonly pageSize = 20;
   protected readonly modus = signal<Modus>('angebote');
@@ -39,6 +71,72 @@ export class Dokumente {
   protected readonly state = signal<ViewState>({ kind: 'loading' });
 
   protected readonly skeletons = Array.from({ length: 6 });
+
+  // --- Anlegen (GoBD-Belege) ----------------------------------------------
+  protected readonly darfAnlegen = computed(() => this.auth.darf('invoicing', 'ANLEGEN'));
+  protected readonly meldung = signal<Meldung | null>(null);
+  /** Offener Anlage-Dialog ('angebot' | 'rechnung') oder null. */
+  protected readonly neuArt = signal<'angebot' | 'rechnung' | null>(null);
+  protected readonly neuLaedt = signal(false);
+  protected readonly formularMeldung = signal<string | null>(null);
+
+  protected readonly lineTypeOptionen: FeldOption[] = [
+    { wert: 'MATERIAL', label: 'Material' },
+    { wert: 'ARBEITSZEIT', label: 'Arbeitszeit' },
+    { wert: 'PAUSCHALE', label: 'Pauschale' },
+    { wert: 'FREMDLEISTUNG', label: 'Fremdleistung' },
+    { wert: 'FAHRT', label: 'Fahrt' },
+    { wert: 'ZUSCHLAG', label: 'Zuschlag' },
+    { wert: 'TEXT', label: 'Textzeile' },
+    { wert: 'ZWISCHENSUMME', label: 'Zwischensumme' },
+  ];
+  protected readonly taxCodeOptionen: FeldOption[] = [
+    { wert: 'DE_19', label: 'USt 19 %' },
+    { wert: 'DE_7', label: 'USt 7 %' },
+    { wert: 'DE_0', label: 'Steuerfrei (0 %)' },
+    { wert: 'DE_13B', label: '§13b UStG (Reverse Charge)' },
+  ];
+  protected readonly invoiceTypeOptionen: FeldOption[] = [
+    { wert: 'RECHNUNG', label: 'Rechnung' },
+    { wert: 'ABSCHLAGSRECHNUNG', label: 'Abschlagsrechnung' },
+    { wert: 'TEILRECHNUNG', label: 'Teilrechnung' },
+    { wert: 'SCHLUSSRECHNUNG', label: 'Schlussrechnung' },
+  ];
+
+  /** Liegenschaftssuche (Pflicht-Objektbezug des Belegs). */
+  protected readonly liegenschaftSuche: RefSuche = (q) =>
+    this.propertySvc.list({ page: 1, page_size: 20, q }).pipe(
+      map((p) =>
+        p.items.map((o) => ({ id: o.id, label: o.name, sub: `${o.property_number} · ${o.city}` })),
+      ),
+    );
+  /** Projektsuche (optionaler Bezug). */
+  protected readonly projektSuche: RefSuche = (q) =>
+    this.projektSvc.list({ page: 1, page_size: 20, q }).pipe(
+      map((p) =>
+        p.items.map((o) => ({ id: o.id, label: o.name, sub: o.project_number })),
+      ),
+    );
+  /** Auftragssuche (optionaler Bezug der Rechnung). */
+  protected readonly auftragSuche: RefSuche = (q) =>
+    this.auftragSvc.list({ page: 1, page_size: 20, q }).pipe(
+      map((p) =>
+        p.items.map((o) => ({ id: o.id, label: o.title, sub: o.order_number })),
+      ),
+    );
+
+  protected readonly neuForm = this.fb.group({
+    title: this.fb.control('', { nonNullable: true }),
+    property_id: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
+    project_id: this.fb.control('', { nonNullable: true }),
+    work_order_id: this.fb.control('', { nonNullable: true }),
+    invoice_type: this.fb.control('RECHNUNG', { nonNullable: true }),
+    quote_date: this.fb.control('', { nonNullable: true }),
+    valid_until_date: this.fb.control('', { nonNullable: true }),
+    invoice_date: this.fb.control('', { nonNullable: true }),
+    due_date: this.fb.control('', { nonNullable: true }),
+    lines: this.fb.array<FormGroup>([]),
+  });
 
   private readonly searchInput$ = new Subject<string>();
   private reqId = 0;
@@ -123,6 +221,176 @@ export class Dokumente {
         },
       });
     }
+  }
+
+  // ---- Anlegen ------------------------------------------------------------
+  /** FormArray der Positionen (typisiert für den Zugriff im Template). */
+  get lines(): FormArray<FormGroup> {
+    return this.neuForm.controls.lines;
+  }
+
+  zeilen(): FormGroup[] {
+    return this.lines.controls;
+  }
+
+  private zeileGruppe(): FormGroup {
+    return this.fb.group({
+      line_type: this.fb.control('MATERIAL', { nonNullable: true }),
+      description: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
+      quantity: this.fb.control('', { nonNullable: true, validators: [dezimalValidator] }),
+      unit: this.fb.control('', { nonNullable: true }),
+      unit_price: this.fb.control('', { nonNullable: true, validators: [dezimalValidator] }),
+      tax_code: this.fb.control('DE_19', { nonNullable: true }),
+    });
+  }
+
+  zeileHinzufuegen(): void {
+    this.lines.push(this.zeileGruppe());
+  }
+
+  zeileEntfernen(i: number): void {
+    this.lines.removeAt(i);
+  }
+
+  istTextZeile(g: FormGroup): boolean {
+    return TEXT_LINE_TYPES.includes(g.controls['line_type'].value as LineType);
+  }
+
+  neuOeffnen(art: 'angebot' | 'rechnung'): void {
+    this.neuForm.reset({
+      title: '',
+      property_id: '',
+      project_id: '',
+      work_order_id: '',
+      invoice_type: 'RECHNUNG',
+      quote_date: '',
+      valid_until_date: '',
+      invoice_date: '',
+      due_date: '',
+    });
+    // Titel ist nur für Angebote ein Pflichtfeld (die Rechnung trägt keinen).
+    const titel = this.neuForm.controls.title;
+    if (art === 'angebot') titel.setValidators([Validators.required, Validators.maxLength(200)]);
+    else titel.clearValidators();
+    titel.updateValueAndValidity();
+    this.lines.clear();
+    this.zeileHinzufuegen();
+    this.formularMeldung.set(null);
+    this.neuArt.set(art);
+  }
+
+  neuSchliessen(): void {
+    if (!this.neuLaedt()) this.neuArt.set(null);
+  }
+
+  /** Pflichtfelder je Position prüfen (Nicht-Text-Zeilen: Menge/Preis/Steuer). */
+  private zeilenPruefen(): boolean {
+    let ok = true;
+    for (const g of this.lines.controls) {
+      if (this.istTextZeile(g)) continue;
+      for (const feld of ['quantity', 'unit_price']) {
+        const c = g.controls[feld];
+        if (!String(c.value ?? '').trim()) {
+          c.setErrors({ ...(c.errors ?? {}), required: true });
+          c.markAsTouched();
+          ok = false;
+        }
+      }
+    }
+    return ok;
+  }
+
+  neuAbsenden(): void {
+    const art = this.neuArt();
+    if (!art || this.neuLaedt()) return;
+    serverFehlerZuruecksetzen(this.neuForm);
+    this.formularMeldung.set(null);
+    felderAlsBeruehrtMarkieren(this.neuForm);
+    const zeilenOk = this.zeilenPruefen();
+    if (this.neuForm.invalid || !zeilenOk) return;
+    if (this.lines.length === 0) {
+      this.formularMeldung.set('Bitte mindestens eine Position erfassen.');
+      return;
+    }
+
+    const v = this.neuForm.getRawValue();
+    const lines: QuoteLineInput[] = this.lines.controls.map((g) => {
+      const lt = g.controls['line_type'].value as LineType;
+      const desc = String(g.controls['description'].value ?? '').trim();
+      if (TEXT_LINE_TYPES.includes(lt)) {
+        return { line_type: lt, description: desc };
+      }
+      return {
+        line_type: lt,
+        description: desc,
+        quantity: deZuApiDezimal(g.controls['quantity'].value),
+        unit: String(g.controls['unit'].value ?? '').trim() || null,
+        unit_price: deZuApiDezimal(g.controls['unit_price'].value),
+        tax_code: g.controls['tax_code'].value as string,
+      };
+    });
+
+    this.neuLaedt.set(true);
+    if (art === 'angebot') {
+      const payload: QuoteCreate = {
+        property_id: v.property_id,
+        title: v.title.trim(),
+        project_id: v.project_id || null,
+        quote_date: v.quote_date || null,
+        valid_until_date: v.valid_until_date || null,
+        lines,
+      };
+      this.svc.createQuote(payload).subscribe({
+        next: (q) => {
+          this.neuLaedt.set(false);
+          this.neuArt.set(null);
+          this.meldung.set({
+            art: 'erfolg',
+            text: `Angebotsentwurf angelegt (brutto ${this.euro(q.gross_total)}, vom Server berechnet).`,
+          });
+          this.modus.set('angebote');
+          this.query.set('');
+          this.page.set(1);
+          this.fetch();
+        },
+        error: (err) => {
+          this.neuLaedt.set(false);
+          this.formularMeldung.set(apiFehlerZuweisen(err, this.neuForm).formular);
+        },
+      });
+    } else {
+      const payload: InvoiceCreate = {
+        property_id: v.property_id,
+        invoice_type: v.invoice_type as InvoiceType,
+        project_id: v.project_id || null,
+        work_order_id: v.work_order_id || null,
+        invoice_date: v.invoice_date || null,
+        due_date: v.due_date || null,
+        lines,
+      };
+      this.svc.createInvoice(payload).subscribe({
+        next: (inv) => {
+          this.neuLaedt.set(false);
+          this.neuArt.set(null);
+          this.meldung.set({
+            art: 'erfolg',
+            text: `Rechnungsentwurf angelegt (brutto ${this.euro(inv.gross_total)}, vom Server berechnet).`,
+          });
+          this.modus.set('rechnungen');
+          this.query.set('');
+          this.page.set(1);
+          this.fetch();
+        },
+        error: (err) => {
+          this.neuLaedt.set(false);
+          this.formularMeldung.set(apiFehlerZuweisen(err, this.neuForm).formular);
+        },
+      });
+    }
+  }
+
+  meldungSchliessen(): void {
+    this.meldung.set(null);
   }
 
   // ---- Darstellungshelfer -------------------------------------------------

@@ -1,9 +1,15 @@
 import { Component, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { RouterLink } from '@angular/router';
-import { Subject, debounceTime, distinctUntilChanged } from 'rxjs';
+import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
+import { Subject, debounceTime, distinctUntilChanged, map } from 'rxjs';
 import { MitarbeiterService } from '../../core/mitarbeiter.service';
+import { PartyService } from '../../core/party.service';
+import { EinsatzService } from '../../core/einsatz.service';
+import { ArtikelService } from '../../core/artikel.service';
+import { AuthService } from '../../core/auth.service';
 import {
+  EmployeeCreate,
   EmployeePage,
   EmployeeStatus,
   employeeStatusClass,
@@ -11,6 +17,14 @@ import {
 } from '../../core/mitarbeiter.model';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { VerbotenState, fehlerState } from '../../shared/http-fehler';
+import { Dialog } from '../../shared/dialog/dialog';
+import { Feld, FeldOption } from '../../shared/formular/feld';
+import { ReferenzWahl, RefSuche } from '../../shared/formular/referenz-wahl';
+import { apiFehlerZuweisen } from '../../shared/formular/api-fehler';
+import {
+  felderAlsBeruehrtMarkieren,
+  serverFehlerZuruecksetzen,
+} from '../../shared/formular/formular.util';
 
 type ViewState =
   | { kind: 'loading' }
@@ -19,15 +33,21 @@ type ViewState =
   | { kind: 'error' };
 
 type Segment = { value: EmployeeStatus | null; label: string };
+type Meldung = { art: 'erfolg' | 'fehler'; text: string };
 
 @Component({
   selector: 'app-mitarbeiter',
-  imports: [RouterLink, KeinZugriff],
+  imports: [RouterLink, KeinZugriff, ReactiveFormsModule, Dialog, Feld, ReferenzWahl],
   templateUrl: './mitarbeiter.html',
   styleUrl: './mitarbeiter.scss',
 })
 export class Mitarbeiter {
   private readonly svc = inject(MitarbeiterService);
+  private readonly partySvc = inject(PartyService);
+  private readonly planungSvc = inject(EinsatzService);
+  private readonly artikelSvc = inject(ArtikelService);
+  private readonly auth = inject(AuthService);
+  private readonly fb = inject(FormBuilder);
 
   protected readonly pageSize = 20;
   protected readonly segments: Segment[] = [
@@ -43,6 +63,37 @@ export class Mitarbeiter {
   protected readonly state = signal<ViewState>({ kind: 'loading' });
 
   protected readonly skeletons = Array.from({ length: 6 });
+
+  // --- Rechte (nur UI-Sichtbarkeit; der Server setzt sie durch) -----------
+  protected readonly darfAnlegen = computed(() => this.auth.darf('hr', 'ANLEGEN'));
+
+  // --- Anlage-Dialog ------------------------------------------------------
+  protected readonly meldung = signal<Meldung | null>(null);
+  protected readonly neuOffen = signal(false);
+  protected readonly neuLaedt = signal(false);
+  protected readonly formularMeldung = signal<string | null>(null);
+  /** Lohngruppen als Auswahl; leer, falls kein pricing-LESEN-Recht (siehe Hinweis). */
+  protected readonly lohngruppen = signal<FeldOption[]>([]);
+  protected readonly lohngruppenGeladen = signal(false);
+  protected readonly neuForm = this.fb.group({
+    app_user_id: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
+    party_id: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
+    hired_on: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
+    wage_group_id: this.fb.control('', { nonNullable: true }),
+    notes: this.fb.control('', { nonNullable: true }),
+  });
+
+  /** Benutzersuche (aktive app_user) für app_user_id. */
+  protected readonly benutzerSuche: RefSuche = (q) =>
+    this.planungSvc.listUsers(q).pipe(
+      map((users) => users.map((u) => ({ id: u.id, label: u.display_name }))),
+    );
+
+  /** Personensuche — der Endpunkt filtert serverseitig auf party_type=PERSON. */
+  protected readonly personSuche: RefSuche = (q) =>
+    this.partySvc.list({ page: 1, page_size: 20, q, party_type: 'PERSON' }).pipe(
+      map((p) => p.items.map((o) => ({ id: o.id, label: o.display_name }))),
+    );
 
   private readonly searchInput$ = new Subject<string>();
   private reqId = 0;
@@ -129,6 +180,77 @@ export class Mitarbeiter {
           if (id === this.reqId) this.state.set(fehlerState(err));
         },
       });
+  }
+
+  // ---- Anlegen ------------------------------------------------------------
+  neuOeffnen(): void {
+    this.neuForm.reset({
+      app_user_id: '',
+      party_id: '',
+      hired_on: '',
+      wage_group_id: '',
+      notes: '',
+    });
+    this.formularMeldung.set(null);
+    this.neuOffen.set(true);
+    if (!this.lohngruppenGeladen()) this.ladeLohngruppen();
+  }
+
+  neuSchliessen(): void {
+    if (!this.neuLaedt()) this.neuOffen.set(false);
+  }
+
+  private ladeLohngruppen(): void {
+    this.lohngruppenGeladen.set(true);
+    this.artikelSvc.listWageGroups().subscribe({
+      next: (wg) =>
+        this.lohngruppen.set(
+          wg.map((g) => ({ wert: g.id, label: `${g.name} · ${this.rate(g.hourly_rate)}` })),
+        ),
+      // 403 (kein pricing-LESEN) oder Netzfehler: Liste bleibt leer; Lohngruppe
+      // ist optional. Der Hinweis im Dialog nennt das.
+      error: () => this.lohngruppen.set([]),
+    });
+  }
+
+  neuAbsenden(): void {
+    if (this.neuLaedt()) return;
+    serverFehlerZuruecksetzen(this.neuForm);
+    this.formularMeldung.set(null);
+    felderAlsBeruehrtMarkieren(this.neuForm);
+    if (this.neuForm.invalid) return;
+
+    const v = this.neuForm.getRawValue();
+    const payload: EmployeeCreate = {
+      app_user_id: v.app_user_id,
+      party_id: v.party_id,
+      hired_on: v.hired_on,
+      wage_group_id: v.wage_group_id || null,
+      notes: v.notes.trim() || null,
+    };
+
+    this.neuLaedt.set(true);
+    this.svc.createEmployee(payload).subscribe({
+      next: (e) => {
+        this.neuLaedt.set(false);
+        this.neuOffen.set(false);
+        this.meldung.set({
+          art: 'erfolg',
+          text: `Mitarbeiter „${e.display_name}“ (Nr. ${e.employee_number}) wurde angelegt.`,
+        });
+        this.page.set(1);
+        this.status.set(null);
+        this.fetch();
+      },
+      error: (err) => {
+        this.neuLaedt.set(false);
+        this.formularMeldung.set(apiFehlerZuweisen(err, this.neuForm).formular);
+      },
+    });
+  }
+
+  meldungSchliessen(): void {
+    this.meldung.set(null);
   }
 
   // ---- Darstellungshelfer -------------------------------------------------

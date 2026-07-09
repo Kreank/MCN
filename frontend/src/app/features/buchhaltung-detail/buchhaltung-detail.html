@@ -126,16 +126,29 @@
           <div class="tab-platzhalter"><p>Zu dieser Rechnung wurde noch keine Zahlung erfasst.</p></div>
         } @else {
           <ul class="buchung-liste">
-            @for (p of daten()!.payments; track $index) {
-              <li class="buchung">
+            @for (p of daten()!.payments; track p.id) {
+              <li class="buchung" [class.buchung--storniert]="p.is_reversed">
                 <span class="buchung__kopf">
                   <span class="stamp stamp--type">{{ paymentTypeLabel(p.payment_type) }}</span>
                   <span class="buchung__datum">{{ d(p.paid_at) }}</span>
+                  @if (p.is_reversal) {
+                    <span class="stamp stamp--warn">Stornobuchung</span>
+                  }
+                  @if (p.is_reversed) {
+                    <span class="stamp stamp--warn">Storniert</span>
+                  }
                 </span>
                 <span class="buchung__betrag" [class.buchung__betrag--minus]="p.payment_type === 'STORNO_BUCHUNG' || p.payment_type === 'RUECKERSTATTUNG'">
                   {{ euro(p.amount) }}
                 </span>
                 <span class="buchung__quelle">{{ p.import_source }}</span>
+                @if (darfStornieren() && p.is_reversible) {
+                  <span class="buchung__aktionen">
+                    <button type="button" class="mini mini--warn" (click)="zStornoFragen(p)">
+                      Stornieren
+                    </button>
+                  </span>
+                }
               </li>
             }
           </ul>
@@ -285,6 +298,22 @@
         </button>
       </div>
     </app-dialog>
+
+    <!-- ============================ Zahlung stornieren ================ -->
+    <app-bestaetigung
+      [offen]="zStornoZahlung() !== null"
+      titel="Zahlung stornieren?"
+      [text]="
+        'Die Zahlung über ' +
+        euro(zStornoZahlung()?.amount ?? null) +
+        ' wird durch eine Gegenbuchung (Storno-Buchung) ausgeglichen. Physisch wird nichts gelöscht; der Vorgang lässt sich nicht rückgängig machen.'
+      "
+      bestaetigenLabel="Zahlung stornieren"
+      [gefahr]="true"
+      [laedt]="zStornoLaedt()"
+      (bestaetigen)="zStornoBestaetigen()"
+      (abbrechen)="zStornoAbbrechen()"
+    />
 
     <!-- ============================ Storno bestätigen ================= -->
     <app-bestaetigung

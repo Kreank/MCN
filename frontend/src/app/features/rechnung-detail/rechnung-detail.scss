@@ -2,6 +2,13 @@
   display: block;
 }
 
+.tab-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
 .kopf-summe {
   font-family: var(--font-mono);
   font-weight: 600;
