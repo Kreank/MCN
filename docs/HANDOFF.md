@@ -161,11 +161,11 @@ Nav-Reihenfolge (Marks 00–60), alle committet, je Tests + Browser + Review:
 | Projekte (30) | …zusätzlich **Aufträge**-Tab (work_order) in der Projektmappe | `/api/workflow/work_orders` |
 | Dokumente (40) | **Angebote + Rechnungen**: Liste + Mappe, Anlegen bis ENTWURF; **Veröffentlichen (Rechnung→VEROEFFENTLICHT) / Versenden (Angebot→VERSENDET)** inkl. Snapshot+Hash+Beteiligte | `/api/invoicing/…/publish`,`/send`,`/parties` |
 | Aufträge | Detail-Mappe (Übersicht/Beteiligte/Verlauf), Statusautomat bis KAUFMAENNISCH_GEPRUEFT/ABGERECHNET mit DB-Toren | `/api/workflow/work_orders` |
-| Planung (50) | **Einsätze** (`workflow.service_job`): Liste + Einsatz-Mappe (Übersicht, Zuweisungen, Zeiten & Material, Verlauf). Read-only; Einsatz-Write-Service existiert + getestet | `/api/planung/einsaetze` |
+| Planung (50) | **Einsätze** (`workflow.service_job`): Liste + Einsatz-Mappe (Übersicht, Zuweisungen, Zeiten & Material, Verlauf) + **Plantafel** (Schwimmbahnen-Board) + **Kalender** (Monatsansicht), Subnav. Read-only | `/api/planung/einsaetze`, `/api/planung/plantafel` |
 | Wartung (55) | **Wartungsverträge** (`maintenance.*`, NEUES Schema): Liste + Detail-Mappe (Details/Erinnerung/Verlauf), Fälligkeits-Aktionen. Write-Service (create/status/trigger) existiert + getestet | `/api/maintenance/contracts` |
 | Aufgaben (60) | Liste + Statusaktionen; **neue Tabelle `workflow.task`** | `/api/workflow/tasks` |
 | Artikel (70) | Artikel + Leistungen (Stücklisten), Liste + Detail | `/api/pricing` |
-| Buchhaltung (80) | **Offene Posten** (veröffentl. Rechnungen mit abgeleitetem Zahlungsstatus/offenem Betrag) + Detail-Mappe (Übersicht/Zahlungen/Mahnverlauf). Zahlungs-/Mahn-Service existiert + getestet | `/api/buchhaltung` |
+| Buchhaltung (80) | **Offene Posten** (abgeleiteter Zahlungsstatus/offener Betrag) + Detail-Mappe (Übersicht/Zahlungen/Mahnverlauf) + **Mahnwesen-Screen** (Mahntabelle mit Stufen-Tabs). Zahlungs-/Mahn-Service getestet | `/api/buchhaltung` |
 | Auswertungen (90) | Landing + **Umsatz-/Projektübersicht** (KPIs, Umsatzverlauf, Projekte nach Gewerk) | `/api/auswertungen/…` |
 
 Nav-Marks: Planung=50, Wartung=55 (bewusst nicht-rund, Service-Cluster),
