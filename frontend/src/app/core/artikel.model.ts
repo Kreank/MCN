@@ -37,6 +37,28 @@ export interface ArticleDetail extends Article {
   updated_at: string;
 }
 
+export interface KalkulationVariant {
+  label: string;
+  is_standard: boolean;
+  kind: string; // FORMEL | FESTPREIS
+  group_name: string | null;
+  basis_kind: string | null; // EK | LISTENPREIS
+  basis_amount: string | null;
+  operator: string | null; // AUFSCHLAG | ABSCHLAG
+  percent_change: string | null;
+  amount_change: string | null;
+  sale_price: string | null;
+}
+
+export interface ArticleKalkulation {
+  article_id: string;
+  article_number: string;
+  description: string;
+  list_price: string | null;
+  ek: string | null;
+  variants: KalkulationVariant[];
+}
+
 export interface Assembly {
   id: string;
   assembly_number: string;

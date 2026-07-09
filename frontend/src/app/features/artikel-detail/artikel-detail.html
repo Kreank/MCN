@@ -46,9 +46,51 @@
           <div class="feld"><dt class="feld__label">Listenpreis</dt><dd class="feld__wert">{{ euro(daten()!.list_price) }}</dd></div>
         </dl>
         <div class="tab-platzhalter">
-          <h2 class="tab-platzhalter__titel">Verkaufspreis</h2>
-          <p>Der Verkaufspreis ergibt sich aus einer Preisgruppen-Formel (Aufschlag auf EK/Listenpreis) bzw. einem Festpreis. Die Live-Berechnung folgt mit dem Kalkulations-Slice (Roadmap 08).</p>
+          <p>Der Verkaufspreis ergibt sich aus einer Preisgruppen-Formel (Auf-/Abschlag auf EK oder Listenpreis) bzw. einem Festpreis — siehe Tab <strong>Kalkulation</strong>.</p>
         </div>
+      }
+
+      @if (tab() === 'kalkulation') {
+        @switch (kalk().kind) {
+          @case ('loading') {
+            <p class="lade-hinweis" role="status">Kalkulation wird geladen …</p>
+          }
+          @case ('error') {
+            <div class="note note--error" role="alert">
+              <h2 class="note__titel">Kalkulation nicht verfügbar</h2>
+              <p class="note__text">Die VK-Kalkulation ließ sich nicht laden.</p>
+              <button type="button" class="btn btn--primary" (click)="retryKalk()">Erneut versuchen</button>
+            </div>
+          }
+          @case ('ready') {
+            <dl class="feld-raster">
+              <div class="feld"><dt class="feld__label">Listenpreis</dt><dd class="feld__wert">{{ euro($any(kalk()).data.list_price) }}</dd></div>
+              <div class="feld"><dt class="feld__label">Einkaufspreis (aktuell)</dt><dd class="feld__wert" [class.feld__wert--leer]="!$any(kalk()).data.ek">{{ euro($any(kalk()).data.ek) }}</dd></div>
+            </dl>
+
+            @if ($any(kalk()).data.variants.length === 0) {
+              <div class="tab-platzhalter"><p>Für diesen Artikel ist noch keine VK-Variante hinterlegt.</p></div>
+            } @else {
+              <ul class="vk-liste">
+                @for (v of $any(kalk()).data.variants; track $index) {
+                  <li class="vk">
+                    <span class="vk__kopf">
+                      <span class="vk__label">{{ v.label }}</span>
+                      @if (v.is_standard) { <span class="stamp stamp--positive">Standard</span> }
+                    </span>
+                    <span class="vk__formel">{{ formelText(v) }}@if (v.group_name) { · {{ v.group_name }} }</span>
+                    <span class="vk__preis" [class.vk__preis--leer]="!v.sale_price">
+                      {{ v.sale_price ? euro(v.sale_price) : 'kein EK hinterlegt' }}
+                    </span>
+                  </li>
+                }
+              </ul>
+            }
+          }
+          @default {
+            <p class="lade-hinweis" role="status">Kalkulation wird vorbereitet …</p>
+          }
+        }
       }
     </app-mappe>
   }

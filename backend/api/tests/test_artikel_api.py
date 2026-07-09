@@ -88,3 +88,27 @@ def test_leistung_detail_mit_stueckliste(client, seeded):
 def test_leistung_detail_404(client, seeded):
     r = client.get(f"/api/pricing/assemblies/{uuid.uuid4()}")
     assert r.status_code == 404
+
+
+@pytest.mark.django_db
+def test_kalkulation_endpoint(client, seeded):
+    mat = seeded["mat"]
+    grp = artikel_service.create_sale_price_group(
+        seeded["app_user"].id, name="Auf50", calc_basis="LISTENPREIS",
+        operator="AUFSCHLAG", percent_change="50.000",
+    )
+    artikel_service.set_article_sale_price(
+        seeded["app_user"].id, article_id=mat.id, sale_price_group_id=grp.id,
+        is_standard=True,
+    )
+    r = client.get(f"/api/pricing/articles/{mat.id}/kalkulation")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["list_price"] == "2.40"
+    assert body["variants"][0]["sale_price"] == "3.60"  # 2,40 + 50 %
+
+
+@pytest.mark.django_db
+def test_kalkulation_404(client, db):
+    r = client.get(f"/api/pricing/articles/{uuid.uuid4()}/kalkulation")
+    assert r.status_code == 404

@@ -1458,3 +1458,116 @@ class MaterialEntry(models.Model):
 
     def __str__(self):
         return f"{self.description} {self.quantity} {self.unit}"
+
+
+class SalePriceGroup(models.Model):
+    """pricing.sale_price_group — VK-Kalkulationsgruppe (Migration 0033).
+
+    Der Verkaufspreis ist eine Formel: Basis (EK oder LISTENPREIS) mit Auf-/
+    Abschlag, entweder prozentual (percent_change) ODER als Betrag (amount_change)
+    — genau eines ist gesetzt (DB-CHECK). Kein Löschen (Schutzstandard).
+    """
+
+    id = models.UUIDField(primary_key=True)
+    name = models.TextField()
+    calc_basis = models.TextField()  # EK | LISTENPREIS
+    operator = models.TextField()  # AUFSCHLAG | ABSCHLAG
+    percent_change = models.DecimalField(
+        max_digits=9, decimal_places=3, null=True, blank=True
+    )
+    amount_change = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True
+    )
+    status = models.TextField()  # AKTIV | INAKTIV
+    version = models.IntegerField()
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'pricing"."sale_price_group'
+
+    def __str__(self):
+        return self.name
+
+
+class ArticleSalePrice(models.Model):
+    """pricing.article_sale_price — VK-Variante eines Artikels (Migration 0033).
+
+    Verweist auf eine sale_price_group (Formel) ODER trägt einen fixed_price
+    (genau eines, DB-CHECK). Genau eine Variante je Artikel ist Standard
+    (partieller Unique-Index).
+    """
+
+    id = models.UUIDField(primary_key=True)
+    article = models.ForeignKey(
+        Article, models.DO_NOTHING, db_column="article_id", related_name="sale_prices"
+    )
+    label = models.TextField()
+    sale_price_group = models.ForeignKey(
+        SalePriceGroup,
+        models.DO_NOTHING,
+        db_column="sale_price_group_id",
+        null=True,
+        blank=True,
+        related_name="article_sale_prices",
+    )
+    fixed_price = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True
+    )
+    is_standard = models.BooleanField(db_default=models.Value(False))
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'pricing"."article_sale_price'
+
+    def __str__(self):
+        return f"{self.label} @ {self.article_id}"
+
+
+class ArticleSupplierReference(models.Model):
+    """pricing.article_supplier_reference — Lieferantenbezug/EK eines Artikels
+    (Migration 0028, price_unit_code aus 0039).
+
+    Historisiert den letzten Einkaufspreis (last_purchase_price) je Lieferant/
+    Quellsystem mit Gültigkeitszeitraum. Für die VK-Kalkulation auf EK-Basis ist
+    der aktuell gültige Datensatz maßgeblich. Kein Löschen — Referenzen werden
+    über valid_until beendet.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    article = models.ForeignKey(
+        Article,
+        models.DO_NOTHING,
+        db_column="article_id",
+        related_name="supplier_references",
+    )
+    supplier_party = models.ForeignKey(
+        Party,
+        models.DO_NOTHING,
+        db_column="supplier_party_id",
+        related_name="supplied_articles",
+    )
+    source_system = models.TextField()
+    source_namespace = models.TextField()
+    supplier_article_number = models.TextField()
+    last_purchase_price = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True
+    )
+    currency = models.CharField(max_length=3, null=True, blank=True)
+    discount_group = models.TextField(null=True, blank=True)
+    last_imported_at = models.DateTimeField(null=True, blank=True)
+    valid_from = models.DateField()
+    valid_until = models.DateField(null=True, blank=True)
+    price_unit_code = models.SmallIntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'pricing"."article_supplier_reference'
+
+    def __str__(self):
+        return f"{self.supplier_article_number} @ {self.article_id}"

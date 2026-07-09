@@ -3,6 +3,7 @@ import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import {
   ArticleDetail,
+  ArticleKalkulation,
   ArticlePage,
   AssemblyDetail,
   AssemblyPage,
@@ -28,6 +29,12 @@ export class ArtikelService {
 
   getArticle(id: string): Observable<ArticleDetail> {
     return this.http.get<ArticleDetail>(`${this.base}/articles/${id}`);
+  }
+
+  getKalkulation(id: string): Observable<ArticleKalkulation> {
+    return this.http.get<ArticleKalkulation>(
+      `${this.base}/articles/${id}/kalkulation`,
+    );
   }
 
   listAssemblies(query: StammQuery): Observable<AssemblyPage> {

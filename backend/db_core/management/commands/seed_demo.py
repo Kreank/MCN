@@ -16,8 +16,9 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
 from db_core.models import (
-    AppUser, Article, Assembly, DunningNotice, Invoice, MaintenanceContract, Party,
-    Payment, Project, ProjectLog, Property, Quote, Task, WageGroup, WorkOrder,
+    AppUser, Article, ArticleSalePrice, Assembly, DunningNotice, Invoice,
+    MaintenanceContract, Party, Payment, Project, ProjectLog, Property, Quote,
+    SalePriceGroup, Task, WageGroup, WorkOrder,
 )
 from db_core.services import artikel as artikel_service
 from db_core.services import aufgabe as aufgabe_service
@@ -539,6 +540,38 @@ class Command(BaseCommand):
             )
             angelegt += 1
             self.stdout.write(f"Leistung angelegt: {created.assembly_number} {created.name}")
+
+        # VK-Kalkulation: zwei Kalkulationsgruppen (Listenpreis-Basis, damit der VK
+        # ohne EK-Referenz rechenbar ist) und je Artikel mit Listenpreis eine
+        # Standard-VK-Variante. Idempotent je Gruppenname bzw. je Artikel.
+        vk_groups = {}
+        for g in (
+            {"name": "Aufschlag 30% (Listenpreis)", "percent_change": Decimal("30.000")},
+            {"name": "Aufschlag 45% (Material)", "percent_change": Decimal("45.000")},
+        ):
+            existing = SalePriceGroup.objects.filter(name=g["name"]).first()
+            if existing is None:
+                existing = artikel_service.create_sale_price_group(
+                    actor.id, name=g["name"], calc_basis="LISTENPREIS",
+                    operator="AUFSCHLAG", percent_change=g["percent_change"],
+                )
+                angelegt += 1
+                self.stdout.write(f"VK-Gruppe angelegt: {existing.name}")
+            vk_groups[g["name"]] = existing
+
+        for art in Article.objects.filter(status="AKTIV", list_price__isnull=False):
+            if ArticleSalePrice.objects.filter(article_id=art.id).exists():
+                continue
+            grp = (
+                vk_groups["Aufschlag 45% (Material)"]
+                if art.line_type == "MATERIAL"
+                else vk_groups["Aufschlag 30% (Listenpreis)"]
+            )
+            artikel_service.set_article_sale_price(
+                actor.id, article_id=art.id, label="Standard",
+                sale_price_group_id=grp.id, is_standard=True,
+            )
+            angelegt += 1
 
         # Projekt-Cockpit: Logbuch + Checkliste am Dachsanierungs-Projekt
         # (idempotent darüber, ob das Projekt bereits Logeinträge hat).

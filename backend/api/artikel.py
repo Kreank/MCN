@@ -12,6 +12,7 @@ from ninja import Query, Router, Schema
 from ninja.errors import HttpError
 
 from db_core.models import Article, Assembly
+from db_core.services import kalkulation as kalkulation_service
 
 router = Router()
 
@@ -124,6 +125,38 @@ def get_article(request, article_id: UUID):
     if article is None:
         raise HttpError(404, "Artikel nicht gefunden.")
     return article
+
+
+class KalkulationVariantOut(Schema):
+    label: str
+    is_standard: bool
+    kind: str  # FORMEL | FESTPREIS
+    group_name: str | None = None
+    basis_kind: str | None = None  # EK | LISTENPREIS
+    basis_amount: str | None = None
+    operator: str | None = None  # AUFSCHLAG | ABSCHLAG
+    percent_change: str | None = None
+    amount_change: str | None = None
+    sale_price: str | None = None
+
+
+class KalkulationOut(Schema):
+    article_id: UUID
+    article_number: str
+    description: str
+    list_price: str | None = None
+    ek: str | None = None
+    variants: list[KalkulationVariantOut]
+
+
+@router.get("/articles/{article_id}/kalkulation", response=KalkulationOut)
+def article_kalkulation(request, article_id: UUID):
+    """VK-Kalkulation eines Artikels: Listenpreis, aktueller EK und die
+    VK-Varianten (Formel oder Festpreis) mit errechnetem Verkaufspreis."""
+    data = kalkulation_service.article_kalkulation(article_id)
+    if data is None:
+        raise HttpError(404, "Artikel nicht gefunden.")
+    return data
 
 
 # --- Leistungs-Endpoints ---------------------------------------------------
