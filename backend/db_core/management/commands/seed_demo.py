@@ -696,6 +696,19 @@ class Command(BaseCommand):
                 angelegt += 1
                 self.stdout.write(f"Mahnstufe 1 erzeugt: {bh_inv.invoice_number}")
 
+            # Rechnungskorrektur (GUTSCHRIFT) der ersten Position — demonstriert
+            # den GoBD-Folgebeleg (reference_invoice_id). Idempotent: nur, wenn
+            # der Beleg noch keinen Korrektur-/Stornobeleg trägt.
+            if not Invoice.objects.filter(reference_invoice_id=bh_inv.id).exists():
+                gs = beleg_service.create_correction(
+                    actor.id, invoice_id=bh_inv.id, positions=[1]
+                )
+                angelegt += 1
+                self.stdout.write(
+                    f"Rechnungskorrektur erzeugt: {gs.invoice_number} "
+                    f"({gs.gross_total} EUR)"
+                )
+
         # Wartung: jährlicher Wartungsvertrag mit bereits fälliger erster Wartung;
         # eine Auslösung erzeugt die Folge-Aufgabe und rückt die Fälligkeit vor.
         # Idempotent je Liegenschaft.

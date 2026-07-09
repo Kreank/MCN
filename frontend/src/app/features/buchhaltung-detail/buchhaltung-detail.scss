@@ -40,6 +40,51 @@
   color: var(--ink);
 }
 
+// ============================ Bezug-Belege (Storno/Korrektur) ===============
+.belege {
+  margin-top: var(--space-5);
+}
+.belege__titel {
+  margin: 0 0 var(--space-3);
+  font-size: var(--step-0);
+  font-family: var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.ref-beleg {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-2);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--radius);
+  color: inherit;
+  text-decoration: none;
+  transition: border-color 0.15s ease;
+}
+.ref-beleg:hover {
+  border-left-color: var(--accent);
+}
+.ref-beleg:focus-visible {
+  outline: 2.5px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.ref-beleg__label {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.ref-beleg__wert {
+  font-family: var(--font-mono);
+  color: var(--accent-ink);
+}
+
 // ============================ Zahlungen =====================================
 .buchung-liste {
   list-style: none;

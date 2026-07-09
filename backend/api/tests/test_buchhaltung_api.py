@@ -2,17 +2,33 @@
 über den Django-Test-Client. Read-only; Setup baut über die Services eine
 veröffentlichte, fällige Rechnung mit Teilzahlung und Mahnstufe 1.
 """
+import uuid
 from datetime import date, timedelta
 from decimal import Decimal
 from uuid import uuid4
 
 import pytest
+from django.contrib.auth import get_user_model
 
+from db_core.models import AppUser
 from db_core.services import auftrag as auftrag_service
 from db_core.services import beleg as beleg_service
 from db_core.services import buchhaltung as buchhaltung_service
 from db_core.services import identity as identity_service
 from db_core.services import property as property_service
+
+User = get_user_model()
+
+
+def _logged_in_client(client):
+    user = User.objects.create_user(username=f"u{uuid.uuid4().hex[:8]}", password="x")
+    au = AppUser.objects.create(
+        id=uuid.uuid4(), display_name="Login", status="ACTIVE", version=1
+    )
+    user.app_user_id = au.id
+    user.save()
+    client.force_login(user)
+    return client
 
 
 def _gepruefter_auftrag(app_user, obj, debtor):
@@ -155,6 +171,51 @@ def test_mahnliste(client, seeded):
     assert row["dunning_level"] == 1
     assert row["days_overdue"] >= 30
     assert Decimal(row["open_amount"]) > 0
+
+
+@pytest.mark.django_db
+def test_cancel_eingeloggt_und_referenz(client, seeded):
+    inv = seeded["inv"]
+    c = _logged_in_client(client)
+    r = c.post(f"/api/buchhaltung/invoices/{inv.id}/cancel", content_type="application/json")
+    assert r.status_code == 201, r.content
+    body = r.json()
+    assert body["invoice_type"] == "STORNO"
+    assert body["invoice_number"].startswith("GS-")
+    # Ursprung listet den Stornobeleg als credit_note.
+    detail = c.get(f"/api/buchhaltung/invoices/{inv.id}").json()
+    assert any(cn["id"] == body["id"] for cn in detail["credit_notes"])
+    # Der Stornobeleg verweist zurück auf den Ursprung.
+    storno_detail = c.get(f"/api/buchhaltung/invoices/{body['id']}").json()
+    assert storno_detail["origin"]["id"] == str(inv.id)
+
+
+@pytest.mark.django_db
+def test_cancel_ohne_login_abgelehnt(client, seeded):
+    r = client.post(f"/api/buchhaltung/invoices/{seeded['inv'].id}/cancel",
+                    content_type="application/json")
+    assert r.status_code in (401, 403)
+
+
+@pytest.mark.django_db
+def test_correction_eingeloggt(client, seeded):
+    c = _logged_in_client(client)
+    r = c.post(
+        f"/api/buchhaltung/invoices/{seeded['inv'].id}/correction",
+        data={"positions": [1]}, content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    assert r.json()["invoice_type"] == "GUTSCHRIFT"
+
+
+@pytest.mark.django_db
+def test_correction_unbekannte_position_422(client, seeded):
+    c = _logged_in_client(client)
+    r = c.post(
+        f"/api/buchhaltung/invoices/{seeded['inv'].id}/correction",
+        data={"positions": [99]}, content_type="application/json",
+    )
+    assert r.status_code == 422
 
 
 @pytest.mark.django_db

@@ -7,6 +7,7 @@ import {
   OpenItemPage,
   PaymentStatus,
   euro,
+  invoiceTypeLabel,
   paymentStatusClass,
   paymentStatusLabel,
 } from '../../core/buchhaltung.model';
@@ -133,6 +134,12 @@ export class Buchhaltung {
   }
   euro(v: string | null): string {
     return euro(v);
+  }
+  typeLabel(t: string): string {
+    return invoiceTypeLabel(t);
+  }
+  isCredit(t: string): boolean {
+    return t === 'GUTSCHRIFT' || t === 'STORNO';
   }
   d(iso: string | null): string {
     if (!iso) return '—';

@@ -417,3 +417,174 @@ def send_quote(actor_app_user_id, *, quote_id):
             )
     quote.refresh_from_db()
     return quote
+
+
+# --- Storno / Rechnungskorrektur (Folgebelege) -----------------------------
+# GoBD: eine veröffentlichte Rechnung ist unveränderlich; „Löschen"/„Korrigieren"
+# gibt es nicht — nur ein Folgebeleg (STORNO = voller Ausgleich, GUTSCHRIFT =
+# Teilkorrektur) mit reference_invoice_id auf den Ursprung. Die Positionen werden
+# invertiert: quantity bleibt positiv (DB-CHECK quantity > 0), der unit_price wird
+# negiert → negativer net_amount. Die DB verlangt zur Veröffentlichung, dass die
+# Schuldner des Korrekturbelegs Schuldner des Ursprungs sind (P3-06); STORNO/
+# GUTSCHRIFT sind von der Auftrags-Vorbedingung (B-08) befreit.
+
+def _negated_lines(origin_lines, positions=None):
+    """Invertierte Positionen aus den Ursprungszeilen (negativer unit_price).
+
+    positions (Menge von position_number) begrenzt auf eine Teilkorrektur; None =
+    alle Positionen (Vollstorno). Text-/Zwischensummenzeilen werden übernommen.
+    Gibt (prepared, net_total, tax_total, gross_total) wie _prepare_lines.
+    """
+    prepared = []
+    new_pos = 0
+    for line in sorted(origin_lines, key=lambda l: l.position_number):
+        if positions is not None and line.position_number not in positions:
+            continue
+        new_pos += 1
+        if line.line_type in TEXT_TYPES:
+            prepared.append(
+                {
+                    "position_number": new_pos,
+                    "line_type": line.line_type,
+                    "description": line.description,
+                }
+            )
+            continue
+        neg_price = (-line.unit_price).quantize(_Q_PRICE, rounding=ROUND_HALF_UP)
+        discount = line.discount_percent or Decimal(0)
+        net = _round2(line.quantity * neg_price * (Decimal(1) - discount / Decimal(100)))
+        prepared.append(
+            {
+                "position_number": new_pos,
+                "line_type": line.line_type,
+                "description": line.description,
+                "quantity": line.quantity,
+                "unit": line.unit,
+                "unit_price": neg_price,
+                "discount_percent": line.discount_percent,
+                "tax_code_id": line.tax_code_id,
+                "tax_rate_percent": line.tax_rate_percent,
+                "net_amount": net,
+            }
+        )
+
+    net_total = Decimal("0.00")
+    group_net = defaultdict(lambda: Decimal("0.00"))
+    for row in prepared:
+        if row["line_type"] in TEXT_TYPES:
+            continue
+        net_total += row["net_amount"]
+        group_net[(row["tax_code_id"], row["tax_rate_percent"])] += row["net_amount"]
+    tax_total = Decimal("0.00")
+    for (_code, rate), net in group_net.items():
+        tax_total += _round2(net * rate / Decimal(100))
+    return prepared, net_total, tax_total, net_total + tax_total
+
+
+def _create_credit(actor_app_user_id, origin, *, invoice_type, positions):
+    """Erzeugt einen Storno-/Gutschriftbeleg zum Ursprung und veröffentlicht ihn.
+
+    Kopiert Schuldner und Empfänger des Ursprungs (Voraussetzung für die
+    Veröffentlichung: A-27 Schuldner/Empfänger, P3-06 Schuldner-Übereinstimmung).
+    """
+    prepared, net, tax, gross = _negated_lines(list(origin.lines.all()), positions)
+    if not any(r["line_type"] not in TEXT_TYPES for r in prepared):
+        raise ValueError("Der Korrekturbeleg enthält keine Betragsposition.")
+    parties = list(origin.parties.all())
+    debtors = [p for p in parties if p.role == "INVOICE_DEBTOR"]
+    recipients = [p for p in parties if p.role == "INVOICE_RECIPIENT"]
+    if not debtors:
+        raise ValueError("Der Ursprungsbeleg hat keinen Rechnungsschuldner (A-27).")
+
+    def _copy_party(credit_id, p):
+        # liability_group/-basis und allocation_percent mitführen, sonst scheitert
+        # ein Mehr-Schuldner-Beleg an A-29 (Gesamtschuld ohne Grundlage).
+        InvoiceParty.objects.create(
+            id=uuid.uuid4(), invoice_id=credit_id, party_id=p.party_id,
+            role=p.role, is_primary=p.is_primary,
+            allocation_percent=p.allocation_percent,
+            liability_group=p.liability_group, liability_basis=p.liability_basis,
+        )
+
+    # Anlage UND Veröffentlichung in EINER Transaktion: scheitert ein Tor beim
+    # Publish, wird auch der ENTWURF-Folgebeleg zurückgerollt (kein Waise).
+    # invoice_date vom Ursprung übernehmen, damit der historische Steuersatz zum
+    # Belegdatum passt (P3-05) — ein Storno kehrt die Ursprungsbeträge um.
+    with business_transaction(actor_app_user_id):
+        credit = Invoice.objects.create(
+            id=uuid.uuid4(),
+            property_id=origin.property_id,
+            project_id=origin.project_id,
+            work_order_id=None,  # STORNO/GUTSCHRIFT sind von B-08 befreit
+            invoice_type=invoice_type,
+            reference_invoice_id=origin.id,
+            status="ENTWURF",
+            invoice_date=origin.invoice_date,
+            net_total=net,
+            tax_total=tax,
+            gross_total=gross,
+            version=1,
+        )
+        for row in prepared:
+            InvoiceLine.objects.create(id=uuid.uuid4(), invoice_id=credit.id, **row)
+        for p in debtors:
+            _copy_party(credit.id, p)
+        for p in recipients:
+            _copy_party(credit.id, p)
+        # Veröffentlichung durchläuft die DB-Tore (P3-06/A-27) und vergibt die
+        # GS-Nummer; Tor-Verstöße werden in ValueError (→422) übersetzt und rollen
+        # die ganze Transaktion zurück.
+        published = publish_invoice(actor_app_user_id, invoice_id=credit.id)
+    return published
+
+
+def create_cancellation(actor_app_user_id, *, invoice_id):
+    """Storniert eine veröffentlichte Rechnung durch einen Stornobeleg (STORNO)
+    mit vollständig invertierten Positionen."""
+    origin = (
+        Invoice.objects.filter(id=invoice_id)
+        .prefetch_related("lines", "parties")
+        .first()
+    )
+    if origin is None:
+        raise ValueError("Ursprungsrechnung nicht gefunden.")
+    if origin.status != "VEROEFFENTLICHT":
+        raise ValueError("Nur veröffentlichte Rechnungen können storniert werden (B-21).")
+    if origin.invoice_type in _CREDIT_TYPES:
+        raise ValueError("Eine Gutschrift/Storno kann nicht erneut storniert werden.")
+    if Invoice.objects.filter(
+        reference_invoice_id=origin.id, invoice_type="STORNO", status="VEROEFFENTLICHT"
+    ).exists():
+        raise ValueError("Diese Rechnung wurde bereits storniert.")
+    return _create_credit(actor_app_user_id, origin, invoice_type="STORNO", positions=None)
+
+
+def create_correction(actor_app_user_id, *, invoice_id, positions):
+    """Erzeugt eine Rechnungskorrektur (GUTSCHRIFT) über die angegebenen
+    Positionen (position_number) einer veröffentlichten Rechnung."""
+    if not positions:
+        raise ValueError(
+            "Rechnungskorrektur erfordert mindestens eine zu korrigierende Position."
+        )
+    origin = (
+        Invoice.objects.filter(id=invoice_id)
+        .prefetch_related("lines", "parties")
+        .first()
+    )
+    if origin is None:
+        raise ValueError("Ursprungsrechnung nicht gefunden.")
+    if origin.status != "VEROEFFENTLICHT":
+        raise ValueError("Nur veröffentlichte Rechnungen können korrigiert werden (B-21).")
+    if origin.invoice_type in _CREDIT_TYPES:
+        raise ValueError("Eine Gutschrift/Storno kann nicht korrigiert werden.")
+    valid_positions = {
+        l.position_number for l in origin.lines.all() if l.line_type not in TEXT_TYPES
+    }
+    unknown = set(positions) - valid_positions
+    if unknown:
+        raise ValueError(
+            f"Unbekannte oder nicht korrigierbare Position(en): {sorted(unknown)}."
+        )
+    return _create_credit(
+        actor_app_user_id, origin, invoice_type="GUTSCHRIFT", positions=set(positions)
+    )

@@ -85,6 +85,9 @@
                 <span class="row__body">
                   <span class="row__title">
                     {{ r.invoice_number }}
+                    @if (isCredit(r.invoice_type)) {
+                      <span class="row__typ">{{ typeLabel(r.invoice_type) }}</span>
+                    }
                     @if (r.debtor) { <span class="row__debtor">· {{ r.debtor }}</span> }
                   </span>
                   <span class="row__meta">

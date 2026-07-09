@@ -192,6 +192,16 @@
   font-weight: 400;
   color: var(--ink-muted);
 }
+.row__typ {
+  font-family: var(--font-sans, inherit);
+  font-weight: 600;
+  font-size: 0.7rem;
+  padding: 0.1em 0.5em;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
+  color: var(--accent-ink);
+}
 .row__meta {
   display: flex;
   flex-wrap: wrap;

@@ -26,8 +26,11 @@ from django.db.models import (
 from django.db.models.functions import Coalesce
 from ninja import Query, Router, Schema
 from ninja.errors import HttpError
+from ninja.responses import Status
+from ninja.security import django_auth
 
 from db_core.models import DunningLevel, DunningNotice, Invoice, Payment
+from db_core.services import beleg as beleg_service
 from db_core.services.buchhaltung import PAYMENT_SIGN
 
 router = Router()
@@ -140,13 +143,28 @@ class InvoiceRefOut(Schema):
     work_order_number: str | None = None
 
 
+class CreditRefOut(Schema):
+    id: UUID
+    invoice_number: str | None = None
+    invoice_type: str
+    gross_total: Decimal | None = None
+
+
 class OpenItemDetailOut(OpenItemOut):
     currency: str
     net_total: Decimal | None = None
     tax_total: Decimal | None = None
     reference: InvoiceRefOut
+    # Bei Gutschrift/Storno: der referenzierte Ursprungsbeleg.
+    origin: CreditRefOut | None = None
+    # Storno-/Gutschriftbelege, die auf DIESE Rechnung verweisen.
+    credit_notes: list[CreditRefOut]
     payments: list[PaymentOut]
     dunning: list[DunningNoticeOut]
+
+
+class CorrectionIn(Schema):
+    positions: list[int]
 
 
 class DunningRowOut(Schema):
@@ -307,14 +325,84 @@ def get_open_item(request, invoice_id: UUID):
         project_name=inv.project.name if inv.project_id else None,
         work_order_number=inv.work_order.order_number if inv.work_order_id else None,
     )
+    origin = None
+    if inv.reference_invoice_id:
+        o = Invoice.objects.filter(id=inv.reference_invoice_id).first()
+        if o is not None:
+            origin = CreditRefOut(
+                id=o.id, invoice_number=o.invoice_number,
+                invoice_type=o.invoice_type, gross_total=o.gross_total,
+            )
+    credit_notes = [
+        CreditRefOut(
+            id=c.id, invoice_number=c.invoice_number,
+            invoice_type=c.invoice_type, gross_total=c.gross_total,
+        )
+        for c in Invoice.objects.filter(
+            reference_invoice_id=inv.id, status="VEROEFFENTLICHT"
+        ).order_by("created_at")
+    ]
     return OpenItemDetailOut(
         **base.model_dump(),
         currency=inv.currency,
         net_total=inv.net_total,
         tax_total=inv.tax_total,
         reference=reference,
+        origin=origin,
+        credit_notes=credit_notes,
         payments=payments,
         dunning=notices,
+    )
+
+
+# --- Schreibende Endpoints (Session-Auth Pflicht) --------------------------
+
+def _actor_id(request):
+    actor = getattr(request.user, "app_user_id", None)
+    if actor is None:
+        raise HttpError(
+            403,
+            "Dem Login-Konto ist kein security.app_user zugeordnet; "
+            "fachliche Schreibvorgänge sind damit nicht möglich.",
+        )
+    return actor
+
+
+@router.post("/invoices/{invoice_id}/cancel", response={201: CreditRefOut}, auth=django_auth)
+def cancel_invoice(request, invoice_id: UUID):
+    """Storniert eine veröffentlichte Rechnung durch einen Stornobeleg (STORNO)."""
+    actor = _actor_id(request)
+    try:
+        credit = beleg_service.create_cancellation(actor, invoice_id=invoice_id)
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return Status(
+        201,
+        CreditRefOut(
+            id=credit.id, invoice_number=credit.invoice_number,
+            invoice_type=credit.invoice_type, gross_total=credit.gross_total,
+        ),
+    )
+
+
+@router.post(
+    "/invoices/{invoice_id}/correction", response={201: CreditRefOut}, auth=django_auth
+)
+def correct_invoice(request, invoice_id: UUID, payload: CorrectionIn):
+    """Erzeugt eine Rechnungskorrektur (GUTSCHRIFT) über die angegebenen Positionen."""
+    actor = _actor_id(request)
+    try:
+        credit = beleg_service.create_correction(
+            actor, invoice_id=invoice_id, positions=payload.positions
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return Status(
+        201,
+        CreditRefOut(
+            id=credit.id, invoice_number=credit.invoice_number,
+            invoice_type=credit.invoice_type, gross_total=credit.gross_total,
+        ),
     )
 
 

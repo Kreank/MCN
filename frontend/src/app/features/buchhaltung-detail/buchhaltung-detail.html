@@ -61,6 +61,24 @@
             </div>
           }
         </div>
+
+        @if (daten()!.origin || daten()!.credit_notes.length > 0) {
+          <div class="belege">
+            <h3 class="belege__titel">Storno / Korrektur</h3>
+            @if (daten()!.origin; as o) {
+              <a class="ref-beleg" [routerLink]="['/buchhaltung', o.id]">
+                <span class="ref-beleg__label">Bezieht sich auf Ursprungsbeleg</span>
+                <span class="ref-beleg__wert">{{ o.invoice_number }} · {{ typeLabel(o.invoice_type) }}</span>
+              </a>
+            }
+            @for (cn of daten()!.credit_notes; track cn.id) {
+              <a class="ref-beleg" [routerLink]="['/buchhaltung', cn.id]">
+                <span class="ref-beleg__label">{{ typeLabel(cn.invoice_type) }}</span>
+                <span class="ref-beleg__wert">{{ cn.invoice_number }} · {{ euro(cn.gross_total) }}</span>
+              </a>
+            }
+          </div>
+        }
       }
 
       @if (tab() === 'zahlungen') {

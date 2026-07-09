@@ -59,11 +59,20 @@ export interface InvoiceRef {
   work_order_number: string | null;
 }
 
+export interface CreditRef {
+  id: string;
+  invoice_number: string | null;
+  invoice_type: string;
+  gross_total: string | null;
+}
+
 export interface OpenItemDetail extends OpenItem {
   currency: string;
   net_total: string | null;
   tax_total: string | null;
   reference: InvoiceRef;
+  origin: CreditRef | null;
+  credit_notes: CreditRef[];
   payments: Payment[];
   dunning: DunningNotice[];
 }
