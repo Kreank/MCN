@@ -182,7 +182,9 @@ def test_create_invoice_ungueltiger_typ(app_user):
 
 
 @pytest.mark.django_db
-def test_create_gutschrift_ohne_referenz(app_user):
+def test_create_gutschrift_via_create_invoice_verboten(app_user):
+    """Gutschrift/Storno entstehen nur über create_cancellation/create_correction,
+    nicht direkt über create_invoice (sonst „positive Gutschrift"-Inkonsistenz)."""
     obj = _property(app_user)
     with pytest.raises(ValueError):
         beleg_service.create_invoice(

@@ -57,6 +57,22 @@ class UmsatzProjektOut(Schema):
     timeline: list[TimelinePointOut]
 
 
+class CustomerRevenueOut(Schema):
+    party_id: str
+    display_name: str
+    net_total: str
+    gross_total: str
+    invoice_count: int
+    credit_count: int
+
+
+class KundenOut(Schema):
+    filters: FiltersOut
+    customer_count: int
+    net_total: str
+    customers: list[CustomerRevenueOut]
+
+
 class DashboardFilter(Schema):
     date_from: date | None = None
     date_to: date | None = None
@@ -75,5 +91,14 @@ def umsatz_projektuebersicht(request, filters: DashboardFilter = Query(...)):
     Optionale Filter date_from/date_to (Belegdatum für Umsatz,
     Erstellungsdatum für Projekte)."""
     return auswertungen_service.umsatz_projektuebersicht_summary(
+        date_from=filters.date_from, date_to=filters.date_to
+    )
+
+
+@router.get("/kunden", response=KundenOut)
+def kunden(request, filters: DashboardFilter = Query(...)):
+    """Umsatz und Rechnungsanzahl je Kunde (primärer Rechnungsschuldner),
+    Top-N nach Netto-Umsatz. Optionale Filter date_from/date_to (Belegdatum)."""
+    return auswertungen_service.kunden_summary(
         date_from=filters.date_from, date_to=filters.date_to
     )

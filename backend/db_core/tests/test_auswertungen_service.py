@@ -102,15 +102,43 @@ def test_umsatz_zaehlt_nur_veroeffentlichte(app_user):
 def test_gutschrift_mindert_umsatz(app_user):
     obj = _property(app_user)
     weg = _party(app_user)
-    rechnung = _published_invoice(app_user, obj, weg, unit_price="100.00")  # +100
-    _published_invoice(
-        app_user, obj, weg, unit_price="30.00", invoice_type="GUTSCHRIFT",
-        reference_invoice_id=rechnung.id,
-    )  # -30
+    _published_invoice(app_user, obj, weg, unit_price="100.00")  # +100
+    r2 = _published_invoice(app_user, obj, weg, unit_price="30.00")  # +30 → 130
+    # Vollstorno von r2 erzeugt einen Beleg mit net −30 (echte Folgebeleg-Kette).
+    beleg_service.create_cancellation(app_user.id, invoice_id=r2.id)
     s = auswertungen_service.umsatz_projektuebersicht_summary()
-    assert s["revenue"]["net_total"] == "70.00"
-    assert s["revenue"]["invoice_count"] == 1
+    assert s["revenue"]["net_total"] == "100.00"  # 130 − 30
+    assert s["revenue"]["invoice_count"] == 2  # Korrekturbelege zählen nicht
     assert s["revenue"]["credit_count"] == 1
+
+
+@pytest.mark.django_db
+def test_kunden_umsatz_je_kunde_sortiert(app_user):
+    obj = _property(app_user)
+    anna = identity_service.create_person(app_user.id, first_name="Anna", last_name="A")
+    bodo = identity_service.create_person(app_user.id, first_name="Bodo", last_name="B")
+    _published_invoice(app_user, obj, anna, unit_price="100.00")
+    _published_invoice(app_user, obj, bodo, unit_price="300.00")
+    s = auswertungen_service.kunden_summary()
+    assert s["customer_count"] == 2
+    assert s["net_total"] == "400.00"
+    # Nach Netto-Umsatz absteigend → Bodo zuerst.
+    assert s["customers"][0]["display_name"] == "Bodo B"
+    assert s["customers"][0]["net_total"] == "300.00"
+    assert s["customers"][1]["net_total"] == "100.00"
+
+
+@pytest.mark.django_db
+def test_kunden_storno_mindert_kundenumsatz(app_user):
+    obj = _property(app_user)
+    anna = identity_service.create_person(app_user.id, first_name="Anna", last_name="A")
+    r = _published_invoice(app_user, obj, anna, unit_price="100.00")
+    beleg_service.create_cancellation(app_user.id, invoice_id=r.id)
+    s = auswertungen_service.kunden_summary()
+    row = next(c for c in s["customers"] if c["display_name"] == "Anna A")
+    assert row["net_total"] == "0.00"
+    assert row["invoice_count"] == 1
+    assert row["credit_count"] == 1
 
 
 @pytest.mark.django_db

@@ -206,9 +206,13 @@ def create_invoice(
             f"Ungültiger invoice_type '{invoice_type}'. "
             f"Erlaubt: {', '.join(INVOICE_TYPES)}."
         )
-    if invoice_type in _CREDIT_TYPES and reference_invoice_id is None:
+    # Gutschrift/Storno entstehen ausschließlich als Folgebeleg (mit invertierten
+    # Positionen, negative Summen) über create_cancellation/create_correction —
+    # nicht direkt hier, sonst entstünde die Inkonsistenz „positive Gutschrift".
+    if invoice_type in _CREDIT_TYPES:
         raise ValueError(
-            f"{invoice_type} erfordert eine reference_invoice_id (Ursprungsbeleg)."
+            f"{invoice_type} wird nicht direkt angelegt, sondern über "
+            "create_cancellation/create_correction erzeugt."
         )
     prepared, net_total, tax_total, gross_total = _prepare_lines(lines)
 

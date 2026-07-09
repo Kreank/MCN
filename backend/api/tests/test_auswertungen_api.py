@@ -71,3 +71,28 @@ def test_umsatz_projektuebersicht_leer(client, db):
     assert body["revenue"]["net_total"] == "0.00"
     assert body["revenue"]["invoice_count"] == 0
     assert body["timeline"] == []
+
+
+@pytest.mark.django_db
+def test_kunden_dashboard_verfuegbar(client, db):
+    body = client.get("/api/auswertungen/dashboards").json()
+    kunden = next(d for d in body if d["key"] == "kunden")
+    assert kunden["available"] is True
+
+
+@pytest.mark.django_db
+def test_kunden_endpoint(client, app_user):
+    obj = property_service.create_property(
+        app_user.id, name="O", property_type="WEG", street="W",
+        postal_code="1", city="Berlin",
+    )
+    anna = identity_service.create_person(app_user.id, first_name="Anna", last_name="A")
+    _publish_invoice(app_user, obj, anna, unit_price="100.00", quantity=2)  # net 200
+
+    r = client.get("/api/auswertungen/kunden")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["customer_count"] == 1
+    assert body["net_total"] == "200.00"
+    assert body["customers"][0]["display_name"] == "Anna A"
+    assert body["customers"][0]["net_total"] == "200.00"

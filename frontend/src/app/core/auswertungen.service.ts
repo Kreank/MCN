@@ -1,7 +1,12 @@
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { AuswertungQuery, Dashboard, UmsatzProjekt } from './auswertungen.model';
+import {
+  AuswertungQuery,
+  Dashboard,
+  Kunden,
+  UmsatzProjekt,
+} from './auswertungen.model';
 
 /** Typisierter Zugriff auf die Auswertungen-API (dev-Proxy: /api -> :8000). */
 @Injectable({ providedIn: 'root' })
@@ -20,5 +25,12 @@ export class AuswertungService {
     return this.http.get<UmsatzProjekt>(`${this.base}/umsatz-projektuebersicht`, {
       params,
     });
+  }
+
+  kunden(query: AuswertungQuery = {}): Observable<Kunden> {
+    let params = new HttpParams();
+    if (query.date_from) params = params.set('date_from', query.date_from);
+    if (query.date_to) params = params.set('date_to', query.date_to);
+    return this.http.get<Kunden>(`${this.base}/kunden`, { params });
   }
 }

@@ -40,6 +40,22 @@ export interface UmsatzProjekt {
   timeline: TimelinePoint[];
 }
 
+export interface CustomerRevenue {
+  party_id: string;
+  display_name: string;
+  net_total: string;
+  gross_total: string;
+  invoice_count: number;
+  credit_count: number;
+}
+
+export interface Kunden {
+  filters: { date_from: string | null; date_to: string | null };
+  customer_count: number;
+  net_total: string;
+  customers: CustomerRevenue[];
+}
+
 export interface AuswertungQuery {
   date_from?: string | null;
   date_to?: string | null;

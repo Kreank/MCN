@@ -149,6 +149,14 @@ export const routes: Routes = [
       ),
   },
   {
+    path: 'auswertungen/kunden',
+    title: 'Kunden — MCN Leitstand',
+    loadComponent: () =>
+      import('./features/auswertungen-kunden/auswertungen-kunden').then(
+        (m) => m.AuswertungenKunden,
+      ),
+  },
+  {
     path: 'artikel',
     title: 'Artikel & Leistungen — MCN Leitstand',
     loadComponent: () => import('./features/artikel/artikel').then((m) => m.Artikel),

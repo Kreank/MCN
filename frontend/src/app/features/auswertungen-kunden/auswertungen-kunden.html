@@ -1,0 +1,91 @@
+<section class="dashboard" aria-labelledby="ku-titel">
+  <header class="page-head">
+    <div>
+      <p class="page-head__kicker">
+        <a class="page-head__back" routerLink="/auswertungen">← Auswertungen</a>
+      </p>
+      <h1 id="ku-titel" class="page-head__titel">Kunden</h1>
+    </div>
+    <p class="page-head__hint">
+      Umsatz je Kunde (primärer Rechnungsschuldner) aus veröffentlichten
+      Rechnungen; Korrekturbelege (Gutschrift/Storno) mindern den Umsatz.
+    </p>
+  </header>
+
+  @switch (state().kind) {
+    @case ('loading') {
+      <p class="lade-hinweis" role="status">Kundenkennzahlen werden geladen …</p>
+    }
+    @case ('error') {
+      <div class="note note--error" role="alert">
+        <h2 class="note__titel">Kennzahlen konnten nicht geladen werden</h2>
+        <p class="note__text">Die Auswertungs-Schnittstelle war nicht erreichbar.</p>
+        <div class="note__aktionen">
+          <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
+        </div>
+      </div>
+    }
+    @case ('ready') {
+      <div class="kpi-reihe" role="group" aria-label="Kundenkennzahlen">
+        <div class="kpi kpi--stark">
+          <span class="kpi__label">Umsatz gesamt (netto)</span>
+          <span class="kpi__wert">{{ euro(daten()!.net_total) }}</span>
+          <span class="kpi__sub">über {{ daten()!.customer_count }} Kunde(n)</span>
+        </div>
+        <div class="kpi">
+          <span class="kpi__label">Kunden mit Umsatz</span>
+          <span class="kpi__wert">{{ daten()!.customer_count }}</span>
+        </div>
+      </div>
+
+      <section class="panel" aria-labelledby="top-titel">
+        <h2 id="top-titel" class="panel__titel">Top-Kunden nach Nettoumsatz</h2>
+        @if (kundenBars().length === 0) {
+          <div class="tab-platzhalter"><p>Es liegen noch keine veröffentlichten Rechnungen mit Kundenbezug vor.</p></div>
+        } @else {
+          <ul class="balken">
+            @for (b of kundenBars(); track b.label) {
+              <li class="balken__zeile">
+                <span class="balken__label">{{ b.label }}</span>
+                <div class="balken__spur">
+                  <div class="balken__fuellung" [style.width.%]="b.widthPct"></div>
+                </div>
+                <span class="balken__wert">{{ b.display }}</span>
+              </li>
+            }
+          </ul>
+        }
+      </section>
+
+      @if (daten()!.customers.length > 0) {
+        <section class="panel" aria-labelledby="tab-titel">
+          <h2 id="tab-titel" class="panel__titel">Kundenübersicht</h2>
+          <div class="tabelle-wrap">
+            <table class="tabelle">
+              <thead>
+                <tr>
+                  <th scope="col">Kunde</th>
+                  <th scope="col" class="num">Umsatz netto</th>
+                  <th scope="col" class="num">Umsatz brutto</th>
+                  <th scope="col" class="num">Rechnungen</th>
+                  <th scope="col" class="num">Korrekturen</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (c of daten()!.customers; track c.party_id) {
+                  <tr>
+                    <td><a class="zelle-link" [routerLink]="['/kontakte', c.party_id]">{{ c.display_name }}</a></td>
+                    <td class="num betrag">{{ euro(c.net_total) }}</td>
+                    <td class="num">{{ euro(c.gross_total) }}</td>
+                    <td class="num">{{ c.invoice_count }}</td>
+                    <td class="num">{{ c.credit_count }}</td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        </section>
+      }
+    }
+  }
+</section>
