@@ -165,13 +165,13 @@ Nav-Reihenfolge (Marks 00–60), alle committet, je Tests + Browser + Review:
 | Wartung (55) | **Wartungsverträge** (`maintenance.*`, NEUES Schema): Liste + Detail-Mappe (Details/Erinnerung/Verlauf), Fälligkeits-Aktionen. Write-Service (create/status/trigger) existiert + getestet | `/api/maintenance/contracts` |
 | Aufgaben (60) | Liste + Statusaktionen; **neue Tabelle `workflow.task`** | `/api/workflow/tasks` |
 | Artikel (70) | Artikel + Leistungen (Stücklisten), Liste + Detail | `/api/pricing` |
-| Buchhaltung (80) | **Offene Posten** (abgeleiteter Zahlungsstatus/offener Betrag) + Detail-Mappe (Übersicht/Zahlungen/Mahnverlauf) + **Mahnwesen-Screen** (Mahntabelle mit Stufen-Tabs). Zahlungs-/Mahn-Service getestet | `/api/buchhaltung` |
+| Buchhaltung (80) | **Offene Posten** + Detail-Mappe (Übersicht/Zahlungen/Mahnverlauf, **Storno-/Gutschrift-Referenzen**) + **Mahnwesen-Screen**. Services: Zahlung/Mahnung + **Storno/Rechnungskorrektur** (STORNO/GUTSCHRIFT, `POST …/cancel`,`/correction`) getestet | `/api/buchhaltung` |
 | Auswertungen (90) | Landing + **Umsatz-/Projektübersicht** (KPIs, Umsatzverlauf, Projekte nach Gewerk) | `/api/auswertungen/…` |
 
 Nav-Marks: Planung=50, Wartung=55 (bewusst nicht-rund, Service-Cluster),
 Aufgaben=60, Artikel=70, Buchhaltung=80, Auswertungen=90.
 
-Backend: **212 Tests grün**, db_core-Migrationen bis **0017** (0016 = Hand-SQL
+Backend: **228 Tests grün**, db_core-Migrationen bis **0017** (0016 = Hand-SQL
 `maintenance`-Schema, 0017 = State-only Models). `seed_demo` deckt
 alle Bereiche ab (Kontakte, Liegenschaften, Projekte+Vorgänge, **durchgeschalteter
 Auftrag**, Aufgaben, Angebot [versendet], **veröffentlichte Rechnung**, Artikel,
@@ -242,6 +242,15 @@ Veröffentlichung (invoice→VEROEFFENTLICHT / quote→VERSENDET, ohne PDF).
   automatisch — aktuell nur manuell über Service), Aktionen PROJEKT/AUFTRAG
   (aktuell nur protokolliert), Anlege-/Auslöse-UI (mit Auth). Muster für neue
   Fachtabellen: `migrations/0016_maintenance_wartung.py` (RunSQL + Schutzstandard).
+- ✔ **„Kein-neues-Schema"-Ausbau** (auf vorhandenem Fachschema, User-Wunsch
+  „erst das, dann Schema+Login"): **Mahnwesen-Screen** (UI zu `/buchhaltung/dunning`),
+  **Plantafel + Kalender** (read-only Board/Monatsansicht auf `service_job`,
+  Endpoint `/planung/plantafel`), **Storno/Rechnungskorrektur** (STORNO/GUTSCHRIFT-
+  Folgebelege, `beleg.py` create_cancellation/create_correction, `POST
+  /buchhaltung/invoices/{id}/cancel`|`/correction`). **Noch offen aus dieser
+  Kategorie:** weitere Auswertungs-Dashboards, VK-Kalkulation/DATANORM (Schema
+  0033/0037 vorhanden), Beleg-PDF (content.document vorhanden). Danach: Schema-
+  Bereiche (HR/Mitarbeiter, Belegerfassung, Ressourcen/Terminkategorien) + Auth/Login.
 
 Empfohlene nächste Reihenfolge:
 
