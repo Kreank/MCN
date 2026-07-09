@@ -162,15 +162,17 @@ Nav-Reihenfolge (Marks 00–60), alle committet, je Tests + Browser + Review:
 | Dokumente (40) | **Angebote + Rechnungen**: Liste + Mappe, Anlegen bis ENTWURF; **Veröffentlichen (Rechnung→VEROEFFENTLICHT) / Versenden (Angebot→VERSENDET)** inkl. Snapshot+Hash+Beteiligte | `/api/invoicing/…/publish`,`/send`,`/parties` |
 | Aufträge | Detail-Mappe (Übersicht/Beteiligte/Verlauf), Statusautomat bis KAUFMAENNISCH_GEPRUEFT/ABGERECHNET mit DB-Toren | `/api/workflow/work_orders` |
 | Planung (50) | **Einsätze** (`workflow.service_job`): Liste + Einsatz-Mappe (Übersicht, Zuweisungen, Zeiten & Material, Verlauf). Read-only; Einsatz-Write-Service existiert + getestet | `/api/planung/einsaetze` |
+| Wartung (55) | **Wartungsverträge** (`maintenance.*`, NEUES Schema): Liste + Detail-Mappe (Details/Erinnerung/Verlauf), Fälligkeits-Aktionen. Write-Service (create/status/trigger) existiert + getestet | `/api/maintenance/contracts` |
 | Aufgaben (60) | Liste + Statusaktionen; **neue Tabelle `workflow.task`** | `/api/workflow/tasks` |
 | Artikel (70) | Artikel + Leistungen (Stücklisten), Liste + Detail | `/api/pricing` |
 | Buchhaltung (80) | **Offene Posten** (veröffentl. Rechnungen mit abgeleitetem Zahlungsstatus/offenem Betrag) + Detail-Mappe (Übersicht/Zahlungen/Mahnverlauf). Zahlungs-/Mahn-Service existiert + getestet | `/api/buchhaltung` |
 | Auswertungen (90) | Landing + **Umsatz-/Projektübersicht** (KPIs, Umsatzverlauf, Projekte nach Gewerk) | `/api/auswertungen/…` |
 
-Nav-Marks nach „Planung"/„Buchhaltung" neu vergeben (Planung=50, Aufgaben=60,
-Artikel=70, Buchhaltung=80, Auswertungen=90).
+Nav-Marks: Planung=50, Wartung=55 (bewusst nicht-rund, Service-Cluster),
+Aufgaben=60, Artikel=70, Buchhaltung=80, Auswertungen=90.
 
-Backend: **192 Tests grün**, db_core-Migrationen bis **0015**. `seed_demo` deckt
+Backend: **212 Tests grün**, db_core-Migrationen bis **0017** (0016 = Hand-SQL
+`maintenance`-Schema, 0017 = State-only Models). `seed_demo` deckt
 alle Bereiche ab (Kontakte, Liegenschaften, Projekte+Vorgänge, **durchgeschalteter
 Auftrag**, Aufgaben, Angebot [versendet], **veröffentlichte Rechnung**, Artikel,
 Cockpit).
@@ -231,6 +233,15 @@ Veröffentlichung (invoice→VEROEFFENTLICHT / quote→VERSENDET, ohne PDF).
   (Endpoint `/api/buchhaltung/dunning` existiert + getestet, aber noch kein UI),
   Mahnstufen-Ausbau 3→6, DATEV/Lexware-Export. Details `docs/roadmap/09-buchhaltung.md`.
   Mahnverlauf-Pausieren fehlt im DB-Schema.
+- ✔ **Wartung** (`maintenance.*` — **erstes selbst angelegtes Fachschema**,
+  Hand-SQL-Migration 0016): `maintenance_contract` (objektzentriert, Statusautomat
+  AKTIV↔INAKTIV→ARCHIVIERT per eigenem Trigger, Belegkreis 'W') + append-only
+  `maintenance_event`. Write-Service `services/wartung.py` (create/set_status/
+  trigger_action; Aktion AUFGABE erzeugt eine workflow.task). Liste + Detail-Mappe
+  read-only. **Offen:** Fälligkeits-Scheduler (Cron/Worker, erzeugt Folgeobjekte
+  automatisch — aktuell nur manuell über Service), Aktionen PROJEKT/AUFTRAG
+  (aktuell nur protokolliert), Anlege-/Auslöse-UI (mit Auth). Muster für neue
+  Fachtabellen: `migrations/0016_maintenance_wartung.py` (RunSQL + Schutzstandard).
 
 Empfohlene nächste Reihenfolge:
 
