@@ -6,9 +6,59 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 > TL;DR: MCN ist ein KI-first CRM (Nachfolger des Hero-CRM) für Handwerk/
 > Gebäudeservice. DB ist database-first PostgreSQL (Regeln in Triggern). Backend
 > Django 5 + django-ninja. Frontend Angular „Leitstand". Es wird in **vertikalen
-> Slices** gebaut (DB→Service→API→UI→Verifikation→Review). Aktuell ~10 Bereiche
-> live, **UI read-only** (Anlegen erst mit Auth ganz am Schluss — bewusste
-> Entscheidung des Users).
+> Slices** gebaut (DB→Service→API→UI→Verifikation→Review). Aktuell **~16 Bereiche
+> read-only live** (Kontakte, Liegenschaften, Projekte, Dokumente, Planung inkl.
+> Plantafel/Kalender, Wartung, Aufgaben, Artikel inkl. VK-Kalkulation, Buchhaltung
+> inkl. Mahnwesen + Storno/Korrektur + Beleg-PDF, Auswertungen). **247 Backend-
+> Tests grün**, db_core-Migrationen bis **0018**.
+
+---
+
+## 0. Nächste Session — Empfehlung & offene Entscheidung (ZUERST LESEN)
+
+Der breite **read-only-Ausbau ist abgeschlossen**: fast alle Hero-Nav-Bereiche
+haben Liste+Detail, und für praktisch jede Aktion existiert bereits ein
+**getesteter Schreib-Service** (create/status/publish/storno/zahlung/mahnung/
+wartung-trigger/kalkulation …) — nur **nicht im UI verdrahtet**. Damit steht die
+eigentliche strategische Weiche an. Es gibt drei Töpfe:
+
+**A) Auth/Login + Schreib-UIs — der größte Hebel, KEIN neues Schema.**
+- *Was:* Django-Session-Login + Angular-Auth (Guard/Interceptor), Verdrahtung der
+  vorhandenen Schreib-Endpunkte in „+ Neu"/Bearbeiten/Statusaktionen; Rechtematrix
+  aus `security.role/role_permission` (0026 existiert) app-seitig durchsetzen.
+- *Warum zuerst:* verwandelt das gesamte read-only-Gerüst in ein **bedienbares
+  System** (größter spürbarer Tiefensprung), ohne DB-Arbeit. `accounts.User` trägt
+  bereits `app_user_id`; `django_auth` ist auf allen Schreib-Endpunkten aktiv
+  (CSRF automatisch an). Größe: **L** (Auth-Infra + viele kleine Formular-Slices).
+- *Achtung:* bisherige Notiz „Auth ganz zuletzt" war eine frühe Entscheidung, als
+  kaum etwas gebaut war — inzwischen würde Auth **alle** Bereiche gleichzeitig
+  aktivieren. **Das ist die zu treffende Entscheidung: Auth jetzt vorziehen oder
+  weiter read-only Schema-Bereiche bauen?** (User-Entscheidung.)
+
+**B) Neue Schema-Bereiche (read-only, brauchen Hand-SQL-Migrationen).**
+Muster: `migrations/0016_maintenance_wartung.py` (RunSQL + Schutzstandard). Jede
+braucht eine kurze fachliche Feld-Entscheidung mit dem User:
+- **Firmeneinstellungen** (`company_profile`/branch/gewerk/email_template fehlen) —
+  klein & wertvoll: ersetzt u.a. den Aussteller-Platzhalter im Beleg-PDF.
+- **Mitarbeiter/Profil** (HR-Schema: Vertrag/Urlaub/Bank fehlen; `security.app_user`
+  ist minimal) — größter Schema-Entwurf.
+- **Belegerfassung/Eingangsrechnungen** (eigene `receipt`-Tabelle vs. gerichtete
+  `invoice` — entscheiden) + `ledger_account`/`cost_center` (Buchhaltung-Ausbau).
+- **Ressourcen + Terminkategorien** (Planung) — schaltet die Ressourcen-Bahnen der
+  Plantafel und die Kategorie-Farben frei.
+
+**C) Kleinere Reste (geringes Risiko, schnelle Slices).**
+- Weitere Auswertungs-Dashboards (Projekte/Artikel/Mitarbeitende) — reine Read-Views.
+- Beleg-PDF-**Archivierung** (MinIO + `content.document`/`file_link`,
+  Einmaligkeits-Index 0032) — braucht MinIO-Anbindung (Container `mitra-crm-minio`).
+- Plantafel **Drag&Drop** (Umplanen = Schreibaktion → kommt mit Auth), Mahnstufen
+  3→6 (`dunning_level` seedet nur 3), DATANORM-Import-Wizard (Schreib-Flow).
+
+**Empfehlung des bisherigen Standes:** **A (Auth) als nächstes** — es ist der
+einzige Schritt, der das viele bereits Gebaute *nutzbar* macht, und braucht kein
+Schema. Falls der User lieber erst die Breite komplett read-only will: mit **B →
+Firmeneinstellungen** starten (kleinster Schema-Slice, sofort sichtbarer Nutzen).
+Details/Gotchas je Bereich in `docs/roadmap/09/11/12/13/14` + Abschnitt 8 unten.
 
 ---
 
