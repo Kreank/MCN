@@ -109,6 +109,15 @@ export const routes: Routes = [
           import('./features/planung-kalender/planung-kalender').then((m) => m.PlanungKalender),
       },
       {
+        path: 'planung/einstellungen',
+        title: 'Kategorien & Ressourcen — MCN Leitstand',
+        canActivate: [darfGuard('workflow', 'LESEN')],
+        loadComponent: () =>
+          import('./features/planung-einstellungen/planung-einstellungen').then(
+            (m) => m.PlanungEinstellungen,
+          ),
+      },
+      {
         path: 'planung/:id',
         title: 'Einsatz — MCN Leitstand',
         canActivate: [darfGuard('workflow', 'LESEN')],
@@ -240,6 +249,35 @@ export const routes: Routes = [
         canActivate: [darfGuard('pricing', 'LESEN')],
         loadComponent: () =>
           import('./features/leistung-detail/leistung-detail').then((m) => m.LeistungDetail),
+      },
+      // Einstellungen — Read-Ansicht mit LESEN (company/invoicing), Bearbeiten
+      // gaten die Komponenten selbst über authService.darf(...,'AENDERN').
+      { path: 'einstellungen', pathMatch: 'full', redirectTo: 'einstellungen/profil' },
+      {
+        path: 'einstellungen/profil',
+        title: 'Firmenprofil — MCN Leitstand',
+        canActivate: [darfGuard('company', 'LESEN')],
+        loadComponent: () =>
+          import('./features/firmenprofil/firmenprofil').then((m) => m.Firmenprofil),
+      },
+      {
+        path: 'einstellungen/mahnstufen',
+        title: 'Mahnstufen — MCN Leitstand',
+        canActivate: [darfGuard('invoicing', 'LESEN')],
+        loadComponent: () => import('./features/mahnstufen/mahnstufen').then((m) => m.Mahnstufen),
+      },
+      {
+        path: 'einstellungen/gewerke',
+        title: 'Gewerke — MCN Leitstand',
+        canActivate: [darfGuard('company', 'LESEN')],
+        loadComponent: () => import('./features/gewerke/gewerke').then((m) => m.Gewerke),
+      },
+      {
+        path: 'einstellungen/niederlassungen',
+        title: 'Niederlassungen — MCN Leitstand',
+        canActivate: [darfGuard('company', 'LESEN')],
+        loadComponent: () =>
+          import('./features/niederlassungen/niederlassungen').then((m) => m.Niederlassungen),
       },
       { path: '**', redirectTo: 'uebersicht' },
     ],

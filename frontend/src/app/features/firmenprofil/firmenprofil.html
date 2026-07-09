@@ -1,0 +1,119 @@
+<section class="firmenprofil" aria-labelledby="firmenprofil-titel">
+<header class="page-head">
+  <div>
+    <p class="page-head__kicker">
+      <span class="page-head__scale" aria-hidden="true"></span>
+      Einstellungen
+    </p>
+    <h1 id="firmenprofil-titel" class="page-head__titel">Firmenprofil</h1>
+  </div>
+</header>
+
+<app-einstellungen-nav />
+
+@switch (state().kind) {
+  @case ('loading') {
+    <p class="lade-hinweis" role="status">Firmenprofil wird geladen.</p>
+  }
+  @case ('forbidden') {
+    <app-kein-zugriff [detail]="$any(state()).detail" />
+  }
+  @case ('error') {
+    <p class="note note--error" role="alert">
+      Das Firmenprofil konnte nicht geladen werden. Bitte erneut versuchen.
+    </p>
+  }
+  @case ('ready') {
+    @if (!darfAendern()) {
+      <p class="note" role="note">
+        Sie sehen das Firmenprofil schreibgeschützt. Zum Bearbeiten fehlt Ihnen das
+        Recht „Firmeneinstellungen ändern".
+      </p>
+    }
+    @if (!$any(state()).data.exists && darfAendern()) {
+      <p class="note" role="note">
+        Es ist noch kein Firmenprofil gepflegt. Es steht später auf jedem Beleg —
+        bitte die Firmendaten hinterlegen.
+      </p>
+    }
+
+    <form class="profil-form" [formGroup]="form" (ngSubmit)="absenden()" novalidate>
+      @if (erfolg(); as m) {
+        <p class="note note--erfolg" role="status">{{ m }}</p>
+      }
+      @if (formularMeldung(); as m) {
+        <p class="note note--error" role="alert">{{ m }}</p>
+      }
+
+      <fieldset class="profil-abschnitt">
+        <legend>Allgemein</legend>
+        <div class="profil-grid">
+          <app-feld [control]="form.controls.company_name" label="Firmenname" [pflicht]="true" />
+          <app-feld [control]="form.controls.legal_form" label="Rechtsform"
+                    hinweis="z. B. GmbH, e. K." />
+          <app-feld [control]="form.controls.default_language" label="Standardsprache"
+                    hinweis="ISO-Kürzel, z. B. de" />
+        </div>
+      </fieldset>
+
+      <fieldset class="profil-abschnitt">
+        <legend>Anschrift</legend>
+        <div class="profil-grid">
+          <app-feld [control]="form.controls.street" label="Straße und Hausnummer" />
+          <app-feld [control]="form.controls.postal_code" label="Postleitzahl" />
+          <app-feld [control]="form.controls.city" label="Ort" />
+          <app-feld [control]="form.controls.country" label="Land"
+                    hinweis="ISO-Kürzel, z. B. DE" />
+          <app-feld [control]="form.controls.state_code" label="Bundesland"
+                    hinweis="z. B. BY — steuert später die Feiertage in der Planung" />
+        </div>
+      </fieldset>
+
+      <fieldset class="profil-abschnitt">
+        <legend>Kontakt</legend>
+        <div class="profil-grid">
+          <app-feld [control]="form.controls.phone" label="Telefon" typ="tel" />
+          <app-feld [control]="form.controls.email" label="E-Mail" typ="email" />
+          <app-feld [control]="form.controls.web" label="Web" />
+        </div>
+      </fieldset>
+
+      <fieldset class="profil-abschnitt">
+        <legend>Steuer &amp; Register</legend>
+        <div class="profil-grid">
+          <app-feld [control]="form.controls.tax_number" label="Steuernummer" />
+          <app-feld [control]="form.controls.vat_id" label="USt-IdNr." />
+          <app-feld [control]="form.controls.commercial_register" label="Handelsregister"
+                    hinweis="z. B. HRB 12345, AG Musterstadt" />
+        </div>
+      </fieldset>
+
+      <fieldset class="profil-abschnitt">
+        <legend>Bankverbindung</legend>
+        <div class="profil-grid">
+          <app-feld [control]="form.controls.bank_name" label="Bank" />
+          <app-feld [control]="form.controls.iban" label="IBAN" />
+          <app-feld [control]="form.controls.bic" label="BIC" />
+        </div>
+      </fieldset>
+
+      <fieldset class="profil-abschnitt">
+        <legend>Geschäftsführung</legend>
+        <div class="profil-grid">
+          <app-feld [control]="form.controls.managing_director" label="Name" />
+          <app-feld [control]="form.controls.managing_director_title" label="Bezeichnung"
+                    hinweis="Fließt in Fußzeilen, z. B. Geschäftsführer" />
+        </div>
+      </fieldset>
+
+      @if (darfAendern()) {
+        <div class="profil-aktionen">
+          <button type="submit" class="btn btn--primary" [disabled]="laedt()">
+            {{ laedt() ? 'Speichern …' : 'Firmenprofil speichern' }}
+          </button>
+        </div>
+      }
+    </form>
+  }
+}
+</section>

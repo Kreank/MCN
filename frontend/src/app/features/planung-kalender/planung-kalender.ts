@@ -4,6 +4,7 @@ import { EinsatzService } from '../../core/einsatz.service';
 import {
   BoardJob,
   ServiceJobStatus,
+  categoryColorClass,
   serviceJobStatusLabel,
 } from '../../core/einsatz.model';
 import { PlanungNav } from '../planung-nav/planung-nav';
@@ -183,5 +184,9 @@ export class PlanungKalender {
   }
   time(iso: string | null): string {
     return iso ? this.timeFmt.format(new Date(iso)) : '';
+  }
+  /** Farbklasse der Kategorie (Ergänzung; der Name steht immer als Text dabei). */
+  categoryClass(job: BoardJob): string {
+    return job.category ? categoryColorClass(job.category.color_token) : '';
   }
 }

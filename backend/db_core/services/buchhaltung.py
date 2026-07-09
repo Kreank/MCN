@@ -22,7 +22,7 @@ from datetime import date
 
 from db_core.db_context import business_transaction
 from db_core.gate_errors import as_business_error
-from db_core.models import DunningNotice, Invoice, Payment
+from db_core.models import DunningLevel, DunningNotice, Invoice, Payment
 from db_core.services._validation import ensure_exists
 
 # Beitrag je payment_type zum bezahlten Betrag (+1 = Geldeingang reduziert den
@@ -131,6 +131,14 @@ def issue_dunning_notice(
     """
     if level is None or level <= 0:
         raise ValueError("level muss eine positive Stufennummer sein.")
+    # Eine deaktivierte Stufe wird nicht ausgestellt (Konfig-Ebene, Migration
+    # 0025 db_core). Die lückenlose Eskalation (max+1) erzwingt zusätzlich der
+    # DB-Trigger.
+    lvl = DunningLevel.objects.filter(level=level).first()
+    if lvl is None:
+        raise ValueError(f"Mahnstufe {level} existiert nicht.")
+    if not lvl.active:
+        raise ValueError(f"Mahnstufe {level} ist deaktiviert und kann nicht ausgestellt werden.")
     ensure_exists(Invoice, invoice_id, "Rechnung")
     with as_business_error():
         with business_transaction(actor_app_user_id):

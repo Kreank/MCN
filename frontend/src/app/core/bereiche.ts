@@ -20,6 +20,9 @@ export const BEREICH_RECHT: Record<string, readonly [string, string]> = {
   auswertungen: ['invoicing', 'LESEN'],
   artikel: ['pricing', 'LESEN'],
   leistungen: ['pricing', 'LESEN'],
+  // Einstellungen: Read-Zugang mit company/LESEN (alle Rollen); die einzelnen
+  // Unterseiten und das Bearbeiten gaten feiner (invoicing bzw. AENDERN).
+  einstellungen: ['company', 'LESEN'],
 };
 
 /** Recht für einen (internen) Pfad, oder null, wenn der Bereich frei ist. */

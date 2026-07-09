@@ -13,7 +13,11 @@ from decimal import Decimal
 
 from fpdf import FPDF
 
-from db_core.models import Invoice
+from db_core.models import CompanyProfile, Invoice
+
+# Fallback-Aussteller, solange kein Firmenprofil gepflegt ist (kein Absturz).
+_FALLBACK_NAME = "MCN Gebäudeservice"
+_FALLBACK_SUBLINE = "Firmenprofil noch nicht gepflegt · Einstellungen › Firmenprofil"
 
 _TYPE_TITLES = {
     "RECHNUNG": "Rechnung",
@@ -49,6 +53,71 @@ def _de_date(d):
     return d.strftime("%d.%m.%Y") if d else "-"
 
 
+def _issuer_lines(profile):
+    """(Name, Unterzeile) des Ausstellers — pure Funktion (ohne Profil: Fallback)."""
+    if profile is None:
+        return _FALLBACK_NAME, _FALLBACK_SUBLINE
+    name = profile.company_name
+    addr_bits = [
+        profile.street,
+        " ".join(b for b in (profile.postal_code, profile.city) if b),
+    ]
+    subline = " · ".join(b for b in addr_bits if b) or (profile.legal_form or "")
+    return name, subline
+
+
+def _footer_parts(profile):
+    """Liste der Fußzeilen-Angaben (Steuer/Register/Bank) — nur was gepflegt ist."""
+    if profile is None:
+        return []
+    parts = []
+    if profile.tax_number:
+        parts.append(f"Steuernr.: {profile.tax_number}")
+    if profile.vat_id:
+        parts.append(f"USt-IdNr.: {profile.vat_id}")
+    if profile.commercial_register:
+        parts.append(profile.commercial_register)
+    if profile.managing_director:
+        title = profile.managing_director_title or "Geschäftsführung"
+        parts.append(f"{title}: {profile.managing_director}")
+    bank = []
+    if profile.bank_name:
+        bank.append(profile.bank_name)
+    if profile.iban:
+        bank.append(f"IBAN {profile.iban}")
+    if profile.bic:
+        bank.append(f"BIC {profile.bic}")
+    if bank:
+        parts.append(" · ".join(bank))
+    return parts
+
+
+def _render_issuer(pdf, profile):
+    """Kopfzeile des Ausstellers aus dem Firmenprofil (oder Fallback)."""
+    name, subline = _issuer_lines(profile)
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.cell(0, 8, _txt(name), new_x="LMARGIN", new_y="NEXT")
+    if subline:
+        pdf.set_font("Helvetica", "", 9)
+        pdf.set_text_color(110, 110, 110)
+        pdf.cell(0, 5, _txt(subline), new_x="LMARGIN", new_y="NEXT")
+        pdf.set_text_color(0, 0, 0)
+    pdf.ln(6)
+
+
+def _render_footer(pdf, profile):
+    """Fußzeile mit Steuer-/Register-/Bankangaben (nur was gepflegt ist)."""
+    parts = _footer_parts(profile)
+    if not parts:
+        return
+    pdf.ln(6)
+    pdf.set_draw_color(210, 210, 210)
+    pdf.set_font("Helvetica", "", 8)
+    pdf.set_text_color(120, 120, 120)
+    pdf.multi_cell(0, 4, _txt(" · ".join(parts)), border="T")
+    pdf.set_text_color(0, 0, 0)
+
+
 def render_invoice_pdf(invoice_id):
     """Rendert das PDF einer veröffentlichten Rechnung und gibt die Bytes zurück.
 
@@ -73,14 +142,10 @@ def render_invoice_pdf(invoice_id):
     pdf.set_margins(20, 18, 20)
     pdf.add_page()
 
-    # Aussteller (Platzhalter — Firmenprofil folgt mit den Einstellungen).
-    pdf.set_font("Helvetica", "B", 14)
-    pdf.cell(0, 8, "MCN Gebäudeservice", new_x="LMARGIN", new_y="NEXT")
-    pdf.set_font("Helvetica", "", 9)
-    pdf.set_text_color(110, 110, 110)
-    pdf.cell(0, 5, "Handwerk & Gebäudeservice · Musterstadt", new_x="LMARGIN", new_y="NEXT")
-    pdf.set_text_color(0, 0, 0)
-    pdf.ln(6)
+    # Aussteller aus dem Firmenprofil (Singleton). Ohne gepflegtes Profil ein
+    # neutraler Fallback statt Absturz.
+    profile = CompanyProfile.objects.first()
+    _render_issuer(pdf, profile)
 
     # Empfänger
     pdf.set_font("Helvetica", "", 11)
@@ -150,6 +215,8 @@ def render_invoice_pdf(invoice_id):
             pdf.multi_cell(0, 5, _txt(f"Bezieht sich auf Ursprungsbeleg "
                                       f"{ref.invoice_number or ref.invoice_type}."))
             pdf.set_text_color(0, 0, 0)
+
+    _render_footer(pdf, profile)
 
     out = pdf.output()
     return bytes(out)

@@ -4,22 +4,27 @@ import { ActivatedRoute, RouterLink } from '@angular/router';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Mappe, MappeTab } from '../../shared/mappe/mappe';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
-import { VerbotenState, fehlerState } from '../../shared/http-fehler';
+import { VerbotenState, fehlerDetail, fehlerState, istVerboten } from '../../shared/http-fehler';
 import { AuthService } from '../../core/auth.service';
 import { EinsatzService } from '../../core/einsatz.service';
+import { PlanungStammdatenService } from '../../core/planung-stammdaten.service';
 import {
   ASSIGNMENT_ROLES,
+  CategoryColorToken,
   MaterialLogInput,
   ServiceJobDetail,
   ServiceJobStatus,
   TimeLogInput,
   assignmentRoleLabel,
+  categoryColorClass,
+  resourceTypeLabel,
   serviceJobStatusClass,
   serviceJobStatusLabel,
   serviceJobStatusLabelStr,
   timeTypeLabel,
   workOrderStatusLabel,
 } from '../../core/einsatz.model';
+import { ResourceType } from '../../core/einsatz.model';
 import { WorkOrderStatus } from '../../core/auftrag.model';
 import { Dialog } from '../../shared/dialog/dialog';
 import { Feld, FeldOption } from '../../shared/formular/feld';
@@ -39,7 +44,14 @@ type ViewState =
   | { kind: 'error' };
 
 type Meldung = { art: 'erfolg' | 'fehler'; text: string };
-type DialogArt = 'termin' | 'status' | 'zeit' | 'material' | 'zuweisung';
+type DialogArt =
+  | 'termin'
+  | 'status'
+  | 'zeit'
+  | 'material'
+  | 'zuweisung'
+  | 'kategorie'
+  | 'ressource';
 
 const JOB_STATUSES: ServiceJobStatus[] = [
   'UNGEPLANT',
@@ -62,6 +74,7 @@ const JOB_STATUSES: ServiceJobStatus[] = [
 export class EinsatzDetail {
   private readonly route = inject(ActivatedRoute);
   private readonly svc = inject(EinsatzService);
+  private readonly stammSvc = inject(PlanungStammdatenService);
   private readonly auth = inject(AuthService);
   private readonly fb = inject(FormBuilder);
 
@@ -165,6 +178,17 @@ export class EinsatzDetail {
     }),
     role: this.fb.control('TECHNICIAN', { nonNullable: true, validators: [Validators.required] }),
   });
+  protected readonly kategorieForm = this.fb.group({
+    category_id: this.fb.control('', { nonNullable: true }),
+  });
+  protected readonly ressourceForm = this.fb.group({
+    resource_id: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
+  });
+
+  // Auswahllisten (aktive Stammdaten), erst beim Öffnen des Dialogs geladen.
+  protected readonly kategorieOpt = signal<FeldOption[]>([]);
+  protected readonly ressourceOpt = signal<FeldOption[]>([]);
+  protected readonly aktionBusyId = signal<string | null>(null);
 
   constructor() {
     this.route.paramMap.pipe(takeUntilDestroyed()).subscribe((pm) => {
@@ -219,8 +243,37 @@ export class EinsatzDetail {
       case 'zuweisung':
         this.zuweisungForm.reset({ assignee_user_id: '', role: 'TECHNICIAN' });
         break;
+      case 'kategorie':
+        this.kategorieForm.reset({ category_id: d?.category?.id ?? '' });
+        this.ladeKategorieOpt();
+        break;
+      case 'ressource':
+        this.ressourceForm.reset({ resource_id: '' });
+        this.ladeRessourceOpt();
+        break;
     }
     this.dialogOffen.set(art);
+  }
+
+  private ladeKategorieOpt(): void {
+    this.stammSvc.listKategorien().subscribe({
+      next: (ks) =>
+        this.kategorieOpt.set(ks.map((k) => ({ wert: k.id, label: k.name }))),
+      error: () => this.kategorieOpt.set([]),
+    });
+  }
+
+  private ladeRessourceOpt(): void {
+    const zugeordnet = new Set((this.daten()?.resources ?? []).map((r) => r.id));
+    this.stammSvc.listRessourcen().subscribe({
+      next: (rs) =>
+        this.ressourceOpt.set(
+          rs
+            .filter((r) => !zugeordnet.has(r.id))
+            .map((r) => ({ wert: r.id, label: `${r.name} (${this.resTypeLabel(r.resource_type)})` })),
+        ),
+      error: () => this.ressourceOpt.set([]),
+    });
   }
 
   dialogSchliessen(): void {
@@ -334,6 +387,61 @@ export class EinsatzDetail {
     });
   }
 
+  kategorieAbsenden(): void {
+    const d = this.daten();
+    if (!d || this.dialogLaedt()) return;
+    this.formularMeldung.set(null);
+    const catId = this.kategorieForm.getRawValue().category_id || null;
+    this.dialogLaedt.set(true);
+    this.stammSvc.setJobKategorie(d.id, catId).subscribe({
+      next: () => this.nachSchreiben(catId ? 'Kategorie gesetzt.' : 'Kategorie entfernt.'),
+      error: (err) => {
+        this.dialogLaedt.set(false);
+        this.formularMeldung.set(apiFehlerZuweisen(err, this.kategorieForm).formular);
+      },
+    });
+  }
+
+  ressourceAbsenden(): void {
+    const d = this.daten();
+    if (!d || this.nichtBereit(this.ressourceForm)) return;
+    const resId = this.ressourceForm.getRawValue().resource_id;
+    this.dialogLaedt.set(true);
+    this.stammSvc.assignRessource(d.id, resId).subscribe({
+      next: (res) => {
+        const text = res.warnings.length
+          ? `Ressource zugeordnet. Hinweis: ${res.warnings.join(' ')}`
+          : 'Ressource zugeordnet.';
+        this.nachSchreiben(text);
+      },
+      error: (err) => {
+        this.dialogLaedt.set(false);
+        this.formularMeldung.set(apiFehlerZuweisen(err, this.ressourceForm).formular);
+      },
+    });
+  }
+
+  ressourceEntfernen(resourceId: string): void {
+    const d = this.daten();
+    if (!d || this.aktionBusyId()) return;
+    this.aktionBusyId.set(resourceId);
+    this.meldung.set(null);
+    this.stammSvc.unassignRessource(d.id, resourceId).subscribe({
+      next: () => {
+        this.aktionBusyId.set(null);
+        this.meldung.set({ art: 'erfolg', text: 'Ressourcenzuordnung entfernt.' });
+        this.load(d.id);
+      },
+      error: (err) => {
+        this.aktionBusyId.set(null);
+        const text = istVerboten(err)
+          ? (fehlerDetail(err) ?? 'Keine Berechtigung für diese Aktion.')
+          : (fehlerDetail(err) ?? 'Die Aktion ist fehlgeschlagen. Bitte erneut versuchen.');
+        this.meldung.set({ art: 'fehler', text });
+      },
+    });
+  }
+
   /** ISO-Datetime → Wert für <input type="datetime-local"> (lokale Zeit). */
   private zuLocal(iso: string | null): string {
     if (!iso) return '';
@@ -361,6 +469,12 @@ export class EinsatzDetail {
   }
   roleLabel(r: string): string {
     return assignmentRoleLabel(r);
+  }
+  categoryClass(token: CategoryColorToken): string {
+    return categoryColorClass(token);
+  }
+  resTypeLabel(t: ResourceType): string {
+    return resourceTypeLabel(t);
   }
   dt(iso: string | null): string {
     if (!iso) return '—';

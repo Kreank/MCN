@@ -56,20 +56,37 @@
               </div>
             }
 
-            @for (lane of lanes(); track lane.id) {
-              <div class="board__lane" [class.board__lane--none]="lane.id === ''">
+            @for (lane of lanes(); track lane.kind + lane.id) {
+              <div
+                class="board__lane"
+                [class.board__lane--none]="lane.kind === 'unassigned'"
+                [class.board__lane--resource]="lane.kind === 'resource'"
+              >
                 <span class="board__lane-name">{{ lane.name }}</span>
+                @if (lane.sub) {
+                  <span class="board__lane-sub">{{ lane.sub }}</span>
+                }
               </div>
               @for (day of days(); track day.iso) {
                 <div class="board__cell" [class.is-today]="day.isToday">
-                  @for (job of cellJobs(lane.id, day.iso); track job.id) {
+                  @for (job of cellJobs(lane, day.iso); track job.id) {
                     <a
                       class="tile tile--{{ statusMod(job.status) }}"
                       [routerLink]="['/planung', job.id]"
-                      [attr.aria-label]="job.title + ', ' + time(job.scheduled_start) + ', ' + statusLabel(job.status)"
+                      [attr.aria-label]="
+                        job.title + ', ' + time(job.scheduled_start) + ', ' +
+                        statusLabel(job.status) +
+                        (job.category ? ', Kategorie ' + job.category.name : '')
+                      "
                     >
                       <span class="tile__time">{{ time(job.scheduled_start) }}</span>
                       <span class="tile__title">{{ job.title }}</span>
+                      @if (job.category) {
+                        <span class="kat-chip tile__kat {{ categoryClass(job) }}">
+                          <span class="kat-dot" aria-hidden="true"></span>
+                          {{ job.category.name }}
+                        </span>
+                      }
                       <span class="tile__status">{{ statusLabel(job.status) }}</span>
                     </a>
                   }

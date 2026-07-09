@@ -48,9 +48,22 @@
           <div class="tab-toolbar">
             <button type="button" class="btn" (click)="dialogOeffnen('termin')">Termin setzen</button>
             <button type="button" class="btn" (click)="dialogOeffnen('status')">Status ändern</button>
+            <button type="button" class="btn" (click)="dialogOeffnen('kategorie')">Kategorie</button>
           </div>
         }
         <dl class="feld-raster">
+          <div class="feld">
+            <dt class="feld__label">Terminkategorie</dt>
+            <dd class="feld__wert" [class.feld__wert--leer]="!daten()!.category">
+              @if (daten()!.category; as c) {
+                <span class="kat-chip {{ categoryClass(c.color_token) }}">
+                  <span class="kat-dot" aria-hidden="true"></span>{{ c.name }}
+                </span>
+              } @else {
+                —
+              }
+            </dd>
+          </div>
           <div class="feld"><dt class="feld__label">Einsatznummer</dt><dd class="feld__wert">{{ daten()!.job_number }}</dd></div>
           <div class="feld"><dt class="feld__label">Status</dt><dd class="feld__wert">{{ statusLabel(daten()!.status) }}</dd></div>
           <div class="feld"><dt class="feld__label">Planbeginn</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.scheduled_start">{{ dt(daten()!.scheduled_start) }}</dd></div>
@@ -98,6 +111,42 @@
                   <span class="ref__name">{{ a.display_name }}</span>
                   <span class="ref__stamps">
                     <span class="stamp stamp--type">{{ roleLabel(a.role) }}</span>
+                  </span>
+                </div>
+              </li>
+            }
+          </ul>
+        }
+
+        <h3 class="erfassung__titel">Ressourcen</h3>
+        @if (darfDispo()) {
+          <div class="tab-toolbar">
+            <button type="button" class="btn" (click)="dialogOeffnen('ressource')">
+              <span aria-hidden="true">＋</span> Ressource zuordnen
+            </button>
+          </div>
+        }
+        @if (daten()!.resources.length === 0) {
+          <div class="tab-platzhalter"><p>Diesem Einsatz sind noch keine Ressourcen (Fahrzeuge/Geräte/Räume) zugeordnet.</p></div>
+        } @else {
+          <ul class="ref-liste">
+            @for (r of daten()!.resources; track r.id) {
+              <li>
+                <div class="ref ref--static">
+                  <span class="ref__name">{{ r.name }}</span>
+                  <span class="ref__stamps">
+                    <span class="stamp stamp--type">{{ resTypeLabel(r.resource_type) }}</span>
+                    <span class="stamp">{{ r.resource_number }}</span>
+                    @if (darfDispo()) {
+                      <button
+                        type="button"
+                        class="btn"
+                        [disabled]="aktionBusyId() === r.id"
+                        (click)="ressourceEntfernen(r.id)"
+                      >
+                        Entfernen
+                      </button>
+                    }
                   </span>
                 </div>
               </li>
@@ -312,6 +361,59 @@
         <button type="button" class="btn" [disabled]="dialogLaedt()" (click)="dialogSchliessen()">Abbrechen</button>
         <button type="submit" form="zuweisung-form" class="btn btn--primary" [disabled]="dialogLaedt()" [attr.aria-busy]="dialogLaedt()">
           {{ dialogLaedt() ? 'Wird zugewiesen …' : 'Zuweisen' }}
+        </button>
+      </div>
+    </app-dialog>
+
+    <!-- ---------------------------- Kategorie-Dialog ---------------------- -->
+    <app-dialog [offen]="dialogOffen() === 'kategorie'" titel="Terminkategorie" (schliessen)="dialogSchliessen()">
+      <form id="kategorie-form" class="dialog-form" (submit)="$event.preventDefault(); kategorieAbsenden()" novalidate>
+        @if (formularMeldung(); as fm) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+          </div>
+        }
+        <app-feld
+          [control]="kategorieForm.controls.category_id"
+          label="Kategorie"
+          typ="select"
+          platzhalter="— keine —"
+          hinweis="Leer lassen entfernt die Kategorie. Die Farbe erscheint immer zusammen mit dem Namen."
+          [optionen]="kategorieOpt()"
+        />
+      </form>
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="dialogLaedt()" (click)="dialogSchliessen()">Abbrechen</button>
+        <button type="submit" form="kategorie-form" class="btn btn--primary" [disabled]="dialogLaedt()" [attr.aria-busy]="dialogLaedt()">
+          {{ dialogLaedt() ? 'Wird gespeichert …' : 'Speichern' }}
+        </button>
+      </div>
+    </app-dialog>
+
+    <!-- ---------------------------- Ressource-Dialog ---------------------- -->
+    <app-dialog [offen]="dialogOffen() === 'ressource'" titel="Ressource zuordnen" (schliessen)="dialogSchliessen()">
+      <form id="ressource-form" class="dialog-form" (submit)="$event.preventDefault(); ressourceAbsenden()" novalidate>
+        @if (formularMeldung(); as fm) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+          </div>
+        }
+        <app-feld
+          [control]="ressourceForm.controls.resource_id"
+          label="Ressource"
+          typ="select"
+          [pflicht]="true"
+          platzhalter="Bitte wählen"
+          hinweis="Doppelbelegung wird nicht gesperrt; bei Überlappung erscheint ein Hinweis."
+          [optionen]="ressourceOpt()"
+        />
+      </form>
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="dialogLaedt()" (click)="dialogSchliessen()">Abbrechen</button>
+        <button type="submit" form="ressource-form" class="btn btn--primary" [disabled]="dialogLaedt()" [attr.aria-busy]="dialogLaedt()">
+          {{ dialogLaedt() ? 'Wird zugeordnet …' : 'Zuordnen' }}
         </button>
       </div>
     </app-dialog>

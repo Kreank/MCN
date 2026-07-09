@@ -21,14 +21,18 @@ from ninja.security import django_auth
 
 from api.permissions import require, require_scoped
 from db_core.models import (
+    AppointmentCategory,
     AppUser,
     JobAssignment,
+    JobResource,
     MaterialEntry,
+    Resource,
     ServiceJob,
     StatusChange,
     TimeEntry,
 )
 from db_core.services import einsatz as einsatz_service
+from db_core.services import planung as planung_service
 
 router = Router()
 
@@ -62,6 +66,22 @@ class PropertyRefOut(Schema):
     city: str
 
 
+class CategoryRefOut(Schema):
+    """Kategorie am Einsatz — Name IMMER dabei (Kalender/Plantafel zeigen den
+    Namen als Text, die Farbe ist nur Ergänzung; WCAG: Status nie nur Farbe)."""
+
+    id: UUID
+    name: str
+    color_token: str
+
+
+class ResourceRefOut(Schema):
+    id: UUID
+    resource_number: str
+    name: str
+    resource_type: str
+
+
 class ServiceJobOut(Schema):
     id: UUID
     job_number: str
@@ -72,6 +92,7 @@ class ServiceJobOut(Schema):
     actual_end: datetime | None = None
     work_order: WorkOrderRefOut
     property: PropertyRefOut | None = None
+    category: CategoryRefOut | None = None
     assignee_count: int = 0
 
 
@@ -117,6 +138,7 @@ class ServiceJobDetailOut(ServiceJobOut):
     on_site_contact: str | None = None
     created_at: datetime
     assignments: list[AssignmentOut]
+    resources: list[ResourceRefOut] = []
     history: list[StatusChangeOut]
     time_entries: list[TimeEntryOut]
     material_entries: list[MaterialEntryOut]
@@ -136,6 +158,7 @@ class ServiceJobCreateIn(Schema):
     scheduled_end: datetime | None = None
     on_site_contact_party_id: UUID | None = None
     access_instructions: str | None = None
+    appointment_category_id: UUID | None = None
 
 
 class ScheduleIn(Schema):
@@ -192,6 +215,13 @@ def _work_order_ref(job):
     )
 
 
+def _category_ref(job):
+    c = getattr(job, "appointment_category", None)
+    if c is None:
+        return None
+    return CategoryRefOut(id=c.id, name=c.name, color_token=c.color_token)
+
+
 def _service_job_out(job, assignee_count=0):
     return ServiceJobOut(
         id=job.id,
@@ -203,6 +233,7 @@ def _service_job_out(job, assignee_count=0):
         actual_end=job.actual_end,
         work_order=_work_order_ref(job),
         property=_property_ref(job),
+        category=_category_ref(job),
         assignee_count=assignee_count,
     )
 
@@ -228,7 +259,7 @@ def list_einsaetze(
         raise HttpError(422, f"Unbekannter Status '{filters.status}'.")
 
     qs = ServiceJob.objects.select_related(
-        "work_order__property__address"
+        "work_order__property__address", "appointment_category"
     )
     if scope == "EIGENE":
         qs = qs.filter(assignments__assignee_id=actor).distinct()
@@ -280,8 +311,12 @@ def get_einsatz(request, job_id: UUID):
     actor, scope = require_scoped(request, "workflow", "LESEN")
     job = (
         ServiceJob.objects.filter(id=job_id)
-        .select_related("work_order__property__address", "on_site_contact_party")
-        .prefetch_related("assignments__assignee")
+        .select_related(
+            "work_order__property__address",
+            "on_site_contact_party",
+            "appointment_category",
+        )
+        .prefetch_related("assignments__assignee", "resource_links__resource")
         .first()
     )
     if job is None:
@@ -339,6 +374,18 @@ def get_einsatz(request, job_id: UUID):
         for m in materials
     ]
 
+    resources = [
+        ResourceRefOut(
+            id=link.resource.id,
+            resource_number=link.resource.resource_number,
+            name=link.resource.name,
+            resource_type=link.resource.resource_type,
+        )
+        for link in sorted(
+            job.resource_links.all(), key=lambda link: link.resource.name
+        )
+    ]
+
     base = _service_job_out(job, len(assignments))
     contact = (
         job.on_site_contact_party.display_name if job.on_site_contact_party_id else None
@@ -350,6 +397,7 @@ def get_einsatz(request, job_id: UUID):
         on_site_contact=contact,
         created_at=job.created_at,
         assignments=assignments,
+        resources=resources,
         history=history,
         time_entries=time_entries,
         material_entries=material_entries,
@@ -396,7 +444,7 @@ def list_assignable_users(request, q: str | None = Query(None)):
 def _reload_job(job_id):
     job = (
         ServiceJob.objects.filter(id=job_id)
-        .select_related("work_order__property__address")
+        .select_related("work_order__property__address", "appointment_category")
         .first()
     )
     if job is None:
@@ -442,6 +490,7 @@ def create_einsatz(request, payload: ServiceJobCreateIn):
             scheduled_end=payload.scheduled_end,
             on_site_contact_party_id=payload.on_site_contact_party_id,
             access_instructions=payload.access_instructions,
+            appointment_category_id=payload.appointment_category_id,
         )
     except ValueError as exc:
         raise HttpError(422, str(exc))
@@ -610,6 +659,14 @@ class BoardResourceOut(Schema):
     display_name: str
 
 
+class BoardResourceLaneOut(Schema):
+    """Bahn einer Betriebsmittel-Ressource (Fahrzeug/Gerät/Raum)."""
+
+    id: UUID
+    display_name: str
+    resource_type: str
+
+
 class BoardJobOut(Schema):
     id: UUID
     job_number: str
@@ -618,13 +675,18 @@ class BoardJobOut(Schema):
     scheduled_start: datetime
     scheduled_end: datetime | None = None
     property_name: str | None = None
+    category: CategoryRefOut | None = None
     assignee_ids: list[UUID]
+    resource_ids: list[UUID]
 
 
 class PlantafelOut(Schema):
     date_from: date
     date_to: date
+    # Mitarbeiter-Bahnen (aus job_assignment).
     resources: list[BoardResourceOut]
+    # Ressourcen-Bahnen (Betriebsmittel aus resource.job_resource).
+    resource_lanes: list[BoardResourceLaneOut]
     jobs: list[BoardJobOut]
     unassigned_count: int
 
@@ -636,10 +698,11 @@ def plantafel(
     date_to: date | None = Query(None),
 ):
     """Plantafel-Daten für einen Zeitraum: die Mitarbeiter-Bahnen (aus den
-    Zuweisungen der Einsätze im Fenster) und die verplanten Einsätze mit ihren
-    assignee_ids. Nur Einsätze mit Planbeginn erscheinen; Mehrfachzuweisungen
+    Zuweisungen der Einsätze im Fenster), die Ressourcen-Bahnen (Betriebsmittel
+    aus resource.job_resource) und die verplanten Einsätze mit ihren assignee_ids
+    und resource_ids. Nur Einsätze mit Planbeginn erscheinen; Mehrfachzuweisungen
     tauchen in jeder betroffenen Bahn auf (n:m). Standardfenster: 7 Tage ab heute,
-    maximal 31 Tage."""
+    maximal 45 Tage."""
     require(request, "workflow", "LESEN")
     today = date.today()
     start = date_from or today
@@ -653,12 +716,13 @@ def plantafel(
         ServiceJob.objects.filter(
             scheduled_start__date__gte=start, scheduled_start__date__lte=end
         )
-        .select_related("work_order__property")
-        .prefetch_related("assignments__assignee")
+        .select_related("work_order__property", "appointment_category")
+        .prefetch_related("assignments__assignee", "resource_links__resource")
         .order_by("scheduled_start", "id")
     )
 
     resources: dict = {}
+    resource_lanes: dict = {}
     unassigned = 0
     out_jobs = []
     for j in jobs:
@@ -666,7 +730,12 @@ def plantafel(
         for a in j.assignments.all():
             resources[a.assignee_id] = a.assignee.display_name
             assignee_ids.append(a.assignee_id)
-        if not assignee_ids:
+        resource_ids = []
+        for link in j.resource_links.all():
+            r = link.resource
+            resource_lanes[r.id] = r
+            resource_ids.append(r.id)
+        if not assignee_ids and not resource_ids:
             unassigned += 1
         out_jobs.append(
             BoardJobOut(
@@ -677,17 +746,335 @@ def plantafel(
                 scheduled_start=j.scheduled_start,
                 scheduled_end=j.scheduled_end,
                 property_name=j.work_order.property.name,
+                category=_category_ref(j),
                 assignee_ids=assignee_ids,
+                resource_ids=resource_ids,
             )
         )
     resource_list = [
         BoardResourceOut(id=uid, display_name=name)
         for uid, name in sorted(resources.items(), key=lambda kv: kv[1])
     ]
+    lane_list = [
+        BoardResourceLaneOut(
+            id=r.id, display_name=r.name, resource_type=r.resource_type
+        )
+        for r in sorted(resource_lanes.values(), key=lambda r: r.name)
+    ]
     return PlantafelOut(
         date_from=start,
         date_to=end,
         resources=resource_list,
+        resource_lanes=lane_list,
         jobs=out_jobs,
         unassigned_count=unassigned,
     )
+
+
+# ===========================================================================
+# Terminkategorien (Stammdaten) — Modul workflow
+# ===========================================================================
+# row_scope-Entscheidung: Terminkategorien und Ressourcen sind Planungs-
+# Stammdaten, die die Disposition/Leitung pflegt. Die Lese-Endpunkte nutzen
+# `require` (fail-closed) — ein MONTEUR (Scope 'EIGENE') bekommt bewusst 403.
+# Das ist korrekt, weil er diese Stammdaten nicht verwaltet; die Kategorie
+# SEINES eigenen Einsatzes sieht er trotzdem, denn sie ist im
+# (scope-geprueften) Einsatz-Detail eingebettet — er braucht die Stammdatenliste
+# dafuer nicht. Konsistent mit list_assignable_users/plantafel (ebenfalls
+# `require`).
+
+class CategoryOut(Schema):
+    id: UUID
+    name: str
+    description: str | None = None
+    color_token: str
+    status: str
+    sort_order: int
+
+
+class CategoryCreateIn(Schema):
+    name: str
+    color_token: str = "NAVY"
+    description: str | None = None
+    sort_order: int = 0
+
+
+class CategoryUpdateIn(Schema):
+    name: str | None = None
+    color_token: str | None = None
+    description: str | None = None
+    sort_order: int | None = None
+
+
+def _category_out(c):
+    return CategoryOut(
+        id=c.id,
+        name=c.name,
+        description=c.description,
+        color_token=c.color_token,
+        status=c.status,
+        sort_order=c.sort_order,
+    )
+
+
+@router.get("/kategorien", response=list[CategoryOut])
+def list_kategorien(request, include_archived: bool = Query(False)):
+    """Terminkategorien (Stammdaten). Standardmaessig nur AKTIVE; fuer die
+    Verwaltung liefert include_archived=true auch archivierte."""
+    require(request, "workflow", "LESEN")
+    qs = AppointmentCategory.objects.all()
+    if not include_archived:
+        qs = qs.filter(status="AKTIV")
+    return [
+        _category_out(c) for c in qs.order_by("sort_order", "name", "id")
+    ]
+
+
+@router.post("/kategorien", response={201: CategoryOut}, auth=django_auth)
+def create_kategorie(request, payload: CategoryCreateIn):
+    """Legt eine Terminkategorie an. `require` (fail-closed): Kategorien pflegt
+    die Disposition/Leitung (ANLEGEN); Monteur-Scope 'EIGENE' -> 403."""
+    actor, _ = require(request, "workflow", "ANLEGEN")
+    try:
+        c = planung_service.create_category(
+            actor,
+            name=payload.name,
+            color_token=payload.color_token,
+            description=payload.description,
+            sort_order=payload.sort_order,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return Status(201, _category_out(c))
+
+
+@router.patch("/kategorien/{category_id}", response=CategoryOut, auth=django_auth)
+def update_kategorie(request, category_id: UUID, payload: CategoryUpdateIn):
+    """Aendert eine Terminkategorie (Name/Farbe/Beschreibung/Sortierung)."""
+    actor, _ = require(request, "workflow", "AENDERN")
+    try:
+        c = planung_service.update_category(
+            actor,
+            category_id=category_id,
+            name=payload.name,
+            color_token=payload.color_token,
+            description=payload.description,
+            sort_order=payload.sort_order,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _category_out(c)
+
+
+@router.post(
+    "/kategorien/{category_id}/archivieren", response=CategoryOut, auth=django_auth
+)
+def archive_kategorie(request, category_id: UUID):
+    """Archiviert eine Terminkategorie (statt Loeschen)."""
+    actor, _ = require(request, "workflow", "AENDERN")
+    try:
+        c = planung_service.archive_category(actor, category_id=category_id)
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _category_out(c)
+
+
+# ===========================================================================
+# Ressourcen (Betriebsmittel) — Schema resource.*, Modul workflow
+# ===========================================================================
+
+class ResourceOut(Schema):
+    id: UUID
+    resource_number: str
+    name: str
+    resource_type: str
+    status: str
+    notes: str | None = None
+
+
+class ResourceCreateIn(Schema):
+    name: str
+    resource_type: str
+    notes: str | None = None
+
+
+class ResourceUpdateIn(Schema):
+    name: str | None = None
+    resource_type: str | None = None
+    notes: str | None = None
+
+
+class ResourceStatusIn(Schema):
+    to_status: str
+
+
+def _resource_out(r):
+    return ResourceOut(
+        id=r.id,
+        resource_number=r.resource_number,
+        name=r.name,
+        resource_type=r.resource_type,
+        status=r.status,
+        notes=r.notes,
+    )
+
+
+@router.get("/ressourcen", response=list[ResourceOut])
+def list_ressourcen(
+    request,
+    q: str | None = Query(None),
+    resource_type: str | None = Query(None),
+    include_inactive: bool = Query(False),
+):
+    """Ressourcen (Stammdaten/Betriebsmittel). Standardmaessig nur AKTIVE; fuer die
+    Verwaltung liefert include_inactive=true auch INAKTIVE/ARCHIVIERTE."""
+    require(request, "workflow", "LESEN")
+    if resource_type and resource_type not in planung_service.RESOURCE_TYPES:
+        raise HttpError(422, f"Unbekannter Typ '{resource_type}'.")
+    qs = Resource.objects.all()
+    if not include_inactive:
+        qs = qs.filter(status="AKTIV")
+    if resource_type:
+        qs = qs.filter(resource_type=resource_type)
+    if q:
+        needle = q.strip()
+        qs = qs.filter(
+            Q(name__icontains=needle) | Q(resource_number__icontains=needle)
+        )
+    return [_resource_out(r) for r in qs.order_by("name", "id")[:500]]
+
+
+@router.post("/ressourcen", response={201: ResourceOut}, auth=django_auth)
+def create_ressource(request, payload: ResourceCreateIn):
+    """Legt eine Ressource an. `require` (fail-closed): Betriebsmittel pflegt die
+    Disposition/Leitung (ANLEGEN); Monteur-Scope 'EIGENE' -> 403."""
+    actor, _ = require(request, "workflow", "ANLEGEN")
+    try:
+        r = planung_service.create_resource(
+            actor,
+            name=payload.name,
+            resource_type=payload.resource_type,
+            notes=payload.notes,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return Status(201, _resource_out(r))
+
+
+@router.patch("/ressourcen/{resource_id}", response=ResourceOut, auth=django_auth)
+def update_ressource(request, resource_id: UUID, payload: ResourceUpdateIn):
+    """Aendert Name/Typ/Notiz einer Ressource (nicht den Status)."""
+    actor, _ = require(request, "workflow", "AENDERN")
+    try:
+        r = planung_service.update_resource(
+            actor,
+            resource_id=resource_id,
+            name=payload.name,
+            resource_type=payload.resource_type,
+            notes=payload.notes,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _resource_out(r)
+
+
+@router.post("/ressourcen/{resource_id}/status", response=ResourceOut, auth=django_auth)
+def set_ressource_status(request, resource_id: UUID, payload: ResourceStatusIn):
+    """Wechselt den Ressourcenstatus (AKTIV<->INAKTIV, INAKTIV->ARCHIVIERT).
+    'ARCHIVIERT' entspricht dem Hero-Entfernen (nicht mehr einplanbar)."""
+    actor, _ = require(request, "workflow", "AENDERN")
+    try:
+        r = planung_service.set_resource_status(
+            actor, resource_id=resource_id, to_status=payload.to_status
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _resource_out(r)
+
+
+# ===========================================================================
+# Zuordnung Kategorie/Ressource <-> Einsatz
+# ===========================================================================
+
+class JobCategoryIn(Schema):
+    category_id: UUID | None = None
+
+
+class ResourceAssignIn(Schema):
+    resource_id: UUID
+
+
+class ResourceAssignOut(Schema):
+    resource: ResourceRefOut
+    # Nicht-blockierende Doppelbelegungs-Hinweise (die Zuordnung wurde angelegt).
+    warnings: list[str] = []
+
+
+@router.post("/einsaetze/{job_id}/kategorie", response=ServiceJobOut, auth=django_auth)
+def set_einsatz_kategorie(request, job_id: UUID, payload: JobCategoryIn):
+    """Setzt oder entfernt (category_id=null) die Terminkategorie eines Einsatzes.
+
+    `require` (fail-closed): die Kategorisierung steuert die Disposition/Leitung
+    (AENDERN); Monteur-Scope 'EIGENE' -> 403."""
+    actor, _ = require(request, "workflow", "AENDERN")
+    _load_job_or_404(job_id)
+    try:
+        planung_service.set_job_category(
+            actor, service_job_id=job_id, category_id=payload.category_id
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _reload_job(job_id)
+
+
+@router.post(
+    "/einsaetze/{job_id}/ressourcen",
+    response={201: ResourceAssignOut},
+    auth=django_auth,
+)
+def assign_ressource(request, job_id: UUID, payload: ResourceAssignIn):
+    """Ordnet dem Einsatz eine Ressource zu (resource.job_resource).
+
+    `require` (fail-closed): die Disposition/Leitung plant Betriebsmittel ein;
+    Monteur-Scope 'EIGENE' -> 403. Doppelbelegung wird NICHT gesperrt — bei
+    ueberlappenden bekannten Zeitfenstern kommen nicht-blockierende Warnhinweise
+    im Feld `warnings` zurueck (die Zuordnung wird dennoch angelegt)."""
+    actor, _ = require(request, "workflow", "AENDERN")
+    _load_job_or_404(job_id)
+    try:
+        link, warnings = planung_service.assign_resource(
+            actor, service_job_id=job_id, resource_id=payload.resource_id
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    r = Resource.objects.get(id=link.resource_id)
+    return Status(
+        201,
+        ResourceAssignOut(
+            resource=ResourceRefOut(
+                id=r.id,
+                resource_number=r.resource_number,
+                name=r.name,
+                resource_type=r.resource_type,
+            ),
+            warnings=warnings,
+        ),
+    )
+
+
+@router.delete(
+    "/einsaetze/{job_id}/ressourcen/{resource_id}",
+    response={200: dict},
+    auth=django_auth,
+)
+def unassign_ressource(request, job_id: UUID, resource_id: UUID):
+    """Entfernt eine Ressourcenzuordnung (nur vor Einsatzabschluss; danach 422)."""
+    actor, _ = require(request, "workflow", "AENDERN")
+    _load_job_or_404(job_id)
+    try:
+        planung_service.unassign_resource(
+            actor, service_job_id=job_id, resource_id=resource_id
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return Status(200, {"detail": "Ressourcenzuordnung entfernt."})

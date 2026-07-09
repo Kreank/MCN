@@ -134,7 +134,8 @@ def test_offene_posten_detail(admin_client, seeded):
     assert body["invoice_number"].startswith("RE-")
     assert [p["payment_type"] for p in body["payments"]] == ["TEILZAHLUNG"]
     assert body["dunning"][0]["level"] == 1
-    assert body["dunning"][0]["label"] == "Zahlungserinnerung"
+    # Hero-Leiter (Migration 0025 db_core): Stufe 1 = „1. Zahlungserinnerung".
+    assert body["dunning"][0]["label"] == "1. Zahlungserinnerung"
     assert body["reference"]["project_name"] is None or isinstance(
         body["reference"]["project_name"], str
     )
@@ -168,7 +169,8 @@ def test_mahnliste(admin_client, seeded):
     r = admin_client.get("/api/buchhaltung/dunning")
     assert r.status_code == 200
     body = r.json()
-    assert [lv["level"] for lv in body["levels"]] == [1, 2, 3]
+    # Vollausbau auf 6 Stufen (Migration 0025 db_core).
+    assert [lv["level"] for lv in body["levels"]] == [1, 2, 3, 4, 5, 6]
     row = next(i for i in body["items"] if i["id"] == str(seeded["inv"].id))
     assert row["dunning_level"] == 1
     assert row["days_overdue"] >= 30

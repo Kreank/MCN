@@ -62,12 +62,22 @@
                       <a
                         class="chip chip--{{ statusMod(job.status) }}"
                         [routerLink]="['/planung', job.id]"
-                        [attr.aria-label]="job.title + ', ' + time(job.scheduled_start) + ', ' + statusLabel(job.status)"
+                        [attr.aria-label]="
+                          job.title + ', ' + time(job.scheduled_start) + ', ' +
+                          statusLabel(job.status) +
+                          (job.category ? ', Kategorie ' + job.category.name : '')
+                        "
                       >
                         <span class="chip__line">
                           <span class="chip__time">{{ time(job.scheduled_start) }}</span>
                           <span class="chip__title">{{ job.title }}</span>
                         </span>
+                        @if (job.category) {
+                          <span class="kat-chip chip__kat {{ categoryClass(job) }}">
+                            <span class="kat-dot" aria-hidden="true"></span>
+                            {{ job.category.name }}
+                          </span>
+                        }
                         <span class="chip__status">{{ statusLabel(job.status) }}</span>
                       </a>
                     }

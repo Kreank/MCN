@@ -1,0 +1,117 @@
+<section class="niederlassungen" aria-labelledby="niederlassungen-titel">
+  <header class="page-head">
+    <div>
+      <p class="page-head__kicker">
+        <span class="page-head__scale" aria-hidden="true"></span>
+        Einstellungen
+      </p>
+      <h1 id="niederlassungen-titel" class="page-head__titel">Niederlassungen</h1>
+    </div>
+    @if (darfAendern() && modus() === null) {
+      <button type="button" class="btn btn--primary" (click)="neu()">+ Niederlassung</button>
+    }
+  </header>
+
+  <app-einstellungen-nav />
+
+  @if (meldung(); as m) {
+    <p class="note note--error" role="alert">{{ m }}</p>
+  }
+
+  @if (modus() !== null) {
+    <form class="edit-form" [formGroup]="form" (ngSubmit)="speichern()" novalidate>
+      <h2 class="edit-form__titel">
+        {{ modus() === 'neu' ? 'Neue Niederlassung' : 'Niederlassung bearbeiten' }}
+      </h2>
+      <div class="edit-grid">
+        <app-feld [control]="form.controls.name" label="Name" [pflicht]="true" />
+        <app-feld [control]="form.controls.street" label="Straße und Hausnummer" />
+        <app-feld [control]="form.controls.postal_code" label="Postleitzahl" />
+        <app-feld [control]="form.controls.city" label="Ort" />
+        <app-feld [control]="form.controls.phone" label="Telefon" typ="tel" />
+        <app-feld [control]="form.controls.email" label="E-Mail" typ="email" />
+      </div>
+      <div class="edit-aktionen">
+        <button type="submit" class="btn btn--primary" [disabled]="laedt()">
+          {{ laedt() ? 'Speichern …' : 'Speichern' }}
+        </button>
+        <button type="button" class="btn" [disabled]="laedt()" (click)="abbrechen()">
+          Abbrechen
+        </button>
+      </div>
+    </form>
+  }
+
+  @switch (state().kind) {
+    @case ('loading') {
+      <p class="lade-hinweis" role="status">Niederlassungen werden geladen.</p>
+    }
+    @case ('forbidden') {
+      <app-kein-zugriff [detail]="$any(state()).detail" />
+    }
+    @case ('error') {
+      <p class="note note--error" role="alert">
+        Die Niederlassungen konnten nicht geladen werden. Bitte erneut versuchen.
+      </p>
+    }
+    @case ('ready') {
+      @if ($any(state()).data.length === 0) {
+        <p class="note" role="note">Es sind noch keine Niederlassungen hinterlegt.</p>
+      } @else {
+        <div class="tabelle-rahmen">
+          <table class="ndl-tabelle">
+            <caption class="sr-only">Niederlassungen mit Anschrift und Status</caption>
+            <thead>
+              <tr>
+                <th scope="col">Name</th>
+                <th scope="col">Anschrift</th>
+                <th scope="col">Kontakt</th>
+                <th scope="col">Status</th>
+                @if (darfAendern()) {
+                  <th scope="col"><span class="sr-only">Aktionen</span></th>
+                }
+              </tr>
+            </thead>
+            <tbody>
+              @for (b of $any(state()).data; track b.id) {
+                <tr>
+                  <th scope="row">{{ b.name }}</th>
+                  <td>
+                    {{ b.street || '' }}
+                    @if (b.postal_code || b.city) {
+                      <br />{{ b.postal_code }} {{ b.city }}
+                    }
+                  </td>
+                  <td>
+                    @if (b.phone) { <span>{{ b.phone }}</span> }
+                    @if (b.email) { <br /><span>{{ b.email }}</span> }
+                  </td>
+                  <td>
+                    <span class="status" [class.status--aktiv]="b.active"
+                          [class.status--inaktiv]="!b.active">
+                      <span aria-hidden="true">{{ b.active ? '●' : '○' }}</span>
+                      {{ b.active ? 'Aktiv' : 'Inaktiv' }}
+                    </span>
+                  </td>
+                  @if (darfAendern()) {
+                    <td class="aktionen-zelle">
+                      <div class="zeilen-aktionen">
+                        <button type="button" class="btn" (click)="starteBearbeiten(b)">
+                          Bearbeiten
+                        </button>
+                        <button type="button" class="btn" [disabled]="laedt()"
+                                (click)="umschalten(b)">
+                          {{ b.active ? 'Deaktivieren' : 'Aktivieren' }}
+                        </button>
+                      </div>
+                    </td>
+                  }
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    }
+  }
+</section>

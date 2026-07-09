@@ -33,6 +33,7 @@ from api.permissions import require
 from db_core.models import DunningLevel, DunningNotice, Invoice, Payment
 from db_core.services import beleg as beleg_service
 from db_core.services import buchhaltung as buchhaltung_service
+from db_core.services import firma as firma_service
 from db_core.services.buchhaltung import PAYMENT_SIGN
 
 router = Router()
@@ -212,6 +213,22 @@ class DunningRowOut(Schema):
 class DunningListOut(Schema):
     items: list[DunningRowOut]
     levels: list[dict]
+
+
+class DunningLevelOut(Schema):
+    level: int
+    label: str
+    days_after_due: int
+    active: bool
+    # fee/interest_note bleiben NULL (STB-Vorbehalt B-22); zur Transparenz mit ausgegeben.
+    fee: Decimal | None = None
+    interest_note: str | None = None
+
+
+class DunningLevelPatch(Schema):
+    label: str | None = None
+    days_after_due: int | None = None
+    active: bool | None = None
 
 
 class OpenItemFilter(Schema):
@@ -544,10 +561,45 @@ def list_dunning(request, level: int | None = Query(None)):
         )
 
     levels = [
-        {"level": lv.level, "label": lv.label, "days_after_due": lv.days_after_due}
+        {"level": lv.level, "label": lv.label,
+         "days_after_due": lv.days_after_due, "active": lv.active}
         for lv in DunningLevel.objects.order_by("level")
     ]
     return DunningListOut(items=items, levels=levels)
+
+
+# --- Mahnstufen-Stammdaten (Konfiguration) ---------------------------------
+
+def _dunning_level_out(lv):
+    return DunningLevelOut(
+        level=lv.level, label=lv.label, days_after_due=lv.days_after_due,
+        active=lv.active, fee=lv.fee, interest_note=lv.interest_note,
+    )
+
+
+@router.get("/dunning-levels", response=list[DunningLevelOut])
+def list_dunning_levels(request):
+    """Alle Mahnstufen (inkl. deaktivierter), aufsteigend."""
+    require(request, "invoicing", "LESEN")
+    return [_dunning_level_out(lv) for lv in firma_service.list_dunning_levels()]
+
+
+@router.put("/dunning-levels/{level}", response=DunningLevelOut, auth=django_auth)
+def update_dunning_level(request, level: int, payload: DunningLevelPatch):
+    """Pflegt Bezeichnung, Frist und Aktivierung einer Mahnstufe (AENDERN).
+
+    fee/interest_note bleiben unangetastet (STB-Vorbehalt B-22). Das Deaktivieren
+    einer mittleren Stufe wird abgelehnt (Lücken-Regel, 422), damit die
+    Eskalation lückenlos ausführbar bleibt.
+    """
+    actor, _ = require(request, "invoicing", "AENDERN")
+    try:
+        lv = firma_service.update_dunning_level(
+            actor, level=level, **payload.model_dump(exclude_unset=True)
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _dunning_level_out(lv)
 
 
 # --- Schreibende Endpoints: Zahlungen und Mahnwesen ------------------------

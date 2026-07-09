@@ -42,6 +42,20 @@ class EmployeeNumberDefault(Func):
     output_field = models.TextField()
 
 
+class ResourceNumberDefault(Func):
+    """DB-seitiger Default für resource.resource.resource_number (Migration 0025).
+
+    Eigene Sequenz statt workflow.next_number(): die Ressourcennummer ist kein
+    Beleg und gehört deshalb in keinen GoBD-Belegkreis (Muster hr.employee).
+    """
+
+    function = ""
+    template = (
+        "'RES-' || lpad(nextval('resource.resource_number_seq')::text, 5, '0')"
+    )
+    output_field = models.TextField()
+
+
 class _NextNumber(Func):
     """DB-seitiger Default über workflow.next_number(prefix) — vergibt fortlaufende
     Fachnummern (Format PREFIX-JJJJ-NNNNNN) in der DB (Migration 0010). Subklassen
@@ -931,6 +945,10 @@ class DunningLevel(models.Model):
     days_after_due = models.IntegerField()
     fee = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
     interest_note = models.TextField(null=True, blank=True)
+    # Stufe aktivierbar/deaktivierbar (Migration 0025 db_core). Deaktivierte
+    # Stufen werden im Mahnlauf nicht ausgestellt; die aktiven Stufen müssen
+    # einen lückenlosen Präfix {1..k} bilden (Service-Durchsetzung).
+    active = models.BooleanField(db_default=True)
     updated_at = models.DateTimeField(db_default=Now())
 
     class Meta:
@@ -1359,6 +1377,15 @@ class ServiceJob(models.Model):
     )
     access_instructions = models.TextField(null=True, blank=True)
     completion_notes = models.TextField(null=True, blank=True)
+    # Optionale Terminkategorie (Migration 0025) — steuert Kalender-/Plantafel-Farbe.
+    appointment_category = models.ForeignKey(
+        "AppointmentCategory",
+        models.DO_NOTHING,
+        db_column="appointment_category_id",
+        null=True,
+        blank=True,
+        related_name="service_jobs",
+    )
     created_at = models.DateTimeField(db_default=Now())
     updated_at = models.DateTimeField(db_default=Now())
 
@@ -1470,6 +1497,111 @@ class MaterialEntry(models.Model):
 
     def __str__(self):
         return f"{self.description} {self.quantity} {self.unit}"
+
+
+class AppointmentCategory(models.Model):
+    """workflow.appointment_category — Terminkategorie (Migration 0025).
+
+    Schlanke Codeliste am Einsatz: Name, optionale Beschreibung, Farbe als
+    geschlossener Token (kein freier Hex; das UI mappt ihn WCAG-sicher) und
+    Sortierung. Archivieren statt Löschen (Statusautomat AKTIV -> ARCHIVIERT,
+    final). Schutzstandard (No-Delete/Audit/No-Truncate).
+    """
+
+    id = models.UUIDField(primary_key=True)
+    name = models.TextField()
+    description = models.TextField(null=True, blank=True)
+    # NAVY|ORANGE|SAGE|AMBER|TEAL|PLUM|ROSE|SLATE
+    color_token = models.TextField(db_default=models.Value("NAVY"))
+    status = models.TextField(db_default=models.Value("AKTIV"))  # AKTIV|ARCHIVIERT
+    sort_order = models.IntegerField(db_default=models.Value(0))
+    created_by = models.ForeignKey(
+        AppUser,
+        models.DO_NOTHING,
+        db_column="created_by",
+        related_name="created_appointment_categories",
+    )
+    version = models.IntegerField(db_default=models.Value(1))
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'workflow"."appointment_category'
+
+    def __str__(self):
+        return self.name
+
+
+class Resource(models.Model):
+    """resource.resource — planbares Betriebsmittel (Migration 0025).
+
+    Fahrzeug/Gerät/Raum als eigenständige Stammdaten (neues Schema `resource`).
+    Nummer RES-##### aus eigener Sequenz (kein Beleg). Statusautomat
+    AKTIV<->INAKTIV->ARCHIVIERT (final). Schutzstandard.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    resource_number = models.TextField(db_default=ResourceNumberDefault())
+    name = models.TextField()
+    # FAHRZEUG|GERAET|RAUM|SONSTIGE
+    resource_type = models.TextField()
+    status = models.TextField(db_default=models.Value("AKTIV"))  # AKTIV|INAKTIV|ARCHIVIERT
+    notes = models.TextField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        AppUser,
+        models.DO_NOTHING,
+        db_column="created_by",
+        related_name="created_resources",
+    )
+    version = models.IntegerField(db_default=models.Value(1))
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'resource"."resource'
+
+    def __str__(self):
+        return f"{self.resource_number} {self.name}"
+
+
+class JobResource(models.Model):
+    """resource.job_resource — n:m Einsatz <-> Ressource (Migration 0025).
+
+    Höchstens ein Eintrag je (Einsatz, Ressource) (UNIQUE). KEIN EXCLUDE gegen
+    zeitliche Doppelbelegung (offene Invariante — der service_job-Zeitraum ist
+    nullable und liegt in einer anderen Tabelle; siehe Migration 0025). Zeilen
+    sind unveränderlich; Entfernen nur vor Einsatzabschluss.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    service_job = models.ForeignKey(
+        ServiceJob,
+        models.DO_NOTHING,
+        db_column="service_job_id",
+        related_name="resource_links",
+    )
+    resource = models.ForeignKey(
+        Resource,
+        models.DO_NOTHING,
+        db_column="resource_id",
+        related_name="job_links",
+    )
+    created_by = models.ForeignKey(
+        AppUser,
+        models.DO_NOTHING,
+        db_column="created_by",
+        related_name="created_job_resources",
+    )
+    created_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'resource"."job_resource'
+
+    def __str__(self):
+        return f"{self.resource_id} @ {self.service_job_id}"
 
 
 class SalePriceGroup(models.Model):
@@ -1864,3 +1996,99 @@ class RolePermission(models.Model):
 
     def __str__(self):
         return f"{self.role_id}/{self.module}/{self.action}={self.allowed}"
+
+
+class CompanyProfile(models.Model):
+    """company.company_profile — Firmenprofil (Singleton, Migration 0023 db_core).
+
+    Genau eine Zeile (Singleton-Garantie über `is_singleton`: UNIQUE +
+    CHECK(is_singleton)). Trägt die Stammdaten des ausstellenden Unternehmens
+    (Identität, Anschrift, Kontakt, Steuer/Register, Firmen-Bankverbindung,
+    Geschäftsführung). Ersetzt den Aussteller-Platzhalter im Beleg-PDF. Änderung
+    auditiert (Trigger); kein Löschen.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    is_singleton = models.BooleanField(db_default=True)
+    company_name = models.TextField()
+    legal_form = models.TextField(null=True, blank=True)
+    street = models.TextField(null=True, blank=True)
+    postal_code = models.TextField(null=True, blank=True)
+    city = models.TextField(null=True, blank=True)
+    country = models.CharField(max_length=2, db_default="DE")
+    state_code = models.TextField(null=True, blank=True)
+    phone = models.TextField(null=True, blank=True)
+    email = models.TextField(null=True, blank=True)
+    web = models.TextField(null=True, blank=True)
+    tax_number = models.TextField(null=True, blank=True)
+    vat_id = models.TextField(null=True, blank=True)
+    commercial_register = models.TextField(null=True, blank=True)
+    bank_name = models.TextField(null=True, blank=True)
+    iban = models.TextField(null=True, blank=True)
+    bic = models.TextField(null=True, blank=True)
+    managing_director = models.TextField(null=True, blank=True)
+    managing_director_title = models.TextField(null=True, blank=True)
+    default_language = models.CharField(max_length=2, db_default="de")
+    logo_file_id = models.UUIDField(null=True, blank=True)
+    version = models.IntegerField(db_default=models.Value(1))
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'company"."company_profile'
+
+    def __str__(self):
+        return self.company_name
+
+
+class Branch(models.Model):
+    """company.branch — Niederlassung (Migration 0023 db_core).
+
+    Deaktivieren statt Löschen (`active`); Änderung auditiert, kein Löschen.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    name = models.TextField()
+    street = models.TextField(null=True, blank=True)
+    postal_code = models.TextField(null=True, blank=True)
+    city = models.TextField(null=True, blank=True)
+    country = models.CharField(max_length=2, db_default="DE")
+    phone = models.TextField(null=True, blank=True)
+    email = models.TextField(null=True, blank=True)
+    active = models.BooleanField(db_default=True)
+    version = models.IntegerField(db_default=models.Value(1))
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'company"."branch'
+
+    def __str__(self):
+        return self.name
+
+
+class Trade(models.Model):
+    """company.trade — Gewerk-Katalog (erste echte Gewerk-Wahrheit, 0023 db_core).
+
+    Bewusst NICHT an workflow.project_category (Projektkategorie) gekoppelt —
+    ein Gewerk ist fachlich etwas anderes als ein Projekttyp. Deaktivieren statt
+    Löschen; Änderung auditiert.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    code = models.TextField(unique=True)
+    label = models.TextField()
+    active = models.BooleanField(db_default=True)
+    sort_order = models.IntegerField(db_default=models.Value(0))
+    version = models.IntegerField(db_default=models.Value(1))
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'company"."trade'
+
+    def __str__(self):
+        return f"{self.code} — {self.label}"

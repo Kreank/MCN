@@ -1,0 +1,291 @@
+<section class="einstellungen" aria-labelledby="einst-titel">
+  <header class="page-head">
+    <div>
+      <p class="page-head__kicker">
+        <span class="page-head__scale" aria-hidden="true"></span>
+        Planung · Einstellungen
+      </p>
+      <h1 id="einst-titel" class="page-head__titel">Kategorien &amp; Ressourcen</h1>
+    </div>
+  </header>
+
+  <app-planung-nav />
+
+  @if (verboten(); as v) {
+    <app-kein-zugriff [detail]="v.detail" />
+  } @else {
+    @if (meldung(); as m) {
+      <div
+        class="note"
+        [class.note--error]="m.art === 'fehler'"
+        [class.note--ok]="m.art === 'erfolg'"
+        role="status"
+      >
+        <p class="note__text">{{ m.text }}</p>
+        <button type="button" class="btn btn--klein" (click)="meldungSchliessen()">
+          Schließen
+        </button>
+      </div>
+    }
+
+    <!-- ================= Terminkategorien ================= -->
+    <div class="karte">
+      <div class="karte__kopf">
+        <h2 class="karte__titel">Terminkategorien</h2>
+        <div class="karte__aktionen">
+          <label class="filter-check">
+            <input
+              type="checkbox"
+              [checked]="katArchivierte()"
+              (change)="katArchivierteUmschalten($any($event.target).checked)"
+            />
+            Archivierte zeigen
+          </label>
+          @if (darfAnlegen()) {
+            <button type="button" class="btn btn--primary" (click)="katNeu()">
+              + Kategorie
+            </button>
+          }
+        </div>
+      </div>
+
+      @if (kategorien().length === 0) {
+        <p class="leer">Noch keine Kategorien angelegt.</p>
+      } @else {
+        <table class="tabelle">
+          <thead>
+            <tr>
+              <th scope="col">Name</th>
+              <th scope="col">Farbe</th>
+              <th scope="col">Sortierung</th>
+              <th scope="col">Status</th>
+              <th scope="col"><span class="sr-only">Aktionen</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (k of kategorien(); track k.id) {
+              <tr>
+                <td>
+                  <span class="kat-chip {{ katColorClass(k.color_token) }}">
+                    <span class="kat-dot" aria-hidden="true"></span>{{ k.name }}
+                  </span>
+                  @if (k.description) {
+                    <span class="zeile-sub">{{ k.description }}</span>
+                  }
+                </td>
+                <td>{{ k.color_token }}</td>
+                <td>{{ k.sort_order }}</td>
+                <td>
+                  <span class="stamp" [class.stamp--warn]="k.status === 'ARCHIVIERT'">
+                    {{ k.status === 'AKTIV' ? 'Aktiv' : 'Archiviert' }}
+                  </span>
+                </td>
+                <td class="zeile-aktionen">
+                  @if (k.status === 'AKTIV' && darfAendern()) {
+                    <button type="button" class="btn btn--klein" (click)="katBearbeiten(k)">
+                      Bearbeiten
+                    </button>
+                    <button
+                      type="button"
+                      class="btn btn--klein"
+                      (click)="katArchivierenFragen(k)"
+                    >
+                      Archivieren
+                    </button>
+                  }
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      }
+    </div>
+
+    <!-- ================= Ressourcen ================= -->
+    <div class="karte">
+      <div class="karte__kopf">
+        <h2 class="karte__titel">Ressourcen (Betriebsmittel)</h2>
+        <div class="karte__aktionen">
+          <label class="filter-check">
+            <input
+              type="checkbox"
+              [checked]="resInaktive()"
+              (change)="resInaktiveUmschalten($any($event.target).checked)"
+            />
+            Inaktive/archivierte zeigen
+          </label>
+          @if (darfAnlegen()) {
+            <button type="button" class="btn btn--primary" (click)="resNeu()">
+              + Ressource
+            </button>
+          }
+        </div>
+      </div>
+
+      @if (ressourcen().length === 0) {
+        <p class="leer">Noch keine Ressourcen angelegt.</p>
+      } @else {
+        <table class="tabelle">
+          <thead>
+            <tr>
+              <th scope="col">Nummer</th>
+              <th scope="col">Name</th>
+              <th scope="col">Typ</th>
+              <th scope="col">Status</th>
+              <th scope="col"><span class="sr-only">Aktionen</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (r of ressourcen(); track r.id) {
+              <tr>
+                <td class="mono">{{ r.resource_number }}</td>
+                <td>
+                  {{ r.name }}
+                  @if (r.notes) {
+                    <span class="zeile-sub">{{ r.notes }}</span>
+                  }
+                </td>
+                <td>{{ typLabel(r.resource_type) }}</td>
+                <td>
+                  <span
+                    class="stamp"
+                    [class.stamp--positive]="r.status === 'AKTIV'"
+                    [class.stamp--warn]="r.status === 'ARCHIVIERT'"
+                  >
+                    {{ statusLabel(r.status) }}
+                  </span>
+                </td>
+                <td class="zeile-aktionen">
+                  @if (darfAendern() && r.status !== 'ARCHIVIERT') {
+                    <button type="button" class="btn btn--klein" (click)="resBearbeiten(r)">
+                      Bearbeiten
+                    </button>
+                    @if (r.status === 'AKTIV') {
+                      <button
+                        type="button"
+                        class="btn btn--klein"
+                        [disabled]="aktionBusyId() === r.id"
+                        (click)="resStatus(r, 'INAKTIV', 'Ressource deaktiviert.')"
+                      >
+                        Deaktivieren
+                      </button>
+                    } @else {
+                      <button
+                        type="button"
+                        class="btn btn--klein"
+                        [disabled]="aktionBusyId() === r.id"
+                        (click)="resStatus(r, 'AKTIV', 'Ressource aktiviert.')"
+                      >
+                        Aktivieren
+                      </button>
+                      <button
+                        type="button"
+                        class="btn btn--klein"
+                        (click)="resArchivierenFragen(r)"
+                      >
+                        Archivieren
+                      </button>
+                    }
+                  }
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+        <p class="hinweis-text">
+          Archivieren ist nur aus dem inaktiven Zustand möglich (erst deaktivieren).
+        </p>
+      }
+    </div>
+  }
+</section>
+
+<!-- ================= Dialoge ================= -->
+<app-dialog
+  [offen]="katDialogOffen()"
+  [titel]="katEditId() ? 'Kategorie bearbeiten' : 'Neue Kategorie'"
+  (schliessen)="katDialogSchliessen()"
+>
+  <form class="formular" (ngSubmit)="katAbsenden()" [formGroup]="katForm">
+    <app-feld [control]="katForm.controls.name" label="Name" [pflicht]="true" />
+    <app-feld
+      [control]="katForm.controls.color_token"
+      label="Farbe"
+      typ="select"
+      [optionen]="farbOptionen"
+      hinweis="Feste Farb-Codeliste; im Kalender/auf der Plantafel immer mit Namen."
+    />
+    <app-feld
+      [control]="katForm.controls.description"
+      label="Beschreibung"
+      typ="textarea"
+    />
+    <app-feld
+      [control]="katForm.controls.sort_order"
+      label="Sortierung"
+      typ="zahl"
+      inputmode="numeric"
+    />
+    @if (katFormularMeldung(); as fm) {
+      <p class="formular__fehler" role="alert">{{ fm }}</p>
+    }
+  </form>
+  <div dialog-aktionen class="dialog__aktionen">
+    <button type="button" class="btn" (click)="katDialogSchliessen()" [disabled]="katLaedt()">
+      Abbrechen
+    </button>
+    <button type="button" class="btn btn--primary" (click)="katAbsenden()" [disabled]="katLaedt()">
+      {{ katLaedt() ? 'Speichern …' : 'Speichern' }}
+    </button>
+  </div>
+</app-dialog>
+
+<app-dialog
+  [offen]="resDialogOffen()"
+  [titel]="resEditId() ? 'Ressource bearbeiten' : 'Neue Ressource'"
+  (schliessen)="resDialogSchliessen()"
+>
+  <form class="formular" (ngSubmit)="resAbsenden()" [formGroup]="resForm">
+    <app-feld [control]="resForm.controls.name" label="Name" [pflicht]="true" />
+    <app-feld
+      [control]="resForm.controls.resource_type"
+      label="Typ"
+      typ="select"
+      [optionen]="typOptionen"
+    />
+    <app-feld [control]="resForm.controls.notes" label="Notiz" typ="textarea" />
+    @if (resFormularMeldung(); as fm) {
+      <p class="formular__fehler" role="alert">{{ fm }}</p>
+    }
+  </form>
+  <div dialog-aktionen class="dialog__aktionen">
+    <button type="button" class="btn" (click)="resDialogSchliessen()" [disabled]="resLaedt()">
+      Abbrechen
+    </button>
+    <button type="button" class="btn btn--primary" (click)="resAbsenden()" [disabled]="resLaedt()">
+      {{ resLaedt() ? 'Speichern …' : 'Speichern' }}
+    </button>
+  </div>
+</app-dialog>
+
+<app-bestaetigung
+  [offen]="katArchivieren() !== null"
+  titel="Kategorie archivieren?"
+  text="Die Kategorie steht für neue Termine nicht mehr zur Wahl; bestehende Termine behalten sie."
+  bestaetigenLabel="Archivieren"
+  [gefahr]="true"
+  [laedt]="katArchivLaedt()"
+  (bestaetigen)="katArchivierenBestaetigen()"
+  (abbrechen)="katArchivierenAbbrechen()"
+/>
+
+<app-bestaetigung
+  [offen]="resArchivieren() !== null"
+  titel="Ressource archivieren?"
+  text="Die Ressource ist danach nicht mehr einplanbar; bestehende Zuordnungen bleiben erhalten."
+  bestaetigenLabel="Archivieren"
+  [gefahr]="true"
+  [laedt]="resArchivLaedt()"
+  (bestaetigen)="resArchivierenBestaetigen()"
+  (abbrechen)="resArchivierenAbbrechen()"
+/>

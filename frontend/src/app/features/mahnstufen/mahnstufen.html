@@ -1,0 +1,112 @@
+<section class="mahnstufen" aria-labelledby="mahnstufen-titel">
+  <header class="page-head">
+    <div>
+      <p class="page-head__kicker">
+        <span class="page-head__scale" aria-hidden="true"></span>
+        Einstellungen · Buchhaltung
+      </p>
+      <h1 id="mahnstufen-titel" class="page-head__titel">Mahnstufen</h1>
+    </div>
+  </header>
+
+  <app-einstellungen-nav />
+
+  <p class="page-hint">
+    Bis zu sechs Stufen (drei Zahlungserinnerungen, drei Mahnungen). Aktive Stufen
+    müssen lückenlos ab Stufe 1 aufeinanderfolgen — zum Deaktivieren einer Stufe
+    zuerst die höheren deaktivieren. Gebühren und Verzugszinsen bleiben dem
+    Steuerberater vorbehalten.
+  </p>
+
+  @switch (state().kind) {
+    @case ('loading') {
+      <p class="lade-hinweis" role="status">Mahnstufen werden geladen.</p>
+    }
+    @case ('forbidden') {
+      <app-kein-zugriff [detail]="$any(state()).detail" />
+    }
+    @case ('error') {
+      <p class="note note--error" role="alert">
+        Die Mahnstufen konnten nicht geladen werden. Bitte erneut versuchen.
+      </p>
+    }
+    @case ('ready') {
+      @if (erfolg(); as m) {
+        <p class="note note--erfolg" role="status">{{ m }}</p>
+      }
+
+      <div class="tabelle-rahmen">
+        <table class="stufen-tabelle">
+          <caption class="sr-only">Mahnstufen mit Bezeichnung, Frist und Status</caption>
+          <thead>
+            <tr>
+              <th scope="col">Stufe</th>
+              <th scope="col">Bezeichnung</th>
+              <th scope="col">Tage nach Fälligkeit</th>
+              <th scope="col">Status</th>
+              @if (darfAendern()) {
+                <th scope="col"><span class="sr-only">Aktionen</span></th>
+              }
+            </tr>
+          </thead>
+          <tbody>
+            @for (lv of $any(state()).data; track lv.level) {
+              @if (bearbeite() === lv.level) {
+                <tr class="ist-bearbeitung">
+                  <th scope="row">{{ lv.level }}</th>
+                  <td>
+                    <app-feld [control]="form.controls.label" label="Bezeichnung"
+                              [pflicht]="true" />
+                  </td>
+                  <td>
+                    <app-feld [control]="form.controls.days_after_due"
+                              label="Tage nach Fälligkeit" inputmode="numeric" [pflicht]="true" />
+                  </td>
+                  <td>
+                    <app-feld [control]="form.controls.active" label="Stufe aktiv"
+                              typ="checkbox" />
+                  </td>
+                  <td class="aktionen-zelle">
+                    <div class="zeilen-aktionen">
+                      <button type="button" class="btn btn--primary" [disabled]="laedt()"
+                              (click)="speichern(lv.level)">
+                        {{ laedt() ? 'Speichern …' : 'Speichern' }}
+                      </button>
+                      <button type="button" class="btn" [disabled]="laedt()"
+                              (click)="abbrechen()">Abbrechen</button>
+                    </div>
+                    @if (zeilenMeldung(); as m) {
+                      <p class="zeilen-fehler" role="alert">
+                        <span aria-hidden="true">▲</span> {{ m }}
+                      </p>
+                    }
+                  </td>
+                </tr>
+              } @else {
+                <tr>
+                  <th scope="row">{{ lv.level }}</th>
+                  <td>{{ lv.label }}</td>
+                  <td>{{ lv.days_after_due }}</td>
+                  <td>
+                    <span class="status" [class.status--aktiv]="lv.active"
+                          [class.status--inaktiv]="!lv.active">
+                      <span aria-hidden="true">{{ lv.active ? '●' : '○' }}</span>
+                      {{ lv.active ? 'Aktiv' : 'Inaktiv' }}
+                    </span>
+                  </td>
+                  @if (darfAendern()) {
+                    <td class="aktionen-zelle">
+                      <button type="button" class="btn" (click)="starteBearbeiten(lv)">
+                        Bearbeiten
+                      </button>
+                    </td>
+                  }
+                </tr>
+              }
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+  }
+</section>

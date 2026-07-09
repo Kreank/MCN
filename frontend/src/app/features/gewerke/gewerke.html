@@ -1,0 +1,107 @@
+<section class="gewerke" aria-labelledby="gewerke-titel">
+  <header class="page-head">
+    <div>
+      <p class="page-head__kicker">
+        <span class="page-head__scale" aria-hidden="true"></span>
+        Einstellungen
+      </p>
+      <h1 id="gewerke-titel" class="page-head__titel">Gewerke</h1>
+    </div>
+  </header>
+
+  <app-einstellungen-nav />
+
+  <p class="page-hint">
+    Der Gewerk-Katalog der Firma. Nicht mehr genutzte Gewerke werden deaktiviert,
+    nicht gelöscht — so behalten alte Vorgänge ihre Zuordnung.
+  </p>
+
+  @if (meldung(); as m) {
+    <p class="note note--error" role="alert">{{ m }}</p>
+  }
+
+  @switch (state().kind) {
+    @case ('loading') {
+      <p class="lade-hinweis" role="status">Gewerke werden geladen.</p>
+    }
+    @case ('forbidden') {
+      <app-kein-zugriff [detail]="$any(state()).detail" />
+    }
+    @case ('error') {
+      <p class="note note--error" role="alert">
+        Die Gewerke konnten nicht geladen werden. Bitte erneut versuchen.
+      </p>
+    }
+    @case ('ready') {
+      @if (darfAendern()) {
+        <form class="neu-form" [formGroup]="neuForm" (ngSubmit)="anlegen()" novalidate>
+          <app-feld [control]="neuForm.controls.code" label="Code" [pflicht]="true"
+                    hinweis="Großbuchstaben/Ziffern, z. B. SHK" />
+          <app-feld [control]="neuForm.controls.label" label="Bezeichnung" [pflicht]="true" />
+          <button type="submit" class="btn btn--primary" [disabled]="laedt()">
+            Gewerk anlegen
+          </button>
+        </form>
+      }
+
+      <div class="tabelle-rahmen">
+        <table class="katalog-tabelle">
+          <caption class="sr-only">Gewerke mit Code, Bezeichnung und Status</caption>
+          <thead>
+            <tr>
+              <th scope="col">Code</th>
+              <th scope="col">Bezeichnung</th>
+              <th scope="col">Status</th>
+              @if (darfAendern()) {
+                <th scope="col"><span class="sr-only">Aktionen</span></th>
+              }
+            </tr>
+          </thead>
+          <tbody>
+            @for (t of $any(state()).data; track t.id) {
+              <tr>
+                <th scope="row"><code>{{ t.code }}</code></th>
+                <td>
+                  @if (bearbeite() === t.id) {
+                    <app-feld [control]="editLabel" label="Bezeichnung" [pflicht]="true" />
+                  } @else {
+                    {{ t.label }}
+                  }
+                </td>
+                <td>
+                  <span class="status" [class.status--aktiv]="t.active"
+                        [class.status--inaktiv]="!t.active">
+                    <span aria-hidden="true">{{ t.active ? '●' : '○' }}</span>
+                    {{ t.active ? 'Aktiv' : 'Inaktiv' }}
+                  </span>
+                </td>
+                @if (darfAendern()) {
+                  <td class="aktionen-zelle">
+                    @if (bearbeite() === t.id) {
+                      <div class="zeilen-aktionen">
+                        <button type="button" class="btn btn--primary" [disabled]="laedt()"
+                                (click)="speichern(t)">Speichern</button>
+                        <button type="button" class="btn" [disabled]="laedt()"
+                                (click)="abbrechen()">Abbrechen</button>
+                      </div>
+                    } @else {
+                      <div class="zeilen-aktionen">
+                        <button type="button" class="btn" (click)="starteBearbeiten(t)">
+                          Umbenennen
+                        </button>
+                        <button type="button" class="btn" [disabled]="laedt()"
+                                (click)="umschalten(t)">
+                          {{ t.active ? 'Deaktivieren' : 'Aktivieren' }}
+                        </button>
+                      </div>
+                    }
+                  </td>
+                }
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+  }
+</section>

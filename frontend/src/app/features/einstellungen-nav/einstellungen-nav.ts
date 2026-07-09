@@ -1,28 +1,28 @@
 import { Component } from '@angular/core';
 import { RouterLink, RouterLinkActive } from '@angular/router';
 
-/** Unternavigation des Planung-Bereichs (Einsätze · Plantafel · Kalender). */
+/** Unternavigation der Einstellungen (Firmenprofil · Mahnstufen · Gewerke · Niederlassungen). */
 @Component({
-  selector: 'app-planung-nav',
+  selector: 'app-einstellungen-nav',
   imports: [RouterLink, RouterLinkActive],
   template: `
-    <nav class="planung-nav" aria-label="Planung-Ansichten">
+    <nav class="einstellungen-nav" aria-label="Einstellungen-Bereiche">
       <a
-        routerLink="/planung"
+        routerLink="/einstellungen/profil"
         routerLinkActive="is-active"
         [routerLinkActiveOptions]="{ exact: true }"
-        >Einsätze</a
+        >Firmenprofil</a
       >
-      <a routerLink="/planung/plantafel" routerLinkActive="is-active">Plantafel</a>
-      <a routerLink="/planung/kalender" routerLinkActive="is-active">Kalender</a>
-      <a routerLink="/planung/einstellungen" routerLinkActive="is-active"
-        >Kategorien &amp; Ressourcen</a
+      <a routerLink="/einstellungen/mahnstufen" routerLinkActive="is-active">Mahnstufen</a>
+      <a routerLink="/einstellungen/gewerke" routerLinkActive="is-active">Gewerke</a>
+      <a routerLink="/einstellungen/niederlassungen" routerLinkActive="is-active"
+        >Niederlassungen</a
       >
     </nav>
   `,
   styles: [
     `
-      .planung-nav {
+      .einstellungen-nav {
         display: flex;
         flex-wrap: wrap;
         gap: var(--space-1);
@@ -51,8 +51,9 @@ import { RouterLink, RouterLinkActive } from '@angular/router';
       a:focus-visible {
         outline: 2.5px solid var(--focus-ring);
         outline-offset: 2px;
+        border-radius: 2px;
       }
     `,
   ],
 })
-export class PlanungNav {}
+export class EinstellungenNav {}

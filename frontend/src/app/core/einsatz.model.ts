@@ -20,6 +20,31 @@ export interface WorkOrderRef {
   status: WorkOrderStatus;
 }
 
+/** Farb-Codeliste der Terminkategorie (Token, kein Hex). Das UI mappt jeden
+ * Token WCAG-sicher; die Farbe ist stets nur Ergänzung zum Namen (Text). */
+export type CategoryColorToken =
+  | 'NAVY'
+  | 'ORANGE'
+  | 'SAGE'
+  | 'AMBER'
+  | 'TEAL'
+  | 'PLUM'
+  | 'ROSE'
+  | 'SLATE';
+
+export interface CategoryRef {
+  id: string;
+  name: string;
+  color_token: CategoryColorToken;
+}
+
+export interface ResourceRef {
+  id: string;
+  resource_number: string;
+  name: string;
+  resource_type: ResourceType;
+}
+
 export interface ServiceJob {
   id: string;
   job_number: string;
@@ -30,6 +55,7 @@ export interface ServiceJob {
   actual_end: string | null;
   work_order: WorkOrderRef;
   property: PropertyRef | null;
+  category: CategoryRef | null;
   assignee_count: number;
 }
 
@@ -89,6 +115,7 @@ export interface ServiceJobCreate {
   scheduled_end?: string | null;
   on_site_contact_party_id?: string | null;
   access_instructions?: string | null;
+  appointment_category_id?: string | null;
 }
 
 // POST /api/planung/einsaetze/{id}/schedule
@@ -132,6 +159,13 @@ export interface BoardResource {
   display_name: string;
 }
 
+/** Bahn eines Betriebsmittels (Fahrzeug/Gerät/Raum) auf der Plantafel. */
+export interface BoardResourceLane {
+  id: string;
+  display_name: string;
+  resource_type: ResourceType;
+}
+
 export interface BoardJob {
   id: string;
   job_number: string;
@@ -140,13 +174,16 @@ export interface BoardJob {
   scheduled_start: string;
   scheduled_end: string | null;
   property_name: string | null;
+  category: CategoryRef | null;
   assignee_ids: string[];
+  resource_ids: string[];
 }
 
 export interface Plantafel {
   date_from: string;
   date_to: string;
   resources: BoardResource[];
+  resource_lanes: BoardResourceLane[];
   jobs: BoardJob[];
   unassigned_count: number;
 }
@@ -157,6 +194,7 @@ export interface ServiceJobDetail extends ServiceJob {
   on_site_contact: string | null;
   created_at: string;
   assignments: JobAssignment[];
+  resources: ResourceRef[];
   history: StatusChangeEntry[];
   time_entries: TimeEntry[];
   material_entries: MaterialEntry[];
@@ -213,4 +251,114 @@ const ASSIGNMENT_ROLE_LABELS: Record<string, string> = {
 
 export function assignmentRoleLabel(r: string): string {
   return ASSIGNMENT_ROLE_LABELS[r] ?? r;
+}
+
+// ===========================================================================
+// Planungs-Stammdaten: Terminkategorien + Ressourcen
+// ===========================================================================
+
+export type CategoryStatus = 'AKTIV' | 'ARCHIVIERT';
+
+export interface AppointmentCategory {
+  id: string;
+  name: string;
+  description: string | null;
+  color_token: CategoryColorToken;
+  status: CategoryStatus;
+  sort_order: number;
+}
+
+export interface CategoryCreate {
+  name: string;
+  color_token: CategoryColorToken;
+  description?: string | null;
+  sort_order?: number;
+}
+
+export interface CategoryUpdate {
+  name?: string | null;
+  color_token?: CategoryColorToken | null;
+  description?: string | null;
+  sort_order?: number | null;
+}
+
+export type ResourceType = 'FAHRZEUG' | 'GERAET' | 'RAUM' | 'SONSTIGE';
+export type ResourceStatus = 'AKTIV' | 'INAKTIV' | 'ARCHIVIERT';
+
+export interface Resource {
+  id: string;
+  resource_number: string;
+  name: string;
+  resource_type: ResourceType;
+  status: ResourceStatus;
+  notes: string | null;
+}
+
+export interface ResourceCreate {
+  name: string;
+  resource_type: ResourceType;
+  notes?: string | null;
+}
+
+export interface ResourceUpdate {
+  name?: string | null;
+  resource_type?: ResourceType | null;
+  notes?: string | null;
+}
+
+export interface ResourceAssignResult {
+  resource: ResourceRef;
+  warnings: string[];
+}
+
+// --- Farb-Codeliste (Token -> Anzeige) -------------------------------------
+// Jede Kategorie zeigt IMMER ihren Namen als Text; der Farbpunkt ist nur
+// dekorative Ergaenzung (WCAG: Status nie nur ueber Farbe). Die CSS-Klasse
+// `kat-<token>` faerbt Punkt/Tint (siehe styles.scss / plantafel.scss).
+export const CATEGORY_COLORS: { token: CategoryColorToken; label: string }[] = [
+  { token: 'NAVY', label: 'Marineblau' },
+  { token: 'ORANGE', label: 'Orange' },
+  { token: 'SAGE', label: 'Salbeigrün' },
+  { token: 'AMBER', label: 'Amber' },
+  { token: 'TEAL', label: 'Petrol' },
+  { token: 'PLUM', label: 'Pflaume' },
+  { token: 'ROSE', label: 'Rosé' },
+  { token: 'SLATE', label: 'Schiefer' },
+];
+
+export function categoryColorLabel(token: CategoryColorToken): string {
+  return CATEGORY_COLORS.find((c) => c.token === token)?.label ?? token;
+}
+
+export function categoryColorClass(token: CategoryColorToken): string {
+  return `kat-${token.toLowerCase()}`;
+}
+
+// --- Ressourcen-Typen/-Status ----------------------------------------------
+export const RESOURCE_TYPES: { wert: ResourceType; label: string }[] = [
+  { wert: 'FAHRZEUG', label: 'Fahrzeug' },
+  { wert: 'GERAET', label: 'Gerät' },
+  { wert: 'RAUM', label: 'Raum' },
+  { wert: 'SONSTIGE', label: 'Sonstige' },
+];
+
+const RESOURCE_TYPE_LABELS: Record<ResourceType, string> = {
+  FAHRZEUG: 'Fahrzeug',
+  GERAET: 'Gerät',
+  RAUM: 'Raum',
+  SONSTIGE: 'Sonstige',
+};
+
+export function resourceTypeLabel(t: ResourceType): string {
+  return RESOURCE_TYPE_LABELS[t] ?? t;
+}
+
+const RESOURCE_STATUS_LABELS: Record<ResourceStatus, string> = {
+  AKTIV: 'Aktiv',
+  INAKTIV: 'Inaktiv',
+  ARCHIVIERT: 'Archiviert',
+};
+
+export function resourceStatusLabel(s: ResourceStatus): string {
+  return RESOURCE_STATUS_LABELS[s] ?? s;
 }

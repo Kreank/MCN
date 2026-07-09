@@ -23,6 +23,7 @@ import uuid
 from db_core.db_context import business_transaction
 from db_core.gate_errors import as_business_error
 from db_core.models import (
+    AppointmentCategory,
     AppUser,
     JobAssignment,
     MaterialEntry,
@@ -65,16 +66,27 @@ def create_service_job(
     scheduled_end=None,
     on_site_contact_party_id=None,
     access_instructions=None,
+    appointment_category_id=None,
 ):
     """Legt einen workflow.service_job (Einsatz) im Initialstatus UNGEPLANT an.
 
     work_order_id ist Pflicht. Der Trigger erzwingt UNGEPLANT als Startstatus und
     verhindert die Anlage auf abgerechnete/stornierte Aufträge (B-03/B-06). Ein
     Planungszeitraum darf gleich mitgegeben werden (für den späteren Wechsel nach
-    GEPLANT ist scheduled_start ohnehin Pflicht).
-    """
+    GEPLANT ist scheduled_start ohnehin Pflicht). appointment_category_id ist
+    optional; nur AKTIVE Kategorien sind zuweisbar (Migration 0025)."""
     ensure_exists(WorkOrder, work_order_id, "Auftrag")
     ensure_party_usable(on_site_contact_party_id, "Ansprechpartner vor Ort")
+    if appointment_category_id is not None:
+        category = AppointmentCategory.objects.filter(
+            id=appointment_category_id
+        ).first()
+        if category is None:
+            raise ValueError(
+                f"Terminkategorie {appointment_category_id} existiert nicht"
+            )
+        if category.status != "AKTIV":
+            raise ValueError("Nur aktive Kategorien können zugewiesen werden.")
     with as_business_error():
         with business_transaction(actor_app_user_id):
             job = ServiceJob.objects.create(
@@ -85,6 +97,7 @@ def create_service_job(
                 scheduled_end=scheduled_end,
                 on_site_contact_party_id=on_site_contact_party_id,
                 access_instructions=access_instructions,
+                appointment_category_id=appointment_category_id,
             )
             job.refresh_from_db()
     return job

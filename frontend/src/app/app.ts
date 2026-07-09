@@ -11,6 +11,8 @@ interface NavItem {
   mark: string;
   /** Benötigtes Recht [Modul, Aktion]; ohne Angabe immer sichtbar. */
   recht?: readonly [string, string];
+  /** Alternativ: sichtbar, sobald EINES dieser Rechte vorliegt (ODER-Logik). */
+  rechtOder?: readonly (readonly [string, string])[];
 }
 
 @Component({
@@ -46,11 +48,26 @@ export class App {
     { path: '/artikel', label: 'Artikel', mark: '70', recht: ['pricing', 'LESEN'] },
     { path: '/buchhaltung', label: 'Buchhaltung', mark: '80', recht: ['invoicing', 'LESEN'] },
     { path: '/auswertungen', label: 'Auswertungen', mark: '90', recht: ['invoicing', 'LESEN'] },
+    // Einstellungen: nur für Rollen, die etwas ändern dürfen (Firmenprofil/
+    // Gewerke/Niederlassungen = company/AENDERN, Mahnstufen = invoicing/AENDERN).
+    {
+      path: '/einstellungen',
+      label: 'Einstellungen',
+      mark: '95',
+      rechtOder: [
+        ['company', 'AENDERN'],
+        ['invoicing', 'AENDERN'],
+      ],
+    },
   ];
 
-  /** Nur Navigationspunkte, für die das Recht vorliegt. */
+  /** Nur Navigationspunkte, für die (mindestens) ein Recht vorliegt. */
   protected readonly sichtbareNav = computed(() =>
-    this.nav.filter((n) => !n.recht || this.auth.darf(n.recht[0], n.recht[1])),
+    this.nav.filter((n) => {
+      if (n.recht && !this.auth.darf(n.recht[0], n.recht[1])) return false;
+      if (n.rechtOder && !n.rechtOder.some((r) => this.auth.darf(r[0], r[1]))) return false;
+      return true;
+    }),
   );
 
   /** Aktuelle URL — Grundlage für die aktive Bemaszungsmarke. */

@@ -5,6 +5,8 @@ import {
   BoardJob,
   Plantafel as PlantafelData,
   ServiceJobStatus,
+  categoryColorClass,
+  resourceTypeLabel,
   serviceJobStatusLabel,
 } from '../../core/einsatz.model';
 import { PlanungNav } from '../planung-nav/planung-nav';
@@ -16,6 +18,14 @@ type ViewState =
   | { kind: 'ready'; data: PlantafelData }
   | VerbotenState
   | { kind: 'error' };
+
+/** Bahn: Mitarbeiter, Betriebsmittel-Ressource oder Sammelbahn ohne Zuweisung. */
+type Lane = {
+  id: string;
+  name: string;
+  kind: 'user' | 'resource' | 'unassigned';
+  sub?: string;
+};
 
 const WINDOW_DAYS = 7;
 
@@ -94,14 +104,27 @@ export class Plantafel {
     });
   });
 
-  // Bahnen: Mitarbeiter mit Zuweisungen + eine „Ohne Zuweisung"-Bahn, falls es
-  // verplante, aber unzugewiesene Einsätze gibt (id = '' als Sammelbahn).
-  protected readonly lanes = computed<{ id: string; name: string }[]>(() => {
+  // Bahnen: erst Mitarbeiter (aus Zuweisungen), dann Ressourcen-Bahnen
+  // (Betriebsmittel aus resource.job_resource), zuletzt eine „Ohne Zuweisung"-
+  // Sammelbahn, falls es verplante, aber niemandem zugeordnete Einsätze gibt.
+  protected readonly lanes = computed<Lane[]>(() => {
     const s = this.state();
     if (s.kind !== 'ready') return [];
-    const lanes = s.data.resources.map((r) => ({ id: r.id, name: r.display_name }));
+    const lanes: Lane[] = s.data.resources.map((r) => ({
+      id: r.id,
+      name: r.display_name,
+      kind: 'user' as const,
+    }));
+    for (const rl of s.data.resource_lanes) {
+      lanes.push({
+        id: rl.id,
+        name: rl.display_name,
+        kind: 'resource',
+        sub: resourceTypeLabel(rl.resource_type),
+      });
+    }
     if (s.data.unassigned_count > 0) {
-      lanes.push({ id: '', name: 'Ohne Zuweisung' });
+      lanes.push({ id: '', name: 'Ohne Zuweisung', kind: 'unassigned' });
     }
     return lanes;
   });
@@ -142,14 +165,16 @@ export class Plantafel {
   }
 
   /** Einsätze einer Bahn an einem Tag (Mehrfachzuweisung → in jeder Bahn). */
-  cellJobs(laneId: string, dayIso: string): BoardJob[] {
+  cellJobs(lane: Lane, dayIso: string): BoardJob[] {
     const s = this.state();
     if (s.kind !== 'ready') return [];
     return s.data.jobs.filter((j) => {
       if (localDayIso(j.scheduled_start) !== dayIso) return false;
-      return laneId === ''
-        ? j.assignee_ids.length === 0
-        : j.assignee_ids.includes(laneId);
+      if (lane.kind === 'resource') return j.resource_ids.includes(lane.id);
+      if (lane.kind === 'unassigned') {
+        return j.assignee_ids.length === 0 && j.resource_ids.length === 0;
+      }
+      return j.assignee_ids.includes(lane.id);
     });
   }
 
@@ -179,5 +204,10 @@ export class Plantafel {
   }
   time(iso: string): string {
     return this.timeFmt.format(new Date(iso));
+  }
+  /** Farbklasse der Kategorie-Kachel (Farbe nur Ergänzung; der Name steht als
+   * Text dabei). Leerer String, wenn keine Kategorie gesetzt ist. */
+  categoryClass(job: BoardJob): string {
+    return job.category ? categoryColorClass(job.category.color_token) : '';
   }
 }

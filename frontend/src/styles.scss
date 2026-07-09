@@ -116,6 +116,42 @@ button {
   background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
+// ----------------------------------------------------------------------------
+// Terminkategorie-Chip: Farbpunkt (dekorativ) + IMMER der Name als Text.
+// Der Name ist der eigentliche Traeger (WCAG: Status nie nur ueber Farbe); der
+// Punkt ergaenzt nur. Farb-Tokens (kat-*) setzen die Hue; Text bleibt --ink.
+// ----------------------------------------------------------------------------
+.kat-navy   { --kat-hue: #2f5273; }
+.kat-orange { --kat-hue: #ef804e; }
+.kat-sage   { --kat-hue: #6faa6a; }
+.kat-amber  { --kat-hue: #db9c4d; }
+.kat-teal   { --kat-hue: #2f9e8f; }
+.kat-plum   { --kat-hue: #9a5ea0; }
+.kat-rose   { --kat-hue: #d06188; }
+.kat-slate  { --kat-hue: #6b7a86; }
+
+.kat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  font-size: var(--step--1);
+  font-weight: 600;
+  color: var(--ink);
+  padding: 0.12em 0.55em 0.12em 0.4em;
+  border: 1.5px solid color-mix(in srgb, var(--kat-hue, var(--line-strong)) 45%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--kat-hue, transparent) 12%, transparent);
+  white-space: nowrap;
+}
+.kat-dot {
+  flex: 0 0 auto;
+  width: 0.62em;
+  height: 0.62em;
+  border-radius: 50%;
+  background: var(--kat-hue, var(--ink-faint));
+  border: 1px solid color-mix(in srgb, var(--kat-hue, var(--line-strong)) 60%, #0006);
+}
+
 // ============================================================================
 // Detailseiten-Bausteine (global, weil in Mappen projizierter Inhalt gestylt
 // werden muss): Feld-Kacheln, Tab-Platzhalter, Notiz-/Button-Basis.

@@ -20,9 +20,10 @@ from django.db.models import Q
 
 from db_core.db_context import business_transaction
 from db_core.models import (
-    AppUser, Article, ArticleSalePrice, Assembly, DunningNotice, Employee,
-    Invoice, MaintenanceContract, Party, Payment, Project, ProjectLog, Property,
-    Quote, SalePriceGroup, Task, UserRole, WageGroup, WorkOrder,
+    AppointmentCategory, AppUser, Article, ArticleSalePrice, Assembly,
+    DunningNotice, Employee, Invoice, MaintenanceContract, Party, Payment,
+    Project, ProjectLog, Property, Quote, Resource, SalePriceGroup, Task,
+    UserRole, WageGroup, WorkOrder,
 )
 from db_core.services import artikel as artikel_service
 from db_core.services import aufgabe as aufgabe_service
@@ -30,6 +31,8 @@ from db_core.services import auftrag as auftrag_service
 from db_core.services import beleg as beleg_service
 from db_core.services import buchhaltung as buchhaltung_service
 from db_core.services import einsatz as einsatz_service
+from db_core.services import firma as firma_service
+from db_core.services import planung as planung_service
 from db_core.services import wartung as wartung_service
 from db_core.services import identity as identity_service
 from db_core.services import mitarbeiter as mitarbeiter_service
@@ -300,6 +303,32 @@ class Command(BaseCommand):
             raise CommandError("seed_demo läuft nur mit settings.DEBUG = True.")
 
         actor, _ = self._ensure_demo_user()
+
+        # Firmenprofil (Singleton) — steht auf jedem Beleg (Beleg-PDF-Aussteller).
+        if firma_service.get_company_profile() is None:
+            firma_service.update_company_profile(
+                actor.id,
+                company_name="Mitra Sanitär GmbH",
+                legal_form="GmbH",
+                street="Industriestraße 5",
+                postal_code="80331",
+                city="München",
+                state_code="BY",
+                phone="+49 89 1234567",
+                email="info@mitra-sanitaer.de",
+                web="https://mitra-sanitaer.de",
+                tax_number="143/456/78901",
+                vat_id="DE123456789",
+                commercial_register="HRB 123456, AG München",
+                bank_name="Stadtsparkasse München",
+                iban="DE12500105170648489890",
+                bic="SSKMDEMMXXX",
+                managing_director="Jörg Feldmann",
+                managing_director_title="Geschäftsführer",
+            )
+            self.stdout.write("Firmenprofil angelegt: Mitra Sanitär GmbH")
+        else:
+            self.stdout.write("Firmenprofil vorhanden — übersprungen.")
 
         # Idempotenz je Party (nicht am Benutzer-Flag): heilt auch Läufe,
         # die nach Teilerfolg abgebrochen sind.
@@ -676,6 +705,37 @@ class Command(BaseCommand):
             angelegt += 1
             self.stdout.write("Projekt-Cockpit (Logbuch + Checkliste) angelegt.")
 
+        # Planungs-Stammdaten: sechs Standard-Terminkategorien (Hero-Vorbild) und
+        # ein paar Betriebsmittel. Idempotent über den Namen; müssen vor der
+        # Kategorie-/Ressourcenzuordnung am Einsatz existieren.
+        _std_categories = [
+            ("Umsetzung", "NAVY"),
+            ("Vor-Ort-Termin", "ORANGE"),
+            ("Schlechtwetter", "SLATE"),
+            ("Büro", "AMBER"),
+            ("Besprechung", "TEAL"),
+            ("Schule", "SAGE"),
+        ]
+        for idx, (kat_name, token) in enumerate(_std_categories):
+            if not AppointmentCategory.objects.filter(name=kat_name).exists():
+                planung_service.create_category(
+                    actor.id, name=kat_name, color_token=token, sort_order=idx
+                )
+                angelegt += 1
+        _std_resources = [
+            ("VW Crafter (BN-MC 1234)", "FAHRZEUG"),
+            ("Sprinter (BN-MC 5678)", "FAHRZEUG"),
+            ("Hubarbeitsbühne 12 m", "GERAET"),
+            ("Kernbohrgerät", "GERAET"),
+            ("Besprechungsraum Nord", "RAUM"),
+        ]
+        for res_name, res_type in _std_resources:
+            if not Resource.objects.filter(name=res_name).exists():
+                planung_service.create_resource(
+                    actor.id, name=res_name, resource_type=res_type
+                )
+                angelegt += 1
+
         # Demo-Einsatz (workflow.service_job) am Fassaden-Projekt. Braucht einen
         # freigegebenen/in Ausführung befindlichen Auftrag (Ausführungs-Gate ab
         # UNTERWEGS, B-01/A-23) und einen Auftrag, der NICHT kaufmännisch geprüft
@@ -774,6 +834,19 @@ class Command(BaseCommand):
             self.stdout.write(
                 f"Einsatz angelegt: {job2.job_number} ({job2.status})"
             )
+
+            # Kategorie + Ressource dem geplanten Einsatz zuordnen (falls noch
+            # nicht gesetzt). Braucht die zuvor angelegten Stammdaten.
+            vor_ort = AppointmentCategory.objects.filter(name="Vor-Ort-Termin").first()
+            if vor_ort is not None and job2.appointment_category_id is None:
+                planung_service.set_job_category(
+                    actor.id, service_job_id=job2.id, category_id=vor_ort.id
+                )
+            crafter = Resource.objects.filter(name="VW Crafter (BN-MC 1234)").first()
+            if crafter is not None and not job2.resource_links.exists():
+                planung_service.assign_resource(
+                    actor.id, service_job_id=job2.id, resource_id=crafter.id
+                )
 
         # Buchhaltung: Teilzahlung + erste Mahnstufe auf der veröffentlichten
         # Rechnung. Idempotent je Rechnung. Die Zahlung braucht kein due_date;
