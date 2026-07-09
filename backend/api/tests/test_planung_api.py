@@ -9,11 +9,15 @@ from decimal import Decimal
 from uuid import uuid4
 
 import pytest
+from django.test import Client
 
+from db_core.models import TimeEntry
 from db_core.services import auftrag as auftrag_service
 from db_core.services import einsatz as einsatz_service
 from db_core.services import identity as identity_service
 from db_core.services import property as property_service
+
+from .conftest import make_role_user
 
 T0 = datetime(2026, 7, 13, 8, 0, tzinfo=dt_timezone.utc)
 T1 = datetime(2026, 7, 13, 12, 0, tzinfo=dt_timezone.utc)
@@ -167,3 +171,193 @@ def test_plantafel_range_invalid(admin_client, db):
 def test_plantafel_range_zu_gross(admin_client, db):
     r = admin_client.get("/api/planung/plantafel?date_from=2026-01-01&date_to=2026-12-31")
     assert r.status_code == 422
+
+
+# --- Schreibende Endpoints -------------------------------------------------
+
+@pytest.mark.django_db
+def test_einsatz_anlegen(admin_client, seeded):
+    """create_service_job (201): Initialstatus UNGEPLANT, E-Nummer von der DB."""
+    r = admin_client.post(
+        "/api/planung/einsaetze",
+        data={"work_order_id": str(seeded["order"].id)},
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    body = r.json()
+    assert body["status"] == "UNGEPLANT"
+    assert body["job_number"].startswith("E-")
+
+
+@pytest.mark.django_db
+def test_schedule_setzen(admin_client, seeded):
+    """set_schedule (200): Planungszeitraum ohne Statuswechsel."""
+    r = admin_client.post(
+        f"/api/planung/einsaetze/{seeded['j2'].id}/schedule",
+        data={"scheduled_start": "2026-08-01T08:00:00Z",
+              "scheduled_end": "2026-08-01T12:00:00Z"},
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    assert r.json()["scheduled_start"].startswith("2026-08-01")
+
+
+@pytest.mark.django_db
+def test_schedule_ende_vor_start_422(admin_client, seeded):
+    r = admin_client.post(
+        f"/api/planung/einsaetze/{seeded['j2'].id}/schedule",
+        data={"scheduled_start": "2026-08-01T12:00:00Z",
+              "scheduled_end": "2026-08-01T08:00:00Z"},
+        content_type="application/json",
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.django_db
+def test_schedule_unbekannter_einsatz_404(admin_client, db):
+    r = admin_client.post(
+        f"/api/planung/einsaetze/{uuid4()}/schedule",
+        data={"scheduled_start": "2026-08-01T08:00:00Z"},
+        content_type="application/json",
+    )
+    assert r.status_code == 404
+
+
+@pytest.mark.django_db
+def test_status_vorschieben(admin_client, seeded):
+    """advance_status (200): GEPLANT → BESTAETIGT (nicht begründungspflichtig)."""
+    r = admin_client.post(
+        f"/api/planung/einsaetze/{seeded['j2'].id}/status",
+        data={"to_status": "BESTAETIGT"}, content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    assert r.json()["status"] == "BESTAETIGT"
+
+
+@pytest.mark.django_db
+def test_status_unzulaessig_422(admin_client, seeded):
+    """GEPLANT → VOR_ORT ist kein erlaubter Übergang → 422."""
+    r = admin_client.post(
+        f"/api/planung/einsaetze/{seeded['j2'].id}/status",
+        data={"to_status": "VOR_ORT"}, content_type="application/json",
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.django_db
+def test_zuweisung(admin_client, seeded, app_user):
+    """assign_user (201): Mitarbeiter dem Einsatz zuweisen."""
+    r = admin_client.post(
+        f"/api/planung/einsaetze/{seeded['j2'].id}/assignments",
+        data={"assignee_user_id": str(app_user.id), "role": "TECHNICIAN"},
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    body = r.json()
+    assert body["role"] == "TECHNICIAN"
+    assert body["assignee_id"] == str(app_user.id)
+
+
+# --- MONTEUR (row_scope EIGENE) --------------------------------------------
+
+def _monteur_client(seeded, app_user, *, assigned=True):
+    """Ein eingeloggter MONTEUR; optional dem Einsatz j1 zugewiesen."""
+    user, monteur = make_role_user("MONTEUR")
+    if assigned:
+        einsatz_service.assign_user(
+            app_user.id, service_job_id=seeded["j1"].id, assignee_user_id=monteur.id
+        )
+    c = Client()
+    c.force_login(user)
+    return c, monteur
+
+
+@pytest.mark.django_db
+def test_monteur_bucht_zeit_auf_eigenem_einsatz(seeded, app_user):
+    """require_scoped: der zugewiesene Monteur darf Zeit buchen (201); user_id wird
+    auf den Akteur gezwungen."""
+    c, monteur = _monteur_client(seeded, app_user)
+    r = c.post(
+        f"/api/planung/einsaetze/{seeded['j1'].id}/times",
+        data={"time_type": "ARBEITSZEIT", "started_at": "2026-07-13T13:00:00Z",
+              "ended_at": "2026-07-13T15:00:00Z"},
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    assert TimeEntry.objects.filter(
+        service_job_id=seeded["j1"].id, user_id=monteur.id
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_monteur_fremde_user_id_403(seeded, app_user):
+    """Bei Scope EIGENE ist das Buchen einer fremden user_id verboten → 403."""
+    c, _monteur = _monteur_client(seeded, app_user)
+    r = c.post(
+        f"/api/planung/einsaetze/{seeded['j1'].id}/times",
+        data={"time_type": "ARBEITSZEIT", "started_at": "2026-07-13T13:00:00Z",
+              "ended_at": "2026-07-13T15:00:00Z", "user_id": str(app_user.id)},
+        content_type="application/json",
+    )
+    assert r.status_code == 403
+
+
+@pytest.mark.django_db
+def test_monteur_fremder_einsatz_404(seeded, app_user):
+    """Nicht zugewiesener Einsatz → 404 (Existenz wird nicht verraten)."""
+    c, _monteur = _monteur_client(seeded, app_user, assigned=False)
+    r = c.post(
+        f"/api/planung/einsaetze/{seeded['j1'].id}/times",
+        data={"time_type": "ARBEITSZEIT", "started_at": "2026-07-13T13:00:00Z",
+              "ended_at": "2026-07-13T15:00:00Z"},
+        content_type="application/json",
+    )
+    assert r.status_code == 404
+
+
+@pytest.mark.django_db
+def test_monteur_bucht_material_auf_eigenem_einsatz(seeded, app_user):
+    c, _monteur = _monteur_client(seeded, app_user)
+    r = c.post(
+        f"/api/planung/einsaetze/{seeded['j1'].id}/materials",
+        data={"description": "Dichtung", "quantity": "2", "unit": "Stk"},
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    assert r.json()["description"] == "Dichtung"
+
+
+@pytest.mark.django_db
+def test_monteur_material_fremder_einsatz_404(seeded, app_user):
+    c, _monteur = _monteur_client(seeded, app_user, assigned=False)
+    r = c.post(
+        f"/api/planung/einsaetze/{seeded['j1'].id}/materials",
+        data={"description": "Dichtung", "quantity": "2", "unit": "Stk"},
+        content_type="application/json",
+    )
+    assert r.status_code == 404
+
+
+@pytest.mark.django_db
+def test_monteur_darf_nicht_anlegen_403(seeded, app_user):
+    """create_service_job nutzt `require` (fail-closed) → Monteur 403."""
+    c, _monteur = _monteur_client(seeded, app_user, assigned=False)
+    r = c.post(
+        "/api/planung/einsaetze",
+        data={"work_order_id": str(seeded["order"].id)},
+        content_type="application/json",
+    )
+    assert r.status_code == 403
+
+
+@pytest.mark.django_db
+def test_monteur_darf_nicht_zuweisen_403(seeded, app_user):
+    """assign_user nutzt `require` (fail-closed) → Monteur 403, auch auf eigenem
+    Einsatz."""
+    c, monteur = _monteur_client(seeded, app_user)
+    r = c.post(
+        f"/api/planung/einsaetze/{seeded['j1'].id}/assignments",
+        data={"assignee_user_id": str(monteur.id)},
+        content_type="application/json",
+    )
+    assert r.status_code == 403

@@ -1,0 +1,52 @@
+<app-dialog
+  [offen]="offen()"
+  [titel]="titel()"
+  [escapeSchliesst]="!laedt()"
+  [backdropSchliesst]="!laedt()"
+  (schliessen)="onAbbrechen()"
+>
+  @if (text()) {
+    <p class="bestaetigung__text">{{ text() }}</p>
+  }
+
+  @if (begruendungPflicht()) {
+    <div class="feld-gruppe bestaetigung__grund">
+      <label class="feld-gruppe__label" for="bestaetigung-grund">
+        {{ begruendungLabel() }}
+        <span class="feld-gruppe__stern" aria-hidden="true">*</span>
+        <span class="sr-only">(Pflichtfeld)</span>
+      </label>
+      <textarea
+        id="bestaetigung-grund"
+        class="feld-gruppe__input feld-gruppe__textarea"
+        rows="3"
+        aria-required="true"
+        [value]="begruendung()"
+        (input)="onEingabe($any($event.target).value)"
+      ></textarea>
+    </div>
+  }
+
+  <div dialog-aktionen class="dialog__aktionen">
+    <button
+      type="button"
+      class="btn"
+      [attr.data-startfokus]="begruendungPflicht() ? null : ''"
+      [disabled]="laedt()"
+      (click)="onAbbrechen()"
+    >
+      {{ abbrechenLabel() }}
+    </button>
+    <button
+      type="button"
+      class="btn"
+      [class.btn--primary]="!gefahr()"
+      [class.btn--gefahr]="gefahr()"
+      [disabled]="!kannBestaetigen()"
+      [attr.aria-busy]="laedt()"
+      (click)="onBestaetigen()"
+    >
+      {{ laedt() ? 'Wird ausgeführt …' : bestaetigenLabel() }}
+    </button>
+  </div>
+</app-dialog>

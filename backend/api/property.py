@@ -15,8 +15,8 @@ from ninja.errors import HttpError
 from ninja.responses import Status
 from ninja.security import django_auth
 
-from api.permissions import require
-from db_core.models import Property
+from api.permissions import require, require_create
+from db_core.models import Building, Property, PropertyPartyRole, Unit
 from db_core.services import property as property_service
 
 router = Router()
@@ -239,3 +239,133 @@ def get_property(request, property_id: UUID):
     """Detail einer Liegenschaft inkl. Adresse, Gebäude/Einheiten und Rollen."""
     require(request, "property", "LESEN")
     return _property_detail(property_id)
+
+
+# --- Schreibende Unterstruktur-Endpoints (Session-Auth Pflicht) ------------
+# row_scope: Das Modul `property` kennt keine Rolle mit Scope 'EIGENE' (nur
+# workflow: Monteur). Die erzeugten Zeilen (Gebäude/Einheit/Party-Rolle) tragen
+# kein Owner-Feld. ANLEGEN daher über `require_create`; die Rollen-Zuordnung
+# (fachlich AENDERN am Liegenschaftsbestand) über `require` (fail-closed).
+
+class BuildingIn(Schema):
+    building_number: str
+    name: str | None = None
+
+
+class UnitIn(Schema):
+    unit_type: str
+    unit_number: str
+
+
+class PartyRoleIn(Schema):
+    party_id: UUID
+    role: str
+    valid_from: date
+    valid_until: date | None = None
+
+
+def _building_out(building):
+    return BuildingOut(
+        id=building.id,
+        building_number=building.building_number,
+        name=building.name,
+        units=[
+            UnitOut(id=u.id, unit_type=u.unit_type, unit_number=u.unit_number)
+            for u in sorted(building.units.all(), key=lambda u: u.unit_number)
+        ],
+    )
+
+
+@router.post(
+    "/properties/{property_id}/buildings",
+    response={201: BuildingOut},
+    auth=django_auth,
+)
+def add_building(request, property_id: UUID, payload: BuildingIn):
+    """Gebäude an einer bestehenden Liegenschaft anlegen."""
+    actor = require_create(request, "property", "ANLEGEN")
+    if not Property.objects.filter(id=property_id).exists():
+        raise HttpError(404, "Liegenschaft nicht gefunden.")
+    try:
+        building = property_service.add_building(
+            actor,
+            property_id=property_id,
+            building_number=payload.building_number,
+            name=payload.name,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    building = Building.objects.prefetch_related("units").get(id=building.id)
+    return Status(201, _building_out(building))
+
+
+@router.post(
+    "/buildings/{building_id}/units", response={201: UnitOut}, auth=django_auth
+)
+def add_unit(request, building_id: UUID, payload: UnitIn):
+    """Einheit in einem Gebäude anlegen.
+
+    property_id ist von der DB an das Gebäude gebunden (zusammengesetzter FK) und
+    wird deshalb hier aus dem Gebäude abgeleitet, nicht aus dem Payload
+    übernommen — so kann keine Einheit einer fremden Liegenschaft untergeschoben
+    werden.
+    """
+    actor = require_create(request, "property", "ANLEGEN")
+    building = Building.objects.filter(id=building_id).first()
+    if building is None:
+        raise HttpError(404, "Gebäude nicht gefunden.")
+    try:
+        unit = property_service.add_unit(
+            actor,
+            building_id=building_id,
+            property_id=building.property_id,
+            unit_type=payload.unit_type,
+            unit_number=payload.unit_number,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return Status(
+        201, UnitOut(id=unit.id, unit_type=unit.unit_type, unit_number=unit.unit_number)
+    )
+
+
+@router.post(
+    "/properties/{property_id}/parties",
+    response={201: PartyRoleOut},
+    auth=django_auth,
+)
+def add_party_role(request, property_id: UUID, payload: PartyRoleIn):
+    """Einer Liegenschaft eine Party-Rolle mit Gültigkeit zuordnen.
+
+    Torfunktion `require` (AENDERN): pflegt den Rollenbestand einer Liegenschaft;
+    der Endpunkt wertet keinen row_scope aus, und `property` kennt ohnehin keine
+    'EIGENE'-Rolle.
+    """
+    actor, _ = require(request, "property", "AENDERN")
+    if not Property.objects.filter(id=property_id).exists():
+        raise HttpError(404, "Liegenschaft nicht gefunden.")
+    try:
+        role = property_service.add_party_role(
+            actor,
+            property_id=property_id,
+            party_id=payload.party_id,
+            role=payload.role,
+            valid_from=payload.valid_from,
+            valid_until=payload.valid_until,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    role = PropertyPartyRole.objects.select_related("party").get(id=role.id)
+    today = date.today()
+    is_current = role.valid_until is None or role.valid_until > today
+    return Status(
+        201,
+        PartyRoleOut(
+            party_id=role.party_id,
+            party_display_name=role.party.display_name,
+            role=role.role,
+            valid_from=role.valid_from,
+            valid_until=role.valid_until,
+            is_current=is_current,
+        ),
+    )

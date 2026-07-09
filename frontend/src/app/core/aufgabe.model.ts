@@ -35,6 +35,16 @@ export interface TaskPage {
   page_size: number;
 }
 
+// Anlage-Payload zu POST /api/workflow/tasks (Felder optional außer title).
+export interface TaskCreate {
+  title: string;
+  description?: string | null;
+  due_date?: string | null;
+  assigned_to_user_id?: string | null;
+  project_id?: string | null;
+  party_id?: string | null;
+}
+
 export interface TaskQuery {
   page: number;
   page_size: number;

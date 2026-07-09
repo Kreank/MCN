@@ -34,12 +34,14 @@ type TasksState =
   | { kind: 'idle' }
   | { kind: 'loading' }
   | { kind: 'ready'; items: Task[] }
+  | VerbotenState
   | { kind: 'error' };
 
 type LazyState<T> =
   | { kind: 'idle' }
   | { kind: 'loading' }
   | { kind: 'ready'; items: T[] }
+  | VerbotenState
   | { kind: 'error' };
 
 @Component({
@@ -111,7 +113,7 @@ export class ProjektDetail {
     this.tasksState.set({ kind: 'loading' });
     this.aufgabeSvc.list({ page: 1, page_size: 50, project_id: projectId }).subscribe({
       next: (d) => this.tasksState.set({ kind: 'ready', items: d.items }),
-      error: () => this.tasksState.set({ kind: 'error' }),
+      error: (err) => this.tasksState.set(fehlerState(err)),
     });
   }
 
@@ -119,7 +121,7 @@ export class ProjektDetail {
     this.ordersState.set({ kind: 'loading' });
     this.auftragSvc.list({ page: 1, page_size: 50, project_id: projectId }).subscribe({
       next: (d) => this.ordersState.set({ kind: 'ready', items: d.items }),
-      error: () => this.ordersState.set({ kind: 'error' }),
+      error: (err) => this.ordersState.set(fehlerState(err)),
     });
   }
 
@@ -127,7 +129,7 @@ export class ProjektDetail {
     this.logState.set({ kind: 'loading' });
     this.svc.getProjectLog(projectId).subscribe({
       next: (items) => this.logState.set({ kind: 'ready', items }),
-      error: () => this.logState.set({ kind: 'error' }),
+      error: (err) => this.logState.set(fehlerState(err)),
     });
   }
 
@@ -135,7 +137,7 @@ export class ProjektDetail {
     this.checklistsState.set({ kind: 'loading' });
     this.svc.getChecklists(projectId).subscribe({
       next: (items) => this.checklistsState.set({ kind: 'ready', items }),
-      error: () => this.checklistsState.set({ kind: 'error' }),
+      error: (err) => this.checklistsState.set(fehlerState(err)),
     });
   }
 

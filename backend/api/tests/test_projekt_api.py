@@ -164,3 +164,128 @@ def test_create_ohne_login_abgelehnt(anonymous_client, db):
         content_type="application/json",
     )
     assert r.status_code in (401, 403)
+
+
+# --- Cockpit-Schreib-Endpoints: Logbuch, Checkliste, Vorgang ---------------
+
+@pytest.mark.django_db
+def test_add_project_log_happy(admin_client, seeded):
+    r = admin_client.post(
+        f"/api/workflow/projects/{seeded['p1'].id}/log",
+        data={"entry": "Kunde angerufen", "category": "ANRUF"},
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    body = r.json()
+    assert body["entry"] == "Kunde angerufen"
+    assert body["category"] == "ANRUF"
+    assert body["created_by"]  # created_by wird auf den Akteur gesetzt
+
+
+@pytest.mark.django_db
+def test_add_project_log_ungueltige_kategorie_422(admin_client, seeded):
+    r = admin_client.post(
+        f"/api/workflow/projects/{seeded['p1'].id}/log",
+        data={"entry": "x", "category": "QUATSCH"},
+        content_type="application/json",
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.django_db
+def test_add_project_log_unbekanntes_projekt_404(admin_client, seeded):
+    r = admin_client.post(
+        f"/api/workflow/projects/{uuid.uuid4()}/log",
+        data={"entry": "x"},
+        content_type="application/json",
+    )
+    assert r.status_code == 404
+
+
+@pytest.mark.django_db
+def test_add_project_log_monteur_403_fail_closed(client_with_role, seeded):
+    """add_project_log nutzt `require` (AENDERN): Monteur hat nur Scope 'EIGENE',
+    der Endpunkt wertet ihn nicht aus → fail-closed 403."""
+    c = client_with_role("MONTEUR")
+    r = c.post(
+        f"/api/workflow/projects/{seeded['p1'].id}/log",
+        data={"entry": "x"},
+        content_type="application/json",
+    )
+    assert r.status_code == 403
+
+
+@pytest.mark.django_db
+def test_create_checklist_happy(admin_client, seeded):
+    r = admin_client.post(
+        f"/api/workflow/projects/{seeded['p1'].id}/checklists",
+        data={"name": "Abnahme", "items": ["Dach", "Rinne"]},
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    body = r.json()
+    assert body["name"] == "Abnahme"
+    assert len(body["items"]) == 2
+    assert body["items"][0]["done"] is False
+
+
+@pytest.mark.django_db
+def test_create_checklist_leerer_name_422(admin_client, seeded):
+    r = admin_client.post(
+        f"/api/workflow/projects/{seeded['p1'].id}/checklists",
+        data={"name": "  "},
+        content_type="application/json",
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.django_db
+def test_create_checklist_ohne_recht_403(client_with_role, seeded):
+    c = client_with_role("NUR_LESEN")
+    r = c.post(
+        f"/api/workflow/projects/{seeded['p1'].id}/checklists",
+        data={"name": "Abnahme"},
+        content_type="application/json",
+    )
+    assert r.status_code == 403
+
+
+@pytest.mark.django_db
+def test_create_service_case_happy(admin_client, seeded):
+    r = admin_client.post(
+        f"/api/workflow/projects/{seeded['p1'].id}/service_cases",
+        data={"property_id": str(seeded["obj"].id), "subject": "Wasserschaden"},
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    body = r.json()
+    assert body["subject"] == "Wasserschaden"
+    assert body["status"] == "NEU"
+    # der Vorgang erscheint jetzt im Projektdetail
+    detail = admin_client.get(f"/api/workflow/projects/{seeded['p1'].id}").json()
+    assert any(c["subject"] == "Wasserschaden" for c in detail["service_cases"])
+
+
+@pytest.mark.django_db
+def test_create_service_case_ungueltige_prioritaet_422(admin_client, seeded):
+    r = admin_client.post(
+        f"/api/workflow/projects/{seeded['p1'].id}/service_cases",
+        data={
+            "property_id": str(seeded["obj"].id),
+            "subject": "X",
+            "priority": "SOFORT",
+        },
+        content_type="application/json",
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.django_db
+def test_create_service_case_ohne_recht_403(client_with_role, seeded):
+    c = client_with_role("NUR_LESEN")
+    r = c.post(
+        f"/api/workflow/projects/{seeded['p1'].id}/service_cases",
+        data={"property_id": str(seeded["obj"].id), "subject": "X"},
+        content_type="application/json",
+    )
+    assert r.status_code == 403

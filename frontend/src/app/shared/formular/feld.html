@@ -1,0 +1,97 @@
+@if (typ() === 'checkbox') {
+  <div class="feld-check">
+    <input
+      type="checkbox"
+      class="feld-check__box"
+      [id]="id"
+      [formControl]="control()"
+      [attr.aria-describedby]="beschriebenVon()"
+      [attr.aria-invalid]="fehlerText() ? true : null"
+      (change)="serverFehlerLoeschen()"
+    />
+    <label class="feld-check__label" [for]="id">
+      {{ label() }}
+      @if (pflicht()) {
+        <span class="feld-gruppe__stern" aria-hidden="true">*</span>
+        <span class="sr-only">(Pflichtfeld)</span>
+      }
+    </label>
+  </div>
+  @if (hinweis(); as h) {
+    <p class="feld-gruppe__hinweis feld-check__hinweis" [id]="hinweisId">{{ h }}</p>
+  }
+  @if (fehlerText(); as f) {
+    <p class="feld-gruppe__fehler feld-check__fehler" [id]="fehlerId" role="alert">
+      <span class="feld-gruppe__fehler-mark" aria-hidden="true">▲</span>{{ f }}
+    </p>
+  }
+} @else {
+  <div class="feld-gruppe">
+    <label class="feld-gruppe__label" [for]="id">
+      {{ label() }}
+      @if (pflicht()) {
+        <span class="feld-gruppe__stern" aria-hidden="true">*</span>
+        <span class="sr-only">(Pflichtfeld)</span>
+      }
+    </label>
+
+    @if (hinweis(); as h) {
+      <p class="feld-gruppe__hinweis" [id]="hinweisId">{{ h }}</p>
+    }
+
+    @switch (typ()) {
+      @case ('textarea') {
+        <textarea
+          class="feld-gruppe__input feld-gruppe__textarea"
+          [id]="id"
+          [rows]="zeilen()"
+          [formControl]="control()"
+          [attr.placeholder]="platzhalter() || null"
+          [attr.aria-required]="pflicht() ? true : null"
+          [attr.aria-describedby]="beschriebenVon()"
+          [attr.aria-invalid]="fehlerText() ? true : null"
+          (input)="serverFehlerLoeschen()"
+        ></textarea>
+      }
+      @case ('select') {
+        <select
+          class="feld-gruppe__input feld-gruppe__select"
+          [id]="id"
+          [formControl]="control()"
+          [attr.aria-required]="pflicht() ? true : null"
+          [attr.aria-describedby]="beschriebenVon()"
+          [attr.aria-invalid]="fehlerText() ? true : null"
+          (change)="serverFehlerLoeschen()"
+        >
+          @if (platzhalter()) {
+            <option value="">{{ platzhalter() }}</option>
+          }
+          @for (o of optionen(); track o.wert) {
+            <option [value]="o.wert">{{ o.label }}</option>
+          }
+        </select>
+      }
+      @default {
+        <input
+          class="feld-gruppe__input"
+          [id]="id"
+          [type]="inputTyp()"
+          [formControl]="control()"
+          [attr.inputmode]="inputmodeAttr()"
+          [attr.placeholder]="platzhalter() || null"
+          [attr.autocomplete]="autocomplete() || null"
+          [attr.aria-required]="pflicht() ? true : null"
+          [attr.aria-describedby]="beschriebenVon()"
+          [attr.aria-invalid]="fehlerText() ? true : null"
+          (input)="serverFehlerLoeschen()"
+        />
+      }
+    }
+
+    @if (fehlerText(); as f) {
+      <p class="feld-gruppe__fehler" [id]="fehlerId" role="alert">
+        <span class="feld-gruppe__fehler-mark" aria-hidden="true">▲</span>{{ f }}
+      </p>
+    }
+  </div>
+}

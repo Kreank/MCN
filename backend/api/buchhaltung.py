@@ -32,6 +32,7 @@ from ninja.security import django_auth
 from api.permissions import require
 from db_core.models import DunningLevel, DunningNotice, Invoice, Payment
 from db_core.services import beleg as beleg_service
+from db_core.services import buchhaltung as buchhaltung_service
 from db_core.services.buchhaltung import PAYMENT_SIGN
 
 router = Router()
@@ -129,6 +130,30 @@ class PaymentOut(Schema):
     import_source: str
 
 
+class PaymentDetailOut(PaymentOut):
+    id: UUID
+    invoice_id: UUID
+    external_reference: str
+
+
+class PaymentRecordIn(Schema):
+    amount: Decimal
+    paid_at: date
+    payment_type: str = "ZAHLUNG"
+    external_reference: str | None = None
+    currency: str = "EUR"
+
+
+class PaymentReverseIn(Schema):
+    paid_at: date | None = None
+
+
+class DunningIssueIn(Schema):
+    level: int
+    issued_at: date
+    note: str | None = None
+
+
 class DunningNoticeOut(Schema):
     level: int
     label: str
@@ -193,6 +218,19 @@ class OpenItemFilter(Schema):
 
 
 # --- Mapper ----------------------------------------------------------------
+
+def _payment_detail(p):
+    return PaymentDetailOut(
+        id=p.id,
+        invoice_id=p.invoice_id,
+        payment_type=p.payment_type,
+        amount=p.amount,
+        currency=p.currency,
+        paid_at=p.paid_at,
+        import_source=p.import_source,
+        external_reference=p.external_reference,
+    )
+
 
 def _open_item_out(inv, today):
     gross = inv.gross_total or _ZERO
@@ -457,3 +495,90 @@ def list_dunning(request, level: int | None = Query(None)):
         for lv in DunningLevel.objects.order_by("level")
     ]
     return DunningListOut(items=items, levels=levels)
+
+
+# --- Schreibende Endpoints: Zahlungen und Mahnwesen ------------------------
+
+@router.post(
+    "/invoices/{invoice_id}/payments", response={201: PaymentDetailOut}, auth=django_auth
+)
+def record_payment(request, invoice_id: UUID, payload: PaymentRecordIn):
+    """Erfasst eine (Teil-)Zahlung zu einer veröffentlichten Rechnung.
+
+    Recht AENDERN: eine Zahlung verändert den offenen Posten einer bestehenden
+    Rechnung — kein Freigabe-/Storno-Vorgang, sondern die laufende Pflege des
+    Zahlungsstands. amount ist stets positiv; das Vorzeichen ergibt sich aus dem
+    payment_type (PAYMENT_SIGN). Die DB-Tore (nur veröffentlichte Rechnung B-23,
+    Idempotenz) landen als 422 beim Aufrufer.
+    """
+    actor, _ = require(request, "invoicing", "AENDERN")
+    try:
+        payment = buchhaltung_service.record_payment(
+            actor,
+            invoice_id=invoice_id,
+            amount=payload.amount,
+            paid_at=payload.paid_at,
+            payment_type=payload.payment_type,
+            external_reference=payload.external_reference,
+            currency=payload.currency,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return Status(201, _payment_detail(payment))
+
+
+@router.post("/payments/{payment_id}/reverse", response=PaymentDetailOut, auth=django_auth)
+def reverse_payment(request, payment_id: UUID, payload: PaymentReverseIn):
+    """Storniert eine Zahlung durch eine Gegenbuchung (STORNO_BUCHUNG).
+
+    Recht STORNIEREN: eine erfasste Zahlung nachträglich unwirksam zu machen ist
+    ein Storno-Vorgang, nicht die normale Pflege — deshalb das eigene, engere
+    Recht. Physisch wird nichts gelöscht (append-only); nur eingehende Zahlungen
+    lassen sich stornieren, und keine doppelt (→ 422).
+    """
+    actor, _ = require(request, "invoicing", "STORNIEREN")
+    try:
+        storno = buchhaltung_service.reverse_payment(
+            actor, payment_id=payment_id, paid_at=payload.paid_at
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _payment_detail(storno)
+
+
+@router.post(
+    "/invoices/{invoice_id}/dunning", response={201: DunningNoticeOut}, auth=django_auth
+)
+def issue_dunning_notice(request, invoice_id: UUID, payload: DunningIssueIn):
+    """Erzeugt eine Mahnstufe (Zahlungserinnerung/Mahnung) zu einer Rechnung.
+
+    Recht VERSENDEN: eine Mahnung ist eine nach außen wirkende Kundenkommunikation
+    — dasselbe Recht, das auch Angebots-/Belegversand trägt. Die DB erzwingt eine
+    veröffentlichte, zum issued_at fällige Rechnung und die nächste lückenlose
+    Stufe (max+1); Verstöße kommen als 422 zurück.
+    """
+    actor, _ = require(request, "invoicing", "VERSENDEN")
+    try:
+        notice = buchhaltung_service.issue_dunning_notice(
+            actor,
+            invoice_id=invoice_id,
+            level=payload.level,
+            issued_at=payload.issued_at,
+            note=payload.note,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    notice = (
+        DunningNotice.objects.select_related("level", "created_by")
+        .get(id=notice.id)
+    )
+    return Status(
+        201,
+        DunningNoticeOut(
+            level=notice.level_id,
+            label=notice.level.label,
+            issued_at=notice.issued_at,
+            note=notice.note,
+            created_by=notice.created_by.display_name if notice.created_by_id else None,
+        ),
+    )

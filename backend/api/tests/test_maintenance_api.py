@@ -85,3 +85,100 @@ def test_detail_mit_historie(admin_client, seeded):
 def test_detail_404(admin_client, db):
     r = admin_client.get(f"/api/maintenance/contracts/{uuid4()}")
     assert r.status_code == 404
+
+
+# --- Schreibende Endpoints -------------------------------------------------
+
+@pytest.mark.django_db
+def test_vertrag_anlegen(admin_client, seeded):
+    """create_contract (201): Status AKTIV, W-Nummer von der DB, erste Fälligkeit
+    = Startdatum."""
+    r = admin_client.post(
+        "/api/maintenance/contracts",
+        data={"property_id": str(seeded["obj"].id), "name": "Heizungswartung",
+              "start_date": "2026-09-01", "interval_kind": "MONATLICH",
+              "due_action": "BENACHRICHTIGUNG"},
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    body = r.json()
+    assert body["name"] == "Heizungswartung"
+    assert body["status"] == "AKTIV"
+    assert body["contract_number"].startswith("W-")
+    assert body["next_due_date"] == "2026-09-01"
+
+
+@pytest.mark.django_db
+def test_vertrag_anlegen_intervall_ohne_tage_422(admin_client, seeded):
+    """interval_kind TAGE ohne interval_days → 422 (Service-Vorprüfung)."""
+    r = admin_client.post(
+        "/api/maintenance/contracts",
+        data={"property_id": str(seeded["obj"].id), "name": "X",
+              "start_date": "2026-09-01", "interval_kind": "TAGE",
+              "due_action": "AUFGABE"},
+        content_type="application/json",
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.django_db
+def test_status_wechsel(admin_client, seeded):
+    """set_status (200): AKTIV → INAKTIV."""
+    cid = seeded["contract"].id
+    r = admin_client.post(
+        f"/api/maintenance/contracts/{cid}/status",
+        data={"to_status": "INAKTIV"}, content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    assert r.json()["status"] == "INAKTIV"
+
+
+@pytest.mark.django_db
+def test_status_wechsel_unzulaessig_422(admin_client, seeded):
+    """AKTIV → ARCHIVIERT ist kein erlaubter Direktübergang → 422."""
+    cid = seeded["contract"].id
+    r = admin_client.post(
+        f"/api/maintenance/contracts/{cid}/status",
+        data={"to_status": "ARCHIVIERT"}, content_type="application/json",
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.django_db
+def test_trigger_action(admin_client, seeded):
+    """trigger_action (200): JAEHRLICH rückt next_due_date um ein Jahr vor."""
+    cid = seeded["contract"].id
+    # Seeded hat bereits einmal ausgelöst → next_due 2027-06-01.
+    r = admin_client.post(
+        f"/api/maintenance/contracts/{cid}/trigger",
+        data={"note": "Manuell"}, content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    assert r.json()["next_due_date"] == "2028-06-01"
+
+
+@pytest.mark.django_db
+def test_status_unbekannter_vertrag_422(admin_client, db):
+    """Unbekannter Vertrag: der Service meldet 'nicht gefunden' als ValueError →
+    422 (Konvention ValueError→422; die maintenance-Services heben Lookup-Fehler
+    nicht gesondert als 404 heraus)."""
+    r = admin_client.post(
+        f"/api/maintenance/contracts/{uuid4()}/status",
+        data={"to_status": "INAKTIV"}, content_type="application/json",
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.django_db
+def test_anlegen_ohne_recht_monteur_403(client_with_role, seeded):
+    """MONTEUR hat workflow.ANLEGEN nur mit row_scope EIGENE; `require`
+    (fail-closed) verweigert → 403."""
+    c = client_with_role("MONTEUR")
+    r = c.post(
+        "/api/maintenance/contracts",
+        data={"property_id": str(seeded["obj"].id), "name": "X",
+              "start_date": "2026-09-01", "interval_kind": "JAEHRLICH",
+              "due_action": "AUFGABE"},
+        content_type="application/json",
+    )
+    assert r.status_code == 403

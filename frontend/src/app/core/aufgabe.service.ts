@@ -1,7 +1,7 @@
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { Task, TaskPage, TaskQuery } from './aufgabe.model';
+import { Task, TaskCreate, TaskPage, TaskQuery } from './aufgabe.model';
 
 /** Typisierter Zugriff auf die Aufgaben-API (dev-Proxy: /api -> :8000). */
 @Injectable({ providedIn: 'root' })
@@ -19,6 +19,11 @@ export class AufgabeService {
     if (query.project_id) params = params.set('project_id', query.project_id);
     if (query.party_id) params = params.set('party_id', query.party_id);
     return this.http.get<TaskPage>(this.base, { params });
+  }
+
+  /** Neue Aufgabe anlegen (Status OFFEN). Erfordert Recht workflow.ANLEGEN. */
+  create(payload: TaskCreate): Observable<Task> {
+    return this.http.post<Task>(this.base, payload);
   }
 
   // Statusaktionen (erfordern Session; UI-Verdrahtung folgt mit Auth).

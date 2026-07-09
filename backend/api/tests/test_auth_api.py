@@ -202,3 +202,92 @@ def test_logout_ohne_csrf_token_wird_abgelehnt():
     strict = Client(enforce_csrf_checks=True)
     r = strict.post("/api/auth/logout")
     assert r.status_code == 403, r.content
+
+
+# --- Passwort ändern (POST /api/auth/password) -----------------------------
+
+ALT = "altes-passwort-2026"
+NEU = "ganz-neues-passwort-2027"
+
+
+def _login_client(email, password):
+    user, _ = make_role_user("NUR_LESEN", email=email, password=password)
+    client = Client()
+    client.force_login(user)
+    return client
+
+
+@pytest.mark.django_db
+def test_passwort_wechsel_erfolgreich_und_session_bleibt_gueltig():
+    client = _login_client("pw.ok@example.test", ALT)
+    r = client.post(
+        "/api/auth/password",
+        data={"old_password": ALT, "new_password": NEU},
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    # update_session_auth_hash: die laufende Sitzung bleibt gültig.
+    assert client.get("/api/auth/me").status_code == 200
+
+
+@pytest.mark.django_db
+def test_passwort_wechsel_neues_passwort_wirkt_altes_nicht_mehr():
+    _login_client("pw.login@example.test", ALT).post(
+        "/api/auth/password",
+        data={"old_password": ALT, "new_password": NEU},
+        content_type="application/json",
+    )
+    # Frischer Login mit dem NEUEN Passwort gelingt …
+    ok = Client().post(
+        "/api/auth/login",
+        data={"email": "pw.login@example.test", "password": NEU},
+        content_type="application/json",
+    )
+    assert ok.status_code == 200, ok.content
+    # … mit dem ALTEN Passwort nicht mehr.
+    alt = Client().post(
+        "/api/auth/login",
+        data={"email": "pw.login@example.test", "password": ALT},
+        content_type="application/json",
+    )
+    assert alt.status_code == 401
+
+
+@pytest.mark.django_db
+def test_passwort_wechsel_falsches_altes_passwort():
+    client = _login_client("pw.falsch@example.test", ALT)
+    r = client.post(
+        "/api/auth/password",
+        data={"old_password": "stimmt-nicht-2026", "new_password": NEU},
+        content_type="application/json",
+    )
+    assert r.status_code == 400
+    # Unspezifische Meldung; das neue Passwort wurde NICHT gesetzt.
+    assert Client().post(
+        "/api/auth/login",
+        data={"email": "pw.falsch@example.test", "password": ALT},
+        content_type="application/json",
+    ).status_code == 200
+
+
+@pytest.mark.django_db
+def test_passwort_wechsel_zu_kurzes_neues_passwort_422():
+    client = _login_client("pw.kurz@example.test", ALT)
+    r = client.post(
+        "/api/auth/password",
+        data={"old_password": ALT, "new_password": "kurz1"},
+        content_type="application/json",
+    )
+    assert r.status_code == 422
+    # Deutsche Validator-Meldung (LANGUAGE_CODE=de-de, MinimumLengthValidator).
+    assert "12 Zeichen" in r.json()["detail"]
+
+
+@pytest.mark.django_db
+def test_passwort_wechsel_anonym_401():
+    r = Client().post(
+        "/api/auth/password",
+        data={"old_password": ALT, "new_password": NEU},
+        content_type="application/json",
+    )
+    assert r.status_code == 401

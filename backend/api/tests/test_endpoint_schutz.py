@@ -41,6 +41,16 @@ WHITELIST = {
     "/api/auth/me",
 }
 
+# Authentifiziert (auth=django_auth), aber bewusst OHNE Modul-Recht: jeder darf
+# sein EIGENES Passwort ändern. Der Endpunkt ruft daher kein `require*` auf und
+# ist nur vom statischen require-Scan ausgenommen — NICHT von der 401-Prüfung:
+# er bleibt anmeldepflichtig (steht deshalb NICHT in WHITELIST, sondern hier).
+# Sicherheit liegt nicht in der Rechtematrix, sondern darin, dass der Endpunkt
+# ausschließlich auf request.user wirkt und kein Zielkonto entgegennimmt.
+NO_REQUIRE_OK = {
+    "/api/auth/password",
+}
+
 _REQUIRE_CALL = re.compile(r"\brequire(_scoped|_create)?\s*\(")
 
 
@@ -138,7 +148,13 @@ def test_jeder_endpunkt_ruft_require(path, method, vf):
     """Statischer Nachweis: die View-Funktion prüft ein Recht — direkt über einen
     require*-Aufruf oder durch Delegation an einen prüfenden Modul-Helfer.
 
-    Fängt POST/PUT-Endpunkte, die der behavioral-Test (nur GET) nicht abdeckt."""
+    Fängt POST/PUT-Endpunkte, die der behavioral-Test (nur GET) nicht abdeckt.
+
+    Ausnahme: NO_REQUIRE_OK-Endpunkte prüfen bewusst KEIN Modul-Recht (z. B.
+    „eigenes Passwort ändern") und sind vom Scan befreit — sie bleiben aber über
+    `test_anonymer_zugriff_401` anmeldepflichtig abgesichert."""
+    if path in NO_REQUIRE_OK:
+        pytest.skip(f"{path}: bewusst ohne Modul-Recht (Self-Service).")
     assert _is_guarded(vf), (
         f"{method} {path}: View {vf.__name__} prüft kein Recht (kein require*/"
         "require_scoped/require_create, auch nicht via Helfer) — ungeschützt."

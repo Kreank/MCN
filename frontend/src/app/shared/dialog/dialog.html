@@ -1,0 +1,33 @@
+<dialog
+  #dlg
+  class="dialog"
+  role="dialog"
+  aria-modal="true"
+  [attr.aria-labelledby]="titel() ? titelId : null"
+  (cancel)="onCancel($event)"
+  (click)="onKlick($event)"
+>
+  <div class="dialog__panel">
+    @if (titel()) {
+      <header class="dialog__kopf">
+        <h2 class="dialog__titel" [id]="titelId" tabindex="-1">{{ titel() }}</h2>
+        <button
+          type="button"
+          class="dialog__x"
+          (click)="schliessen.emit()"
+          aria-label="Dialog schließen"
+        >
+          <span aria-hidden="true">✕</span>
+        </button>
+      </header>
+    }
+
+    <div class="dialog__inhalt">
+      <ng-content></ng-content>
+    </div>
+
+    <footer class="dialog__fuss">
+      <ng-content select="[dialog-aktionen]"></ng-content>
+    </footer>
+  </div>
+</dialog>

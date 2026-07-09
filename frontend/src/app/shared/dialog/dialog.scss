@@ -1,0 +1,111 @@
+// Natives <dialog>: als vollflaechiger, zentrierender Container mit eigener
+// Abdunkelung (statt ::backdrop, dessen Vererbung uneinheitlich ist).
+.dialog {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  width: 100%;
+  height: 100%;
+  max-width: 100vw;
+  max-height: 100dvh;
+  background: transparent;
+  color: var(--ink);
+  overflow: visible;
+}
+.dialog:not([open]) {
+  display: none;
+}
+.dialog[open] {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  background: var(--overlay);
+}
+// Kein zweiter Schleier: die Abdunkelung liegt auf dem Dialog selbst.
+.dialog::backdrop {
+  background: transparent;
+}
+
+.dialog__panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 34rem;
+  max-height: calc(100dvh - 2 * var(--space-4));
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
+}
+
+.dialog__kopf {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-5) var(--space-3);
+}
+.dialog__titel {
+  font-size: var(--step-2);
+  margin: 0;
+}
+.dialog__titel:focus-visible {
+  outline: 2.5px solid var(--focus-ring);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+.dialog__x {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border: 1.5px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--ink-muted);
+  font-size: 1rem;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+
+  &:hover {
+    color: var(--ink);
+    border-color: var(--line-strong);
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+
+.dialog__inhalt {
+  padding: 0 var(--space-5) var(--space-5);
+}
+// Ohne Kopf (z. B. sehr schlanke Dialoge): Innenabstand oben ausgleichen.
+.dialog__kopf + .dialog__inhalt,
+.dialog__inhalt:first-child {
+  padding-top: var(--space-5);
+}
+
+.dialog__fuss:empty {
+  display: none;
+}
+
+// Sanfte Einblendung — respektiert prefers-reduced-motion (global gedrosselt).
+@media (prefers-reduced-motion: no-preference) {
+  .dialog[open] .dialog__panel {
+    animation: dialog-auf 0.16s ease-out;
+  }
+}
+@keyframes dialog-auf {
+  from {
+    opacity: 0;
+    transform: translateY(0.5rem) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}

@@ -197,3 +197,130 @@ def test_create_ohne_login_abgelehnt(anonymous_client, db):
         content_type="application/json",
     )
     assert r.status_code in (401, 403)
+
+
+# --- Schreibende Unterstruktur-Endpoints -----------------------------------
+
+@pytest.mark.django_db
+def test_add_building_happy(admin_client, seeded):
+    r = admin_client.post(
+        f"/api/property/properties/{seeded['weg'].id}/buildings",
+        data={"building_number": "B", "name": "Hinterhaus"},
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    body = r.json()
+    assert body["building_number"] == "B"
+    assert body["name"] == "Hinterhaus"
+    assert body["units"] == []
+
+
+@pytest.mark.django_db
+def test_add_building_leere_nummer_422(admin_client, seeded):
+    r = admin_client.post(
+        f"/api/property/properties/{seeded['weg'].id}/buildings",
+        data={"building_number": "  "},
+        content_type="application/json",
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.django_db
+def test_add_building_unbekannte_liegenschaft_404(admin_client, seeded):
+    r = admin_client.post(
+        f"/api/property/properties/{uuid.uuid4()}/buildings",
+        data={"building_number": "B"},
+        content_type="application/json",
+    )
+    assert r.status_code == 404
+
+
+@pytest.mark.django_db
+def test_add_building_ohne_recht_403(client_with_role, seeded):
+    c = client_with_role("NUR_LESEN")
+    r = c.post(
+        f"/api/property/properties/{seeded['weg'].id}/buildings",
+        data={"building_number": "B"},
+        content_type="application/json",
+    )
+    assert r.status_code == 403
+
+
+@pytest.mark.django_db
+def test_add_unit_happy(admin_client, seeded):
+    r = admin_client.post(
+        f"/api/property/buildings/{seeded['building'].id}/units",
+        data={"unit_type": "GARAGE", "unit_number": "TG 1"},
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    body = r.json()
+    assert body["unit_type"] == "GARAGE"
+    assert body["unit_number"] == "TG 1"
+
+
+@pytest.mark.django_db
+def test_add_unit_ungueltiger_typ_422(admin_client, seeded):
+    r = admin_client.post(
+        f"/api/property/buildings/{seeded['building'].id}/units",
+        data={"unit_type": "FALSCH", "unit_number": "1"},
+        content_type="application/json",
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.django_db
+def test_add_unit_unbekanntes_gebaeude_404(admin_client, seeded):
+    r = admin_client.post(
+        f"/api/property/buildings/{uuid.uuid4()}/units",
+        data={"unit_type": "APARTMENT", "unit_number": "1"},
+        content_type="application/json",
+    )
+    assert r.status_code == 404
+
+
+@pytest.mark.django_db
+def test_add_party_role_happy(admin_client, seeded):
+    r = admin_client.post(
+        f"/api/property/properties/{seeded['weg'].id}/parties",
+        data={
+            "party_id": str(seeded["eigentuemer"].id),
+            "role": "PROPERTY_OWNER",
+            "valid_from": "2021-01-01",
+        },
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    body = r.json()
+    assert body["role"] == "PROPERTY_OWNER"
+    assert body["party_display_name"] == "WEG Beispielweg 1"
+    assert body["is_current"] is True
+
+
+@pytest.mark.django_db
+def test_add_party_role_ungueltige_rolle_422(admin_client, seeded):
+    r = admin_client.post(
+        f"/api/property/properties/{seeded['weg'].id}/parties",
+        data={
+            "party_id": str(seeded["eigentuemer"].id),
+            "role": "HAUSMEISTER",
+            "valid_from": "2021-01-01",
+        },
+        content_type="application/json",
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.django_db
+def test_add_party_role_ohne_recht_403(client_with_role, seeded):
+    c = client_with_role("NUR_LESEN")
+    r = c.post(
+        f"/api/property/properties/{seeded['weg'].id}/parties",
+        data={
+            "party_id": str(seeded["eigentuemer"].id),
+            "role": "PROPERTY_OWNER",
+            "valid_from": "2021-01-01",
+        },
+        content_type="application/json",
+    )
+    assert r.status_code == 403

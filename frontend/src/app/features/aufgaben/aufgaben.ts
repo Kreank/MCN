@@ -1,11 +1,21 @@
 import { Component, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { RouterLink } from '@angular/router';
-import { Subject, debounceTime, distinctUntilChanged } from 'rxjs';
+import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
+import { Observable, Subject, debounceTime, distinctUntilChanged } from 'rxjs';
 import { AufgabeService } from '../../core/aufgabe.service';
-import { TaskPage, TaskStatus } from '../../core/aufgabe.model';
+import { AuthService } from '../../core/auth.service';
+import { Task, TaskCreate, TaskPage, TaskStatus } from '../../core/aufgabe.model';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
-import { VerbotenState, fehlerState } from '../../shared/http-fehler';
+import { VerbotenState, fehlerDetail, fehlerState, istVerboten } from '../../shared/http-fehler';
+import { Dialog } from '../../shared/dialog/dialog';
+import { Bestaetigung } from '../../shared/bestaetigung/bestaetigung';
+import { Feld } from '../../shared/formular/feld';
+import { apiFehlerZuweisen } from '../../shared/formular/api-fehler';
+import {
+  felderAlsBeruehrtMarkieren,
+  serverFehlerZuruecksetzen,
+} from '../../shared/formular/formular.util';
 
 type ViewState =
   | { kind: 'loading' }
@@ -14,15 +24,18 @@ type ViewState =
   | { kind: 'error' };
 
 type Segment = { value: TaskStatus | null; label: string };
+type Meldung = { art: 'erfolg' | 'fehler'; text: string };
 
 @Component({
   selector: 'app-aufgaben',
-  imports: [RouterLink, KeinZugriff],
+  imports: [RouterLink, ReactiveFormsModule, KeinZugriff, Dialog, Bestaetigung, Feld],
   templateUrl: './aufgaben.html',
   styleUrl: './aufgaben.scss',
 })
 export class Aufgaben {
   private readonly svc = inject(AufgabeService);
+  private readonly auth = inject(AuthService);
+  private readonly fb = inject(FormBuilder);
 
   protected readonly pageSize = 20;
   protected readonly segments: Segment[] = [
@@ -37,6 +50,29 @@ export class Aufgaben {
   protected readonly state = signal<ViewState>({ kind: 'loading' });
 
   protected readonly skeletons = Array.from({ length: 6 });
+
+  // --- Rechte (nur UI-Sichtbarkeit; der Server setzt sie durch) -----------
+  protected readonly darfAnlegen = computed(() => this.auth.darf('workflow', 'ANLEGEN'));
+  protected readonly darfAendern = computed(() => this.auth.darf('workflow', 'AENDERN'));
+
+  // --- Anlage-Dialog ------------------------------------------------------
+  protected readonly neuOffen = signal(false);
+  protected readonly neuLaedt = signal(false);
+  protected readonly formularMeldung = signal<string | null>(null);
+  protected readonly neuForm = this.fb.group({
+    title: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.required, Validators.maxLength(200)],
+    }),
+    description: this.fb.control('', { nonNullable: true }),
+    due_date: this.fb.control('', { nonNullable: true }),
+  });
+
+  // --- Zeilen-Aktionen ----------------------------------------------------
+  protected readonly meldung = signal<Meldung | null>(null);
+  protected readonly aktionBusyId = signal<string | null>(null);
+  protected readonly verwerfenTask = signal<Task | null>(null);
+  protected readonly verwerfenLaedt = signal(false);
 
   private readonly searchInput$ = new Subject<string>();
   private reqId = 0;
@@ -113,6 +149,112 @@ export class Aufgaben {
           if (id === this.reqId) this.state.set(fehlerState(err));
         },
       });
+  }
+
+  // ---- Anlegen ------------------------------------------------------------
+  neuOeffnen(): void {
+    this.neuForm.reset({ title: '', description: '', due_date: '' });
+    this.formularMeldung.set(null);
+    this.neuOffen.set(true);
+  }
+
+  neuSchliessen(): void {
+    if (this.neuLaedt()) return;
+    this.neuOffen.set(false);
+  }
+
+  neuAbsenden(): void {
+    if (this.neuLaedt()) return;
+    serverFehlerZuruecksetzen(this.neuForm);
+    this.formularMeldung.set(null);
+    felderAlsBeruehrtMarkieren(this.neuForm);
+    if (this.neuForm.invalid) return;
+
+    const v = this.neuForm.getRawValue();
+    const payload: TaskCreate = {
+      title: v.title.trim(),
+      description: v.description.trim() || null,
+      due_date: v.due_date || null,
+    };
+
+    this.neuLaedt.set(true);
+    this.svc.create(payload).subscribe({
+      next: () => {
+        this.neuLaedt.set(false);
+        this.neuOffen.set(false);
+        this.meldung.set({ art: 'erfolg', text: `Aufgabe „${payload.title}“ wurde angelegt.` });
+        this.page.set(1);
+        this.fetch();
+      },
+      error: (err) => {
+        this.neuLaedt.set(false);
+        this.formularMeldung.set(apiFehlerZuweisen(err, this.neuForm).formular);
+      },
+    });
+  }
+
+  // ---- Zeilen-Aktionen ----------------------------------------------------
+  erledigen(t: Task): void {
+    this.aktion(this.svc.complete(t.id), t.id, 'Aufgabe als erledigt markiert.');
+  }
+
+  wiederOeffnen(t: Task): void {
+    this.aktion(this.svc.reopen(t.id), t.id, 'Aufgabe wieder geöffnet.');
+  }
+
+  verwerfenFragen(t: Task): void {
+    this.verwerfenTask.set(t);
+  }
+
+  verwerfenAbbrechen(): void {
+    if (!this.verwerfenLaedt()) this.verwerfenTask.set(null);
+  }
+
+  verwerfenBestaetigen(): void {
+    const t = this.verwerfenTask();
+    if (!t) return;
+    this.verwerfenLaedt.set(true);
+    this.svc.discard(t.id).subscribe({
+      next: () => {
+        this.verwerfenLaedt.set(false);
+        this.verwerfenTask.set(null);
+        this.meldung.set({ art: 'erfolg', text: 'Aufgabe verworfen.' });
+        this.fetch();
+      },
+      error: (err) => {
+        this.verwerfenLaedt.set(false);
+        this.verwerfenTask.set(null);
+        this.aktionsFehler(err);
+      },
+    });
+  }
+
+  meldungSchliessen(): void {
+    this.meldung.set(null);
+  }
+
+  private aktion(obs: Observable<Task>, id: string, erfolg: string): void {
+    if (this.aktionBusyId()) return;
+    this.aktionBusyId.set(id);
+    this.meldung.set(null);
+    obs.subscribe({
+      next: () => {
+        this.aktionBusyId.set(null);
+        this.meldung.set({ art: 'erfolg', text: erfolg });
+        this.fetch();
+      },
+      error: (err) => {
+        this.aktionBusyId.set(null);
+        this.aktionsFehler(err);
+      },
+    });
+  }
+
+  private aktionsFehler(err: unknown): void {
+    const text = istVerboten(err)
+      ? (fehlerDetail(err) ?? 'Keine Berechtigung für diese Aktion.')
+      : (fehlerDetail(err) ?? 'Die Aktion ist fehlgeschlagen. Bitte erneut versuchen.');
+    this.meldung.set({ art: 'fehler', text });
   }
 
   // ---- Darstellungshelfer -------------------------------------------------

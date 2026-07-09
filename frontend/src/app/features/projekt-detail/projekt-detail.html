@@ -89,6 +89,7 @@
       @if (tab() === 'auftraege') {
         @switch (ordersState().kind) {
           @case ('loading') { <p class="lade-hinweis" role="status">Aufträge werden geladen …</p> }
+          @case ('forbidden') { <app-kein-zugriff [detail]="$any(ordersState()).detail" /> }
           @case ('error') { <div class="tab-platzhalter"><p>Aufträge konnten nicht geladen werden.</p></div> }
           @case ('ready') {
             @if ($any(ordersState()).items.length === 0) {
@@ -116,6 +117,7 @@
       @if (tab() === 'aufgaben') {
         @switch (tasksState().kind) {
           @case ('loading') { <p class="lade-hinweis" role="status">Aufgaben werden geladen …</p> }
+          @case ('forbidden') { <app-kein-zugriff [detail]="$any(tasksState()).detail" /> }
           @case ('error') { <div class="tab-platzhalter"><p>Aufgaben konnten nicht geladen werden.</p></div> }
           @case ('ready') {
             @if ($any(tasksState()).items.length === 0) {
@@ -140,6 +142,7 @@
       @if (tab() === 'logbuch') {
         @switch (logState().kind) {
           @case ('loading') { <p class="lade-hinweis" role="status">Logbuch wird geladen …</p> }
+          @case ('forbidden') { <app-kein-zugriff [detail]="$any(logState()).detail" /> }
           @case ('error') { <div class="tab-platzhalter"><p>Das Logbuch konnte nicht geladen werden.</p></div> }
           @case ('ready') {
             @if ($any(logState()).items.length === 0) {
@@ -163,6 +166,7 @@
       @if (tab() === 'checklisten') {
         @switch (checklistsState().kind) {
           @case ('loading') { <p class="lade-hinweis" role="status">Checklisten werden geladen …</p> }
+          @case ('forbidden') { <app-kein-zugriff [detail]="$any(checklistsState()).detail" /> }
           @case ('error') { <div class="tab-platzhalter"><p>Die Checklisten konnten nicht geladen werden.</p></div> }
           @case ('ready') {
             @if ($any(checklistsState()).items.length === 0) {

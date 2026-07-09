@@ -112,3 +112,175 @@ def test_kalkulation_endpoint(admin_client, seeded):
 def test_kalkulation_404(admin_client, db):
     r = admin_client.get(f"/api/pricing/articles/{uuid.uuid4()}/kalkulation")
     assert r.status_code == 404
+
+
+# --- Schreibende Endpoints -------------------------------------------------
+
+@pytest.mark.django_db
+def test_create_article_happy(admin_client, db):
+    r = admin_client.post(
+        "/api/pricing/articles",
+        data={
+            "article_number": "NEU-1", "description": "Dämmplatte",
+            "unit": "m²", "line_type": "MATERIAL", "list_price": "9.995",
+        },
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    body = r.json()
+    assert body["article_number"] == "NEU-1"
+    # list_price wird auf 2 Nachkommastellen quantisiert (9,995 → 10,00).
+    assert body["list_price"] == "10.00"
+
+
+@pytest.mark.django_db
+def test_create_article_ungueltiger_line_type_422(admin_client, db):
+    r = admin_client.post(
+        "/api/pricing/articles",
+        data={
+            "article_number": "X", "description": "Y", "unit": "Stk",
+            "line_type": "FALSCH",
+        },
+        content_type="application/json",
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.django_db
+def test_create_article_ohne_recht_403(client_with_role, db):
+    c = client_with_role("NUR_LESEN")
+    r = c.post(
+        "/api/pricing/articles",
+        data={"article_number": "X", "description": "Y", "unit": "Stk"},
+        content_type="application/json",
+    )
+    assert r.status_code == 403
+
+
+@pytest.mark.django_db
+def test_create_wage_group_happy(admin_client, db):
+    r = admin_client.post(
+        "/api/pricing/wage_groups",
+        data={"name": "Geselle", "hourly_rate": "52.00"},
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    assert r.json()["name"] == "Geselle"
+
+
+@pytest.mark.django_db
+def test_create_wage_group_ungueltige_art_422(admin_client, db):
+    r = admin_client.post(
+        "/api/pricing/wage_groups",
+        data={"name": "X", "hourly_rate": "10.00", "kind": "FALSCH"},
+        content_type="application/json",
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.django_db
+def test_create_assembly_happy(admin_client, seeded):
+    r = admin_client.post(
+        "/api/pricing/assemblies",
+        data={
+            "assembly_number": "LEI-NEU", "name": "Platte setzen", "unit": "m²",
+            "components": [
+                {"article_id": str(seeded["mat"].id), "quantity": "3.000"},
+            ],
+        },
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    body = r.json()
+    assert body["assembly_number"] == "LEI-NEU"
+    assert len(body["components"]) == 1
+    assert body["components"][0]["kind"] == "MATERIAL"
+
+
+@pytest.mark.django_db
+def test_create_assembly_position_ohne_menge_422(admin_client, seeded):
+    """Material-Position ohne quantity → fachlicher Fehler (kein DB-500)."""
+    r = admin_client.post(
+        "/api/pricing/assemblies",
+        data={
+            "assembly_number": "LEI-X", "name": "Kaputt", "unit": "m²",
+            "components": [{"article_id": str(seeded["mat"].id)}],
+        },
+        content_type="application/json",
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.django_db
+def test_create_sale_price_group_happy(admin_client, db):
+    r = admin_client.post(
+        "/api/pricing/sale_price_groups",
+        data={
+            "name": "Aufschlag 30", "calc_basis": "EK",
+            "operator": "AUFSCHLAG", "percent_change": "30.000",
+        },
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    assert r.json()["name"] == "Aufschlag 30"
+
+
+@pytest.mark.django_db
+def test_create_sale_price_group_beide_werte_422(admin_client, db):
+    """percent_change UND amount_change gesetzt verletzt das XOR → 422."""
+    r = admin_client.post(
+        "/api/pricing/sale_price_groups",
+        data={
+            "name": "Kaputt", "percent_change": "10.000", "amount_change": "5.00",
+        },
+        content_type="application/json",
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.django_db
+def test_set_article_sale_price_happy(admin_client, seeded):
+    grp = artikel_service.create_sale_price_group(
+        seeded["app_user"].id, name="Auf20", calc_basis="LISTENPREIS",
+        operator="AUFSCHLAG", percent_change="20.000",
+    )
+    r = admin_client.put(
+        f"/api/pricing/articles/{seeded['mat'].id}/sale_price",
+        data={"sale_price_group_id": str(grp.id), "is_standard": True},
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    body = r.json()
+    assert body["is_standard"] is True
+    assert body["sale_price_group_id"] == str(grp.id)
+
+
+@pytest.mark.django_db
+def test_set_article_sale_price_beide_werte_422(admin_client, seeded):
+    r = admin_client.put(
+        f"/api/pricing/articles/{seeded['mat'].id}/sale_price",
+        data={"fixed_price": "5.00", "sale_price_group_id": str(uuid.uuid4())},
+        content_type="application/json",
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.django_db
+def test_set_article_sale_price_unbekannter_artikel_404(admin_client, db):
+    r = admin_client.put(
+        f"/api/pricing/articles/{uuid.uuid4()}/sale_price",
+        data={"fixed_price": "5.00"},
+        content_type="application/json",
+    )
+    assert r.status_code == 404
+
+
+@pytest.mark.django_db
+def test_set_article_sale_price_ohne_recht_403(client_with_role, seeded):
+    c = client_with_role("NUR_LESEN")
+    r = c.put(
+        f"/api/pricing/articles/{seeded['mat'].id}/sale_price",
+        data={"fixed_price": "5.00"},
+        content_type="application/json",
+    )
+    assert r.status_code == 403

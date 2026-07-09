@@ -14,7 +14,7 @@ from ninja.errors import HttpError
 from ninja.responses import Status
 from ninja.security import django_auth
 
-from api.permissions import require
+from api.permissions import require, require_create
 from db_core.models import Checklist, Project, ProjectLog, ServiceCase, StatusChange
 from db_core.services import projekt as projekt_service
 
@@ -378,4 +378,143 @@ def get_service_case(request, case_id: UUID):
         project=project,
         reported_by=reporter,
         history=history,
+    )
+
+
+# --- Schreibende Cockpit-Endpoints (Session-Auth Pflicht) ------------------
+
+class LogEntryIn(Schema):
+    entry: str
+    category: str = "NOTIZ"
+
+
+class ChecklistIn(Schema):
+    name: str
+    items: list[str] = []
+
+
+class ServiceCaseIn(Schema):
+    property_id: UUID
+    subject: str
+    description: str | None = None
+    reported_by_party_id: UUID | None = None
+    priority: str = "NORMAL"
+
+
+def _require_project(project_id):
+    """Existenz des übergeordneten Projekts prüfen → 404 statt DB-FK-500."""
+    if not Project.objects.filter(id=project_id).exists():
+        raise HttpError(404, "Projekt nicht gefunden.")
+
+
+@router.post(
+    "/projects/{project_id}/log", response={201: LogEntryOut}, auth=django_auth
+)
+def add_project_log(request, project_id: UUID, payload: LogEntryIn):
+    """Logbuch-Eintrag an einem Projekt anlegen (append-only).
+
+    Torfunktion `require` (AENDERN): der Endpunkt wertet den row_scope NICHT aus.
+    ProjectLog trägt kein setzbares Owner-Feld — `created_by` wird im Service
+    zwingend auf den Akteur gesetzt, nicht aus dem Payload übernommen. Ein Konto
+    mit Scope 'EIGENE' (Monteur) bekommt hier fail-closed 403; das Logbuch ist
+    kein zeilenbegrenzter Bereich.
+    """
+    actor, _ = require(request, "workflow", "AENDERN")
+    _require_project(project_id)
+    try:
+        log = projekt_service.add_project_log(
+            actor,
+            project_id=project_id,
+            entry=payload.entry,
+            category=payload.category,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    log = ProjectLog.objects.select_related("created_by").get(id=log.id)
+    return Status(
+        201,
+        LogEntryOut(
+            category=log.category,
+            entry=log.entry,
+            created_by=log.created_by.display_name if log.created_by_id else None,
+            created_at=log.created_at,
+        ),
+    )
+
+
+@router.post(
+    "/projects/{project_id}/checklists", response={201: ChecklistOut}, auth=django_auth
+)
+def create_checklist(request, project_id: UUID, payload: ChecklistIn):
+    """Checkliste (mit optionalen Punkten) an einem Projekt anlegen.
+
+    Torfunktion `require_create` (ANLEGEN): die erzeugte Checkliste trägt kein
+    setzbares Owner-Feld (`created_by` wird im Service auf den Akteur gesetzt),
+    daher ist 'EIGENE' bedeutungslos — der Erzeuger ist per Definition der Akteur.
+    """
+    actor = require_create(request, "workflow", "ANLEGEN")
+    _require_project(project_id)
+    try:
+        checklist = projekt_service.create_checklist(
+            actor,
+            project_id=project_id,
+            name=payload.name,
+            items=payload.items,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    checklist = Checklist.objects.prefetch_related("items").get(id=checklist.id)
+    items = [
+        ChecklistItemOut(
+            position=i.position,
+            label=i.label,
+            done=i.done_at is not None,
+            done_by=None,
+            done_at=i.done_at,
+        )
+        for i in sorted(checklist.items.all(), key=lambda i: i.position)
+    ]
+    return Status(201, ChecklistOut(id=checklist.id, name=checklist.name, items=items))
+
+
+@router.post(
+    "/projects/{project_id}/service_cases",
+    response={201: ServiceCaseOut},
+    auth=django_auth,
+)
+def create_service_case(request, project_id: UUID, payload: ServiceCaseIn):
+    """Vorgang (service_case) unter einem Projekt anlegen (Initialstatus NEU).
+
+    Der Vorgang hängt fachlich an einer Liegenschaft (`property_id` Pflicht) und
+    wird hier zusätzlich dem Projekt aus dem Pfad zugeordnet (`project_id`).
+
+    Torfunktion `require_create` (ANLEGEN): der service_case trägt kein setzbares
+    app_user-Owner-Feld (nur `reported_by_party_id`, ein Melder aus dem Kontakt-
+    stamm — keine Zeilen-Zuordnung an einen Bearbeiter). 'EIGENE' ist damit
+    bedeutungslos.
+    """
+    actor = require_create(request, "workflow", "ANLEGEN")
+    _require_project(project_id)
+    try:
+        case = projekt_service.create_service_case(
+            actor,
+            property_id=payload.property_id,
+            subject=payload.subject,
+            project_id=project_id,
+            description=payload.description,
+            reported_by_party_id=payload.reported_by_party_id,
+            priority=payload.priority,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return Status(
+        201,
+        ServiceCaseOut(
+            id=case.id,
+            case_number=case.case_number,
+            subject=case.subject,
+            status=case.status,
+            priority=case.priority,
+            received_at=case.received_at,
+        ),
     )

@@ -10,9 +10,12 @@ from uuid import UUID
 from django.db.models import F, Q
 from ninja import Query, Router, Schema
 from ninja.errors import HttpError
+from ninja.responses import Status
+from ninja.security import django_auth
 
 from api.permissions import require
 from db_core.models import MaintenanceContract, MaintenanceEvent
+from db_core.services import wartung as wartung_service
 
 router = Router()
 
@@ -74,6 +77,28 @@ class ContractFilter(Schema):
     status: str | None = None
     property_id: UUID | None = None
     due: bool | None = None
+
+
+class ContractCreateIn(Schema):
+    property_id: UUID
+    name: str
+    start_date: date
+    interval_kind: str
+    due_action: str
+    interval_days: int | None = None
+    fixed_date: date | None = None
+    party_id: UUID | None = None
+    project_id: UUID | None = None
+    lead_time_days: int | None = None
+    notes: str | None = None
+
+
+class ContractStatusIn(Schema):
+    to_status: str
+
+
+class ContractTriggerIn(Schema):
+    note: str | None = None
 
 
 # --- Mapper ----------------------------------------------------------------
@@ -183,3 +208,78 @@ def get_contract(request, contract_id: UUID):
         created_at=contract.created_at,
         events=events,
     )
+
+
+# --- Schreibende Endpoints (Session-Auth Pflicht) --------------------------
+
+def _reload_contract(contract_id):
+    contract = (
+        MaintenanceContract.objects.filter(id=contract_id)
+        .select_related("property__address", "party", "project")
+        .first()
+    )
+    if contract is None:
+        raise HttpError(404, "Wartungsvertrag nicht gefunden.")
+    return _contract_out(contract, date.today())
+
+
+@router.post("/contracts", response={201: ContractOut}, auth=django_auth)
+def create_contract(request, payload: ContractCreateIn):
+    """Legt einen Wartungsvertrag im Status AKTIV an und berechnet die erste
+    Fälligkeit.
+
+    `require` (fail-closed): der Vertrag trägt kein Owner-Feld, das der Erzeuger
+    jemandem zuordnet — Wartungsverträge plant die Disposition/Leitung, nicht der
+    Monteur (dessen 'EIGENE'-Scope hier zu 403 führt)."""
+    actor, _ = require(request, "workflow", "ANLEGEN")
+    try:
+        contract = wartung_service.create_contract(
+            actor,
+            property_id=payload.property_id,
+            name=payload.name,
+            start_date=payload.start_date,
+            interval_kind=payload.interval_kind,
+            due_action=payload.due_action,
+            interval_days=payload.interval_days,
+            fixed_date=payload.fixed_date,
+            party_id=payload.party_id,
+            project_id=payload.project_id,
+            lead_time_days=payload.lead_time_days,
+            notes=payload.notes,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return Status(201, _reload_contract(contract.id))
+
+
+@router.post("/contracts/{contract_id}/status", response=ContractOut, auth=django_auth)
+def set_contract_status(request, contract_id: UUID, payload: ContractStatusIn):
+    """Wechselt den Vertragsstatus (AKTIV↔INAKTIV, INAKTIV→ARCHIVIERT).
+
+    Statuswechsel eines bestehenden Vertrags → AENDERN. Unzulässige Übergänge
+    kommen als 422 (Service-Vorprüfung + DB-Trigger)."""
+    actor, _ = require(request, "workflow", "AENDERN")
+    try:
+        wartung_service.set_status(
+            actor, contract_id=contract_id, to_status=payload.to_status
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _reload_contract(contract_id)
+
+
+@router.post("/contracts/{contract_id}/trigger", response=ContractOut, auth=django_auth)
+def trigger_contract_action(request, contract_id: UUID, payload: ContractTriggerIn):
+    """Löst die Fälligkeits-Aktion des Vertrags manuell aus (protokolliert append-only
+    und rückt next_due_date vor).
+
+    Auslösen ist eine Zustandsänderung am Vertrag (Fälligkeit, Historie) → AENDERN.
+    Nur aktive Verträge mit offener Fälligkeit → sonst 422."""
+    actor, _ = require(request, "workflow", "AENDERN")
+    try:
+        wartung_service.trigger_action(
+            actor, contract_id=contract_id, note=payload.note
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _reload_contract(contract_id)

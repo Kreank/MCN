@@ -241,6 +241,206 @@ button {
     border-color: var(--accent);
   }
 }
+// Folgenreiche Aktion (Storno, Kuendigung, Verwerfen): Amber-Ton, dunkler Text.
+// Farbe ist nie alleiniger Traeger — der Knopf traegt immer einen klaren Text.
+.btn--gefahr {
+  background: var(--warn-tint);
+  color: var(--warn-ink);
+  border-color: color-mix(in srgb, var(--warn-ink) 55%, var(--line-strong));
+
+  &:hover:not(:disabled) {
+    border-color: var(--warn-ink);
+  }
+}
+
+// ============================================================================
+// Formular-Bausteine (global, damit alle Bereiche + Dialoge sie teilen).
+// Genutzt von shared/formular/feld und shared/bestaetigung.
+// ============================================================================
+.feld-gruppe {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.feld-gruppe + .feld-gruppe {
+  margin-top: var(--space-4);
+}
+.feld-gruppe__label {
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.feld-gruppe__stern {
+  color: var(--accent-ink);
+  margin-left: 0.15em;
+  font-weight: 700;
+}
+.feld-gruppe__hinweis {
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--ink-faint);
+}
+.feld-gruppe__input {
+  min-height: 44px;
+  padding: 0 var(--space-4);
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--step-0);
+  transition: border-color 0.15s ease;
+
+  &::placeholder {
+    color: var(--ink-faint);
+  }
+  &:hover:not(:disabled) {
+    border-color: var(--ink-muted);
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+    border-color: var(--ink);
+  }
+  &:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+  // aria-invalid setzt eine Amber-Umrandung — Fehlertext steht zusaetzlich darunter.
+  &[aria-invalid='true'] {
+    border-color: var(--warn-ink);
+  }
+}
+.feld-gruppe__textarea {
+  padding: var(--space-3) var(--space-4);
+  min-height: 5.5rem;
+  line-height: 1.5;
+  resize: vertical;
+}
+.feld-gruppe__select {
+  appearance: none;
+  padding-right: var(--space-6);
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 1.1rem) 1.15rem, calc(100% - 0.7rem) 1.15rem;
+  background-size: 0.4rem 0.4rem;
+  background-repeat: no-repeat;
+  color: var(--ink);
+}
+.feld-gruppe__fehler {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4em;
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--warn-ink);
+}
+.feld-gruppe__fehler-mark {
+  flex: none;
+  font-size: 0.8em;
+  line-height: 1.55;
+}
+
+.feld-check {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+.feld-check__box {
+  flex: none;
+  width: 1.25rem;
+  height: 1.25rem;
+  margin-top: 0.1rem;
+  accent-color: var(--command);
+
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+.feld-check__label {
+  font-size: var(--step-0);
+  color: var(--ink);
+}
+.feld-check__hinweis,
+.feld-check__fehler {
+  margin-top: var(--space-2);
+}
+
+// Aktionsleiste im Dialogfuss (projizierter Inhalt -> global statt scoped).
+.dialog__aktionen {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5) var(--space-5);
+  border-top: 1px solid var(--line);
+}
+
+// Formular innerhalb eines Dialogs: gleichmaessige Feldabstaende.
+.dialog-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+// ============================================================================
+// Melde-Banner (Erfolg/Fehler nach einer Aktion). Status nie nur ueber Farbe:
+// stets Icon + Wortmarke („Erledigt"/„Fehler") + Text.
+// ============================================================================
+.melde {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1.5px solid var(--line-strong);
+  border-left-width: 3px;
+  border-radius: var(--radius);
+  font-size: var(--step--1);
+}
+.melde__mark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 0.85rem;
+  line-height: 1;
+}
+.melde__text {
+  flex: 1;
+  align-self: center;
+}
+.melde__zu {
+  flex: none;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 0.15rem 0.35rem;
+  border-radius: var(--radius-sm);
+
+  &:focus-visible {
+    outline: 2.5px solid currentColor;
+    outline-offset: 1px;
+  }
+}
+.melde--erfolg {
+  border-color: color-mix(in srgb, var(--positive-ink) 45%, var(--line-strong));
+  background: var(--positive-tint);
+  color: var(--positive-ink);
+}
+.melde--fehler {
+  border-color: color-mix(in srgb, var(--warn-ink) 45%, var(--line-strong));
+  background: var(--warn-tint);
+  color: var(--warn-ink);
+}
 
 @media (prefers-reduced-motion: reduce) {
   *,

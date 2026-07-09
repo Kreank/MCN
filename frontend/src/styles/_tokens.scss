@@ -64,6 +64,10 @@
   --focus-ring: #1c3244;    // Navy-Ring auf hell
   --focus-ring-on-command: #ef804e; // Orange-Marke auf Navy
 
+  // Overlay/Backdrop fuer modale Dialoge (aus Navy abgeleitet, halbtransparent).
+  // var(--command) wird erst bei Nutzung aufgeloest -> passt sich Light/Dark an.
+  --overlay: color-mix(in srgb, var(--command) 62%, transparent);
+
   // --- Typografie ----------------------------------------------------------
   --font-display: 'Bricolage Grotesque Variable', 'Source Sans 3 Variable', system-ui, sans-serif;
   --font-body: 'Source Sans 3 Variable', system-ui, -apple-system, sans-serif;

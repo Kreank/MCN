@@ -18,10 +18,18 @@ eine Sitzung besteht. Alles andere in der API ist ab jetzt anmeldepflichtig
 """
 from uuid import UUID
 
-from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth import (
+    authenticate,
+    login,
+    logout,
+    update_session_auth_hash,
+)
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
 from django.middleware.csrf import get_token
 from ninja import Router, Schema
 from ninja.errors import HttpError
+from ninja.security import django_auth
 from ninja.utils import check_csrf
 
 from db_core.models import AppUser
@@ -137,6 +145,44 @@ def logout_view(request):
     _require_csrf(request)
     logout(request)
     return {"detail": "abgemeldet"}
+
+
+class PasswordChangeIn(Schema):
+    old_password: str
+    new_password: str
+
+
+@router.post("/password", auth=django_auth)
+def change_password(request, payload: PasswordChangeIn):
+    """Eigenes Passwort ändern (nur das des angemeldeten Kontos).
+
+    Bewusst OHNE Modul-Recht: jeder darf sein eigenes Passwort ändern. Dennoch
+    `auth=django_auth` — ohne Anmeldung 401. Der Endpunkt kann kein fremdes Konto
+    treffen: er wirkt ausschließlich auf `request.user`, es gibt keinen Parameter
+    für ein Zielkonto.
+
+    Ablauf:
+      1. altes Passwort verifizieren (`check_password`) → bei Fehlschlag 400 mit
+         unspezifischer Meldung (keine Aussage darüber, was genau falsch war);
+      2. neues Passwort gegen die Policy prüfen (`validate_password`, u. a. min.
+         12 Zeichen) → 422 mit den deutschen Validator-Meldungen;
+      3. setzen und speichern, dann `update_session_auth_hash`, damit die
+         laufende Sitzung nicht durch den geänderten Passwort-Hash ungültig wird
+         (sonst fliegt der Benutzer beim nächsten Request raus).
+
+    Passwörter werden niemals geloggt.
+    """
+    user = request.user
+    if not user.check_password(payload.old_password):
+        raise HttpError(400, "Das aktuelle Passwort ist falsch.")
+    try:
+        validate_password(payload.new_password, user=user)
+    except ValidationError as exc:
+        raise HttpError(422, " ".join(exc.messages))
+    user.set_password(payload.new_password)
+    user.save(update_fields=["password"])
+    update_session_auth_hash(request, user)
+    return {"detail": "Passwort geändert."}
 
 
 @router.get("/me", response=MeOut, auth=None)

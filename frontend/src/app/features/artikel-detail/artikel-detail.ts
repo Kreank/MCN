@@ -16,6 +16,7 @@ type KalkState =
   | { kind: 'idle' }
   | { kind: 'loading' }
   | { kind: 'ready'; data: ArticleKalkulation }
+  | VerbotenState
   | { kind: 'error' };
 
 type ViewState =
@@ -103,8 +104,8 @@ export class ArtikelDetail {
       next: (data) => {
         if (rid === this.kalkReqId) this.kalk.set({ kind: 'ready', data });
       },
-      error: () => {
-        if (rid === this.kalkReqId) this.kalk.set({ kind: 'error' });
+      error: (err) => {
+        if (rid === this.kalkReqId) this.kalk.set(fehlerState(err));
       },
     });
   }

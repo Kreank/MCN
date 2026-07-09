@@ -10,7 +10,7 @@ from uuid import uuid4
 import pytest
 from django.contrib.auth import get_user_model
 
-from db_core.models import AppUser
+from db_core.models import AppUser, Payment
 from db_core.services import auftrag as auftrag_service
 from db_core.services import beleg as beleg_service
 from db_core.services import buchhaltung as buchhaltung_service
@@ -228,3 +228,149 @@ def test_mahnliste_levelfilter(admin_client, seeded):
     r0 = admin_client.get("/api/buchhaltung/dunning?level=0")
     ids0 = {i["id"] for i in r0.json()["items"]}
     assert str(seeded["inv"].id) not in ids0
+
+
+# --- Schreibende Endpoints: Zahlungen, Storno, Mahnwesen -------------------
+
+@pytest.mark.django_db
+def test_zahlung_erfassen(admin_client, seeded):
+    """record_payment (201): Teilzahlung erhöht den bezahlten Betrag."""
+    inv = seeded["inv"]
+    r = admin_client.post(
+        f"/api/buchhaltung/invoices/{inv.id}/payments",
+        data={"amount": "50.00", "paid_at": str(date.today()),
+              "payment_type": "TEILZAHLUNG"},
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    body = r.json()
+    assert Decimal(body["amount"]) == Decimal("50.00")
+    assert body["payment_type"] == "TEILZAHLUNG"
+    # Seeded: 100 gezahlt + 50 = 150.
+    detail = admin_client.get(f"/api/buchhaltung/invoices/{inv.id}").json()
+    assert Decimal(detail["paid_total"]) == Decimal("150.00")
+
+
+@pytest.mark.django_db
+def test_zahlung_ungueltiger_typ_422(admin_client, seeded):
+    r = admin_client.post(
+        f"/api/buchhaltung/invoices/{seeded['inv'].id}/payments",
+        data={"amount": "10.00", "paid_at": str(date.today()),
+              "payment_type": "QUATSCH"},
+        content_type="application/json",
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.django_db
+def test_zahlung_auf_entwurf_422(admin_client, app_user):
+    """DB-Tor B-23: Zahlung nur auf veröffentlichte Rechnung → 422."""
+    obj = property_service.create_property(
+        app_user.id, name="Entwurf", property_type="WEG",
+        street="W", postal_code="10115", city="Berlin",
+    )
+    inv = beleg_service.create_invoice(
+        app_user.id, property_id=obj.id, invoice_type="RECHNUNG",
+        lines=[{"line_type": "MATERIAL", "description": "Z", "quantity": 1,
+                "unit": "Stk", "unit_price": "2.40", "tax_code": "DE_19"}],
+    )
+    r = admin_client.post(
+        f"/api/buchhaltung/invoices/{inv.id}/payments",
+        data={"amount": "10.00", "paid_at": str(date.today())},
+        content_type="application/json",
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.django_db
+def test_zahlung_ohne_recht_403(client_with_role, seeded):
+    """NUR_LESEN hat invoicing.LESEN, aber nicht AENDERN → 403."""
+    c = client_with_role("NUR_LESEN")
+    r = c.post(
+        f"/api/buchhaltung/invoices/{seeded['inv'].id}/payments",
+        data={"amount": "10.00", "paid_at": str(date.today())},
+        content_type="application/json",
+    )
+    assert r.status_code == 403
+
+
+@pytest.mark.django_db
+def test_zahlung_stornieren(admin_client, seeded):
+    """reverse_payment (200): Gegenbuchung neutralisiert die Zahlung."""
+    p = Payment.objects.filter(
+        invoice_id=seeded["inv"].id, payment_type="TEILZAHLUNG"
+    ).first()
+    r = admin_client.post(
+        f"/api/buchhaltung/payments/{p.id}/reverse",
+        data={}, content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    assert r.json()["payment_type"] == "STORNO_BUCHUNG"
+    detail = admin_client.get(f"/api/buchhaltung/invoices/{seeded['inv'].id}").json()
+    assert Decimal(detail["paid_total"]) == Decimal("0.00")
+
+
+@pytest.mark.django_db
+def test_zahlung_doppelt_stornieren_422(admin_client, seeded):
+    p = Payment.objects.filter(
+        invoice_id=seeded["inv"].id, payment_type="TEILZAHLUNG"
+    ).first()
+    r1 = admin_client.post(
+        f"/api/buchhaltung/payments/{p.id}/reverse",
+        data={}, content_type="application/json",
+    )
+    assert r1.status_code == 200, r1.content
+    r2 = admin_client.post(
+        f"/api/buchhaltung/payments/{p.id}/reverse",
+        data={}, content_type="application/json",
+    )
+    assert r2.status_code == 422
+
+
+@pytest.mark.django_db
+def test_storno_ohne_recht_403(client_with_role, seeded):
+    """NUR_LESEN hat kein invoicing.STORNIEREN → 403."""
+    p = Payment.objects.filter(
+        invoice_id=seeded["inv"].id, payment_type="TEILZAHLUNG"
+    ).first()
+    c = client_with_role("NUR_LESEN")
+    r = c.post(
+        f"/api/buchhaltung/payments/{p.id}/reverse",
+        data={}, content_type="application/json",
+    )
+    assert r.status_code == 403
+
+
+@pytest.mark.django_db
+def test_mahnung_erstellen(admin_client, seeded):
+    """issue_dunning_notice (201): nächste lückenlose Stufe (2 nach 1)."""
+    r = admin_client.post(
+        f"/api/buchhaltung/invoices/{seeded['inv'].id}/dunning",
+        data={"level": 2, "issued_at": str(date.today()), "note": "Zweite"},
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    assert r.json()["level"] == 2
+
+
+@pytest.mark.django_db
+def test_mahnung_luecke_422(admin_client, seeded):
+    """DB-Tor B-22: Stufen müssen lückenlos aufsteigen (3 nach 1 → 422)."""
+    r = admin_client.post(
+        f"/api/buchhaltung/invoices/{seeded['inv'].id}/dunning",
+        data={"level": 3, "issued_at": str(date.today())},
+        content_type="application/json",
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.django_db
+def test_mahnung_ohne_recht_403(client_with_role, seeded):
+    """NUR_LESEN hat kein invoicing.VERSENDEN → 403."""
+    c = client_with_role("NUR_LESEN")
+    r = c.post(
+        f"/api/buchhaltung/invoices/{seeded['inv'].id}/dunning",
+        data={"level": 2, "issued_at": str(date.today())},
+        content_type="application/json",
+    )
+    assert r.status_code == 403
