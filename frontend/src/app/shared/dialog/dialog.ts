@@ -1,4 +1,12 @@
-import { Component, ElementRef, effect, input, output, viewChild } from '@angular/core';
+import {
+  Component,
+  ElementRef,
+  OnDestroy,
+  effect,
+  input,
+  output,
+  viewChild,
+} from '@angular/core';
 
 /** Selektor fuer das erste sinnvoll fokussierbare Element im Dialoginhalt. */
 const FOKUSSIERBAR =
@@ -41,7 +49,7 @@ let offeneDialoge = 0;
   templateUrl: './dialog.html',
   styleUrl: './dialog.scss',
 })
-export class Dialog {
+export class Dialog implements OnDestroy {
   /** Sichtbarkeit; der Eltern-Teil steuert Auf/Zu. */
   readonly offen = input(false);
   /** Ueberschrift; leer -> kein Kopf, kein aria-labelledby. */
@@ -66,6 +74,14 @@ export class Dialog {
       if (offen && !el.open) this.oeffnen(el);
       else if (!offen && el.open) this.schliessenIntern(el);
     });
+  }
+
+  ngOnDestroy(): void {
+    // Wird die Komponente zerstört, während der Dialog offen ist (Navigation,
+    // @if am Eltern-Element), bliebe der Zähler stehen und der Body für immer
+    // gesperrt. Der Zustand wird deshalb hier aufgeräumt.
+    const el = this.dlg()?.nativeElement;
+    if (el?.open) this.schliessenIntern(el);
   }
 
   private oeffnen(el: HTMLDialogElement): void {

@@ -219,3 +219,23 @@ def test_issue_dunning_auf_entwurf_scheitert(app_user):
         buchhaltung_service.issue_dunning_notice(
             app_user.id, invoice_id=inv.id, level=1, issued_at=date.today()
         )
+
+
+@pytest.mark.django_db
+def test_record_payment_lehnt_storno_buchung_ab(app_user):
+    """Review-Befund: über record_payment (Recht AENDERN) ließ sich eine
+    STORNO_BUCHUNG erzeugen — das hebelte das Recht STORNIEREN und den
+    Doppel-Storno-Schutz aus, und die Buchung hing an keiner Ursprungszahlung."""
+    from db_core.services import buchhaltung as service
+
+    import uuid as _uuid
+
+    assert "STORNO_BUCHUNG" not in service.RECORDABLE_PAYMENT_TYPES
+    with pytest.raises(ValueError, match="payment_type"):
+        service.record_payment(
+            app_user.id,
+            invoice_id=_uuid.uuid4(),
+            amount=Decimal("10.00"),
+            paid_at=date.today(),
+            payment_type="STORNO_BUCHUNG",
+        )

@@ -111,6 +111,7 @@ def create_branch(actor_app_user_id, *, name, **fields):
     vals = {k: _clean(fields.get(k)) for k in allowed if k in fields}
     if vals.get("country"):
         vals["country"] = vals["country"].upper()
+        _assert_country(vals["country"])
     else:
         vals.pop("country", None)  # NOT NULL → DB-Default 'DE'
     with business_transaction(actor_app_user_id):
@@ -142,6 +143,7 @@ def update_branch(actor_app_user_id, *, branch_id, **fields):
                 if not val:
                     continue  # NOT NULL: leeres Land bleibt unverändert
                 val = val.upper()
+                _assert_country(val)
         setattr(branch, key, val)
         changed.append(key)
     if changed:
@@ -160,11 +162,22 @@ def list_trades(*, include_inactive=True):
     return qs.order_by("sort_order", "label", "id")
 
 
+def _assert_country(value):
+    """Spiegelt den DB-CHECK. Ohne das schlüge ein 'USA' als DataError durch (500)."""
+    if value and not re.fullmatch(r"[A-Z]{2}", value):
+        raise ValueError("Land muss ein zweistelliges ISO-Kürzel sein (z. B. DE).")
+
+
 def create_trade(actor_app_user_id, *, code, label, sort_order=0):
     code = (_clean(code) or "").upper()
     label = _clean(label)
     if not code:
         raise ValueError("Gewerk-Code ist erforderlich.")
+    # Spiegelt den DB-CHECK trade_code_check; sonst 500 statt 422.
+    if not re.fullmatch(r"[A-Z0-9_]{2,}", code):
+        raise ValueError(
+            "Gewerk-Code darf nur A–Z, 0–9 und _ enthalten (mindestens 2 Zeichen)."
+        )
     if not label:
         raise ValueError("Gewerk-Bezeichnung ist erforderlich.")
     if Trade.objects.filter(code=code).exists():

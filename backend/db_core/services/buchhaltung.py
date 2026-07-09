@@ -37,6 +37,11 @@ PAYMENT_SIGN = {
 }
 PAYMENT_TYPES = tuple(PAYMENT_SIGN)
 
+# Typen, die über record_payment erfassbar sind. STORNO_BUCHUNG fehlt bewusst:
+# sie entsteht nur als Gegenbuchung in reverse_payment (Recht STORNIEREN) und
+# ist dort an die Ursprungszahlung gekoppelt.
+RECORDABLE_PAYMENT_TYPES = tuple(t for t in PAYMENT_SIGN if t != "STORNO_BUCHUNG")
+
 
 def record_payment(
     actor_app_user_id,
@@ -56,11 +61,17 @@ def record_payment(
     Rechnung (B-23) und Idempotenz über UNIQUE(import_source, external_reference);
     fehlt external_reference, wird bei manueller Erfassung eine synthetische
     Referenz vergeben.
+
+    `STORNO_BUCHUNG` ist hier **nicht** erfassbar: Eine Stornobuchung entsteht
+    ausschließlich über `reverse_payment`, das sie an die Ursprungszahlung
+    koppelt (`STORNO:<id>`) und doppeltes Stornieren verhindert. Ohne diese
+    Sperre könnte ein Konto mit dem Recht AENDERN eine Stornobuchung erzeugen und
+    damit das Recht STORNIEREN aushebeln — und die Buchung hinge an nichts.
     """
-    if payment_type not in PAYMENT_TYPES:
+    if payment_type not in RECORDABLE_PAYMENT_TYPES:
         raise ValueError(
             f"Ungültiger payment_type '{payment_type}'. "
-            f"Erlaubt: {', '.join(PAYMENT_TYPES)}."
+            f"Erlaubt: {', '.join(RECORDABLE_PAYMENT_TYPES)}."
         )
     if amount is None or amount <= 0:
         raise ValueError("amount muss ein positiver Betrag sein.")

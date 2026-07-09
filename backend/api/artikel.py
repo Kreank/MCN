@@ -35,7 +35,11 @@ def _quantize(value, places):
     """
     if value is None:
         return None
-    return Decimal(value).quantize(Decimal(1).scaleb(-places), rounding=ROUND_HALF_UP)
+    # Decimal(str(value)) statt Decimal(value): rutschte je ein float durch,
+    # erbte der Decimal dessen Binärfehler. Muster wie beleg.py::_prepare_lines.
+    return Decimal(str(value)).quantize(
+        Decimal(1).scaleb(-places), rounding=ROUND_HALF_UP
+    )
 
 
 # --- Artikel-Schemas -------------------------------------------------------

@@ -246,3 +246,44 @@ def test_admin_sieht_alle_einsaetze():
     r = client.get("/api/planung/einsaetze")
     assert r.status_code == 200
     assert r.json()["total"] == 2
+
+
+# --- Regressionen aus dem Review (Welle 1–4) ------------------------------
+
+
+@pytest.mark.django_db
+def test_monteur_kann_keinen_vorgang_auf_fremdem_projekt_anlegen():
+    """Review-Befund: `require_create` ließ einen MONTEUR Vorgänge (mit vergebener
+    GoBD-Belegnummer) an Projekten anlegen, die er nicht einmal lesen darf."""
+    from db_core.services import projekt as projekt_service
+    from db_core.services import property as property_service
+
+    creator = make_app_user("Projekt-Ersteller")
+    prop = property_service.create_property(
+        creator.id,
+        name="Fremdobjekt",
+        property_type="WEG",
+        street="Weg",
+        house_number="1",
+        postal_code="12345",
+        city="Fremdstadt",
+    )
+    projekt = projekt_service.create_project(
+        creator.id, name="Fremdprojekt", property_ids=[prop.id]
+    )
+
+    client, _monteur = _monteur_client()
+    r = client.post(
+        f"/api/workflow/projects/{projekt.id}/service_cases",
+        data={"property_id": str(prop.id), "subject": "Heimlicher Vorgang"},
+        content_type="application/json",
+    )
+    assert r.status_code == 403, r.content
+    assert "eigene" in r.json()["detail"].lower()
+
+    r = client.post(
+        f"/api/workflow/projects/{projekt.id}/checklists",
+        data={"name": "Heimliche Checkliste"},
+        content_type="application/json",
+    )
+    assert r.status_code == 403, r.content

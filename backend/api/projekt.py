@@ -448,11 +448,13 @@ def add_project_log(request, project_id: UUID, payload: LogEntryIn):
 def create_checklist(request, project_id: UUID, payload: ChecklistIn):
     """Checkliste (mit optionalen Punkten) an einem Projekt anlegen.
 
-    Torfunktion `require_create` (ANLEGEN): die erzeugte Checkliste trägt kein
-    setzbares Owner-Feld (`created_by` wird im Service auf den Akteur gesetzt),
-    daher ist 'EIGENE' bedeutungslos — der Erzeuger ist per Definition der Akteur.
+    Torfunktion `require` (fail-closed), nicht `require_create`: Die Checkliste
+    hat zwar kein setzbares Owner-Feld, hängt aber an einem **fremden Projekt**.
+    Ein Konto mit Scope EIGENE könnte sonst Zeilen an Projekten erzeugen, die es
+    nicht einmal lesen darf. `require_create` schützt nur vor fremder Zuweisung,
+    nicht vor dem Anlegen außerhalb des eigenen Sichtfelds.
     """
-    actor = require_create(request, "workflow", "ANLEGEN")
+    actor, _ = require(request, "workflow", "ANLEGEN")
     _require_project(project_id)
     try:
         checklist = projekt_service.create_checklist(
@@ -488,12 +490,14 @@ def create_service_case(request, project_id: UUID, payload: ServiceCaseIn):
     Der Vorgang hängt fachlich an einer Liegenschaft (`property_id` Pflicht) und
     wird hier zusätzlich dem Projekt aus dem Pfad zugeordnet (`project_id`).
 
-    Torfunktion `require_create` (ANLEGEN): der service_case trägt kein setzbares
-    app_user-Owner-Feld (nur `reported_by_party_id`, ein Melder aus dem Kontakt-
-    stamm — keine Zeilen-Zuordnung an einen Bearbeiter). 'EIGENE' ist damit
-    bedeutungslos.
+    Torfunktion `require` (fail-closed), nicht `require_create`: Der Vorgang
+    trägt zwar kein setzbares Owner-Feld, hängt aber an einem **fremden Projekt**
+    und verbraucht eine Belegnummer (V-JJJJ-NNNNNN, GoBD-Sequenz). Ein Konto mit
+    Scope EIGENE könnte sonst nummerierte Vorgänge quer über alle Projekte
+    erzeugen, die es anschließend nicht lesen darf. `require_create` schützt nur
+    vor fremder Zuweisung, nicht vor dem Anlegen außerhalb des Sichtfelds.
     """
-    actor = require_create(request, "workflow", "ANLEGEN")
+    actor, _ = require(request, "workflow", "ANLEGEN")
     _require_project(project_id)
     try:
         case = projekt_service.create_service_case(
