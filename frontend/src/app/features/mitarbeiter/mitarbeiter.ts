@@ -9,17 +9,20 @@ import {
   employeeStatusClass,
   employeeStatusLabel,
 } from '../../core/mitarbeiter.model';
+import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 
 type ViewState =
   | { kind: 'loading' }
   | { kind: 'ready'; data: EmployeePage }
+  | VerbotenState
   | { kind: 'error' };
 
 type Segment = { value: EmployeeStatus | null; label: string };
 
 @Component({
   selector: 'app-mitarbeiter',
-  imports: [RouterLink],
+  imports: [RouterLink, KeinZugriff],
   templateUrl: './mitarbeiter.html',
   styleUrl: './mitarbeiter.scss',
 })
@@ -63,6 +66,7 @@ export class Mitarbeiter {
   protected readonly resultSummary = computed(() => {
     const s = this.state();
     if (s.kind === 'loading') return 'Mitarbeiter werden geladen.';
+    if (s.kind === 'forbidden') return 'Keine Berechtigung für den Personalbereich.';
     if (s.kind === 'error') return 'Mitarbeiter konnten nicht geladen werden.';
     const t = s.data.total;
     if (t === 0) return 'Keine Mitarbeiter gefunden.';
@@ -121,8 +125,8 @@ export class Mitarbeiter {
         next: (data) => {
           if (id === this.reqId) this.state.set({ kind: 'ready', data });
         },
-        error: () => {
-          if (id === this.reqId) this.state.set({ kind: 'error' });
+        error: (err) => {
+          if (id === this.reqId) this.state.set(fehlerState(err));
         },
       });
   }

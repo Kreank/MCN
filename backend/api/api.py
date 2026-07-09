@@ -2,12 +2,23 @@
 
 OpenAPI-Schema: /api/openapi.json — daraus werden die Clients generiert
 (Angular jetzt, Kotlin für die Android-App später). Interaktive Doku: /api/docs.
+
+**Seit dem Auth-Slice ist die gesamte API anmeldepflichtig.** Das `auth`-Argument
+der NinjaAPI-Instanz gilt für jeden Endpunkt, der nicht ausdrücklich `auth=None`
+setzt — bisher trugen nur die Schreib-Endpunkte `auth=django_auth`, die
+Lese-Endpunkte waren in der Dev-Phase offen. Damit fällt auch die zuletzt
+verbliebene DSGVO-Lücke (`GET /hr/employees/{id}` mit Krankheitshistorie).
+
+Ausgenommen (`auth=None`): `/health` und die vier Endpunkte unter `/auth`, die
+erreichbar sein müssen, bevor eine Sitzung besteht.
 """
 from ninja import NinjaAPI
+from ninja.security import django_auth
 
 from api.artikel import router as artikel_router
 from api.aufgabe import router as aufgabe_router
 from api.auftrag import router as auftrag_router
+from api.auth import router as auth_router
 from api.auswertungen import router as auswertungen_router
 from api.beleg import router as beleg_router
 from api.buchhaltung import router as buchhaltung_router
@@ -18,16 +29,17 @@ from api.planung import router as planung_router
 from api.projekt import router as projekt_router
 from api.property import router as property_router
 
-# django-ninja aktiviert den CSRF-Schutz automatisch, sobald ein Endpoint
-# Cookie-basierte Auth (django_auth) nutzt — kein globaler Schalter nötig.
-api = NinjaAPI(title="MCN API", version="0.1.0")
+# Cookie-basierte Session-Auth für die ganze API; django-ninja aktiviert damit
+# zugleich den CSRF-Schutz für unsichere Methoden.
+api = NinjaAPI(title="MCN API", version="0.1.0", auth=django_auth)
 
 
-@api.get("/health", tags=["system"])
+@api.get("/health", tags=["system"], auth=None)
 def health(request):
     return {"status": "ok"}
 
 
+api.add_router("/auth", auth_router, tags=["auth"])
 api.add_router("/identity", identity_router, tags=["identity"])
 api.add_router("/property", property_router, tags=["property"])
 api.add_router("/workflow", projekt_router, tags=["workflow"])

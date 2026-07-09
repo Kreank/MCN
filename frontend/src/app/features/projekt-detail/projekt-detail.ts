@@ -21,10 +21,13 @@ import {
   ProjectStatus,
   ServiceCaseStatus,
 } from '../../core/projekt.model';
+import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 
 type ViewState =
   | { kind: 'loading' }
   | { kind: 'ready'; data: ProjectDetail }
+  | VerbotenState
   | { kind: 'error' };
 
 type TasksState =
@@ -41,7 +44,7 @@ type LazyState<T> =
 
 @Component({
   selector: 'app-projekt-detail',
-  imports: [Mappe, RouterLink],
+  imports: [Mappe, RouterLink, KeinZugriff],
   templateUrl: './projekt-detail.html',
   styleUrl: './projekt-detail.scss',
 })
@@ -159,8 +162,8 @@ export class ProjektDetail {
       next: (data) => {
         if (rid === this.reqId) this.state.set({ kind: 'ready', data });
       },
-      error: () => {
-        if (rid === this.reqId) this.state.set({ kind: 'error' });
+      error: (err) => {
+        if (rid === this.reqId) this.state.set(fehlerState(err));
       },
     });
   }

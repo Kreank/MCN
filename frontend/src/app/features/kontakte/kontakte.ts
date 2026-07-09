@@ -4,17 +4,20 @@ import { RouterLink } from '@angular/router';
 import { Subject, debounceTime, distinctUntilChanged } from 'rxjs';
 import { PartyService } from '../../core/party.service';
 import { Party, PartyPage, PartyStatus, PartyType } from '../../core/party.model';
+import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 
 type ViewState =
   | { kind: 'loading' }
   | { kind: 'ready'; data: PartyPage }
+  | VerbotenState
   | { kind: 'error' };
 
 type Segment = { value: PartyType | null; label: string };
 
 @Component({
   selector: 'app-kontakte',
-  imports: [RouterLink],
+  imports: [RouterLink, KeinZugriff],
   templateUrl: './kontakte.html',
   styleUrl: './kontakte.scss',
 })
@@ -48,6 +51,7 @@ export class Kontakte {
   protected readonly resultSummary = computed(() => {
     const s = this.state();
     if (s.kind === 'loading') return 'Kontakte werden geladen.';
+    if (s.kind === 'forbidden') return 'Keine Berechtigung für die Kontakte.';
     if (s.kind === 'error') return 'Kontakte konnten nicht geladen werden.';
     const t = s.data.total;
     if (t === 0) return 'Keine Kontakte gefunden.';
@@ -106,8 +110,8 @@ export class Kontakte {
         next: (data) => {
           if (id === this.reqId) this.state.set({ kind: 'ready', data });
         },
-        error: () => {
-          if (id === this.reqId) this.state.set({ kind: 'error' });
+        error: (err) => {
+          if (id === this.reqId) this.state.set(fehlerState(err));
         },
       });
   }

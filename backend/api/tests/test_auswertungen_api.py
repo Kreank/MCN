@@ -35,8 +35,8 @@ def _publish_invoice(app_user, obj, party, *, unit_price, quantity):
 
 
 @pytest.mark.django_db
-def test_dashboards_liste(client, db):
-    r = client.get("/api/auswertungen/dashboards")
+def test_dashboards_liste(admin_client, db):
+    r = admin_client.get("/api/auswertungen/dashboards")
     assert r.status_code == 200
     body = r.json()
     umsatz = next(d for d in body if d["key"] == "umsatz-projektuebersicht")
@@ -44,7 +44,7 @@ def test_dashboards_liste(client, db):
 
 
 @pytest.mark.django_db
-def test_umsatz_projektuebersicht(client, app_user):
+def test_umsatz_projektuebersicht(admin_client, app_user):
     obj = property_service.create_property(
         app_user.id, name="O", property_type="WEG", street="W",
         postal_code="1", city="Berlin",
@@ -53,7 +53,7 @@ def test_umsatz_projektuebersicht(client, app_user):
     weg = identity_service.create_person(app_user.id, first_name="W", last_name="EG")
     _publish_invoice(app_user, obj, weg, unit_price="100.00", quantity=2)
 
-    r = client.get("/api/auswertungen/umsatz-projektuebersicht")
+    r = admin_client.get("/api/auswertungen/umsatz-projektuebersicht")
     assert r.status_code == 200
     body = r.json()
     assert body["revenue"]["net_total"] == "200.00"
@@ -64,8 +64,8 @@ def test_umsatz_projektuebersicht(client, app_user):
 
 
 @pytest.mark.django_db
-def test_umsatz_projektuebersicht_leer(client, db):
-    r = client.get("/api/auswertungen/umsatz-projektuebersicht")
+def test_umsatz_projektuebersicht_leer(admin_client, db):
+    r = admin_client.get("/api/auswertungen/umsatz-projektuebersicht")
     assert r.status_code == 200
     body = r.json()
     assert body["revenue"]["net_total"] == "0.00"
@@ -74,14 +74,14 @@ def test_umsatz_projektuebersicht_leer(client, db):
 
 
 @pytest.mark.django_db
-def test_kunden_dashboard_verfuegbar(client, db):
-    body = client.get("/api/auswertungen/dashboards").json()
+def test_kunden_dashboard_verfuegbar(admin_client, db):
+    body = admin_client.get("/api/auswertungen/dashboards").json()
     kunden = next(d for d in body if d["key"] == "kunden")
     assert kunden["available"] is True
 
 
 @pytest.mark.django_db
-def test_kunden_endpoint(client, app_user):
+def test_kunden_endpoint(admin_client, app_user):
     obj = property_service.create_property(
         app_user.id, name="O", property_type="WEG", street="W",
         postal_code="1", city="Berlin",
@@ -89,7 +89,7 @@ def test_kunden_endpoint(client, app_user):
     anna = identity_service.create_person(app_user.id, first_name="Anna", last_name="A")
     _publish_invoice(app_user, obj, anna, unit_price="100.00", quantity=2)  # net 200
 
-    r = client.get("/api/auswertungen/kunden")
+    r = admin_client.get("/api/auswertungen/kunden")
     assert r.status_code == 200
     body = r.json()
     assert body["customer_count"] == 1

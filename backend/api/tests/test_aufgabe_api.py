@@ -26,6 +26,7 @@ def seeded(app_user):
 
 
 def _logged_in_client(client, *, with_app_user=True):
+    from .conftest import grant_role
     user = User.objects.create_user(username=f"u{uuid.uuid4().hex[:8]}", password="x")
     if with_app_user:
         au = AppUser.objects.create(
@@ -33,13 +34,14 @@ def _logged_in_client(client, *, with_app_user=True):
         )
         user.app_user_id = au.id
         user.save()
+        grant_role(au.id, "ADMINISTRATION")
     client.force_login(user)
     return client
 
 
 @pytest.mark.django_db
-def test_liste_blendet_verworfene_aus(client, seeded):
-    r = client.get("/api/workflow/tasks")
+def test_liste_blendet_verworfene_aus(admin_client, seeded):
+    r = admin_client.get("/api/workflow/tasks")
     assert r.status_code == 200
     titles = {i["title"] for i in r.json()["items"]}
     assert "Offene Aufgabe" in titles
@@ -48,23 +50,23 @@ def test_liste_blendet_verworfene_aus(client, seeded):
 
 
 @pytest.mark.django_db
-def test_offene_vor_erledigten(client, seeded):
+def test_offene_vor_erledigten(admin_client, seeded):
     # Ohne Statusfilter: OFFEN muss vor ERLEDIGT stehen (Rang, nicht alphabetisch).
-    r = client.get("/api/workflow/tasks")
+    r = admin_client.get("/api/workflow/tasks")
     statuses = [i["status"] for i in r.json()["items"]]
     assert statuses.index("OFFEN") < statuses.index("ERLEDIGT")
 
 
 @pytest.mark.django_db
-def test_status_filter_verworfen(client, seeded):
-    r = client.get("/api/workflow/tasks?status=VERWORFEN")
+def test_status_filter_verworfen(admin_client, seeded):
+    r = admin_client.get("/api/workflow/tasks?status=VERWORFEN")
     titles = {i["title"] for i in r.json()["items"]}
     assert titles == {"Verworfene Aufgabe"}
 
 
 @pytest.mark.django_db
-def test_projektfilter(client, seeded):
-    r = client.get(f"/api/workflow/tasks?project_id={seeded['project'].id}")
+def test_projektfilter(admin_client, seeded):
+    r = admin_client.get(f"/api/workflow/tasks?project_id={seeded['project'].id}")
     body = r.json()
     assert body["total"] == 1
     assert body["items"][0]["title"] == "Offene Aufgabe"
@@ -95,8 +97,8 @@ def test_create_leerer_titel_422(client, db):
 
 
 @pytest.mark.django_db
-def test_create_ohne_login_abgelehnt(client, db):
-    r = client.post(
+def test_create_ohne_login_abgelehnt(anonymous_client, db):
+    r = anonymous_client.post(
         "/api/workflow/tasks", data={"title": "Anon"}, content_type="application/json"
     )
     assert r.status_code in (401, 403)

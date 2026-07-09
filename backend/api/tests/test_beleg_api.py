@@ -33,18 +33,20 @@ def seeded(app_user):
 def _logged_in_client(client, *, with_app_user=True):
     user = User.objects.create_user(username=f"u{uuid.uuid4().hex[:8]}", password="x")
     if with_app_user:
+        from .conftest import grant_role
         au = AppUser.objects.create(
             id=uuid.uuid4(), display_name="Login", status="ACTIVE", version=1
         )
         user.app_user_id = au.id
         user.save()
+        grant_role(au.id, "ADMINISTRATION")
     client.force_login(user)
     return client
 
 
 @pytest.mark.django_db
-def test_liste(client, seeded):
-    r = client.get("/api/invoicing/quotes")
+def test_liste(admin_client, seeded):
+    r = admin_client.get("/api/invoicing/quotes")
     assert r.status_code == 200
     body = r.json()
     assert body["total"] == 1
@@ -56,16 +58,16 @@ def test_liste(client, seeded):
 
 
 @pytest.mark.django_db
-def test_liste_property_filter(client, seeded):
-    r = client.get(f"/api/invoicing/quotes?property_id={seeded['obj'].id}")
+def test_liste_property_filter(admin_client, seeded):
+    r = admin_client.get(f"/api/invoicing/quotes?property_id={seeded['obj'].id}")
     assert r.json()["total"] == 1
-    r2 = client.get(f"/api/invoicing/quotes?property_id={uuid.uuid4()}")
+    r2 = admin_client.get(f"/api/invoicing/quotes?property_id={uuid.uuid4()}")
     assert r2.json()["total"] == 0
 
 
 @pytest.mark.django_db
-def test_detail_mit_positionen(client, seeded):
-    r = client.get(f"/api/invoicing/quotes/{seeded['quote'].id}")
+def test_detail_mit_positionen(admin_client, seeded):
+    r = admin_client.get(f"/api/invoicing/quotes/{seeded['quote'].id}")
     assert r.status_code == 200
     body = r.json()
     assert len(body["lines"]) == 2
@@ -76,8 +78,8 @@ def test_detail_mit_positionen(client, seeded):
 
 
 @pytest.mark.django_db
-def test_detail_404(client, seeded):
-    r = client.get(f"/api/invoicing/quotes/{uuid.uuid4()}")
+def test_detail_404(admin_client, seeded):
+    r = admin_client.get(f"/api/invoicing/quotes/{uuid.uuid4()}")
     assert r.status_code == 404
 
 
@@ -127,12 +129,12 @@ def test_create_ungueltige_position_422(client, db, app_user):
 
 
 @pytest.mark.django_db
-def test_create_ohne_login_abgelehnt(client, db, app_user):
+def test_create_ohne_login_abgelehnt(anonymous_client, db, app_user):
     obj = property_service.create_property(
         app_user.id, name="O", property_type="OTHER",
         street="S", postal_code="1", city="C",
     )
-    r = client.post(
+    r = anonymous_client.post(
         "/api/invoicing/quotes",
         data={"property_id": str(obj.id), "title": "Anon", "lines": []},
         content_type="application/json",
@@ -141,7 +143,7 @@ def test_create_ohne_login_abgelehnt(client, db, app_user):
 
 
 @pytest.mark.django_db
-def test_rechnung_liste_und_detail(client, app_user):
+def test_rechnung_liste_und_detail(admin_client, app_user):
     obj = property_service.create_property(
         app_user.id, name="RE-Objekt", property_type="WEG",
         street="W", house_number="2", postal_code="10115", city="Berlin",
@@ -151,13 +153,13 @@ def test_rechnung_liste_und_detail(client, app_user):
         lines=[{"line_type": "MATERIAL", "description": "Pos", "quantity": 2,
                 "unit_price": 50, "tax_code": "DE_19"}],
     )
-    r = client.get("/api/invoicing/invoices")
+    r = admin_client.get("/api/invoicing/invoices")
     assert r.status_code == 200
     assert r.json()["total"] == 1
     assert r.json()["items"][0]["invoice_type"] == "RECHNUNG"
     assert r.json()["items"][0]["invoice_number"] is None
 
-    d = client.get(f"/api/invoicing/invoices/{inv.id}")
+    d = admin_client.get(f"/api/invoicing/invoices/{inv.id}")
     assert d.status_code == 200
     body = d.json()
     assert len(body["lines"]) == 1
@@ -165,8 +167,8 @@ def test_rechnung_liste_und_detail(client, app_user):
 
 
 @pytest.mark.django_db
-def test_rechnung_detail_404(client, db):
-    r = client.get(f"/api/invoicing/invoices/{uuid.uuid4()}")
+def test_rechnung_detail_404(admin_client, db):
+    r = admin_client.get(f"/api/invoicing/invoices/{uuid.uuid4()}")
     assert r.status_code == 404
 
 
@@ -191,12 +193,12 @@ def test_rechnung_create_eingeloggt(client, db, app_user):
 
 
 @pytest.mark.django_db
-def test_rechnung_create_ohne_login(client, db, app_user):
+def test_rechnung_create_ohne_login(anonymous_client, db, app_user):
     obj = property_service.create_property(
         app_user.id, name="O", property_type="OTHER",
         street="S", postal_code="1", city="C",
     )
-    r = client.post(
+    r = anonymous_client.post(
         "/api/invoicing/invoices",
         data={"property_id": str(obj.id), "invoice_type": "RECHNUNG", "lines": []},
         content_type="application/json",

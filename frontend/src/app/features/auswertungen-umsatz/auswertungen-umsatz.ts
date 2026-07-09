@@ -2,10 +2,13 @@ import { Component, computed, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { AuswertungService } from '../../core/auswertungen.service';
 import { UmsatzProjekt } from '../../core/auswertungen.model';
+import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 
 type ViewState =
   | { kind: 'loading' }
   | { kind: 'ready'; data: UmsatzProjekt }
+  | VerbotenState
   | { kind: 'error' };
 
 interface Bar {
@@ -17,7 +20,7 @@ interface Bar {
 
 @Component({
   selector: 'app-auswertungen-umsatz',
-  imports: [RouterLink],
+  imports: [RouterLink, KeinZugriff],
   templateUrl: './auswertungen-umsatz.html',
   styleUrl: './auswertungen-umsatz.scss',
 })
@@ -71,7 +74,7 @@ export class AuswertungenUmsatz {
     this.state.set({ kind: 'loading' });
     this.svc.umsatzProjektuebersicht().subscribe({
       next: (data) => this.state.set({ kind: 'ready', data }),
-      error: () => this.state.set({ kind: 'error' }),
+      error: (err) => this.state.set(fehlerState(err)),
     });
   }
 

@@ -4,17 +4,20 @@ import { RouterLink } from '@angular/router';
 import { Subject, debounceTime, distinctUntilChanged } from 'rxjs';
 import { AufgabeService } from '../../core/aufgabe.service';
 import { TaskPage, TaskStatus } from '../../core/aufgabe.model';
+import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 
 type ViewState =
   | { kind: 'loading' }
   | { kind: 'ready'; data: TaskPage }
+  | VerbotenState
   | { kind: 'error' };
 
 type Segment = { value: TaskStatus | null; label: string };
 
 @Component({
   selector: 'app-aufgaben',
-  imports: [RouterLink],
+  imports: [RouterLink, KeinZugriff],
   templateUrl: './aufgaben.html',
   styleUrl: './aufgaben.scss',
 })
@@ -47,6 +50,7 @@ export class Aufgaben {
   protected readonly resultSummary = computed(() => {
     const s = this.state();
     if (s.kind === 'loading') return 'Aufgaben werden geladen.';
+    if (s.kind === 'forbidden') return 'Keine Berechtigung für die Aufgaben.';
     if (s.kind === 'error') return 'Aufgaben konnten nicht geladen werden.';
     const t = s.data.total;
     if (t === 0) return 'Keine Aufgaben gefunden.';
@@ -105,8 +109,8 @@ export class Aufgaben {
         next: (data) => {
           if (id === this.reqId) this.state.set({ kind: 'ready', data });
         },
-        error: () => {
-          if (id === this.reqId) this.state.set({ kind: 'error' });
+        error: (err) => {
+          if (id === this.reqId) this.state.set(fehlerState(err));
         },
       });
   }

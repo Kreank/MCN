@@ -8,15 +8,18 @@ import {
   ServiceCaseDetail,
   ServiceCaseStatus,
 } from '../../core/projekt.model';
+import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 
 type ViewState =
   | { kind: 'loading' }
   | { kind: 'ready'; data: ServiceCaseDetail }
+  | VerbotenState
   | { kind: 'error' };
 
 @Component({
   selector: 'app-vorgang-detail',
-  imports: [Mappe, RouterLink],
+  imports: [Mappe, RouterLink, KeinZugriff],
   templateUrl: './vorgang-detail.html',
   styleUrl: './vorgang-detail.scss',
 })
@@ -62,8 +65,8 @@ export class VorgangDetail {
       next: (data) => {
         if (rid === this.reqId) this.state.set({ kind: 'ready', data });
       },
-      error: () => {
-        if (rid === this.reqId) this.state.set({ kind: 'error' });
+      error: (err) => {
+        if (rid === this.reqId) this.state.set(fehlerState(err));
       },
     });
   }

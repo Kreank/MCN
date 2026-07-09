@@ -1,8 +1,11 @@
 """Personal-API — Mitarbeiter, Arbeitsverträge, Abwesenheiten, Urlaubskonto (hr.*).
 
-Lesen in der Dev-Phase ohne Auth; Anlegen, Statuswechsel und Genehmigungen
-verlangen Django-Session + zugeordnetes app_user. Views dünn, rufen die
-Service-Schicht.
+Alle Endpunkte verlangen eine Anmeldung und das Recht auf dem Modul `hr`
+(Migration 0021): Personaldaten sehen und pflegen ausschließlich ADMINISTRATION
+und GESCHAEFTSFUEHRUNG — auch NUR_LESEN, das sonst überall lesen darf, hat hier
+kein Recht. Grund: Abwesenheiten enthalten Krankheitszeiten (DSGVO Art. 9).
+
+Views dünn, rufen die Service-Schicht.
 
 Personendaten (Name, Anrede, Geburtsdatum) liegen in identity.person und werden
 hier nur mitgelesen, nie geschrieben — dafür ist die Kontakte-API zuständig.
@@ -17,6 +20,7 @@ from ninja.errors import HttpError
 from ninja.responses import Status
 from ninja.security import django_auth
 
+from api.permissions import require
 from db_core.models import Absence, Employee, EmploymentContract
 from db_core.services import mitarbeiter as mitarbeiter_service
 
@@ -254,6 +258,7 @@ def list_employees(
     page_size: int = 25,
 ):
     """Mitarbeiterliste mit Suche (Name/Personalnummer) und Statusfilter."""
+    require(request, "hr", "LESEN")
     if filters.status and filters.status not in EMPLOYEE_STATUS:
         raise HttpError(422, f"Unbekannter Status: {filters.status}")
     page = max(page, 1)
@@ -290,6 +295,7 @@ def list_employees(
 @router.get("/employees/{employee_id}", response=EmployeeDetailOut)
 def get_employee(request, employee_id: UUID, year: int | None = None):
     """Mitarbeiter-Mappe: Stammdaten, Verträge, Abwesenheiten, Urlaubskonto."""
+    require(request, "hr", "LESEN")
     employee = _employee_qs().filter(id=employee_id).first()
     if employee is None:
         raise HttpError(404, "Mitarbeiter nicht gefunden.")
@@ -328,6 +334,7 @@ def list_absences(request, status: str | None = None, employee_id: UUID | None =
     Personalbestand aus. Gesundheitsdaten sind eine besondere Kategorie nach
     DSGVO Art. 9 und gehören nicht in eine offene Leseschnittstelle.
     """
+    require(request, "hr", "LESEN")
     if status and status not in ABSENCE_STATUS:
         raise HttpError(422, f"Unbekannter Status: {status}")
     qs = Absence.objects.all()
@@ -340,17 +347,6 @@ def list_absences(request, status: str | None = None, employee_id: UUID | None =
 
 # --- Schreibende Endpoints (Session-Auth Pflicht) --------------------------
 
-def _actor_id(request):
-    actor = getattr(request.user, "app_user_id", None)
-    if actor is None:
-        raise HttpError(
-            403,
-            "Dem Login-Konto ist kein security.app_user zugeordnet; "
-            "fachliche Schreibvorgänge sind damit nicht möglich.",
-        )
-    return actor
-
-
 def _reload_employee(employee_id):
     employee = _employee_qs().filter(id=employee_id).first()
     if employee is None:
@@ -361,7 +357,7 @@ def _reload_employee(employee_id):
 @router.post("/employees", response={201: EmployeeOut}, auth=django_auth)
 def create_employee(request, payload: EmployeeIn):
     """Personalsatz anlegen (Status AKTIV)."""
-    actor = _actor_id(request)
+    actor, _ = require(request, "hr", "ANLEGEN")
     try:
         employee = mitarbeiter_service.create_employee(
             actor,
@@ -379,7 +375,7 @@ def create_employee(request, payload: EmployeeIn):
 @router.post("/employees/{employee_id}/status", response=EmployeeOut, auth=django_auth)
 def set_employee_status(request, employee_id: UUID, payload: EmployeeStatusIn):
     """Statuswechsel; AUSGETRETEN verlangt ein Austrittsdatum und ist final."""
-    actor = _actor_id(request)
+    actor, _ = require(request, "hr", "AENDERN")
     try:
         mitarbeiter_service.set_employee_status(
             actor,
@@ -397,7 +393,7 @@ def set_employee_status(request, employee_id: UUID, payload: EmployeeStatusIn):
 )
 def create_contract(request, employee_id: UUID, payload: ContractIn):
     """Arbeitsvertrag anlegen; ein laufender Vorgänger wird am Vortag beendet."""
-    actor = _actor_id(request)
+    actor, _ = require(request, "hr", "ANLEGEN")
     hours = {field: getattr(payload, field) for field in _HOUR_FIELDS}
     try:
         contract = mitarbeiter_service.create_contract(
@@ -419,7 +415,8 @@ def create_contract(request, employee_id: UUID, payload: ContractIn):
 @router.post("/contracts/{contract_id}/terminate", response=ContractOut, auth=django_auth)
 def terminate_contract(request, contract_id: UUID, payload: TerminateIn):
     """Vertrag kündigen (begründungspflichtig)."""
-    actor = _actor_id(request)
+    # Kündigung = Änderung des bestehenden Vertrags (valid_to/Grund) → AENDERN.
+    actor, _ = require(request, "hr", "AENDERN")
     try:
         mitarbeiter_service.terminate_contract(
             actor, contract_id=contract_id, valid_to=payload.valid_to, reason=payload.reason
@@ -439,7 +436,7 @@ def terminate_contract(request, contract_id: UUID, payload: TerminateIn):
 )
 def create_absence(request, employee_id: UUID, payload: AbsenceIn):
     """Abwesenheitsantrag anlegen (Status ENTWURF). days_count rechnet der Service."""
-    actor = _actor_id(request)
+    actor, _ = require(request, "hr", "ANLEGEN")
     try:
         absence = mitarbeiter_service.create_absence(
             actor,
@@ -456,8 +453,8 @@ def create_absence(request, employee_id: UUID, payload: AbsenceIn):
     return Status(201, _absence_out(absence))
 
 
-def _absence_action(request, absence_id, func, **kwargs):
-    actor = _actor_id(request)
+def _absence_action(request, absence_id, func, action, **kwargs):
+    actor, _ = require(request, "hr", action)
     try:
         absence = func(actor, absence_id=absence_id, **kwargs)
     except ValueError as exc:
@@ -468,29 +465,40 @@ def _absence_action(request, absence_id, func, **kwargs):
 @router.post("/absences/{absence_id}/submit", response=AbsenceOut, auth=django_auth)
 def submit_absence(request, absence_id: UUID):
     """Antrag einreichen (ENTWURF → EINGEREICHT)."""
-    return _absence_action(request, absence_id, mitarbeiter_service.submit_absence)
+    # Einreichen ist ein Statuswechsel des eigenen Antrags → AENDERN.
+    return _absence_action(
+        request, absence_id, mitarbeiter_service.submit_absence, "AENDERN"
+    )
 
 
 @router.post("/absences/{absence_id}/approve", response=AbsenceOut, auth=django_auth)
 def approve_absence(request, absence_id: UUID, payload: DecisionIn):
     """Antrag genehmigen (EINGEREICHT → GENEHMIGT)."""
+    # Genehmigen ist ein Freigabetor → FREIGEBEN.
     return _absence_action(
-        request, absence_id, mitarbeiter_service.approve_absence, note=payload.note
+        request, absence_id, mitarbeiter_service.approve_absence, "FREIGEBEN",
+        note=payload.note,
     )
 
 
 @router.post("/absences/{absence_id}/reject", response=AbsenceOut, auth=django_auth)
 def reject_absence(request, absence_id: UUID, payload: DecisionIn):
     """Antrag ablehnen (begründungspflichtig)."""
+    # Ablehnen ist die Kehrseite der Genehmigung (dieselbe Freigabe-Entscheidung)
+    # → FREIGEBEN.
     return _absence_action(
-        request, absence_id, mitarbeiter_service.reject_absence, note=payload.note
+        request, absence_id, mitarbeiter_service.reject_absence, "FREIGEBEN",
+        note=payload.note,
     )
 
 
 @router.post("/absences/{absence_id}/withdraw", response=AbsenceOut, auth=django_auth)
 def withdraw_absence(request, absence_id: UUID):
     """Antrag zurückziehen (aus ENTWURF oder EINGEREICHT)."""
-    return _absence_action(request, absence_id, mitarbeiter_service.withdraw_absence)
+    # Zurückziehen ist ein Statuswechsel des Antrags → AENDERN.
+    return _absence_action(
+        request, absence_id, mitarbeiter_service.withdraw_absence, "AENDERN"
+    )
 
 
 @router.put(
@@ -500,7 +508,8 @@ def withdraw_absence(request, absence_id: UUID):
 )
 def set_vacation_budget(request, employee_id: UUID, payload: VacationBudgetIn):
     """Urlaubskonto eines Jahres setzen (idempotent). Anpassung ist begründungspflichtig."""
-    actor = _actor_id(request)
+    # Urlaubskonto setzen/anpassen = Update bestehender Kontodaten → AENDERN.
+    actor, _ = require(request, "hr", "AENDERN")
     try:
         mitarbeiter_service.set_vacation_budget(
             actor,

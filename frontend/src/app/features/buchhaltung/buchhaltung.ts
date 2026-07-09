@@ -11,17 +11,20 @@ import {
   paymentStatusClass,
   paymentStatusLabel,
 } from '../../core/buchhaltung.model';
+import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 
 type ViewState =
   | { kind: 'loading' }
   | { kind: 'ready'; data: OpenItemPage }
+  | VerbotenState
   | { kind: 'error' };
 
 type Segment = { value: PaymentStatus | null; label: string };
 
 @Component({
   selector: 'app-buchhaltung',
-  imports: [RouterLink],
+  imports: [RouterLink, KeinZugriff],
   templateUrl: './buchhaltung.html',
   styleUrl: './buchhaltung.scss',
 })
@@ -61,6 +64,7 @@ export class Buchhaltung {
   protected readonly resultSummary = computed(() => {
     const s = this.state();
     if (s.kind === 'loading') return 'Offene Posten werden geladen.';
+    if (s.kind === 'forbidden') return 'Keine Berechtigung für die Buchhaltung.';
     if (s.kind === 'error') return 'Offene Posten konnten nicht geladen werden.';
     const t = s.data.total;
     if (t === 0) return 'Keine Rechnungen für diese Auswahl.';
@@ -119,8 +123,8 @@ export class Buchhaltung {
         next: (data) => {
           if (id === this.reqId) this.state.set({ kind: 'ready', data });
         },
-        error: () => {
-          if (id === this.reqId) this.state.set({ kind: 'error' });
+        error: (err) => {
+          if (id === this.reqId) this.state.set(fehlerState(err));
         },
       });
   }

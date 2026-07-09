@@ -7,10 +7,13 @@ import {
   serviceJobStatusLabel,
 } from '../../core/einsatz.model';
 import { PlanungNav } from '../planung-nav/planung-nav';
+import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 
 type ViewState =
   | { kind: 'loading' }
   | { kind: 'ready'; jobs: BoardJob[] }
+  | VerbotenState
   | { kind: 'error' };
 
 const STATUS_MOD: Record<ServiceJobStatus, string> = {
@@ -57,7 +60,7 @@ function addMonthsIso(monthIso: string, n: number): string {
 
 @Component({
   selector: 'app-planung-kalender',
-  imports: [RouterLink, PlanungNav],
+  imports: [RouterLink, PlanungNav, KeinZugriff],
   templateUrl: './planung-kalender.html',
   styleUrl: './planung-kalender.scss',
 })
@@ -121,6 +124,7 @@ export class PlanungKalender {
   protected readonly summary = computed(() => {
     const s = this.state();
     if (s.kind === 'loading') return 'Kalender wird geladen.';
+    if (s.kind === 'forbidden') return 'Keine Berechtigung für den Kalender.';
     if (s.kind === 'error') return 'Kalender konnte nicht geladen werden.';
     return `${s.jobs.length} Einsätze im ${this.monthLabel()}.`;
   });
@@ -164,8 +168,8 @@ export class PlanungKalender {
       next: (data) => {
         if (id === this.reqId) this.state.set({ kind: 'ready', jobs: data.jobs });
       },
-      error: () => {
-        if (id === this.reqId) this.state.set({ kind: 'error' });
+      error: (err) => {
+        if (id === this.reqId) this.state.set(fehlerState(err));
       },
     });
   }

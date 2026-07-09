@@ -1,0 +1,185 @@
+:host {
+  display: block;
+}
+
+.login {
+  display: grid;
+  place-items: center;
+  min-height: calc(100vh - var(--header-h));
+  padding: var(--space-6) var(--space-4);
+}
+
+.login__card {
+  width: 100%;
+  max-width: 26rem;
+  padding: var(--space-6);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
+}
+
+// -------------------------------- Marke -------------------------------------
+.login__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+}
+.login__mark {
+  display: grid;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: var(--radius);
+  background: var(--command);
+  color: var(--accent);
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.35rem;
+}
+.login__wordmark {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.1;
+}
+.login__name {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.25rem;
+  letter-spacing: 0.02em;
+}
+.login__sub {
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+}
+
+// -------------------------------- Kopf --------------------------------------
+.login__head {
+  margin-bottom: var(--space-5);
+}
+.login__kicker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.login__scale {
+  width: 2rem;
+  height: 0.5rem;
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--line-strong) 0,
+    var(--line-strong) 1px,
+    transparent 1px,
+    transparent 0.5rem
+  );
+  border-bottom: 1px solid var(--line-strong);
+}
+.login__titel {
+  font-size: var(--step-2);
+  margin: 0 0 var(--space-2);
+}
+.login__hint {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: var(--step--1);
+}
+
+// ------------------------------- Fehler -------------------------------------
+.login__alert {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+  padding: var(--space-3) var(--space-4);
+  border: 1.5px solid color-mix(in srgb, var(--warn-ink) 45%, var(--line-strong));
+  border-left-width: 3px;
+  border-radius: var(--radius);
+  background: var(--warn-tint);
+  color: var(--warn-ink);
+  font-size: var(--step--1);
+}
+.login__alert:focus-visible {
+  outline: 2.5px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.login__alert-mark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 0.85rem;
+  line-height: 1;
+}
+
+// -------------------------------- Form --------------------------------------
+.login__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.feld-gruppe {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.feld-gruppe__label {
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.feld-gruppe__input {
+  min-height: 44px;
+  padding: 0 var(--space-4);
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--step-0);
+  transition: border-color 0.15s ease;
+
+  &::placeholder {
+    color: var(--ink-faint);
+  }
+  &:hover:not(:disabled) {
+    border-color: var(--ink-muted);
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+    border-color: var(--ink);
+  }
+  &:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+}
+
+.login__submit {
+  margin-top: var(--space-2);
+  width: 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .feld-gruppe__input {
+    transition: none;
+  }
+}

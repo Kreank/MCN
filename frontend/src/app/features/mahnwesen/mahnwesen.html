@@ -36,6 +36,10 @@
       <p class="lade-hinweis" role="status">Mahnfälle werden geladen …</p>
     }
 
+    @case ('forbidden') {
+      <app-kein-zugriff [detail]="$any(state()).detail" />
+    }
+
     @case ('error') {
       <div class="note note--error" role="alert">
         <h2 class="note__titel">Verbindung zum Mahnwesen unterbrochen</h2>

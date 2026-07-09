@@ -4,15 +4,18 @@ import { ActivatedRoute, RouterLink } from '@angular/router';
 import { Mappe, MappeTab } from '../../shared/mappe/mappe';
 import { BelegService } from '../../core/beleg.service';
 import { InvoiceDetail, InvoiceStatus, InvoiceType, LineType } from '../../core/beleg.model';
+import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 
 type ViewState =
   | { kind: 'loading' }
   | { kind: 'ready'; data: InvoiceDetail }
+  | VerbotenState
   | { kind: 'error' };
 
 @Component({
   selector: 'app-rechnung-detail',
-  imports: [Mappe, RouterLink],
+  imports: [Mappe, RouterLink, KeinZugriff],
   templateUrl: './rechnung-detail.html',
   styleUrl: './rechnung-detail.scss',
 })
@@ -59,8 +62,8 @@ export class RechnungDetail {
       next: (data) => {
         if (rid === this.reqId) this.state.set({ kind: 'ready', data });
       },
-      error: () => {
-        if (rid === this.reqId) this.state.set({ kind: 'error' });
+      error: (err) => {
+        if (rid === this.reqId) this.state.set(fehlerState(err));
       },
     });
   }

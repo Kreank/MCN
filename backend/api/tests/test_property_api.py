@@ -58,6 +58,7 @@ def seeded(app_user):
 
 
 def _logged_in_client(client, *, with_app_user=True):
+    from .conftest import grant_role
     kwargs = {"username": f"u{uuid.uuid4().hex[:8]}", "password": "x"}
     user = User.objects.create_user(**kwargs)
     if with_app_user:
@@ -67,13 +68,14 @@ def _logged_in_client(client, *, with_app_user=True):
         )
         user.app_user_id = au.id
         user.save()
+        grant_role(au.id, "ADMINISTRATION")
     client.force_login(user)
     return client
 
 
 @pytest.mark.django_db
-def test_liste_und_pagination(client, seeded):
-    r = client.get("/api/property/properties?page=1&page_size=1")
+def test_liste_und_pagination(admin_client, seeded):
+    r = admin_client.get("/api/property/properties?page=1&page_size=1")
     assert r.status_code == 200
     body = r.json()
     assert body["total"] == 2
@@ -85,32 +87,32 @@ def test_liste_und_pagination(client, seeded):
 
 
 @pytest.mark.django_db
-def test_suche_nach_name(client, seeded):
-    r = client.get("/api/property/properties?q=Rheinpassage")
+def test_suche_nach_name(admin_client, seeded):
+    r = admin_client.get("/api/property/properties?q=Rheinpassage")
     assert r.status_code == 200
     names = {i["name"] for i in r.json()["items"]}
     assert names == {"Rheinpassage Kontor"}
 
 
 @pytest.mark.django_db
-def test_suche_nach_nummer(client, seeded):
+def test_suche_nach_nummer(admin_client, seeded):
     # Alle Demonummern beginnen mit OBJ- → Suche liefert beide.
-    r = client.get("/api/property/properties?q=OBJ-")
+    r = admin_client.get("/api/property/properties?q=OBJ-")
     assert r.json()["total"] == 2
 
 
 @pytest.mark.django_db
-def test_typfilter(client, seeded):
-    r = client.get("/api/property/properties?property_type=COMMERCIAL")
+def test_typfilter(admin_client, seeded):
+    r = admin_client.get("/api/property/properties?property_type=COMMERCIAL")
     body = r.json()
     assert body["total"] == 1
     assert all(i["property_type"] == "COMMERCIAL" for i in body["items"])
 
 
 @pytest.mark.django_db
-def test_detail_mit_adresse_gebaeuden_rollen(client, seeded):
+def test_detail_mit_adresse_gebaeuden_rollen(admin_client, seeded):
     pid = seeded["weg"].id
-    r = client.get(f"/api/property/properties/{pid}")
+    r = admin_client.get(f"/api/property/properties/{pid}")
     assert r.status_code == 200
     body = r.json()
     assert body["property_type"] == "WEG"
@@ -129,8 +131,8 @@ def test_detail_mit_adresse_gebaeuden_rollen(client, seeded):
 
 
 @pytest.mark.django_db
-def test_detail_404(client, seeded):
-    r = client.get(f"/api/property/properties/{uuid.uuid4()}")
+def test_detail_404(admin_client, seeded):
+    r = admin_client.get(f"/api/property/properties/{uuid.uuid4()}")
     assert r.status_code == 404
 
 
@@ -185,8 +187,8 @@ def test_create_ohne_app_user_id_403(client, db):
 
 
 @pytest.mark.django_db
-def test_create_ohne_login_abgelehnt(client, db):
-    r = client.post(
+def test_create_ohne_login_abgelehnt(anonymous_client, db):
+    r = anonymous_client.post(
         "/api/property/properties",
         data={
             "name": "Anon", "property_type": "OTHER",

@@ -21,12 +21,14 @@ User = get_user_model()
 
 
 def _logged_in_client(client):
+    from .conftest import grant_role
     user = User.objects.create_user(username=f"u{uuid.uuid4().hex[:8]}", password="x")
     au = AppUser.objects.create(
         id=uuid.uuid4(), display_name="Login", status="ACTIVE", version=1
     )
     user.app_user_id = au.id
     user.save()
+    grant_role(au.id, "ADMINISTRATION")
     client.force_login(user)
     return client
 
@@ -91,8 +93,8 @@ def seeded(app_user):
 
 
 @pytest.mark.django_db
-def test_offene_posten_liste(client, seeded):
-    r = client.get("/api/buchhaltung/invoices?payment_status=TEILZAHLUNG")
+def test_offene_posten_liste(admin_client, seeded):
+    r = admin_client.get("/api/buchhaltung/invoices?payment_status=TEILZAHLUNG")
     assert r.status_code == 200
     body = r.json()
     assert body["total"] == 1
@@ -106,27 +108,27 @@ def test_offene_posten_liste(client, seeded):
 
 
 @pytest.mark.django_db
-def test_bezahlt_nach_restzahlung(client, seeded, app_user):
+def test_bezahlt_nach_restzahlung(admin_client, seeded, app_user):
     """Restzahlung bis zur Bruttosumme → Status BEZAHLT, offener Betrag 0."""
     inv = seeded["inv"]
     remaining = inv.gross_total - Decimal("100.00")
     buchhaltung_service.record_payment(
         app_user.id, invoice_id=inv.id, amount=remaining, paid_at=date.today()
     )
-    body = client.get(f"/api/buchhaltung/invoices/{inv.id}").json()
+    body = admin_client.get(f"/api/buchhaltung/invoices/{inv.id}").json()
     assert body["payment_status"] == "BEZAHLT"
     assert Decimal(body["open_amount"]) == Decimal("0.00")
 
 
 @pytest.mark.django_db
-def test_unbekannter_payment_status_422(client, seeded):
-    r = client.get("/api/buchhaltung/invoices?payment_status=QUATSCH")
+def test_unbekannter_payment_status_422(admin_client, seeded):
+    r = admin_client.get("/api/buchhaltung/invoices?payment_status=QUATSCH")
     assert r.status_code == 422
 
 
 @pytest.mark.django_db
-def test_offene_posten_detail(client, seeded):
-    r = client.get(f"/api/buchhaltung/invoices/{seeded['inv'].id}")
+def test_offene_posten_detail(admin_client, seeded):
+    r = admin_client.get(f"/api/buchhaltung/invoices/{seeded['inv'].id}")
     assert r.status_code == 200
     body = r.json()
     assert body["invoice_number"].startswith("RE-")
@@ -140,7 +142,7 @@ def test_offene_posten_detail(client, seeded):
 
 
 @pytest.mark.django_db
-def test_detail_entwurf_404(client, app_user):
+def test_detail_entwurf_404(admin_client, app_user):
     """Nicht veröffentlichte Rechnung ist kein offener Posten."""
     obj = property_service.create_property(
         app_user.id, name="X", property_type="WEG",
@@ -151,19 +153,19 @@ def test_detail_entwurf_404(client, app_user):
         lines=[{"line_type": "MATERIAL", "description": "Z", "quantity": 1,
                 "unit": "Stk", "unit_price": "2.40", "tax_code": "DE_19"}],
     )
-    r = client.get(f"/api/buchhaltung/invoices/{inv.id}")
+    r = admin_client.get(f"/api/buchhaltung/invoices/{inv.id}")
     assert r.status_code == 404
 
 
 @pytest.mark.django_db
-def test_detail_404(client, db):
-    r = client.get(f"/api/buchhaltung/invoices/{uuid4()}")
+def test_detail_404(admin_client, db):
+    r = admin_client.get(f"/api/buchhaltung/invoices/{uuid4()}")
     assert r.status_code == 404
 
 
 @pytest.mark.django_db
-def test_mahnliste(client, seeded):
-    r = client.get("/api/buchhaltung/dunning")
+def test_mahnliste(admin_client, seeded):
+    r = admin_client.get("/api/buchhaltung/dunning")
     assert r.status_code == 200
     body = r.json()
     assert [lv["level"] for lv in body["levels"]] == [1, 2, 3]
@@ -191,8 +193,8 @@ def test_cancel_eingeloggt_und_referenz(client, seeded):
 
 
 @pytest.mark.django_db
-def test_cancel_ohne_login_abgelehnt(client, seeded):
-    r = client.post(f"/api/buchhaltung/invoices/{seeded['inv'].id}/cancel",
+def test_cancel_ohne_login_abgelehnt(anonymous_client, seeded):
+    r = anonymous_client.post(f"/api/buchhaltung/invoices/{seeded['inv'].id}/cancel",
                     content_type="application/json")
     assert r.status_code in (401, 403)
 
@@ -219,10 +221,10 @@ def test_correction_unbekannte_position_422(client, seeded):
 
 
 @pytest.mark.django_db
-def test_mahnliste_levelfilter(client, seeded):
-    r = client.get("/api/buchhaltung/dunning?level=1")
+def test_mahnliste_levelfilter(admin_client, seeded):
+    r = admin_client.get("/api/buchhaltung/dunning?level=1")
     ids = {i["id"] for i in r.json()["items"]}
     assert str(seeded["inv"].id) in ids
-    r0 = client.get("/api/buchhaltung/dunning?level=0")
+    r0 = admin_client.get("/api/buchhaltung/dunning?level=0")
     ids0 = {i["id"] for i in r0.json()["items"]}
     assert str(seeded["inv"].id) not in ids0

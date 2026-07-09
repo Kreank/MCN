@@ -8,10 +8,13 @@ import {
   serviceJobStatusLabel,
 } from '../../core/einsatz.model';
 import { PlanungNav } from '../planung-nav/planung-nav';
+import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 
 type ViewState =
   | { kind: 'loading' }
   | { kind: 'ready'; data: PlantafelData }
+  | VerbotenState
   | { kind: 'error' };
 
 const WINDOW_DAYS = 7;
@@ -54,7 +57,7 @@ function localDayIso(iso: string): string {
 
 @Component({
   selector: 'app-plantafel',
-  imports: [RouterLink, PlanungNav],
+  imports: [RouterLink, PlanungNav, KeinZugriff],
   templateUrl: './plantafel.html',
   styleUrl: './plantafel.scss',
 })
@@ -113,6 +116,7 @@ export class Plantafel {
   protected readonly summary = computed(() => {
     const s = this.state();
     if (s.kind === 'loading') return 'Plantafel wird geladen.';
+    if (s.kind === 'forbidden') return 'Keine Berechtigung für die Plantafel.';
     if (s.kind === 'error') return 'Plantafel konnte nicht geladen werden.';
     return `${s.data.jobs.length} Einsätze auf ${this.lanes().length} Bahnen im Zeitraum ${this.rangeLabel()}.`;
   });
@@ -160,8 +164,8 @@ export class Plantafel {
       next: (data) => {
         if (id === this.reqId) this.state.set({ kind: 'ready', data });
       },
-      error: () => {
-        if (id === this.reqId) this.state.set({ kind: 'error' });
+      error: (err) => {
+        if (id === this.reqId) this.state.set(fehlerState(err));
       },
     });
   }

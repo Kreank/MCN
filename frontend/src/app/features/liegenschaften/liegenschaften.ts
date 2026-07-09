@@ -9,17 +9,20 @@ import {
   PropertyStatus,
   PropertyType,
 } from '../../core/property.model';
+import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 
 type ViewState =
   | { kind: 'loading' }
   | { kind: 'ready'; data: PropertyPage }
+  | VerbotenState
   | { kind: 'error' };
 
 type Segment = { value: PropertyType | null; label: string };
 
 @Component({
   selector: 'app-liegenschaften',
-  imports: [RouterLink],
+  imports: [RouterLink, KeinZugriff],
   templateUrl: './liegenschaften.html',
   styleUrl: './liegenschaften.scss',
 })
@@ -56,6 +59,7 @@ export class Liegenschaften {
   protected readonly resultSummary = computed(() => {
     const s = this.state();
     if (s.kind === 'loading') return 'Liegenschaften werden geladen.';
+    if (s.kind === 'forbidden') return 'Keine Berechtigung für die Liegenschaften.';
     if (s.kind === 'error') return 'Liegenschaften konnten nicht geladen werden.';
     const t = s.data.total;
     if (t === 0) return 'Keine Liegenschaften gefunden.';
@@ -114,8 +118,8 @@ export class Liegenschaften {
         next: (data) => {
           if (id === this.reqId) this.state.set({ kind: 'ready', data });
         },
-        error: () => {
-          if (id === this.reqId) this.state.set({ kind: 'error' });
+        error: (err) => {
+          if (id === this.reqId) this.state.set(fehlerState(err));
         },
       });
   }

@@ -10,17 +10,20 @@ import {
   serviceJobStatusLabel,
 } from '../../core/einsatz.model';
 import { PlanungNav } from '../planung-nav/planung-nav';
+import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 
 type ViewState =
   | { kind: 'loading' }
   | { kind: 'ready'; data: ServiceJobPage }
+  | VerbotenState
   | { kind: 'error' };
 
 type Segment = { value: ServiceJobStatus | null; label: string };
 
 @Component({
   selector: 'app-einsaetze',
-  imports: [RouterLink, PlanungNav],
+  imports: [RouterLink, PlanungNav, KeinZugriff],
   templateUrl: './einsaetze.html',
   styleUrl: './einsaetze.scss',
 })
@@ -62,6 +65,7 @@ export class Einsaetze {
   protected readonly resultSummary = computed(() => {
     const s = this.state();
     if (s.kind === 'loading') return 'Einsätze werden geladen.';
+    if (s.kind === 'forbidden') return 'Keine Berechtigung für die Einsätze.';
     if (s.kind === 'error') return 'Einsätze konnten nicht geladen werden.';
     const t = s.data.total;
     if (t === 0) return 'Keine Einsätze gefunden.';
@@ -120,8 +124,8 @@ export class Einsaetze {
         next: (data) => {
           if (id === this.reqId) this.state.set({ kind: 'ready', data });
         },
-        error: () => {
-          if (id === this.reqId) this.state.set({ kind: 'error' });
+        error: (err) => {
+          if (id === this.reqId) this.state.set(fehlerState(err));
         },
       });
   }

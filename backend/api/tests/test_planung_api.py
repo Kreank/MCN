@@ -81,8 +81,8 @@ def seeded(app_user):
 
 
 @pytest.mark.django_db
-def test_liste_und_pagination(client, seeded):
-    r = client.get("/api/planung/einsaetze?page=1&page_size=1")
+def test_liste_und_pagination(admin_client, seeded):
+    r = admin_client.get("/api/planung/einsaetze?page=1&page_size=1")
     assert r.status_code == 200
     body = r.json()
     assert body["total"] == 2
@@ -94,8 +94,8 @@ def test_liste_und_pagination(client, seeded):
 
 
 @pytest.mark.django_db
-def test_statusfilter(client, seeded):
-    r = client.get("/api/planung/einsaetze?status=VOR_ORT")
+def test_statusfilter(admin_client, seeded):
+    r = admin_client.get("/api/planung/einsaetze?status=VOR_ORT")
     body = r.json()
     assert body["total"] == 1
     assert body["items"][0]["status"] == "VOR_ORT"
@@ -103,20 +103,20 @@ def test_statusfilter(client, seeded):
 
 
 @pytest.mark.django_db
-def test_unbekannter_status_422(client, seeded):
-    r = client.get("/api/planung/einsaetze?status=QUATSCH")
+def test_unbekannter_status_422(admin_client, seeded):
+    r = admin_client.get("/api/planung/einsaetze?status=QUATSCH")
     assert r.status_code == 422
 
 
 @pytest.mark.django_db
-def test_auftragsfilter(client, seeded):
-    r = client.get(f"/api/planung/einsaetze?work_order_id={seeded['order'].id}")
+def test_auftragsfilter(admin_client, seeded):
+    r = admin_client.get(f"/api/planung/einsaetze?work_order_id={seeded['order'].id}")
     assert r.json()["total"] == 2
 
 
 @pytest.mark.django_db
-def test_detail_mit_zuweisung_zeit_material(client, seeded):
-    r = client.get(f"/api/planung/einsaetze/{seeded['j1'].id}")
+def test_detail_mit_zuweisung_zeit_material(admin_client, seeded):
+    r = admin_client.get(f"/api/planung/einsaetze/{seeded['j1'].id}")
     assert r.status_code == 200
     body = r.json()
     assert body["status"] == "VOR_ORT"
@@ -138,15 +138,15 @@ def test_detail_mit_zuweisung_zeit_material(client, seeded):
 
 
 @pytest.mark.django_db
-def test_detail_404(client, db):
-    r = client.get(f"/api/planung/einsaetze/{uuid4()}")
+def test_detail_404(admin_client, db):
+    r = admin_client.get(f"/api/planung/einsaetze/{uuid4()}")
     assert r.status_code == 404
 
 
 @pytest.mark.django_db
-def test_plantafel(client, seeded):
+def test_plantafel(admin_client, seeded):
     # Beide Einsätze sind auf 2026-07-13 geplant; j1 hat eine Zuweisung, j2 nicht.
-    r = client.get("/api/planung/plantafel?date_from=2026-07-13&date_to=2026-07-13")
+    r = admin_client.get("/api/planung/plantafel?date_from=2026-07-13&date_to=2026-07-13")
     assert r.status_code == 200
     body = r.json()
     assert len(body["jobs"]) == 2
@@ -158,12 +158,12 @@ def test_plantafel(client, seeded):
 
 
 @pytest.mark.django_db
-def test_plantafel_range_invalid(client, db):
-    r = client.get("/api/planung/plantafel?date_from=2026-07-20&date_to=2026-07-10")
+def test_plantafel_range_invalid(admin_client, db):
+    r = admin_client.get("/api/planung/plantafel?date_from=2026-07-20&date_to=2026-07-10")
     assert r.status_code == 422
 
 
 @pytest.mark.django_db
-def test_plantafel_range_zu_gross(client, db):
-    r = client.get("/api/planung/plantafel?date_from=2026-01-01&date_to=2026-12-31")
+def test_plantafel_range_zu_gross(admin_client, db):
+    r = admin_client.get("/api/planung/plantafel?date_from=2026-01-01&date_to=2026-12-31")
     assert r.status_code == 422

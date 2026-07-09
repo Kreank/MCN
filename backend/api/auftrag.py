@@ -15,6 +15,7 @@ from ninja.errors import HttpError
 from ninja.responses import Status
 from ninja.security import django_auth
 
+from api.permissions import require
 from db_core.models import StatusChange, WorkOrder
 from db_core.services import auftrag as auftrag_service
 
@@ -174,6 +175,7 @@ def list_work_orders(
     page_size: int = Query(25, ge=1, le=100),
 ):
     """Aufträge auflisten: Suche (Titel/Nummer), Status-/Projekt-/Objekt-/Vorgangsfilter."""
+    require(request, "workflow", "LESEN")
     qs = WorkOrder.objects.select_related(
         "property__address", "project", "service_case"
     )
@@ -251,26 +253,16 @@ def _work_order_detail(work_order_id):
 @router.get("/work_orders/{work_order_id}", response=WorkOrderDetailOut)
 def get_work_order(request, work_order_id: UUID):
     """Detail eines Auftrags inkl. Beteiligter und Statusverlauf."""
+    require(request, "workflow", "LESEN")
     return _work_order_detail(work_order_id)
 
 
 # --- Schreibende Endpoints (Session-Auth Pflicht) --------------------------
 
-def _actor_id(request):
-    actor = getattr(request.user, "app_user_id", None)
-    if actor is None:
-        raise HttpError(
-            403,
-            "Dem Login-Konto ist kein security.app_user zugeordnet; "
-            "fachliche Schreibvorgänge sind damit nicht möglich.",
-        )
-    return actor
-
-
 @router.post("/work_orders", response={201: WorkOrderDetailOut}, auth=django_auth)
 def create_work_order(request, payload: WorkOrderIn):
     """Neuen Auftrag (Status ENTWURF) anlegen."""
-    actor = _actor_id(request)
+    actor, _ = require(request, "workflow", "ANLEGEN")
     try:
         order = auftrag_service.create_work_order(
             actor,
@@ -296,7 +288,8 @@ def create_work_order(request, payload: WorkOrderIn):
 )
 def add_work_order_party(request, work_order_id: UUID, payload: WorkOrderPartyIn):
     """Beteiligten (Rolle) am Auftrag hinzufügen."""
-    actor = _actor_id(request)
+    # Beteiligtenzuweisung ist eine Änderung am bestehenden Auftrag → AENDERN.
+    actor, _ = require(request, "workflow", "AENDERN")
     try:
         auftrag_service.add_work_order_party(
             actor,
@@ -319,7 +312,7 @@ def add_work_order_party(request, work_order_id: UUID, payload: WorkOrderPartyIn
 )
 def confirm_responsibility(request, work_order_id: UUID, payload: ResponsibilityIn):
     """Verantwortungsbereich bestätigen (A-21)."""
-    actor = _actor_id(request)
+    actor, _ = require(request, "workflow", "AENDERN")
     try:
         auftrag_service.confirm_responsibility(
             actor, work_order_id=work_order_id, scope=payload.scope
@@ -336,7 +329,7 @@ def confirm_responsibility(request, work_order_id: UUID, payload: Responsibility
 )
 def set_order_evidence(request, work_order_id: UUID, payload: EvidenceIn):
     """Beauftragungsnachweis in Textform hinterlegen (A-26)."""
-    actor = _actor_id(request)
+    actor, _ = require(request, "workflow", "AENDERN")
     try:
         auftrag_service.set_order_evidence(
             actor, work_order_id=work_order_id, reference=payload.reference
@@ -354,7 +347,12 @@ def set_order_evidence(request, work_order_id: UUID, payload: EvidenceIn):
 def advance_work_order_status(request, work_order_id: UUID, payload: StatusIn):
     """Statuswechsel des Auftrags durchführen (validiert gegen die Übergangstabelle;
     die Freigabe-/Abrechnungs-Tore prüft die DB)."""
-    actor = _actor_id(request)
+    # Zweifelsfall: dieser eine Endpunkt bedient ALLE Statuswechsel. Der Übergang
+    # in FREIGEGEBEN ist die eigentliche Auftrags-Freigabe (ein Freigabetor) und
+    # verlangt daher das Recht FREIGEBEN; alle übrigen Wechsel sind AENDERN. So
+    # kann ein Konto mit AENDERN, aber ohne FREIGEBEN, den Auftrag nicht freigeben.
+    action = "FREIGEBEN" if payload.to_status == "FREIGEGEBEN" else "AENDERN"
+    actor, _ = require(request, "workflow", action)
     try:
         auftrag_service.advance_status(
             actor,

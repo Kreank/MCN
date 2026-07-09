@@ -15,6 +15,7 @@ from ninja.errors import HttpError
 from ninja.responses import Status
 from ninja.security import django_auth
 
+from api.permissions import require
 from db_core.models import Property
 from db_core.services import property as property_service
 
@@ -112,6 +113,7 @@ def list_properties(
     Die Ortsangabe stammt aus der verknüpften identity.address; sie wird per
     select_related mitgeladen, damit die Liste ohne N+1 auskommt.
     """
+    require(request, "property", "LESEN")
     qs = Property.objects.select_related("address")
 
     if filters.q:
@@ -211,22 +213,10 @@ def _property_detail(property_id):
 # unterscheiden sich in Methode und Segmentzahl); der Aufbau folgt der
 # Identity-API der Lesbarkeit halber: Liste, dann Write, dann Detail.
 
-def _actor_id(request):
-    """app_user_id des eingeloggten Kontos oder 403 mit klarer Meldung."""
-    actor = getattr(request.user, "app_user_id", None)
-    if actor is None:
-        raise HttpError(
-            403,
-            "Dem Login-Konto ist kein security.app_user zugeordnet; "
-            "fachliche Schreibvorgänge sind damit nicht möglich.",
-        )
-    return actor
-
-
 @router.post("/properties", response={201: PropertyDetailOut}, auth=django_auth)
 def create_property(request, payload: PropertyIn):
     """Neue Liegenschaft anlegen (identity.address + property.property)."""
-    actor = _actor_id(request)
+    actor, _ = require(request, "property", "ANLEGEN")
     try:
         prop = property_service.create_property(
             actor,
@@ -247,4 +237,5 @@ def create_property(request, payload: PropertyIn):
 @router.get("/properties/{property_id}", response=PropertyDetailOut)
 def get_property(request, property_id: UUID):
     """Detail einer Liegenschaft inkl. Adresse, Gebäude/Einheiten und Rollen."""
+    require(request, "property", "LESEN")
     return _property_detail(property_id)

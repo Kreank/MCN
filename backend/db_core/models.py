@@ -1789,3 +1789,78 @@ class VacationBudget(models.Model):
 
     def __str__(self):
         return f"Urlaubskonto {self.year} ({self.employee_id})"
+
+
+# ---------------------------------------------------------------------------
+# security.* — Rollen und Rechtematrix (db/migrations/0026, hr-Modul 0021)
+# ---------------------------------------------------------------------------
+
+
+class Role(models.Model):
+    """security.role — Codeliste der Rollen (PK ist der Code, nicht eine UUID)."""
+
+    code = models.TextField(primary_key=True)
+    label = models.TextField()
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'security"."role'
+
+    def __str__(self):
+        return self.code
+
+
+class UserRole(models.Model):
+    """security.user_role — zeitabhängige Rollenzuordnung.
+
+    Zuordnungen werden beendet (`valid_until`), nicht gelöscht. Ein EXCLUDE
+    verhindert zeitgleiche Doppelzuordnung derselben Rolle.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    user = models.ForeignKey(
+        AppUser, models.DO_NOTHING, db_column="user_id", related_name="user_roles"
+    )
+    role = models.ForeignKey(
+        Role, models.DO_NOTHING, db_column="role_code", related_name="user_roles"
+    )
+    valid_from = models.DateField()
+    valid_until = models.DateField(null=True, blank=True)
+    granted_by = models.ForeignKey(
+        AppUser, models.DO_NOTHING, db_column="granted_by", related_name="granted_roles"
+    )
+    created_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'security"."user_role'
+
+    def __str__(self):
+        return f"{self.user_id} → {self.role_id}"
+
+
+class RolePermission(models.Model):
+    """security.role_permission — Rechtematrix (Rolle × Modul × Aktion).
+
+    `row_scope` ('ALLE'|'EIGENE') ist ein Kennzeichen; die Auswertung erfolgt
+    ausdrücklich in der App-Schicht (die Anwendung verbindet sich als
+    technischer DB-Benutzer).
+    """
+
+    id = models.UUIDField(primary_key=True)
+    role = models.ForeignKey(
+        Role, models.DO_NOTHING, db_column="role_code", related_name="permissions"
+    )
+    module = models.TextField()
+    action = models.TextField()
+    allowed = models.BooleanField()
+    row_scope = models.TextField()  # ALLE | EIGENE
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'security"."role_permission'
+
+    def __str__(self):
+        return f"{self.role_id}/{self.module}/{self.action}={self.allowed}"

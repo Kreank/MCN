@@ -12,6 +12,7 @@ from ninja.errors import HttpError
 from ninja.responses import Status
 from ninja.security import django_auth
 
+from api.permissions import require_create, require_scoped
 from db_core.models import Task
 from db_core.services import aufgabe as aufgabe_service
 
@@ -120,8 +121,14 @@ def list_tasks(
 
     Ohne expliziten Statusfilter werden verworfene Aufgaben (VERWORFEN)
     ausgeblendet; gezielt abrufbar über status=VERWORFEN.
+
+    Zeilenbegrenzung: Wer nur 'EIGENE' sehen darf (Monteur), bekommt
+    ausschließlich die ihm zugewiesenen Aufgaben.
     """
+    actor, scope = require_scoped(request, "workflow", "LESEN")
     qs = Task.objects.select_related("assigned_to", "project", "party")
+    if scope == "EIGENE":
+        qs = qs.filter(assigned_to_id=actor)
 
     if filters.q:
         qs = qs.filter(title__icontains=filters.q.strip())
@@ -157,15 +164,22 @@ def list_tasks(
 
 # --- Schreibende Endpoints (Session-Auth Pflicht) --------------------------
 
-def _actor_id(request):
-    actor = getattr(request.user, "app_user_id", None)
-    if actor is None:
-        raise HttpError(
-            403,
-            "Dem Login-Konto ist kein security.app_user zugeordnet; "
-            "fachliche Schreibvorgänge sind damit nicht möglich.",
-        )
-    return actor
+def _guard_own_task(task_id, actor, scope):
+    """Bei Scope 'EIGENE': nur die dem Akteur zugewiesene Aufgabe ist zugänglich.
+
+    Fremde (oder nicht existierende) Aufgabe → 404, nicht 403: die Existenz
+    fremder Zeilen soll nicht verraten werden. Bei 'ALLE' passiert nichts; ein
+    fehlender Datensatz fällt dann im Service auf.
+    """
+    if scope != "EIGENE":
+        return
+    owner = (
+        Task.objects.filter(id=task_id)
+        .values_list("assigned_to_id", flat=True)
+        .first()
+    )
+    if owner != actor:
+        raise HttpError(404, "Aufgabe nicht gefunden.")
 
 
 def _reload(task_id):
@@ -181,15 +195,31 @@ def _reload(task_id):
 
 @router.post("/tasks", response={201: TaskOut}, auth=django_auth)
 def create_task(request, payload: TaskIn):
-    """Neue Aufgabe anlegen (Status OFFEN)."""
-    actor = _actor_id(request)
+    """Neue Aufgabe anlegen (Status OFFEN).
+
+    `require_scoped` statt `require_create`: die Aufgabe trägt mit `assigned_to`
+    ein Owner-Feld, das der Erzeuger frei setzen kann. Wer nur eigene Zeilen
+    sehen darf, könnte sonst Aufgaben auf fremde Listen legen — und sie danach
+    selbst nicht mehr sehen. Bei Scope EIGENE wird eine fremde Zuweisung deshalb
+    abgelehnt und die leere Zuweisung auf den Akteur gesetzt.
+    """
+    actor, scope = require_scoped(request, "workflow", "ANLEGEN")
+    assigned_to = payload.assigned_to_user_id
+    if scope == "EIGENE":
+        if assigned_to not in (None, actor):
+            raise HttpError(
+                403,
+                "Ihre Rolle erlaubt nur eigene Datensätze; eine Aufgabe kann "
+                "nicht einer anderen Person zugewiesen werden.",
+            )
+        assigned_to = actor
     try:
         task = aufgabe_service.create_task(
             actor,
             title=payload.title,
             description=payload.description,
             due_date=payload.due_date,
-            assigned_to_user_id=payload.assigned_to_user_id,
+            assigned_to_user_id=assigned_to,
             project_id=payload.project_id,
             party_id=payload.party_id,
         )
@@ -201,7 +231,8 @@ def create_task(request, payload: TaskIn):
 @router.post("/tasks/{task_id}/complete", response=TaskOut, auth=django_auth)
 def complete_task(request, task_id: UUID):
     """Aufgabe als erledigt markieren."""
-    actor = _actor_id(request)
+    actor, scope = require_scoped(request, "workflow", "AENDERN")
+    _guard_own_task(task_id, actor, scope)
     try:
         aufgabe_service.complete_task(actor, task_id)
     except ValueError as exc:
@@ -212,7 +243,8 @@ def complete_task(request, task_id: UUID):
 @router.post("/tasks/{task_id}/discard", response=TaskOut, auth=django_auth)
 def discard_task(request, task_id: UUID):
     """Aufgabe verwerfen (Status VERWORFEN statt Löschen)."""
-    actor = _actor_id(request)
+    actor, scope = require_scoped(request, "workflow", "AENDERN")
+    _guard_own_task(task_id, actor, scope)
     try:
         aufgabe_service.discard_task(actor, task_id)
     except ValueError as exc:
@@ -223,7 +255,8 @@ def discard_task(request, task_id: UUID):
 @router.post("/tasks/{task_id}/reopen", response=TaskOut, auth=django_auth)
 def reopen_task(request, task_id: UUID):
     """Erledigte/verworfene Aufgabe wieder öffnen (Status OFFEN)."""
-    actor = _actor_id(request)
+    actor, scope = require_scoped(request, "workflow", "AENDERN")
+    _guard_own_task(task_id, actor, scope)
     try:
         aufgabe_service.reopen_task(actor, task_id)
     except ValueError as exc:

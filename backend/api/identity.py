@@ -16,6 +16,7 @@ from ninja.errors import HttpError
 from ninja.responses import Status
 from ninja.security import django_auth
 
+from api.permissions import require
 from db_core.models import Party
 from db_core.services import identity as identity_service
 
@@ -98,6 +99,7 @@ def list_parties(
     Ohne expliziten Statusfilter werden zusammengeführte (MERGED) Parties
     ausgeblendet; wer MERGED sehen will, setzt status=MERGED gezielt.
     """
+    require(request, "identity", "LESEN")
     qs = Party.objects.all()
 
     if filters.q:
@@ -149,22 +151,10 @@ def _party_detail(party_id):
 # Vor der {party_id}-Detailroute registriert: der Pfad-Konverter würde sonst
 # die literalen Pfade /person bzw. /organization schlucken.
 
-def _actor_id(request):
-    """app_user_id des eingeloggten Kontos oder 403 mit klarer Meldung."""
-    actor = getattr(request.user, "app_user_id", None)
-    if actor is None:
-        raise HttpError(
-            403,
-            "Dem Login-Konto ist kein security.app_user zugeordnet; "
-            "fachliche Schreibvorgänge sind damit nicht möglich.",
-        )
-    return actor
-
-
 @router.post("/parties/person", response={201: PartyDetailOut}, auth=django_auth)
 def create_person(request, payload: PersonIn):
     """Neue Person anlegen (Party PERSON + identity.person)."""
-    actor = _actor_id(request)
+    actor, _ = require(request, "identity", "ANLEGEN")
     try:
         party = identity_service.create_person(
             actor,
@@ -182,7 +172,7 @@ def create_person(request, payload: PersonIn):
 @router.post("/parties/organization", response={201: PartyDetailOut}, auth=django_auth)
 def create_organization(request, payload: OrganizationIn):
     """Neue Organisation anlegen (Party ORGANIZATION + identity.organization)."""
-    actor = _actor_id(request)
+    actor, _ = require(request, "identity", "ANLEGEN")
     try:
         party = identity_service.create_organization(
             actor,
@@ -202,4 +192,5 @@ def create_organization(request, payload: OrganizationIn):
 @router.get("/parties/{party_id}", response=PartyDetailOut)
 def get_party(request, party_id: UUID):
     """Detail einer Party inkl. Subtyp-Feldern (Person ODER Organisation)."""
+    require(request, "identity", "LESEN")
     return _party_detail(party_id)

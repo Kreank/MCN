@@ -14,12 +14,14 @@ User = get_user_model()
 
 
 def _logged_in_client(client):
+    from .conftest import grant_role
     user = User.objects.create_user(username=f"u{uuid.uuid4().hex[:8]}", password="x")
     au = AppUser.objects.create(
         id=uuid.uuid4(), display_name="Login", status="ACTIVE", version=1
     )
     user.app_user_id = au.id
     user.save()
+    grant_role(au.id, "ADMINISTRATION")
     client.force_login(user)
     return client
 
@@ -84,7 +86,7 @@ def test_publish_invoice_ueber_api(client, app_user):
 
 
 @pytest.mark.django_db
-def test_publish_ohne_login_abgelehnt(client, app_user):
+def test_publish_ohne_login_abgelehnt(anonymous_client, app_user):
     obj = property_service.create_property(
         app_user.id, name="O", property_type="WEG", street="W",
         postal_code="1", city="Berlin",
@@ -96,7 +98,7 @@ def test_publish_ohne_login_abgelehnt(client, app_user):
              "unit_price": "1.00", "tax_code": "DE_19"},
         ],
     )
-    r = client.post(f"/api/invoicing/invoices/{inv.id}/publish", content_type="application/json")
+    r = anonymous_client.post(f"/api/invoicing/invoices/{inv.id}/publish", content_type="application/json")
     assert r.status_code in (401, 403)
 
 
@@ -162,9 +164,9 @@ def _published_invoice(app_user, client):
 
 
 @pytest.mark.django_db
-def test_invoice_pdf_veroeffentlicht(client, app_user):
-    inv = _published_invoice(app_user, client)
-    r = client.get(f"/api/invoicing/invoices/{inv.id}/pdf")
+def test_invoice_pdf_veroeffentlicht(admin_client, app_user):
+    inv = _published_invoice(app_user, admin_client)
+    r = admin_client.get(f"/api/invoicing/invoices/{inv.id}/pdf")
     assert r.status_code == 200
     assert r["Content-Type"] == "application/pdf"
     content = r.getvalue()
@@ -173,7 +175,7 @@ def test_invoice_pdf_veroeffentlicht(client, app_user):
 
 
 @pytest.mark.django_db
-def test_invoice_pdf_sonderzeichen_kein_500(client, app_user):
+def test_invoice_pdf_sonderzeichen_kein_500(admin_client, app_user):
     """Nicht-Latin-1-Zeichen in Beschreibung/Einheit/Partei dürfen kein 500
     auslösen (fpdf2-Kernfont ist Latin-1; der Service sanitisiert Freitext)."""
     obj = property_service.create_property(
@@ -193,13 +195,13 @@ def test_invoice_pdf_sonderzeichen_kein_500(client, app_user):
             app_user.id, invoice_id=inv.id, party_id=weg.id, role=role, is_primary=True
         )
     beleg_service.publish_invoice(app_user.id, invoice_id=inv.id)
-    r = client.get(f"/api/invoicing/invoices/{inv.id}/pdf")
+    r = admin_client.get(f"/api/invoicing/invoices/{inv.id}/pdf")
     assert r.status_code == 200
     assert r.getvalue()[:4] == b"%PDF"
 
 
 @pytest.mark.django_db
-def test_invoice_pdf_entwurf_404(client, app_user):
+def test_invoice_pdf_entwurf_404(admin_client, app_user):
     obj = property_service.create_property(
         app_user.id, name="O", property_type="WEG", street="W",
         postal_code="1", city="Berlin",
@@ -209,11 +211,11 @@ def test_invoice_pdf_entwurf_404(client, app_user):
         lines=[{"line_type": "MATERIAL", "description": "X", "quantity": 1,
                 "unit_price": "1.00", "tax_code": "DE_19"}],
     )
-    r = client.get(f"/api/invoicing/invoices/{inv.id}/pdf")
+    r = admin_client.get(f"/api/invoicing/invoices/{inv.id}/pdf")
     assert r.status_code == 404
 
 
 @pytest.mark.django_db
-def test_invoice_pdf_unbekannt_404(client, db):
-    r = client.get(f"/api/invoicing/invoices/{uuid.uuid4()}/pdf")
+def test_invoice_pdf_unbekannt_404(admin_client, db):
+    r = admin_client.get(f"/api/invoicing/invoices/{uuid.uuid4()}/pdf")
     assert r.status_code == 404

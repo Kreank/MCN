@@ -11,6 +11,7 @@ from django.db.models import F, Q
 from ninja import Query, Router, Schema
 from ninja.errors import HttpError
 
+from api.permissions import require
 from db_core.models import MaintenanceContract, MaintenanceEvent
 
 router = Router()
@@ -120,6 +121,7 @@ def list_contracts(
 ):
     """Wartungsverträge auflisten: Suche (Name/Nummer), Status-/Objekt-/
     Fälligkeitsfilter. Sortiert nach nächster Fälligkeit (fällige zuerst)."""
+    require(request, "workflow", "LESEN")
     if filters.status and filters.status not in CONTRACT_STATUSES:
         raise HttpError(422, f"Unbekannter Status '{filters.status}'.")
 
@@ -149,6 +151,7 @@ def list_contracts(
 @router.get("/contracts/{contract_id}", response=ContractDetailOut)
 def get_contract(request, contract_id: UUID):
     """Detail eines Wartungsvertrags inkl. Auslöse-Historie."""
+    require(request, "workflow", "LESEN")
     today = date.today()
     contract = (
         MaintenanceContract.objects.filter(id=contract_id)

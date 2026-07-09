@@ -29,6 +29,7 @@ from ninja.errors import HttpError
 from ninja.responses import Status
 from ninja.security import django_auth
 
+from api.permissions import require
 from db_core.models import DunningLevel, DunningNotice, Invoice, Payment
 from db_core.services import beleg as beleg_service
 from db_core.services.buchhaltung import PAYMENT_SIGN
@@ -230,6 +231,7 @@ def list_open_items(
     """Offene Posten: veröffentlichte Rechnungen mit abgeleitetem Zahlungsstatus
     und offenem Betrag. Filter: Zahlungsstatus, überfällig, Belegart, Suche
     (Rechnungsnummer)."""
+    require(request, "invoicing", "LESEN")
     if filters.payment_status and filters.payment_status not in PAYMENT_STATUSES:
         raise HttpError(422, f"Unbekannter payment_status '{filters.payment_status}'.")
 
@@ -278,6 +280,7 @@ def list_open_items(
 @router.get("/invoices/{invoice_id}", response=OpenItemDetailOut)
 def get_open_item(request, invoice_id: UUID):
     """Detail eines offenen Postens inkl. Zahlungen und Mahnverlauf."""
+    require(request, "invoicing", "LESEN")
     today = date.today()
     inv = (
         Invoice.objects.filter(id=invoice_id, status="VEROEFFENTLICHT")
@@ -357,21 +360,10 @@ def get_open_item(request, invoice_id: UUID):
 
 # --- Schreibende Endpoints (Session-Auth Pflicht) --------------------------
 
-def _actor_id(request):
-    actor = getattr(request.user, "app_user_id", None)
-    if actor is None:
-        raise HttpError(
-            403,
-            "Dem Login-Konto ist kein security.app_user zugeordnet; "
-            "fachliche Schreibvorgänge sind damit nicht möglich.",
-        )
-    return actor
-
-
 @router.post("/invoices/{invoice_id}/cancel", response={201: CreditRefOut}, auth=django_auth)
 def cancel_invoice(request, invoice_id: UUID):
     """Storniert eine veröffentlichte Rechnung durch einen Stornobeleg (STORNO)."""
-    actor = _actor_id(request)
+    actor, _ = require(request, "invoicing", "STORNIEREN")
     try:
         credit = beleg_service.create_cancellation(actor, invoice_id=invoice_id)
     except ValueError as exc:
@@ -390,7 +382,8 @@ def cancel_invoice(request, invoice_id: UUID):
 )
 def correct_invoice(request, invoice_id: UUID, payload: CorrectionIn):
     """Erzeugt eine Rechnungskorrektur (GUTSCHRIFT) über die angegebenen Positionen."""
-    actor = _actor_id(request)
+    # Korrektur/Gutschrift eines veröffentlichten Belegs = Storno-Folgebeleg → STORNIEREN.
+    actor, _ = require(request, "invoicing", "STORNIEREN")
     try:
         credit = beleg_service.create_correction(
             actor, invoice_id=invoice_id, positions=payload.positions
@@ -411,6 +404,7 @@ def list_dunning(request, level: int | None = Query(None)):
     """Mahnliste: veröffentlichte Rechnungen, die überfällig mit offenem Betrag
     sind oder bereits gemahnt wurden. Optional nach aktueller Mahnstufe gefiltert
     (level=0 → überfällig, aber noch ungemahnt)."""
+    require(request, "invoicing", "LESEN")
     today = date.today()
     qs = (
         Invoice.objects.filter(status="VEROEFFENTLICHT")

@@ -17,6 +17,7 @@ from django.db.models import Count, F, Q
 from ninja import Query, Router, Schema
 from ninja.errors import HttpError
 
+from api.permissions import require, require_scoped
 from db_core.models import (
     JobAssignment,
     MaterialEntry,
@@ -173,13 +174,20 @@ def list_einsaetze(
 ):
     """Einsätze auflisten: Suche (Einsatz-/Auftragsnummer, Auftragstitel),
     Status-/Auftrags-/Zeitraumfilter. Sortiert nach Planbeginn (geplante zuerst,
-    ungeplante ans Ende), dann Anlegedatum."""
+    ungeplante ans Ende), dann Anlegedatum.
+
+    Zeilenbegrenzung: Wer nur 'EIGENE' sehen darf (Monteur), bekommt
+    ausschließlich Einsätze, denen er über workflow.job_assignment zugewiesen
+    ist."""
+    actor, scope = require_scoped(request, "workflow", "LESEN")
     if filters.status and filters.status not in JOB_STATUSES:
         raise HttpError(422, f"Unbekannter Status '{filters.status}'.")
 
     qs = ServiceJob.objects.select_related(
         "work_order__property__address"
     )
+    if scope == "EIGENE":
+        qs = qs.filter(assignments__assignee_id=actor).distinct()
     if filters.q:
         needle = filters.q.strip()
         qs = qs.filter(
@@ -220,7 +228,12 @@ def _assignee_counts(job_ids):
 @router.get("/einsaetze/{job_id}", response=ServiceJobDetailOut)
 def get_einsatz(request, job_id: UUID):
     """Detail eines Einsatzes inkl. Zuweisungen, Statusverlauf, erfasster Zeiten
-    und Materialien."""
+    und Materialien.
+
+    Zeilenbegrenzung: Bei Scope 'EIGENE' (Monteur) ist ein Einsatz, dem der
+    Akteur nicht zugewiesen ist, mit 404 abgeriegelt — die Existenz fremder
+    Einsätze wird nicht verraten."""
+    actor, scope = require_scoped(request, "workflow", "LESEN")
     job = (
         ServiceJob.objects.filter(id=job_id)
         .select_related("work_order__property__address", "on_site_contact_party")
@@ -228,6 +241,10 @@ def get_einsatz(request, job_id: UUID):
         .first()
     )
     if job is None:
+        raise HttpError(404, "Einsatz nicht gefunden.")
+    if scope == "EIGENE" and not JobAssignment.objects.filter(
+        service_job_id=job_id, assignee_id=actor
+    ).exists():
         raise HttpError(404, "Einsatz nicht gefunden.")
 
     assignments = [
@@ -332,6 +349,7 @@ def plantafel(
     assignee_ids. Nur Einsätze mit Planbeginn erscheinen; Mehrfachzuweisungen
     tauchen in jeder betroffenen Bahn auf (n:m). Standardfenster: 7 Tage ab heute,
     maximal 31 Tage."""
+    require(request, "workflow", "LESEN")
     today = date.today()
     start = date_from or today
     end = date_to or (start + timedelta(days=6))

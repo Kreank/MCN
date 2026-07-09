@@ -48,18 +48,23 @@ def _logged_in_client(client, *, with_app_user=True):
     user = User.objects.create_user(**kwargs)
     if with_app_user:
         from db_core.models import AppUser
+
+        from .conftest import grant_role
         au = AppUser.objects.create(
             id=uuid.uuid4(), display_name="Login-Akteur", status="ACTIVE", version=1,
         )
         user.app_user_id = au.id
         user.save()
+        # Rechte-Durchsetzung: das Login-Konto braucht jetzt eine Rolle. Für die
+        # positiven Schreibtests reicht ADMINISTRATION (darf alles).
+        grant_role(au.id, "ADMINISTRATION")
     client.force_login(user)
     return client
 
 
 @pytest.mark.django_db
-def test_liste_und_pagination(client, seeded):
-    r = client.get("/api/identity/parties?page=1&page_size=2")
+def test_liste_und_pagination(admin_client, seeded):
+    r = admin_client.get("/api/identity/parties?page=1&page_size=2")
     assert r.status_code == 200
     body = r.json()
     # 3 Personen + 2 Orgs = 5 sichtbar (MERGED ausgeblendet)
@@ -70,8 +75,8 @@ def test_liste_und_pagination(client, seeded):
 
 
 @pytest.mark.django_db
-def test_suche_case_insensitive(client, seeded):
-    r = client.get("/api/identity/parties?q=albrecht")
+def test_suche_case_insensitive(admin_client, seeded):
+    r = admin_client.get("/api/identity/parties?q=albrecht")
     assert r.status_code == 200
     names = {i["display_name"] for i in r.json()["items"]}
     assert "Anna Albrecht" in names
@@ -79,8 +84,8 @@ def test_suche_case_insensitive(client, seeded):
 
 
 @pytest.mark.django_db
-def test_typfilter(client, seeded):
-    r = client.get("/api/identity/parties?party_type=ORGANIZATION")
+def test_typfilter(admin_client, seeded):
+    r = admin_client.get("/api/identity/parties?party_type=ORGANIZATION")
     assert r.status_code == 200
     body = r.json()
     assert body["total"] == 2
@@ -88,20 +93,20 @@ def test_typfilter(client, seeded):
 
 
 @pytest.mark.django_db
-def test_merged_wird_ausgeblendet(client, seeded):
-    r = client.get("/api/identity/parties")
+def test_merged_wird_ausgeblendet(admin_client, seeded):
+    r = admin_client.get("/api/identity/parties")
     ids = {i["id"] for i in r.json()["items"]}
     assert str(seeded["merged"].id) not in ids
     # gezielt nach MERGED gefragt → sichtbar
-    r2 = client.get("/api/identity/parties?status=MERGED")
+    r2 = admin_client.get("/api/identity/parties?status=MERGED")
     ids2 = {i["id"] for i in r2.json()["items"]}
     assert str(seeded["merged"].id) in ids2
 
 
 @pytest.mark.django_db
-def test_detail_person(client, seeded):
+def test_detail_person(admin_client, seeded):
     pid = seeded["persons"][0].id
-    r = client.get(f"/api/identity/parties/{pid}")
+    r = admin_client.get(f"/api/identity/parties/{pid}")
     assert r.status_code == 200
     body = r.json()
     assert body["party_type"] == "PERSON"
@@ -110,9 +115,9 @@ def test_detail_person(client, seeded):
 
 
 @pytest.mark.django_db
-def test_detail_organisation(client, seeded):
+def test_detail_organisation(admin_client, seeded):
     oid = seeded["orgs"][0].id
-    r = client.get(f"/api/identity/parties/{oid}")
+    r = admin_client.get(f"/api/identity/parties/{oid}")
     assert r.status_code == 200
     body = r.json()
     assert body["party_type"] == "ORGANIZATION"
@@ -121,8 +126,8 @@ def test_detail_organisation(client, seeded):
 
 
 @pytest.mark.django_db
-def test_detail_404(client, seeded):
-    r = client.get(f"/api/identity/parties/{uuid.uuid4()}")
+def test_detail_404(admin_client, seeded):
+    r = admin_client.get(f"/api/identity/parties/{uuid.uuid4()}")
     assert r.status_code == 404
 
 
@@ -165,8 +170,8 @@ def test_create_ohne_app_user_id_403(client, db):
 
 
 @pytest.mark.django_db
-def test_create_ohne_login_abgelehnt(client, db):
-    r = client.post(
+def test_create_ohne_login_abgelehnt(anonymous_client, db):
+    r = anonymous_client.post(
         "/api/identity/parties/person",
         data={"first_name": "Anon", "last_name": "Ymous"},
         content_type="application/json",

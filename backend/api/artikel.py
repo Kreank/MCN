@@ -11,6 +11,7 @@ from django.db.models import Q
 from ninja import Query, Router, Schema
 from ninja.errors import HttpError
 
+from api.permissions import require
 from db_core.models import Article, Assembly
 from db_core.services import kalkulation as kalkulation_service
 
@@ -101,6 +102,7 @@ def list_articles(
     page_size: int = Query(25, ge=1, le=100),
 ):
     """Artikel auflisten: Suche (Nummer/Beschreibung), Typ-/Statusfilter."""
+    require(request, "pricing", "LESEN")
     qs = Article.objects.all()
     if filters.q:
         needle = filters.q.strip()
@@ -121,6 +123,7 @@ def list_articles(
 
 @router.get("/articles/{article_id}", response=ArticleDetailOut)
 def get_article(request, article_id: UUID):
+    require(request, "pricing", "LESEN")
     article = Article.objects.filter(id=article_id).first()
     if article is None:
         raise HttpError(404, "Artikel nicht gefunden.")
@@ -153,6 +156,10 @@ class KalkulationOut(Schema):
 def article_kalkulation(request, article_id: UUID):
     """VK-Kalkulation eines Artikels: Listenpreis, aktueller EK und die
     VK-Varianten (Formel oder Festpreis) mit errechnetem Verkaufspreis."""
+    # Zweifelsfall: das Wort „Kalkulation" steht in der Aktionsliste unter AENDERN,
+    # meint dort aber das SCHREIBEN einer Kalkulation. Dieser Endpunkt ist ein GET,
+    # der nur liest/ableitet und nichts schreibt → LESEN.
+    require(request, "pricing", "LESEN")
     data = kalkulation_service.article_kalkulation(article_id)
     if data is None:
         raise HttpError(404, "Artikel nicht gefunden.")
@@ -169,6 +176,7 @@ def list_assemblies(
     page_size: int = Query(25, ge=1, le=100),
 ):
     """Leistungen auflisten: Suche (Nummer/Name), Statusfilter."""
+    require(request, "pricing", "LESEN")
     qs = Assembly.objects.all()
     if filters.q:
         needle = filters.q.strip()
@@ -187,6 +195,7 @@ def list_assemblies(
 
 @router.get("/assemblies/{assembly_id}", response=AssemblyDetailOut)
 def get_assembly(request, assembly_id: UUID):
+    require(request, "pricing", "LESEN")
     assembly = (
         Assembly.objects.filter(id=assembly_id)
         .prefetch_related("components__article", "components__wage_group")

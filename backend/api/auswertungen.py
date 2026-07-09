@@ -8,6 +8,7 @@ from datetime import date
 
 from ninja import Query, Router, Schema
 
+from api.permissions import require
 from db_core.services import auswertungen as auswertungen_service
 
 router = Router()
@@ -81,6 +82,7 @@ class DashboardFilter(Schema):
 @router.get("/dashboards", response=list[DashboardOut])
 def list_dashboards(request):
     """Verfügbare Auswertungs-Dashboards (Landing)."""
+    require(request, "invoicing", "LESEN")
     return auswertungen_service.list_dashboards()
 
 
@@ -90,6 +92,7 @@ def umsatz_projektuebersicht(request, filters: DashboardFilter = Query(...)):
 
     Optionale Filter date_from/date_to (Belegdatum für Umsatz,
     Erstellungsdatum für Projekte)."""
+    require(request, "invoicing", "LESEN")
     return auswertungen_service.umsatz_projektuebersicht_summary(
         date_from=filters.date_from, date_to=filters.date_to
     )
@@ -99,6 +102,7 @@ def umsatz_projektuebersicht(request, filters: DashboardFilter = Query(...)):
 def kunden(request, filters: DashboardFilter = Query(...)):
     """Umsatz und Rechnungsanzahl je Kunde (primärer Rechnungsschuldner),
     Top-N nach Netto-Umsatz. Optionale Filter date_from/date_to (Belegdatum)."""
+    require(request, "invoicing", "LESEN")
     return auswertungen_service.kunden_summary(
         date_from=filters.date_from, date_to=filters.date_to
     )

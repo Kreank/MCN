@@ -4,15 +4,18 @@ import { ActivatedRoute, RouterLink } from '@angular/router';
 import { Mappe, MappeTab } from '../../shared/mappe/mappe';
 import { PartyService } from '../../core/party.service';
 import { PartyDetail, PartyStatus, PartyType } from '../../core/party.model';
+import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 
 type ViewState =
   | { kind: 'loading' }
   | { kind: 'ready'; data: PartyDetail }
+  | VerbotenState
   | { kind: 'error' };
 
 @Component({
   selector: 'app-kontakt-detail',
-  imports: [Mappe, RouterLink],
+  imports: [Mappe, RouterLink, KeinZugriff],
   templateUrl: './kontakt-detail.html',
   styleUrl: './kontakt-detail.scss',
 })
@@ -61,8 +64,8 @@ export class KontaktDetail {
       next: (data) => {
         if (rid === this.reqId) this.state.set({ kind: 'ready', data });
       },
-      error: () => {
-        if (rid === this.reqId) this.state.set({ kind: 'error' });
+      error: (err) => {
+        if (rid === this.reqId) this.state.set(fehlerState(err));
       },
     });
   }

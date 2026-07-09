@@ -15,6 +15,11 @@ uv sync
 # Verbindung (Defaults: localhost:55432, DB mitra_crm_dev, User postgres)
 $env:MCN_DB_PASSWORD = "..."          # weitere: MCN_DB_NAME/USER/HOST/PORT
 
+# Entwicklung: DEBUG muss bewusst eingeschaltet werden (Default ist 0, fail-safe).
+# Ohne dies tragen Session- und CSRF-Cookie das Secure-Flag, der Browser sendet
+# sie über http://localhost nicht mit — der Login schlägt scheinbar grundlos fehl.
+$env:MCN_DEBUG = "1"
+
 # Leere Datenbank: baut ALLES auf (43 SQL-Dateien + Django-Tabellen)
 uv run python manage.py migrate
 
@@ -96,8 +101,33 @@ die KI bekommt keinen Sonderweg an den DB-Toren vorbei.
 `accounts.User` (Login, Sessions, Passwort — Djangos Welt, Schema `public`)
 ↔ `security.app_user` (fachliche Identität, Audit-Referenzziel) über
 `User.app_user_id`. Beim Anlegen eines Mitarbeiters: erst `app_user`-Zeile
-(fachlich), dann Django-User mit dessen UUID. Konten ohne `app_user_id`
-können lesen, aber nicht fachlich schreiben (`db_context` lehnt ab).
+(fachlich), dann Django-User mit dessen UUID.
+
+**Eigenes Login, kein SSO/Fremdanbieter.** Angemeldet wird sich mit der
+**E-Mail-Adresse** (`accounts.backends.EmailBackend`, case-insensitiv eindeutig);
+`username` ist nur noch technisches Pflichtfeld von `AbstractUser`.
+
+**Die gesamte API ist anmeldepflichtig** (`NinjaAPI(auth=django_auth)`).
+Ausnahmen (`auth=None`): `/api/health`, `/api/auth/{csrf,login,logout,me}`.
+`api/tests/test_endpoint_schutz.py` zählt die Ninja-Registry durch und schlägt
+fehl, sobald ein Endpunkt ungeschützt bleibt.
+
+**Rechte** aus `security.role_permission` (Migration 0026; Modul `hr` per 0021):
+`db_core/services/rechte.py` wertet aus, `api/permissions.py` setzt durch.
+Drei Torfunktionen, **fail-closed**:
+
+| Funktion | wofür | Verhalten bei `row_scope='EIGENE'` |
+|---|---|---|
+| `require` | Regelfall, Endpunkt filtert nicht | **403** (nie zu `ALLE` aufweiten!) |
+| `require_scoped` | Endpunkt filtert wirklich auf eigene Zeilen | gibt Scope zurück, Aufrufer **muss** filtern |
+| `require_create` | ANLEGEN | irrelevant, Erzeuger ist der Akteur |
+
+Konten ohne `app_user_id` bekommen 403, bevor Daten fließen. Fremde Zeilen
+antworten mit **404** statt 403, damit ihre Existenz nicht verraten wird.
+
+Nicht verwechseln: **Recht** → 403 (`permissions.py`), **fachliches Tor** → 422
+(Service + DB-Trigger). Wer FREIGEBEN darf, darf trotzdem keinen Auftrag
+freigeben, dem die Vorbedingungen fehlen.
 
 ## Admin
 

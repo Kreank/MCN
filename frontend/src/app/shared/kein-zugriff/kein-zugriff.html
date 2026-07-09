@@ -1,0 +1,17 @@
+<div class="sperr note" role="alert">
+  <p class="sperr__kicker">
+    <span class="sperr__glyph" aria-hidden="true">◇</span>
+    Zugriff · verweigert
+  </p>
+  <h2 class="sperr__titel note__titel">Keine Berechtigung</h2>
+  <p class="note__text">
+    Für diesen Bereich fehlt Ihrem Konto die Berechtigung. Wenden Sie sich an die
+    Administration, wenn Sie hier Zugriff benötigen.
+  </p>
+  @if (detail(); as d) {
+    <p class="sperr__detail">{{ d }}</p>
+  }
+  <div class="note__aktionen">
+    <a class="btn btn--primary" routerLink="/uebersicht">Zur Übersicht</a>
+  </div>
+</div>

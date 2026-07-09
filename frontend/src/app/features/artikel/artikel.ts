@@ -8,6 +8,8 @@ import {
   ArticlePage,
   AssemblyPage,
 } from '../../core/artikel.model';
+import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 
 type Modus = 'artikel' | 'leistungen';
 
@@ -15,11 +17,12 @@ type ViewState =
   | { kind: 'loading' }
   | { kind: 'ready'; modus: 'artikel'; data: ArticlePage }
   | { kind: 'ready'; modus: 'leistungen'; data: AssemblyPage }
+  | VerbotenState
   | { kind: 'error' };
 
 @Component({
   selector: 'app-artikel',
-  imports: [RouterLink],
+  imports: [RouterLink, KeinZugriff],
   templateUrl: './artikel.html',
   styleUrl: './artikel.scss',
 })
@@ -48,6 +51,7 @@ export class Artikel {
     const s = this.state();
     const wort = this.modus() === 'artikel' ? 'Artikel' : 'Leistungen';
     if (s.kind === 'loading') return `${wort} werden geladen.`;
+    if (s.kind === 'forbidden') return 'Keine Berechtigung für Artikel und Leistungen.';
     if (s.kind === 'error') return `${wort} konnten nicht geladen werden.`;
     const t = s.data.total;
     if (t === 0) return `Keine ${wort} gefunden.`;
@@ -103,8 +107,8 @@ export class Artikel {
         next: (data) => {
           if (id === this.reqId) this.state.set({ kind: 'ready', modus, data });
         },
-        error: () => {
-          if (id === this.reqId) this.state.set({ kind: 'error' });
+        error: (err) => {
+          if (id === this.reqId) this.state.set(fehlerState(err));
         },
       });
     } else {
@@ -112,8 +116,8 @@ export class Artikel {
         next: (data) => {
           if (id === this.reqId) this.state.set({ kind: 'ready', modus, data });
         },
-        error: () => {
-          if (id === this.reqId) this.state.set({ kind: 'error' });
+        error: (err) => {
+          if (id === this.reqId) this.state.set(fehlerState(err));
         },
       });
     }

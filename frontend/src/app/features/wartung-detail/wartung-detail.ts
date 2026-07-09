@@ -2,6 +2,8 @@ import { Component, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { Mappe, MappeTab } from '../../shared/mappe/mappe';
+import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 import { WartungService } from '../../core/wartung.service';
 import {
   ContractDetail,
@@ -17,11 +19,12 @@ import {
 type ViewState =
   | { kind: 'loading' }
   | { kind: 'ready'; data: ContractDetail }
+  | VerbotenState
   | { kind: 'error' };
 
 @Component({
   selector: 'app-wartung-detail',
-  imports: [Mappe, RouterLink],
+  imports: [Mappe, RouterLink, KeinZugriff],
   templateUrl: './wartung-detail.html',
   styleUrl: './wartung-detail.scss',
 })
@@ -74,8 +77,8 @@ export class WartungDetail {
       next: (data) => {
         if (rid === this.reqId) this.state.set({ kind: 'ready', data });
       },
-      error: () => {
-        if (rid === this.reqId) this.state.set({ kind: 'error' });
+      error: (err) => {
+        if (rid === this.reqId) this.state.set(fehlerState(err));
       },
     });
   }

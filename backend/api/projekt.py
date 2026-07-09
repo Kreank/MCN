@@ -14,6 +14,7 @@ from ninja.errors import HttpError
 from ninja.responses import Status
 from ninja.security import django_auth
 
+from api.permissions import require
 from db_core.models import Checklist, Project, ProjectLog, ServiceCase, StatusChange
 from db_core.services import projekt as projekt_service
 
@@ -93,6 +94,7 @@ def list_projects(
     page_size: int = Query(25, ge=1, le=100),
 ):
     """Projekte auflisten: Suche (Name/Nummer), Status-/Kategoriefilter, Seiten."""
+    require(request, "workflow", "LESEN")
     qs = Project.objects.select_related("category")
 
     if filters.q:
@@ -184,21 +186,10 @@ def _project_detail(project_id):
 
 # --- Schreibender Endpoint (Session-Auth Pflicht) --------------------------
 
-def _actor_id(request):
-    actor = getattr(request.user, "app_user_id", None)
-    if actor is None:
-        raise HttpError(
-            403,
-            "Dem Login-Konto ist kein security.app_user zugeordnet; "
-            "fachliche Schreibvorgänge sind damit nicht möglich.",
-        )
-    return actor
-
-
 @router.post("/projects", response={201: ProjectDetailOut}, auth=django_auth)
 def create_project(request, payload: ProjectIn):
     """Neues Projekt anlegen (workflow.project + optionale Liegenschafts-Links)."""
-    actor = _actor_id(request)
+    actor, _ = require(request, "workflow", "ANLEGEN")
     try:
         project = projekt_service.create_project(
             actor,
@@ -216,6 +207,7 @@ def create_project(request, payload: ProjectIn):
 @router.get("/projects/{project_id}", response=ProjectDetailOut)
 def get_project(request, project_id: UUID):
     """Detail eines Projekts inkl. Liegenschaften und Vorgängen."""
+    require(request, "workflow", "LESEN")
     return _project_detail(project_id)
 
 
@@ -281,6 +273,7 @@ class ChecklistOut(Schema):
 @router.get("/projects/{project_id}/log", response=list[LogEntryOut])
 def get_project_log(request, project_id: UUID):
     """Logbuch-Einträge eines Projekts (neueste zuerst)."""
+    require(request, "workflow", "LESEN")
     entries = (
         ProjectLog.objects.filter(project_id=project_id)
         .select_related("created_by")
@@ -300,6 +293,7 @@ def get_project_log(request, project_id: UUID):
 @router.get("/projects/{project_id}/checklists", response=list[ChecklistOut])
 def get_project_checklists(request, project_id: UUID):
     """Checklisten eines Projekts inkl. Punkten (erledigt-Status)."""
+    require(request, "workflow", "LESEN")
     checklists = (
         Checklist.objects.filter(project_id=project_id)
         .prefetch_related("items__done_by")
@@ -325,6 +319,7 @@ def get_project_checklists(request, project_id: UUID):
 def get_service_case(request, case_id: UUID):
     """Detail eines Vorgangs inkl. Liegenschaft, Projekt, Melder und
     Statusverlauf (append-only aus workflow.status_change)."""
+    require(request, "workflow", "LESEN")
     case = (
         ServiceCase.objects.filter(id=case_id)
         .select_related("property__address", "project", "reported_by_party")

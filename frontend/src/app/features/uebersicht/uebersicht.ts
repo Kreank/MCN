@@ -1,5 +1,6 @@
 import { Component, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
+import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 import { AufgabeService } from '../../core/aufgabe.service';
 import { ProjektService } from '../../core/projekt.service';
 import { BelegService } from '../../core/beleg.service';
@@ -10,6 +11,7 @@ import { Quote } from '../../core/beleg.model';
 type Tile<T> =
   | { kind: 'loading' }
   | { kind: 'ready'; total: number; items: T[] }
+  | VerbotenState
   | { kind: 'error' };
 
 @Component({
@@ -30,15 +32,15 @@ export class Uebersicht {
   constructor() {
     this.aufgabeSvc.list({ page: 1, page_size: 5, status: 'OFFEN' }).subscribe({
       next: (d) => this.tasks.set({ kind: 'ready', total: d.total, items: d.items }),
-      error: () => this.tasks.set({ kind: 'error' }),
+      error: (err) => this.tasks.set(fehlerState(err)),
     });
     this.projektSvc.list({ page: 1, page_size: 5, status: 'OPEN' }).subscribe({
       next: (d) => this.projects.set({ kind: 'ready', total: d.total, items: d.items }),
-      error: () => this.projects.set({ kind: 'error' }),
+      error: (err) => this.projects.set(fehlerState(err)),
     });
     this.belegSvc.list({ page: 1, page_size: 5, status: 'ENTWURF' }).subscribe({
       next: (d) => this.quotes.set({ kind: 'ready', total: d.total, items: d.items }),
-      error: () => this.quotes.set({ kind: 'error' }),
+      error: (err) => this.quotes.set(fehlerState(err)),
     });
   }
 

@@ -2,10 +2,13 @@ import { Component, computed, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { BuchhaltungService } from '../../core/buchhaltung.service';
 import { DunningList, euro } from '../../core/buchhaltung.model';
+import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 
 type ViewState =
   | { kind: 'loading' }
   | { kind: 'ready'; data: DunningList }
+  | VerbotenState
   | { kind: 'error' };
 
 // Tab-Auswahl: 'alle' = alles, 'offen' = überfällig aber ungemahnt (Stufe 0),
@@ -14,7 +17,7 @@ type Tab = 'alle' | 'offen' | number;
 
 @Component({
   selector: 'app-mahnwesen',
-  imports: [RouterLink],
+  imports: [RouterLink, KeinZugriff],
   templateUrl: './mahnwesen.html',
   styleUrl: './mahnwesen.scss',
 })
@@ -55,6 +58,7 @@ export class Mahnwesen {
   protected readonly resultSummary = computed(() => {
     const s = this.state();
     if (s.kind === 'loading') return 'Mahnfälle werden geladen.';
+    if (s.kind === 'forbidden') return 'Keine Berechtigung für das Mahnwesen.';
     if (s.kind === 'error') return 'Mahnfälle konnten nicht geladen werden.';
     const n = this.filtered().length;
     return n === 0 ? 'Keine Mahnfälle in dieser Auswahl.' : `${n} Mahnfälle in dieser Auswahl.`;
@@ -76,7 +80,7 @@ export class Mahnwesen {
     this.state.set({ kind: 'loading' });
     this.svc.listDunning().subscribe({
       next: (data) => this.state.set({ kind: 'ready', data }),
-      error: () => this.state.set({ kind: 'error' }),
+      error: (err) => this.state.set(fehlerState(err)),
     });
   }
 

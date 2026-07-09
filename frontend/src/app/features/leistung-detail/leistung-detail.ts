@@ -2,17 +2,20 @@ import { Component, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { Mappe, MappeTab } from '../../shared/mappe/mappe';
+import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 import { ArtikelService } from '../../core/artikel.service';
 import { AssemblyComponent, AssemblyDetail, StammStatus } from '../../core/artikel.model';
 
 type ViewState =
   | { kind: 'loading' }
   | { kind: 'ready'; data: AssemblyDetail }
+  | VerbotenState
   | { kind: 'error' };
 
 @Component({
   selector: 'app-leistung-detail',
-  imports: [Mappe, RouterLink],
+  imports: [Mappe, RouterLink, KeinZugriff],
   templateUrl: './leistung-detail.html',
   styleUrl: './leistung-detail.scss',
 })
@@ -58,8 +61,8 @@ export class LeistungDetail {
       next: (data) => {
         if (rid === this.reqId) this.state.set({ kind: 'ready', data });
       },
-      error: () => {
-        if (rid === this.reqId) this.state.set({ kind: 'error' });
+      error: (err) => {
+        if (rid === this.reqId) this.state.set(fehlerState(err));
       },
     });
   }

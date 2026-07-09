@@ -7,18 +7,22 @@ settings.DEBUG; auf produktiven Umgebungen bricht der Befehl ab. Alle Writes
 gehen über die Service-Schicht, also durch business_transaction
 (Benutzerkontext, Audit).
 """
+import os
 import uuid
 from datetime import date, datetime, timedelta, timezone as dt_timezone
 from decimal import Decimal
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
+from django.db.models import Q
 
+from db_core.db_context import business_transaction
 from db_core.models import (
     AppUser, Article, ArticleSalePrice, Assembly, DunningNotice, Employee,
     Invoice, MaintenanceContract, Party, Payment, Project, ProjectLog, Property,
-    Quote, SalePriceGroup, Task, WageGroup, WorkOrder,
+    Quote, SalePriceGroup, Task, UserRole, WageGroup, WorkOrder,
 )
 from db_core.services import artikel as artikel_service
 from db_core.services import aufgabe as aufgabe_service
@@ -232,6 +236,9 @@ DEMO_EMPLOYEES = [
     {
         "person": {"salutation": "Herr", "first_name": "Jörg", "last_name": "Feldmann"},
         "account_id": uuid.UUID("00000000-0000-4000-8000-000000000101"),
+        # Login-Konto (accounts.User): E-Mail rein ASCII (joerg, nicht jörg).
+        "login_email": "joerg.feldmann@mitra-sanitaer.de",
+        "role": "ADMINISTRATION",
         "hired_on": date(2021, 3, 1),
         "hours": VOLLZEIT_HOURS,
         "vacation_days": Decimal("30"),
@@ -245,6 +252,8 @@ DEMO_EMPLOYEES = [
     {
         "person": {"salutation": "Frau", "first_name": "Petra", "last_name": "Lindqvist"},
         "account_id": uuid.UUID("00000000-0000-4000-8000-000000000102"),
+        "login_email": "petra.lindqvist@mitra-sanitaer.de",
+        "role": "DISPOSITION",
         "hired_on": date(2022, 9, 1),
         "hours": TEILZEIT_HOURS,
         "vacation_days": Decimal("18"),
@@ -254,6 +263,8 @@ DEMO_EMPLOYEES = [
     {
         "person": {"salutation": "Herr", "first_name": "Sven", "last_name": "Ostmann"},
         "account_id": uuid.UUID("00000000-0000-4000-8000-000000000103"),
+        "login_email": "sven.ostmann@mitra-sanitaer.de",
+        "role": "NUR_LESEN",
         "hired_on": date(2019, 1, 15),
         "hours": VOLLZEIT_HOURS,
         "vacation_days": Decimal("30"),
@@ -262,6 +273,14 @@ DEMO_EMPLOYEES = [
         "absences": [],
     },
 ]
+
+# Administrations-Login, verknüpft mit dem Seed-Akteur (DEMO_APP_USER_ID). Django-
+# Superuser (Admin-Backend), fachlich Rolle ADMINISTRATION.
+ADMIN_LOGIN_EMAIL = "admin@mitra-sanitaer.de"
+
+# Wegwerf-Dev-Passwort (12+ Zeichen, erfüllt die Passwort-Policy). NIE in eine
+# Datei schreiben — nur auf stdout ausgeben. Nur bei settings.DEBUG gesetzt.
+DEV_PASSWORD = os.environ.get("MCN_DEV_PASSWORD", "mcn-dev-passwort-2026")
 
 
 def _first_monday(year, month):
@@ -904,6 +923,45 @@ class Command(BaseCommand):
                 f"({employee.status})"
             )
 
+        # Login-Konten (accounts.User) für die Seed-Mitarbeiter und ein Admin-
+        # Konto. Jedes Konto ist über app_user_id mit einem security.app_user
+        # verknüpft; die fachliche Rolle kommt über security.user_role. Passwörter
+        # NUR bei settings.DEBUG (siehe _ensure_login). Idempotent über die
+        # E-Mail-Existenz bzw. eine bereits gültige UserRole-Zeile.
+        User = get_user_model()
+        if settings.DEBUG:
+            self.stdout.write(
+                f"Seed-Logins erhalten das Dev-Passwort aus MCN_DEV_PASSWORD "
+                f"(aktuell: {DEV_PASSWORD!r}) — nur DEBUG, nicht in Dateien ablegen."
+            )
+        # (E-Mail, app_user_id, Rolle, Admin-Rechte) — die drei Mitarbeiter plus Admin.
+        seed_logins = [
+            (emp["login_email"], emp["account_id"], emp["role"], False)
+            for emp in DEMO_EMPLOYEES
+        ]
+        seed_logins.append((ADMIN_LOGIN_EMAIL, DEMO_APP_USER_ID, "ADMINISTRATION", True))
+
+        for email, app_user_id, role_code, is_admin in seed_logins:
+            if AppUser.objects.filter(id=app_user_id).first() is None:
+                self.stdout.write(
+                    self.style.WARNING(
+                        f"Login '{email}' übersprungen: kein security.app_user "
+                        f"{app_user_id} vorhanden."
+                    )
+                )
+                continue
+            if self._ensure_login(
+                User, email=email, app_user_id=app_user_id,
+                is_staff=is_admin, is_superuser=is_admin,
+            ):
+                angelegt += 1
+            else:
+                uebersprungen += 1
+            if self._ensure_role(actor, app_user_id=app_user_id, role_code=role_code):
+                angelegt += 1
+            else:
+                uebersprungen += 1
+
         self.stdout.write(
             self.style.SUCCESS(
                 f"seed_demo fertig: {angelegt} angelegt, {uebersprungen} übersprungen."
@@ -922,3 +980,63 @@ class Command(BaseCommand):
                     "version": 1,
                 },
             )
+
+    def _ensure_login(self, User, *, email, app_user_id, is_staff=False,
+                      is_superuser=False):
+        """Legt ein Login-Konto (accounts.User) idempotent an. Rückgabe: True, wenn
+        neu angelegt, sonst False.
+
+        Idempotenz über die E-Mail (case-insensitiv, entspricht dem
+        UniqueConstraint auf Lower('email')). Das Passwort wird NUR bei
+        settings.DEBUG gesetzt (Wegwerf-Dev-Passwort aus MCN_DEV_PASSWORD) und
+        ausschließlich auf stdout ausgegeben, nie in eine Datei geschrieben. Ohne
+        DEBUG bleibt das Konto ohne nutzbares Passwort (manage.py changepassword).
+        """
+        if User.objects.filter(email__iexact=email).exists():
+            return False
+        # username bleibt technisches Pflichtfeld von AbstractUser; wir nehmen die
+        # E-Mail (angemeldet wird sich ohnehin über die E-Mail, EmailBackend).
+        user = User(username=email, email=email, app_user_id=app_user_id,
+                    is_staff=is_staff, is_superuser=is_superuser)
+        if settings.DEBUG:
+            user.set_password(DEV_PASSWORD)
+        else:
+            user.set_unusable_password()
+        user.save()
+        if settings.DEBUG:
+            self.stdout.write(f"Login angelegt: {email} (Passwort gesetzt, s. o.)")
+        else:
+            self.stdout.write(
+                self.style.WARNING(
+                    f"Login angelegt: {email} — Passwort NICHT gesetzt (kein DEBUG); "
+                    f"bitte 'manage.py changepassword {email}' nutzen."
+                )
+            )
+        return True
+
+    def _ensure_role(self, actor, *, app_user_id, role_code):
+        """Weist einem app_user eine Rolle über security.user_role zu (idempotent).
+        Rückgabe: True, wenn neu angelegt, sonst False.
+
+        user_role ist eine Fachtabelle (security-Schema) → Anlage über
+        business_transaction (Benutzerkontext/Audit). granted_by ist NOT NULL
+        (Migration 0026) und wird auf den Seed-Akteur gesetzt. Idempotenz über
+        eine bereits heute gültige Zuordnung derselben Rolle (das EXCLUDE der
+        Tabelle verböte eine zeitgleiche Doppelzuordnung ohnehin).
+        """
+        today = date.today()
+        exists = (
+            UserRole.objects.filter(user_id=app_user_id, role_id=role_code,
+                                    valid_from__lte=today)
+            .filter(Q(valid_until__isnull=True) | Q(valid_until__gt=today))
+            .exists()
+        )
+        if exists:
+            return False
+        with business_transaction(actor.id):
+            UserRole.objects.create(
+                id=uuid.uuid4(), user_id=app_user_id, role_id=role_code,
+                valid_from=today, granted_by_id=actor.id,
+            )
+        self.stdout.write(f"Rolle zugewiesen: {role_code} -> app_user {app_user_id}")
+        return True

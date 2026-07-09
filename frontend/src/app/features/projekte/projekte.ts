@@ -4,17 +4,20 @@ import { RouterLink } from '@angular/router';
 import { Subject, debounceTime, distinctUntilChanged } from 'rxjs';
 import { ProjektService } from '../../core/projekt.service';
 import { Project, ProjectPage, ProjectStatus } from '../../core/projekt.model';
+import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 
 type ViewState =
   | { kind: 'loading' }
   | { kind: 'ready'; data: ProjectPage }
+  | VerbotenState
   | { kind: 'error' };
 
 type Segment = { value: ProjectStatus | null; label: string };
 
 @Component({
   selector: 'app-projekte',
-  imports: [RouterLink],
+  imports: [RouterLink, KeinZugriff],
   templateUrl: './projekte.html',
   styleUrl: './projekte.scss',
 })
@@ -47,6 +50,7 @@ export class Projekte {
   protected readonly resultSummary = computed(() => {
     const s = this.state();
     if (s.kind === 'loading') return 'Projekte werden geladen.';
+    if (s.kind === 'forbidden') return 'Keine Berechtigung für die Projekte.';
     if (s.kind === 'error') return 'Projekte konnten nicht geladen werden.';
     const t = s.data.total;
     if (t === 0) return 'Keine Projekte gefunden.';
@@ -105,8 +109,8 @@ export class Projekte {
         next: (data) => {
           if (id === this.reqId) this.state.set({ kind: 'ready', data });
         },
-        error: () => {
-          if (id === this.reqId) this.state.set({ kind: 'error' });
+        error: (err) => {
+          if (id === this.reqId) this.state.set(fehlerState(err));
         },
       });
   }

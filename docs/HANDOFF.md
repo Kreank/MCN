@@ -10,35 +10,47 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 > read-only live** (Kontakte, Liegenschaften, Projekte, Dokumente, Planung inkl.
 > Plantafel/Kalender, Wartung, Aufgaben, **Mitarbeiter/HR**, Artikel inkl.
 > VK-Kalkulation, Buchhaltung inkl. Mahnwesen + Storno/Korrektur + Beleg-PDF,
-> Auswertungen). **298 Backend-Tests grün**, db_core-Migrationen bis **0020**.
+> Auswertungen). **Auth/Login + Rechtematrix stehen** (eigenes Login, kein SSO);
+> die gesamte API ist anmeldepflichtig. **500 Backend-Tests grün**,
+> db_core-Migrationen bis **0022**, accounts bis **0002**.
 
 ---
 
 ## 0. Nächste Session — Empfehlung & offene Entscheidung (ZUERST LESEN)
 
-Der breite **read-only-Ausbau ist abgeschlossen**: fast alle Hero-Nav-Bereiche
-haben Liste+Detail, und für praktisch jede Aktion existiert bereits ein
+Der breite **read-only-Ausbau ist abgeschlossen**, **HR-Schema (0019) steht**, und
+**Auth/Login + Rechtematrix sind gebaut**. Für praktisch jede Aktion existiert ein
 **getesteter Schreib-Service** (create/status/publish/storno/zahlung/mahnung/
-wartung-trigger/kalkulation/**personal** …) — nur **nicht im UI verdrahtet**.
+wartung-trigger/kalkulation/personal …) — die meisten sind aber **noch nicht im UI
+verdrahtet**. Genau das ist jetzt der größte Hebel.
 
-**Der HR-Slice (Migration 0019) ist erledigt** — er war der größte offene
-Schema-Entwurf. Damit ist Topf B nur noch klein. Es bleiben:
+**A) Schreib-UIs — „+ Neu", Bearbeiten, Statusaktionen. KEIN neues Schema.**
+- *Was:* Formulare und Aktions-Buttons an die vorhandenen, getesteten
+  Schreib-Endpunkte hängen. Auth, CSRF, Rechte und das 403-Handling im Frontend
+  stehen bereits — `authService.darf(modul, aktion)` blendet aus, was der Server
+  ohnehin ablehnen würde.
+- *Warum zuerst:* verwandelt das read-only-Gerüst in ein **bedienbares System**.
+  Jede Aktion ist ein kleiner, unabhängiger Slice. Größe: **L**, aber gut teilbar.
+- *Reihenfolge-Vorschlag:* Aufgaben (anlegen/erledigen) → Abwesenheiten
+  (einreichen/genehmigen) → Kontakte/Liegenschaften anlegen → Belege
+  (anlegen/veröffentlichen/versenden) → Zahlungen/Mahnungen (Endpunkte fehlen
+  noch, nur Services!) → Plantafel-Drag&Drop.
 
-**A) Auth/Login + Schreib-UIs — der größte Hebel, KEIN neues Schema.**
-- *Was:* Django-Session-Login + Angular-Auth (Guard/Interceptor), Verdrahtung der
-  vorhandenen Schreib-Endpunkte in „+ Neu"/Bearbeiten/Statusaktionen; Rechtematrix
-  aus `security.role/role_permission` (0026 existiert) app-seitig durchsetzen.
-- *Warum zuerst:* verwandelt das gesamte read-only-Gerüst in ein **bedienbares
-  System** (größter spürbarer Tiefensprung), ohne DB-Arbeit. `accounts.User` trägt
-  bereits `app_user_id`; `django_auth` ist auf allen Schreib-Endpunkten aktiv
-  (CSRF automatisch an). Größe: **L** (Auth-Infra + viele kleine Formular-Slices).
-- *Erstmaßnahme beim Auth-Slice:* `GET /api/hr/employees/{id}` absichern. Der
-  Endpunkt liefert Geburtsdatum und die volle Abwesenheitshistorie inkl.
-  Krankheitszeiten (DSGVO Art. 9). `GET /api/hr/absences` ist deshalb **schon
-  jetzt** der einzige Lese-Endpunkt mit `auth=django_auth`.
-- *Achtung:* die alte Notiz „Auth ganz zuletzt" (Abschnitt 7) stammt aus einer
-  Zeit, als kaum etwas gebaut war. Inzwischen würde Auth **alle** Bereiche
-  gleichzeitig aktivieren.
+**A2) Offene Enden aus dem Auth-Slice** (klein, aber sicherheitsrelevant):
+- **`row_scope='EIGENE'` ist nur für Aufgaben und Einsätze umgesetzt.** Überall
+  sonst gilt **fail-closed**: `require()` wirft 403, wenn die Rolle nur eigene
+  Zeilen sehen darf. Folge: ein MONTEUR sieht Projekte, Aufträge, Wartung und
+  Plantafel gar nicht. Wer das ändern will, setzt EIGENE dort echt um und stellt
+  den Endpunkt auf `require_scoped` um — **niemals** einfach auf `require`
+  zurückfallen, das wäre ein stiller Datenleak.
+- Kein „Passwort vergessen"-Flow (braucht Mailversand). Kein Passwort-Ändern-UI.
+  Hero-Fakt für später: Einmal-Passwort 12 Stunden gültig.
+- Keine Rechtematrix-Pflege-UI (`security.role_permission` ist Stammdaten;
+  Änderungen derzeit nur per SQL/Migration). Siehe `docs/roadmap/13`.
+- Zwei Sub-Ressourcen zeigen 403 noch als generischen Fehler:
+  `projekt-detail` (Tabs Aufträge/Aufgaben/Logbuch/Checklisten) und
+  `artikel-detail` (VK-Kalkulation). Muster zum Nachziehen:
+  `shared/http-fehler.ts` + `shared/kein-zugriff`.
 
 **B) Verbleibende Schema-Bereiche (read-only, Hand-SQL-Migrationen).**
 Muster: `migrations/0019_hr_personal.py` bzw. `0016_maintenance_wartung.py`
@@ -79,8 +91,25 @@ docker start mitra-crm-test           # falls gestoppt (Exited)
 
 Für ALLE Backend-Befehle diese Env-Vars setzen (sonst schlägt die DB-Verbindung fehl):
 ```bash
-export MCN_DB_NAME=mitra_crm_test MCN_DB_PASSWORD=mcn_dev_local
+export MCN_DB_NAME=mitra_crm_test MCN_DB_PASSWORD=mcn_dev_local MCN_DEBUG=1
 ```
+
+**`MCN_DEBUG=1` ist seit dem Auth-Slice Pflicht für die Entwicklung.** Der Default
+steht bewusst auf `0` (fail-safe: Produktion muss DEBUG nicht ausschalten, die
+Entwicklung muss es einschalten). An `DEBUG` hängen die `Secure`-Flags von
+Session- und CSRF-Cookie — ohne `MCN_DEBUG=1` schickt der Browser sie über
+`http://localhost` nicht mit und **der Login schlägt fehl**. Ebenso vergibt
+`seed_demo` die Dev-Passwörter nur bei `DEBUG`.
+
+**Dev-Logins** (von `seed_demo` angelegt, Passwort aus `MCN_DEV_PASSWORD`,
+Default `mcn-dev-passwort-2026`):
+
+| E-Mail | Rolle | sieht |
+|---|---|---|
+| `admin@mitra-sanitaer.de` | ADMINISTRATION (Superuser) | alles |
+| `joerg.feldmann@mitra-sanitaer.de` | ADMINISTRATION | alles |
+| `petra.lindqvist@mitra-sanitaer.de` | DISPOSITION | kein `hr`, kein `pricing`/`invoicing` |
+| `sven.ostmann@mitra-sanitaer.de` | NUR_LESEN | nur lesen, kein `hr` |
 
 **Backend** (`cd backend`, uv):
 ```bash
@@ -118,6 +147,48 @@ uv run python manage.py migrate db_core                          # wendet die NE
 Kette gebaut.)
 
 ---
+
+## 2b. Auth & Rechte (seit dem Auth-Slice)
+
+**Eigenes Login, kein Fremdanbieter.** E-Mail + Passwort, Django-Session-Cookie.
+Ausdrücklich **kein SSO/OIDC/Microsoft** (User-Entscheidung). Die in
+`docs/roadmap/14` beschriebene Microsoft/Google-OAuth-Anbindung betrifft
+ausschließlich den **Mailversand** (Absender-Konto verbinden) — nicht die
+Anmeldung. Nicht verwechseln.
+
+- **Die gesamte API ist anmeldepflichtig**: `NinjaAPI(auth=django_auth)` in
+  `api/api.py`. Ausnahmen mit `auth=None`: `/api/health` und
+  `/api/auth/{csrf,login,logout,me}`. Ein Test
+  (`api/tests/test_endpoint_schutz.py`) zählt die Ninja-Registry durch und
+  schlägt fehl, sobald jemand einen Endpunkt ungeschützt lässt.
+- **Anmeldung** über `accounts.backends.EmailBackend` (E-Mail case-insensitiv
+  eindeutig, `UniqueConstraint(Lower("email"))`). `username` bleibt nur
+  technisches Pflichtfeld von `AbstractUser`.
+- **CSRF**: django-ninja schützt Cookie-Auth-Endpunkte automatisch. Die
+  `auth=None`-Endpunkte `/auth/login` und `/auth/logout` holen die Prüfung
+  selbst nach (`ninja.utils.check_csrf`) — sonst wäre **Login-CSRF** möglich.
+  Das Frontend holt den Token über `GET /api/auth/csrf` und schickt ihn als
+  `X-CSRFToken`.
+- **Rechte** (`security.role`/`user_role`/`role_permission`, Migration 0026,
+  Modul `hr` per 0021 ergänzt): `db_core/services/rechte.py` wertet aus,
+  `api/permissions.py` setzt durch. Rollen **addieren** Rechte; beim `row_scope`
+  gewinnt die weiteste Sicht (`ALLE`).
+- **Drei Torfunktionen — fail-closed als Grundhaltung:**
+  - `require(request, modul, aktion)` — Regelfall. Wirft **403 auch dann**, wenn
+    die Rolle nur `EIGENE` sehen darf, der Endpunkt das aber nicht umsetzt.
+    `EIGENE` wird **nie** stillschweigend zu `ALLE`.
+  - `require_scoped(...)` — nur für Endpunkte, die wirklich auf eigene Zeilen
+    filtern (aktuell: Aufgaben, Einsätze). Wer das nutzt, **muss** filtern.
+  - `require_create(...)` — für ANLEGEN; dort ist `EIGENE` bedeutungslos.
+- **Fremde Zeilen → 404, nicht 403** (Detail/Schreibzugriff), damit ihre Existenz
+  nicht verraten wird.
+- **Zwei Ebenen nicht verwechseln:** Recht (403, `permissions.py`) vs. fachliches
+  Tor (422, Service + DB-Trigger). Wer FREIGEBEN darf, darf trotzdem keinen
+  Auftrag freigeben, dem die Vorbedingungen fehlen.
+- **Frontend**: `core/auth.service.ts` (Signal + `darf()`), `auth.interceptor.ts`
+  (`withCredentials`, `X-CSRFToken`, 401 → `/login`, 403 **nicht** umleiten),
+  `auth.guard.ts` (`authGuard` + `darfGuard(modul, aktion)` je Route),
+  `shared/http-fehler.ts` (403 → `kind:'forbidden'`), `shared/kein-zugriff`.
 
 ## 3. Architektur & eiserne Konventionen
 
@@ -255,12 +326,15 @@ gültiges Szenario (geprüfter Auftrag + Beteiligte).
 
 ## 7. Fixierte Entscheidungen (nicht erneut aufmachen)
 
-- **Auth spät** (User-Wunsch; zuletzt bestätigt, als HR vorgezogen wurde). Folge:
-  UI ist read-only; Schreib-Endpunkte existieren + sind getestet, aber ohne Login
-  nicht im UI verdrahtet. „+ Neu"-Buttons/Formulare kommen mit dem Auth-Slice.
-  **Ausnahme:** Lese-Endpunkte mit Gesundheitsdaten (`GET /api/hr/absences`)
-  tragen bereits `django_auth` — die Dev-Phasen-Konvention „Lesen ohne Auth"
-  gilt für DSGVO-Art.-9-Daten ausdrücklich nicht.
+- **Auth ist gebaut** (siehe Abschnitt 2b) — die frühere Notiz „Auth ganz zuletzt"
+  ist erledigt und gilt nicht mehr. Die gesamte API ist anmeldepflichtig; die
+  Dev-Phasen-Konvention „Lesen ohne Auth" ist damit **abgeschafft**.
+- **Eigenes Login, kein SSO/Microsoft** (ausdrückliche User-Entscheidung). Die
+  Microsoft/Google-OAuth-Anbindung in `docs/roadmap/14` betrifft nur den
+  **Mailversand**, nicht die Anmeldung.
+- **`row_scope='EIGENE'` ist fail-closed**: wo eine Ansicht die Zeilenbegrenzung
+  nicht umsetzt, gibt es 403 statt aller Zeilen. Nicht „vorübergehend" auf
+  `require_scoped` ohne Filter umstellen — das wäre ein stiller Datenleak.
 - **Nav-Begriffe Hero-nah:** „Projekte"/„Dokumente" (nicht Vorgänge/Belege).
 - **Liegenschaften** eigener Nav-Punkt (nicht Reiter in Kontakten).
 - **Kein Löschen** (GoBD/Audit): Rechnungen nur Storno; Projekte nur verschieben/

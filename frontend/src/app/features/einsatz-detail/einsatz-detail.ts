@@ -2,6 +2,8 @@ import { Component, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { Mappe, MappeTab } from '../../shared/mappe/mappe';
+import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 import { EinsatzService } from '../../core/einsatz.service';
 import {
   ServiceJobDetail,
@@ -18,11 +20,12 @@ import { WorkOrderStatus } from '../../core/auftrag.model';
 type ViewState =
   | { kind: 'loading' }
   | { kind: 'ready'; data: ServiceJobDetail }
+  | VerbotenState
   | { kind: 'error' };
 
 @Component({
   selector: 'app-einsatz-detail',
-  imports: [Mappe, RouterLink],
+  imports: [Mappe, RouterLink, KeinZugriff],
   templateUrl: './einsatz-detail.html',
   styleUrl: './einsatz-detail.scss',
 })
@@ -78,8 +81,8 @@ export class EinsatzDetail {
       next: (data) => {
         if (rid === this.reqId) this.state.set({ kind: 'ready', data });
       },
-      error: () => {
-        if (rid === this.reqId) this.state.set({ kind: 'error' });
+      error: (err) => {
+        if (rid === this.reqId) this.state.set(fehlerState(err));
       },
     });
   }

@@ -28,19 +28,21 @@ def seeded(app_user):
 
 
 def _logged_in_client(client):
+    from .conftest import grant_role
     user = User.objects.create_user(username=f"u{uuid.uuid4().hex[:8]}", password="x")
     au = AppUser.objects.create(
         id=uuid.uuid4(), display_name="Login", status="ACTIVE", version=1
     )
     user.app_user_id = au.id
     user.save()
+    grant_role(au.id, "ADMINISTRATION")
     client.force_login(user)
     return client
 
 
 @pytest.mark.django_db
-def test_liste_und_pagination(client, seeded):
-    r = client.get("/api/workflow/work_orders?page=1&page_size=1")
+def test_liste_und_pagination(admin_client, seeded):
+    r = admin_client.get("/api/workflow/work_orders?page=1&page_size=1")
     assert r.status_code == 200
     body = r.json()
     assert body["total"] == 2
@@ -48,17 +50,17 @@ def test_liste_und_pagination(client, seeded):
 
 
 @pytest.mark.django_db
-def test_suche_und_projektfilter(client, seeded):
-    r = client.get("/api/workflow/work_orders?q=Fassade")
+def test_suche_und_projektfilter(admin_client, seeded):
+    r = admin_client.get("/api/workflow/work_orders?q=Fassade")
     titles = {i["title"] for i in r.json()["items"]}
     assert titles == {"Fassade streichen"}
-    r2 = client.get(f"/api/workflow/work_orders?property_id={seeded['obj'].id}")
+    r2 = admin_client.get(f"/api/workflow/work_orders?property_id={seeded['obj'].id}")
     assert r2.json()["total"] == 2
 
 
 @pytest.mark.django_db
-def test_detail_mit_verlauf(client, seeded):
-    r = client.get(f"/api/workflow/work_orders/{seeded['a1'].id}")
+def test_detail_mit_verlauf(admin_client, seeded):
+    r = admin_client.get(f"/api/workflow/work_orders/{seeded['a1'].id}")
     assert r.status_code == 200
     body = r.json()
     assert body["title"] == "Heizung erneuern"
@@ -69,8 +71,8 @@ def test_detail_mit_verlauf(client, seeded):
 
 
 @pytest.mark.django_db
-def test_detail_404(client, db):
-    r = client.get(f"/api/workflow/work_orders/{uuid.uuid4()}")
+def test_detail_404(admin_client, db):
+    r = admin_client.get(f"/api/workflow/work_orders/{uuid.uuid4()}")
     assert r.status_code == 404
 
 
@@ -95,8 +97,8 @@ def test_create_eingeloggt(client, app_user):
 
 
 @pytest.mark.django_db
-def test_create_ohne_login_abgelehnt(client, seeded):
-    r = client.post(
+def test_create_ohne_login_abgelehnt(anonymous_client, seeded):
+    r = anonymous_client.post(
         "/api/workflow/work_orders",
         data={"property_id": str(seeded["obj"].id), "title": "Anon"},
         content_type="application/json",

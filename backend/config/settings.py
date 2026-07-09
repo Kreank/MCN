@@ -19,7 +19,11 @@ SQL_MIGRATIONS_DIR = REPO_ROOT / "db" / "migrations"
 SECRET_KEY = os.environ.get(
     "MCN_SECRET_KEY", "django-insecure-nur-fuer-entwicklung"
 )
-DEBUG = os.environ.get("MCN_DEBUG", "1") == "1"
+# Fail-safe: Produktion muss nicht daran denken, DEBUG auszuschalten, sondern die
+# Entwicklung muss es bewusst einschalten (`MCN_DEBUG=1`). An DEBUG hängen die
+# Secure-Flags der Cookies und die Vergabe des Dev-Passworts in seed_demo — ein
+# versehentlich mit Default-DEBUG deployter Dienst wäre sonst gleich doppelt offen.
+DEBUG = os.environ.get("MCN_DEBUG", "0") == "1"
 ALLOWED_HOSTS = os.environ.get("MCN_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
 
 INSTALLED_APPS = [
@@ -82,12 +86,40 @@ DATABASES = {
 
 AUTH_USER_MODEL = "accounts.User"
 
+# Anmeldung mit E-Mail statt Benutzername (eigenes Login, kein Fremdanbieter).
+# ModelBackend bleibt als zweites Backend, damit der Django-Admin und
+# `createsuperuser`/`manage.py shell` weiter über den Benutzernamen funktionieren.
+AUTHENTICATION_BACKENDS = [
+    "accounts.backends.EmailBackend",
+    "django.contrib.auth.backends.ModelBackend",
+]
+
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
-    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator", "OPTIONS": {"min_length": 12}},
     {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
+
+# --- Sitzung und CSRF ------------------------------------------------------
+# Das Session-Cookie ist HttpOnly (Django-Default) — JavaScript darf es nicht
+# lesen. Das CSRF-Cookie muss lesbar sein: das Frontend schickt seinen Wert als
+# X-CSRFToken-Header zurück (Djangos Double-Submit-Verfahren).
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = "Lax"
+SESSION_COOKIE_AGE = 60 * 60 * 12       # ein Arbeitstag
+SESSION_EXPIRE_AT_BROWSER_CLOSE = False
+CSRF_COOKIE_HTTPONLY = False
+CSRF_COOKIE_SAMESITE = "Lax"
+
+# In Produktion laufen beide Cookies nur über HTTPS. Im Dev-Betrieb (DEBUG)
+# gibt es kein TLS, dort muss das Flag aus bleiben.
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
+
+CSRF_TRUSTED_ORIGINS = os.environ.get(
+    "MCN_CSRF_TRUSTED_ORIGINS", "http://localhost:4200,http://127.0.0.1:8000"
+).split(",")
 
 LANGUAGE_CODE = "de-de"
 TIME_ZONE = "UTC"          # Nummernkreis-Jahreszuordnung erfolgt in UTC (db/README.md)
@@ -98,7 +130,11 @@ STATIC_URL = "static/"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# Angular-Dev-Server
+# Angular-Dev-Server. Der Dev-Proxy (frontend/proxy.conf.json) leitet /api auf
+# denselben Origin, CORS greift dort also gar nicht — die Einstellung deckt den
+# Fall ab, dass das Frontend direkt gegen :8000 spricht. Cookies erfordern dann
+# CORS_ALLOW_CREDENTIALS; ein Wildcard-Origin ist damit ausgeschlossen.
 CORS_ALLOWED_ORIGINS = os.environ.get(
     "MCN_CORS_ORIGINS", "http://localhost:4200"
 ).split(",")
+CORS_ALLOW_CREDENTIALS = True

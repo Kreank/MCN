@@ -1,0 +1,71 @@
+<section class="login" aria-labelledby="login-titel">
+  <div class="login__card">
+    <div class="login__brand">
+      <span class="login__mark" aria-hidden="true">M</span>
+      <span class="login__wordmark">
+        <span class="login__name">MCN</span>
+        <span class="login__sub">Leitstand</span>
+      </span>
+    </div>
+
+    <header class="login__head">
+      <p class="login__kicker">
+        <span class="login__scale" aria-hidden="true"></span>
+        Zugang
+      </p>
+      <h1 id="login-titel" class="login__titel">Anmeldung</h1>
+      <p class="login__hint">Mit E-Mail-Adresse und Passwort anmelden.</p>
+    </header>
+
+    @if (fehler(); as meldung) {
+      <div #fehlerBox class="login__alert" role="alert" tabindex="-1">
+        <span class="login__alert-mark" aria-hidden="true">!</span>
+        <span>{{ meldung }}</span>
+      </div>
+    }
+
+    <form class="login__form" (submit)="$event.preventDefault(); absenden()" novalidate>
+      <div class="feld-gruppe">
+        <label class="feld-gruppe__label" for="login-email">E-Mail-Adresse</label>
+        <input
+          id="login-email"
+          class="feld-gruppe__input"
+          type="email"
+          name="email"
+          autocomplete="email"
+          inputmode="email"
+          autocapitalize="none"
+          spellcheck="false"
+          required
+          [value]="email()"
+          (input)="onEmail($any($event.target).value)"
+          [disabled]="laedt()"
+        />
+      </div>
+
+      <div class="feld-gruppe">
+        <label class="feld-gruppe__label" for="login-passwort">Passwort</label>
+        <input
+          id="login-passwort"
+          class="feld-gruppe__input"
+          type="password"
+          name="password"
+          autocomplete="current-password"
+          required
+          [value]="password()"
+          (input)="onPassword($any($event.target).value)"
+          [disabled]="laedt()"
+        />
+      </div>
+
+      <button
+        type="submit"
+        class="btn btn--primary login__submit"
+        [disabled]="laedt()"
+        [attr.aria-busy]="laedt()"
+      >
+        {{ laedt() ? 'Wird angemeldet …' : 'Anmelden' }}
+      </button>
+    </form>
+  </div>
+</section>

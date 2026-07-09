@@ -1,11 +1,14 @@
 import { Component, computed, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
+import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 import { AuswertungService } from '../../core/auswertungen.service';
 import { Kunden } from '../../core/auswertungen.model';
 
 type ViewState =
   | { kind: 'loading' }
   | { kind: 'ready'; data: Kunden }
+  | VerbotenState
   | { kind: 'error' };
 
 interface Bar {
@@ -16,7 +19,7 @@ interface Bar {
 
 @Component({
   selector: 'app-auswertungen-kunden',
-  imports: [RouterLink],
+  imports: [RouterLink, KeinZugriff],
   templateUrl: './auswertungen-kunden.html',
   styleUrl: './auswertungen-kunden.scss',
 })
@@ -56,7 +59,7 @@ export class AuswertungenKunden {
     this.state.set({ kind: 'loading' });
     this.svc.kunden().subscribe({
       next: (data) => this.state.set({ kind: 'ready', data }),
-      error: () => this.state.set({ kind: 'error' }),
+      error: (err) => this.state.set(fehlerState(err)),
     });
   }
 

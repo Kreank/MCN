@@ -1,8 +1,9 @@
 """API-Tests der Personal-Endpoints (hr.*) über den Django-Test-Client.
 
-Lesen ist in der Dev-Phase ohne Auth erlaubt; Schreiben verlangt Session +
-zugeordnetes app_user. Der Zustand wird ausschließlich über die Service-Schicht
-aufgebaut (echte Trigger/Constraints), nicht über rohe ORM-Creates.
+Alle Endpunkte verlangen Anmeldung und das Recht auf dem Modul `hr`; die Tests
+nutzen dafür den `admin_client`. Der Zustand wird ausschließlich über die
+Service-Schicht aufgebaut (echte Trigger/Constraints), nicht über rohe
+ORM-Creates.
 """
 import uuid
 from datetime import date
@@ -132,11 +133,13 @@ def _logged_in_client(client, *, with_app_user=True):
         username=f"u{uuid.uuid4().hex[:8]}", password="x"
     )
     if with_app_user:
+        from .conftest import grant_role
         au = AppUser.objects.create(
             id=uuid.uuid4(), display_name="Login-Akteur", status="ACTIVE", version=1
         )
         user.app_user_id = au.id
         user.save()
+        grant_role(au.id, "ADMINISTRATION")
     client.force_login(user)
     return client
 
@@ -145,8 +148,8 @@ def _logged_in_client(client, *, with_app_user=True):
 
 
 @pytest.mark.django_db
-def test_liste_und_pagination_felder(client, seeded):
-    r = client.get("/api/hr/employees")
+def test_liste_und_pagination_felder(admin_client, seeded):
+    r = admin_client.get("/api/hr/employees")
     assert r.status_code == 200
     body = r.json()
     assert body["total"] == 3
@@ -160,8 +163,8 @@ def test_liste_und_pagination_felder(client, seeded):
 
 
 @pytest.mark.django_db
-def test_suche_nach_name(client, seeded):
-    r = client.get("/api/hr/employees?q=Muster")
+def test_suche_nach_name(admin_client, seeded):
+    r = admin_client.get("/api/hr/employees?q=Muster")
     assert r.status_code == 200
     body = r.json()
     assert body["total"] == 1
@@ -169,9 +172,9 @@ def test_suche_nach_name(client, seeded):
 
 
 @pytest.mark.django_db
-def test_suche_nach_personalnummer(client, seeded):
+def test_suche_nach_personalnummer(admin_client, seeded):
     nummer = seeded["aktiv"].employee_number
-    r = client.get(f"/api/hr/employees?q={nummer}")
+    r = admin_client.get(f"/api/hr/employees?q={nummer}")
     assert r.status_code == 200
     body = r.json()
     assert body["total"] == 1
@@ -179,25 +182,25 @@ def test_suche_nach_personalnummer(client, seeded):
 
 
 @pytest.mark.django_db
-def test_statusfilter(client, seeded):
-    assert client.get("/api/hr/employees?status=AKTIV").json()["total"] == 1
-    assert client.get("/api/hr/employees?status=INAKTIV").json()["total"] == 1
-    assert client.get("/api/hr/employees?status=AUSGETRETEN").json()["total"] == 1
-    aus = client.get("/api/hr/employees?status=AUSGETRETEN").json()
+def test_statusfilter(admin_client, seeded):
+    assert admin_client.get("/api/hr/employees?status=AKTIV").json()["total"] == 1
+    assert admin_client.get("/api/hr/employees?status=INAKTIV").json()["total"] == 1
+    assert admin_client.get("/api/hr/employees?status=AUSGETRETEN").json()["total"] == 1
+    aus = admin_client.get("/api/hr/employees?status=AUSGETRETEN").json()
     assert aus["items"][0]["last_name"] == "Abele"
 
 
 @pytest.mark.django_db
-def test_unbekannter_status_422(client, seeded):
-    r = client.get("/api/hr/employees?status=QUATSCH")
+def test_unbekannter_status_422(admin_client, seeded):
+    r = admin_client.get("/api/hr/employees?status=QUATSCH")
     assert r.status_code == 422
 
 
 @pytest.mark.django_db
-def test_sortierung_aktiv_vor_ausgetreten(client, seeded):
+def test_sortierung_aktiv_vor_ausgetreten(admin_client, seeded):
     """AKTIV (rank 0) steht vor AUSGETRETEN (rank 2), obwohl der Ausgetretene
     ('Abele') alphabetisch vor dem Aktiven ('Muster') läge."""
-    body = client.get("/api/hr/employees").json()
+    body = admin_client.get("/api/hr/employees").json()
     stati = [i["status"] for i in body["items"]]
     assert stati.index("AKTIV") < stati.index("AUSGETRETEN")
     # der Ausgetretene ist der Letzte in der Liste
@@ -208,9 +211,9 @@ def test_sortierung_aktiv_vor_ausgetreten(client, seeded):
 
 
 @pytest.mark.django_db
-def test_detail_mit_mappe(client, seeded):
+def test_detail_mit_mappe(admin_client, seeded):
     emp = seeded["aktiv"]
-    r = client.get(f"/api/hr/employees/{emp.id}?year=2024")
+    r = admin_client.get(f"/api/hr/employees/{emp.id}?year=2024")
     assert r.status_code == 200
     body = r.json()
     assert body["first_name"] == "Anna"
@@ -236,8 +239,8 @@ def test_detail_mit_mappe(client, seeded):
 
 
 @pytest.mark.django_db
-def test_detail_404(client, seeded):
-    r = client.get(f"/api/hr/employees/{uuid4()}")
+def test_detail_404(admin_client, seeded):
+    r = admin_client.get(f"/api/hr/employees/{uuid4()}")
     assert r.status_code == 404
 
 
@@ -247,8 +250,8 @@ def test_detail_404(client, seeded):
 
 
 @pytest.mark.django_db
-def test_absences_ohne_login_401(client, seeded):
-    r = client.get("/api/hr/absences")
+def test_absences_ohne_login_401(anonymous_client, seeded):
+    r = anonymous_client.get("/api/hr/absences")
     assert r.status_code == 401
 
 
@@ -276,8 +279,8 @@ def test_absences_unbekannter_status_422(client, seeded):
 
 
 @pytest.mark.django_db
-def test_create_employee_ohne_login_401(client, db):
-    r = client.post(
+def test_create_employee_ohne_login_401(anonymous_client, db):
+    r = anonymous_client.post(
         "/api/hr/employees",
         data={
             "app_user_id": str(uuid4()),
@@ -290,8 +293,8 @@ def test_create_employee_ohne_login_401(client, db):
 
 
 @pytest.mark.django_db
-def test_approve_absence_ohne_login_401(client, seeded):
-    r = client.post(
+def test_approve_absence_ohne_login_401(anonymous_client, seeded):
+    r = anonymous_client.post(
         f"/api/hr/absences/{seeded['eingereicht'].id}/approve",
         data={"note": "ok"},
         content_type="application/json",

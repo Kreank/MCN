@@ -14,6 +14,7 @@ from ninja.errors import HttpError
 from ninja.responses import Status
 from ninja.security import django_auth
 
+from api.permissions import require
 from db_core.models import Invoice, Quote
 from db_core.services import beleg as beleg_service
 from db_core.services import beleg_pdf as beleg_pdf_service
@@ -136,6 +137,7 @@ def list_quotes(
     page_size: int = Query(25, ge=1, le=100),
 ):
     """Angebote auflisten: Suche (Titel/Nummer), Status-/Liegenschafts-/Projektfilter."""
+    require(request, "invoicing", "LESEN")
     qs = Quote.objects.select_related("property__address")
 
     if filters.q:
@@ -213,21 +215,10 @@ def _quote_detail(quote_id):
 
 # --- Schreibender Endpoint (Session-Auth Pflicht) --------------------------
 
-def _actor_id(request):
-    actor = getattr(request.user, "app_user_id", None)
-    if actor is None:
-        raise HttpError(
-            403,
-            "Dem Login-Konto ist kein security.app_user zugeordnet; "
-            "fachliche Schreibvorgänge sind damit nicht möglich.",
-        )
-    return actor
-
-
 @router.post("/quotes", response={201: QuoteDetailOut}, auth=django_auth)
 def create_quote(request, payload: QuoteIn):
     """Neues Angebot (Status ENTWURF) mit Positionen anlegen."""
-    actor = _actor_id(request)
+    actor, _ = require(request, "invoicing", "ANLEGEN")
     try:
         quote = beleg_service.create_quote(
             actor,
@@ -247,7 +238,7 @@ def create_quote(request, payload: QuoteIn):
 def send_quote(request, quote_id: UUID):
     """Angebot versenden (ENTWURF → … → VERSENDET); DB vergibt die AN-Nummer und
     friert den Beleg ein."""
-    actor = _actor_id(request)
+    actor, _ = require(request, "invoicing", "VERSENDEN")
     try:
         beleg_service.send_quote(actor, quote_id=quote_id)
     except ValueError as exc:
@@ -258,6 +249,7 @@ def send_quote(request, quote_id: UUID):
 @router.get("/quotes/{quote_id}", response=QuoteDetailOut)
 def get_quote(request, quote_id: UUID):
     """Detail eines Angebots inkl. Positionen."""
+    require(request, "invoicing", "LESEN")
     return _quote_detail(quote_id)
 
 
@@ -353,6 +345,7 @@ def list_invoices(
     page_size: int = Query(25, ge=1, le=100),
 ):
     """Rechnungen auflisten: Suche (Nummer), Status-/Typ-/Objekt-/Projektfilter."""
+    require(request, "invoicing", "LESEN")
     qs = Invoice.objects.select_related("property__address")
     if filters.q:
         qs = qs.filter(invoice_number__icontains=filters.q.strip())
@@ -444,7 +437,7 @@ def _invoice_detail(invoice_id):
 @router.post("/invoices", response={201: InvoiceDetailOut}, auth=django_auth)
 def create_invoice(request, payload: InvoiceIn):
     """Neue Rechnung/Gutschrift (Status ENTWURF) mit Positionen anlegen."""
-    actor = _actor_id(request)
+    actor, _ = require(request, "invoicing", "ANLEGEN")
     try:
         invoice = beleg_service.create_invoice(
             actor,
@@ -469,7 +462,8 @@ def create_invoice(request, payload: InvoiceIn):
 )
 def add_invoice_party(request, invoice_id: UUID, payload: InvoicePartyIn):
     """Rechnungsbeteiligten (Schuldner/Empfänger …) hinzufügen (nur im Entwurf)."""
-    actor = _actor_id(request)
+    # Beteiligten am Entwurf ergänzen = Änderung am Beleg → AENDERN.
+    actor, _ = require(request, "invoicing", "AENDERN")
     try:
         beleg_service.add_invoice_party(
             actor,
@@ -490,7 +484,8 @@ def add_invoice_party(request, invoice_id: UUID, payload: InvoicePartyIn):
 def publish_invoice(request, invoice_id: UUID):
     """Rechnung veröffentlichen (ENTWURF → VEROEFFENTLICHT); DB vergibt die Nummer
     und prüft die Tore (Auftrag geprüft, Schuldner/Empfänger)."""
-    actor = _actor_id(request)
+    # Veröffentlichen ist das Freigabetor der Rechnung → FREIGEBEN.
+    actor, _ = require(request, "invoicing", "FREIGEBEN")
     try:
         beleg_service.publish_invoice(actor, invoice_id=invoice_id)
     except ValueError as exc:
@@ -501,6 +496,7 @@ def publish_invoice(request, invoice_id: UUID):
 @router.get("/invoices/{invoice_id}", response=InvoiceDetailOut)
 def get_invoice(request, invoice_id: UUID):
     """Detail einer Rechnung inkl. Positionen."""
+    require(request, "invoicing", "LESEN")
     return _invoice_detail(invoice_id)
 
 
@@ -510,6 +506,7 @@ def invoice_pdf(request, invoice_id: UUID):
 
     Nur festgeschriebene Belege (VEROEFFENTLICHT) erhalten eine Ausfertigung; für
     Entwürfe/unbekannte Belege → 404."""
+    require(request, "invoicing", "LESEN")
     pdf = beleg_pdf_service.render_invoice_pdf(invoice_id)
     if pdf is None:
         raise HttpError(404, "Veröffentlichte Rechnung nicht gefunden.")

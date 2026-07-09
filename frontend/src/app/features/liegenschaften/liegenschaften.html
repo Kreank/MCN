@@ -66,6 +66,11 @@
       </ul>
     }
 
+    <!-- --------------------------- Keine Rechte --------------------------- -->
+    @case ('forbidden') {
+      <app-kein-zugriff [detail]="$any(state()).detail" />
+    }
+
     <!-- ------------------------------- Fehler ----------------------------- -->
     @case ('error') {
       <div class="note note--error" role="alert">

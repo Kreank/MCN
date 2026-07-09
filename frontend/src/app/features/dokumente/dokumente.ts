@@ -10,6 +10,8 @@ import {
   QuotePage,
   QuoteStatus,
 } from '../../core/beleg.model';
+import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 
 type Modus = 'angebote' | 'rechnungen';
 
@@ -17,11 +19,12 @@ type ViewState =
   | { kind: 'loading' }
   | { kind: 'ready'; modus: 'angebote'; data: QuotePage }
   | { kind: 'ready'; modus: 'rechnungen'; data: InvoicePage }
+  | VerbotenState
   | { kind: 'error' };
 
 @Component({
   selector: 'app-dokumente',
-  imports: [RouterLink],
+  imports: [RouterLink, KeinZugriff],
   templateUrl: './dokumente.html',
   styleUrl: './dokumente.scss',
 })
@@ -50,6 +53,7 @@ export class Dokumente {
     const s = this.state();
     const wort = this.modus() === 'angebote' ? 'Angebote' : 'Rechnungen';
     if (s.kind === 'loading') return `${wort} werden geladen.`;
+    if (s.kind === 'forbidden') return 'Keine Berechtigung für die Dokumente.';
     if (s.kind === 'error') return `${wort} konnten nicht geladen werden.`;
     const t = s.data.total;
     if (t === 0) return `Keine ${wort} gefunden.`;
@@ -105,8 +109,8 @@ export class Dokumente {
         next: (data) => {
           if (id === this.reqId) this.state.set({ kind: 'ready', modus, data });
         },
-        error: () => {
-          if (id === this.reqId) this.state.set({ kind: 'error' });
+        error: (err) => {
+          if (id === this.reqId) this.state.set(fehlerState(err));
         },
       });
     } else {
@@ -114,8 +118,8 @@ export class Dokumente {
         next: (data) => {
           if (id === this.reqId) this.state.set({ kind: 'ready', modus, data });
         },
-        error: () => {
-          if (id === this.reqId) this.state.set({ kind: 'error' });
+        error: (err) => {
+          if (id === this.reqId) this.state.set(fehlerState(err));
         },
       });
     }

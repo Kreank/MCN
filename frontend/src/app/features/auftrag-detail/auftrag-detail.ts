@@ -10,15 +10,18 @@ import {
   workOrderStatusClass,
   workOrderStatusLabel,
 } from '../../core/auftrag.model';
+import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 
 type ViewState =
   | { kind: 'loading' }
   | { kind: 'ready'; data: WorkOrderDetail }
+  | VerbotenState
   | { kind: 'error' };
 
 @Component({
   selector: 'app-auftrag-detail',
-  imports: [Mappe, RouterLink],
+  imports: [Mappe, RouterLink, KeinZugriff],
   templateUrl: './auftrag-detail.html',
   styleUrl: './auftrag-detail.scss',
 })
@@ -65,8 +68,8 @@ export class AuftragDetail {
       next: (data) => {
         if (rid === this.reqId) this.state.set({ kind: 'ready', data });
       },
-      error: () => {
-        if (rid === this.reqId) this.state.set({ kind: 'error' });
+      error: (err) => {
+        if (rid === this.reqId) this.state.set(fehlerState(err));
       },
     });
   }

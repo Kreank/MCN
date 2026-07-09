@@ -27,6 +27,7 @@
       </header>
       @switch (tasks().kind) {
         @case ('loading') { <p class="kachel__leer">Wird geladen …</p> }
+        @case ('forbidden') { <p class="kachel__leer">Keine Berechtigung.</p> }
         @case ('error') { <p class="kachel__leer">Konnte nicht geladen werden.</p> }
         @case ('ready') {
           @if ($any(tasks()).items.length === 0) {
@@ -58,6 +59,7 @@
       </header>
       @switch (projects().kind) {
         @case ('loading') { <p class="kachel__leer">Wird geladen …</p> }
+        @case ('forbidden') { <p class="kachel__leer">Keine Berechtigung.</p> }
         @case ('error') { <p class="kachel__leer">Konnte nicht geladen werden.</p> }
         @case ('ready') {
           @if ($any(projects()).items.length === 0) {
@@ -89,6 +91,7 @@
       </header>
       @switch (quotes().kind) {
         @case ('loading') { <p class="kachel__leer">Wird geladen …</p> }
+        @case ('forbidden') { <p class="kachel__leer">Keine Berechtigung.</p> }
         @case ('error') { <p class="kachel__leer">Konnte nicht geladen werden.</p> }
         @case ('ready') {
           @if ($any(quotes()).items.length === 0) {

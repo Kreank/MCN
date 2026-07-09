@@ -1,0 +1,41 @@
+:host {
+  display: block;
+}
+
+// Sperr-Hinweis: eigenständige, ruhige Behandlung — kein „Fehler-Rot", denn
+// technisch ist nichts kaputt. Amber signalisiert Hinweis/Schranke, getragen
+// zusätzlich von Text und Glyph (Status nie nur über Farbe).
+.sperr {
+  max-width: 42rem;
+  border-left: 3px solid var(--warn-ink);
+}
+
+.sperr__kicker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--warn-ink);
+}
+.sperr__glyph {
+  font-size: 0.9rem;
+}
+
+.sperr__titel {
+  margin-bottom: var(--space-3);
+}
+
+.sperr__detail {
+  margin: 0 0 var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+}

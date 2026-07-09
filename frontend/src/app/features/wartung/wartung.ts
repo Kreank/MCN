@@ -13,17 +13,20 @@ import {
   dueActionLabel,
   intervalKindLabel,
 } from '../../core/wartung.model';
+import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 
 type ViewState =
   | { kind: 'loading' }
   | { kind: 'ready'; data: ContractPage }
+  | VerbotenState
   | { kind: 'error' };
 
 type Segment = { value: ContractStatus | null; label: string };
 
 @Component({
   selector: 'app-wartung',
-  imports: [RouterLink],
+  imports: [RouterLink, KeinZugriff],
   templateUrl: './wartung.html',
   styleUrl: './wartung.scss',
 })
@@ -63,6 +66,7 @@ export class Wartung {
   protected readonly resultSummary = computed(() => {
     const s = this.state();
     if (s.kind === 'loading') return 'Wartungsverträge werden geladen.';
+    if (s.kind === 'forbidden') return 'Keine Berechtigung für die Wartungsverträge.';
     if (s.kind === 'error') return 'Wartungsverträge konnten nicht geladen werden.';
     const t = s.data.total;
     if (t === 0) return 'Keine Wartungsverträge gefunden.';
@@ -121,8 +125,8 @@ export class Wartung {
         next: (data) => {
           if (id === this.reqId) this.state.set({ kind: 'ready', data });
         },
-        error: () => {
-          if (id === this.reqId) this.state.set({ kind: 'error' });
+        error: (err) => {
+          if (id === this.reqId) this.state.set(fehlerState(err));
         },
       });
   }

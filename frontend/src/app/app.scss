@@ -9,6 +9,11 @@
   min-height: 100vh;
 }
 
+// Anmeldeansicht: keine Sidebar, volle Breite fuer die Login-Karte.
+.shell--auth {
+  grid-template-columns: 1fr;
+}
+
 // ============================ Sidebar (Navy) =================================
 .sidebar {
   position: sticky;
@@ -259,6 +264,68 @@
   letter-spacing: 0.2em;
   text-transform: uppercase;
   color: var(--accent);
+}
+
+// Rechte Kopfleiste: Benutzer-Chip + Theme-Toggle.
+.header__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.userchip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding-right: var(--space-3);
+  border-right: 1px solid var(--command-line);
+}
+.userchip__ident {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+  text-align: right;
+}
+.userchip__name {
+  font-weight: 600;
+  font-size: var(--step--1);
+  color: var(--on-command);
+}
+.userchip__roles {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--on-command-muted);
+}
+.userchip__logout {
+  min-height: 44px;
+  padding: 0 var(--space-4);
+  border: 1.5px solid var(--command-line);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--on-command);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+
+  &:hover {
+    background: var(--command-2);
+    border-color: var(--accent);
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring-on-command);
+    outline-offset: 2px;
+  }
+}
+
+@media (max-width: 560px) {
+  .userchip__ident {
+    display: none;
+  }
 }
 
 .theme-toggle {

@@ -9,15 +9,18 @@ import {
   PropertyStatus,
   PropertyType,
 } from '../../core/property.model';
+import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 
 type ViewState =
   | { kind: 'loading' }
   | { kind: 'ready'; data: PropertyDetail }
+  | VerbotenState
   | { kind: 'error' };
 
 @Component({
   selector: 'app-liegenschaft-detail',
-  imports: [Mappe, RouterLink],
+  imports: [Mappe, RouterLink, KeinZugriff],
   templateUrl: './liegenschaft-detail.html',
   styleUrl: './liegenschaft-detail.scss',
 })
@@ -73,8 +76,8 @@ export class LiegenschaftDetail {
       next: (data) => {
         if (rid === this.reqId) this.state.set({ kind: 'ready', data });
       },
-      error: () => {
-        if (rid === this.reqId) this.state.set({ kind: 'error' });
+      error: (err) => {
+        if (rid === this.reqId) this.state.set(fehlerState(err));
       },
     });
   }

@@ -33,8 +33,8 @@ def seeded(app_user):
 
 
 @pytest.mark.django_db
-def test_liste(client, seeded):
-    r = client.get("/api/maintenance/contracts")
+def test_liste(admin_client, seeded):
+    r = admin_client.get("/api/maintenance/contracts")
     assert r.status_code == 200
     body = r.json()
     assert body["total"] == 1
@@ -47,29 +47,29 @@ def test_liste(client, seeded):
 
 
 @pytest.mark.django_db
-def test_statusfilter(client, seeded, app_user):
+def test_statusfilter(admin_client, seeded, app_user):
     wartung_service.set_status(
         app_user.id, contract_id=seeded["contract"].id, to_status="INAKTIV"
     )
-    assert client.get("/api/maintenance/contracts?status=AKTIV").json()["total"] == 0
-    assert client.get("/api/maintenance/contracts?status=INAKTIV").json()["total"] == 1
+    assert admin_client.get("/api/maintenance/contracts?status=AKTIV").json()["total"] == 0
+    assert admin_client.get("/api/maintenance/contracts?status=INAKTIV").json()["total"] == 1
 
 
 @pytest.mark.django_db
-def test_faelligkeitsfilter(client, seeded):
+def test_faelligkeitsfilter(admin_client, seeded):
     # next_due wurde durch das Auslösen auf 2027-06-01 vorgerückt → nicht fällig.
-    assert client.get("/api/maintenance/contracts?due=true").json()["total"] == 0
+    assert admin_client.get("/api/maintenance/contracts?due=true").json()["total"] == 0
 
 
 @pytest.mark.django_db
-def test_unbekannter_status_422(client, seeded):
-    r = client.get("/api/maintenance/contracts?status=QUATSCH")
+def test_unbekannter_status_422(admin_client, seeded):
+    r = admin_client.get("/api/maintenance/contracts?status=QUATSCH")
     assert r.status_code == 422
 
 
 @pytest.mark.django_db
-def test_detail_mit_historie(client, seeded):
-    r = client.get(f"/api/maintenance/contracts/{seeded['contract'].id}")
+def test_detail_mit_historie(admin_client, seeded):
+    r = admin_client.get(f"/api/maintenance/contracts/{seeded['contract'].id}")
     assert r.status_code == 200
     body = r.json()
     assert body["notes"] == "Jährliche Prüfung."
@@ -82,6 +82,6 @@ def test_detail_mit_historie(client, seeded):
 
 
 @pytest.mark.django_db
-def test_detail_404(client, db):
-    r = client.get(f"/api/maintenance/contracts/{uuid4()}")
+def test_detail_404(admin_client, db):
+    r = admin_client.get(f"/api/maintenance/contracts/{uuid4()}")
     assert r.status_code == 404
