@@ -1,0 +1,93 @@
+<section class="mahnwesen" aria-labelledby="mahnwesen-titel">
+  <header class="page-head">
+    <div>
+      <p class="page-head__kicker">
+        <span class="page-head__scale" aria-hidden="true"></span>
+        Buchhaltung · Mahnwesen
+      </p>
+      <h1 id="mahnwesen-titel" class="page-head__titel">Mahnwesen</h1>
+    </div>
+    <a class="btn" routerLink="/buchhaltung">Zu den offenen Posten</a>
+  </header>
+
+  <p class="page-head__hint">
+    Überfällige veröffentlichte Rechnungen mit aktueller Mahnstufe. Der Mahnlauf
+    (Zahlungserinnerung/Mahnung erstellen) läuft über die KI und die API.
+  </p>
+
+  <div class="tabs" role="group" aria-label="Mahnstufe filtern">
+    @for (t of tabs(); track t.id) {
+      <button
+        type="button"
+        class="tab"
+        [class.is-active]="activeTab() === t.id"
+        [attr.aria-pressed]="activeTab() === t.id"
+        (click)="selectTab(t.id)"
+      >
+        {{ t.label }}
+      </button>
+    }
+  </div>
+
+  <p class="sr-only" role="status">{{ resultSummary() }}</p>
+
+  @switch (state().kind) {
+    @case ('loading') {
+      <p class="lade-hinweis" role="status">Mahnfälle werden geladen …</p>
+    }
+
+    @case ('error') {
+      <div class="note note--error" role="alert">
+        <h2 class="note__titel">Verbindung zum Mahnwesen unterbrochen</h2>
+        <p class="note__text">Die Mahnfälle ließen sich nicht laden. Prüfe die Verbindung und lade den Bereich erneut.</p>
+        <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
+      </div>
+    }
+
+    @case ('ready') {
+      @if (filtered().length === 0) {
+        <div class="note note--empty">
+          <h2 class="note__titel">Keine offenen Mahnfälle</h2>
+          <p class="note__text">In dieser Auswahl ist aktuell keine Rechnung überfällig oder mahnfällig.</p>
+        </div>
+      } @else {
+        <div class="tabelle-wrap">
+          <table class="tabelle">
+            <thead>
+              <tr>
+                <th scope="col">Rechnung</th>
+                <th scope="col">Schuldner</th>
+                <th scope="col" class="num">Fällig</th>
+                <th scope="col" class="num">Offen</th>
+                <th scope="col">Mahnstufe</th>
+                <th scope="col" class="num">Überfällig</th>
+                <th scope="col" class="num">Letzte Mahnung</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (r of filtered(); track r.id) {
+                <tr>
+                  <td>
+                    <a class="zelle-link" [routerLink]="['/buchhaltung', r.id]">{{ r.invoice_number }}</a>
+                  </td>
+                  <td>{{ r.debtor || '—' }}</td>
+                  <td class="num">{{ d(r.due_date) }}</td>
+                  <td class="num betrag">{{ euro(r.open_amount) }}</td>
+                  <td>
+                    @if (r.dunning_level) {
+                      <span class="stufe">Stufe {{ r.dunning_level }}</span>
+                    } @else {
+                      <span class="stufe stufe--offen">ungemahnt</span>
+                    }
+                  </td>
+                  <td class="num">{{ r.days_overdue !== null ? r.days_overdue + ' Tage' : '—' }}</td>
+                  <td class="num">{{ d(r.last_issued_at) }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    }
+  }
+</section>

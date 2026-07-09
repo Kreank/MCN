@@ -1,7 +1,12 @@
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { OpenItemDetail, OpenItemPage, OpenItemQuery } from './buchhaltung.model';
+import {
+  DunningList,
+  OpenItemDetail,
+  OpenItemPage,
+  OpenItemQuery,
+} from './buchhaltung.model';
 
 /** Typisierter Zugriff auf die Buchhaltungs-API (dev-Proxy: /api -> :8000). */
 @Injectable({ providedIn: 'root' })
@@ -23,5 +28,12 @@ export class BuchhaltungService {
 
   getOpenItem(id: string): Observable<OpenItemDetail> {
     return this.http.get<OpenItemDetail>(`${this.base}/invoices/${id}`);
+  }
+
+  /** Mahnliste; level filtert die aktuelle Mahnstufe (0 = überfällig, ungemahnt). */
+  listDunning(level?: number | null): Observable<DunningList> {
+    let params = new HttpParams();
+    if (level !== null && level !== undefined) params = params.set('level', level);
+    return this.http.get<DunningList>(`${this.base}/dunning`, { params });
   }
 }

@@ -109,6 +109,12 @@ export const routes: Routes = [
       import('./features/buchhaltung/buchhaltung').then((m) => m.Buchhaltung),
   },
   {
+    path: 'buchhaltung/mahnwesen',
+    title: 'Mahnwesen — MCN Leitstand',
+    loadComponent: () =>
+      import('./features/mahnwesen/mahnwesen').then((m) => m.Mahnwesen),
+  },
+  {
     path: 'buchhaltung/:id',
     title: 'Rechnung — MCN Leitstand',
     loadComponent: () =>
