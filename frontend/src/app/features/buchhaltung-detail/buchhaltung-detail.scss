@@ -233,6 +233,11 @@
   color: var(--ink-muted);
   font-style: italic;
 }
+.verlauf__aktionen {
+  margin-left: auto;
+  align-self: flex-start;
+  flex: none;
+}
 
 // ============================== Aktionen / Dialoge ==========================
 .detail-melde {

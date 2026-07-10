@@ -18,9 +18,11 @@ import { deZuApiDezimal, dezimalValidator } from '../../shared/formular/dezimal'
 import { VerbotenState, fehlerDetail, fehlerState, istVerboten } from '../../shared/http-fehler';
 import { BuchhaltungService } from '../../core/buchhaltung.service';
 import { BelegService } from '../../core/beleg.service';
+import { MailService } from '../../core/mail.service';
 import { AuthService } from '../../core/auth.service';
 import { QuoteLine } from '../../core/beleg.model';
 import {
+  DunningNotice,
   OpenItemDetail,
   PAYMENT_TYPES,
   Payment,
@@ -60,6 +62,7 @@ export class BuchhaltungDetail {
   private readonly route = inject(ActivatedRoute);
   private readonly svc = inject(BuchhaltungService);
   private readonly belege = inject(BelegService);
+  private readonly mailSvc = inject(MailService);
   private readonly auth = inject(AuthService);
   private readonly fb = inject(FormBuilder);
 
@@ -123,6 +126,21 @@ export class BuchhaltungDetail {
   /** Nächste (lückenlose) Mahnstufe = aktuelle + 1; die DB erzwingt max+1. */
   protected readonly naechsteStufe = computed(() => (this.daten()?.dunning_level ?? 0) + 1);
 
+  // --- Mahnung per E-Mail senden -------------------------------------------
+  /** Ob ein Absenderkonto hinterlegt ist (null = noch nicht geladen). Der Server
+   *  bleibt maßgeblich; das UI blendet die Aktion ohne Konto nur aus. */
+  protected readonly mailKontoVorhanden = signal<boolean | null>(null);
+  /** Die Mahnung, die gerade versendet wird (steuert den Dialog). */
+  protected readonly versandNotice = signal<DunningNotice | null>(null);
+  protected readonly versandLaedt = signal(false);
+  protected readonly versandMeldung = signal<string | null>(null);
+  protected readonly versandForm = this.fb.group({
+    to_address: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.required, Validators.email],
+    }),
+  });
+
   // --- Storno (Rechnung) ---------------------------------------------------
   protected readonly stornoOffen = signal(false);
   protected readonly stornoLaedt = signal(false);
@@ -165,6 +183,15 @@ export class BuchhaltungDetail {
       }
       this.load(id);
     });
+
+    // Ob ein Absenderkonto konfiguriert ist, entscheidet über die Versand-Aktion
+    // im Mahnverlauf. Nur laden, wenn die Rolle überhaupt versenden darf.
+    if (this.darfMahnung()) {
+      this.mailSvc.getAccount().subscribe({
+        next: (k) => this.mailKontoVorhanden.set(k.exists),
+        error: () => this.mailKontoVorhanden.set(false),
+      });
+    }
   }
 
   retry(): void {
@@ -304,6 +331,51 @@ export class BuchhaltungDetail {
           this.mahnungMeldung.set(apiFehlerZuweisen(err, this.mahnungForm).formular);
         },
       });
+  }
+
+  // ---- Mahnung per E-Mail senden ------------------------------------------
+  /** Ob die Versand-Aktion je Mahnung angeboten wird (Recht + Absenderkonto). */
+  protected readonly kannVersenden = computed(
+    () => this.darfMahnung() && this.mailKontoVorhanden() === true,
+  );
+
+  versandOeffnen(notice: DunningNotice): void {
+    if (!this.kannVersenden()) return;
+    this.versandForm.reset({ to_address: this.daten()?.recipient_email ?? '' });
+    serverFehlerZuruecksetzen(this.versandForm);
+    this.versandMeldung.set(null);
+    this.meldung.set(null);
+    this.versandNotice.set(notice);
+  }
+
+  versandSchliessen(): void {
+    if (!this.versandLaedt()) this.versandNotice.set(null);
+  }
+
+  versandAbsenden(): void {
+    const notice = this.versandNotice();
+    if (!notice || this.versandLaedt()) return;
+    serverFehlerZuruecksetzen(this.versandForm);
+    this.versandMeldung.set(null);
+    felderAlsBeruehrtMarkieren(this.versandForm);
+    if (this.versandForm.invalid) return;
+
+    const to = this.versandForm.controls.to_address.value.trim();
+    this.versandLaedt.set(true);
+    this.svc.sendDunningEmail(notice.id, to).subscribe({
+      next: (res) => {
+        this.versandLaedt.set(false);
+        this.versandNotice.set(null);
+        this.meldung.set({
+          art: 'erfolg',
+          text: `${notice.label} wurde als E-Mail (Rechnung als PDF) an ${res.to_address} gesendet.`,
+        });
+      },
+      error: (err) => {
+        this.versandLaedt.set(false);
+        this.versandMeldung.set(apiFehlerZuweisen(err, this.versandForm).formular);
+      },
+    });
   }
 
   // ---- Storno -------------------------------------------------------------

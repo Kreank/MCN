@@ -163,7 +163,7 @@
           <div class="tab-platzhalter"><p>Für diese Rechnung wurde noch keine Mahnstufe erzeugt.</p></div>
         } @else {
           <ol class="verlauf">
-            @for (m of daten()!.dunning; track $index) {
+            @for (m of daten()!.dunning; track m.id) {
               <li class="verlauf__eintrag">
                 <span class="verlauf__punkt" aria-hidden="true"></span>
                 <div class="verlauf__inhalt">
@@ -175,6 +175,13 @@
                   </span>
                   @if (m.note) { <span class="verlauf__grund">„{{ m.note }}"</span> }
                 </div>
+                @if (kannVersenden()) {
+                  <span class="verlauf__aktionen">
+                    <button type="button" class="mini" (click)="versandOeffnen(m)">
+                      Per E-Mail senden
+                    </button>
+                  </span>
+                }
               </li>
             }
           </ol>
@@ -258,6 +265,41 @@
         <button type="button" class="btn" [disabled]="mahnungLaedt()" (click)="mahnungSchliessen()">Abbrechen</button>
         <button type="submit" form="mahnung-form" class="btn btn--primary" [disabled]="mahnungLaedt()" [attr.aria-busy]="mahnungLaedt()">
           {{ mahnungLaedt() ? 'Wird erzeugt …' : 'Mahnung erzeugen' }}
+        </button>
+      </div>
+    </app-dialog>
+
+    <!-- ==================== Mahnung per E-Mail senden ================== -->
+    <app-dialog
+      [offen]="versandNotice() !== null"
+      titel="Mahnung per E-Mail senden"
+      (schliessen)="versandSchliessen()"
+    >
+      <form id="mahn-versand-form" class="dialog-form" (submit)="$event.preventDefault(); versandAbsenden()" novalidate>
+        @if (versandMeldung(); as fm) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+          </div>
+        }
+        <p class="dialog-hinweis">
+          @if (versandNotice(); as n) {
+            <strong>{{ n.label }}</strong> wird an den Rechnungsschuldner gesendet.
+          }
+          Die Rechnung wird als PDF angehängt.
+        </p>
+        <app-feld
+          [control]="versandForm.controls.to_address"
+          label="Empfänger-Adresse"
+          typ="text"
+          [pflicht]="true"
+          hinweis="Vorbelegt mit der E-Mail des Schuldners; bei Bedarf überschreiben."
+        />
+      </form>
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="versandLaedt()" (click)="versandSchliessen()">Abbrechen</button>
+        <button type="submit" form="mahn-versand-form" class="btn btn--primary" [disabled]="versandLaedt()" [attr.aria-busy]="versandLaedt()">
+          {{ versandLaedt() ? 'Wird gesendet …' : 'Senden' }}
         </button>
       </div>
     </app-dialog>

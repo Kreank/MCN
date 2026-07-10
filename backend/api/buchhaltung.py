@@ -31,12 +31,15 @@ from ninja.security import django_auth
 
 from api.permissions import require
 from db_core.db_context import business_transaction
+from db_core.mail_crypto import MailKeyError
 from db_core.models import DunningLevel, DunningNotice, Invoice, Payment
 from db_core.services import beleg as beleg_service
+from db_core.services import beleg_versand as beleg_versand_service
 from db_core.services import buchhaltung as buchhaltung_service
 from db_core.services import firma as firma_service
 from db_core.services import vier_augen
 from db_core.services.buchhaltung import PAYMENT_SIGN
+from db_core.services.mail import MailSendError
 
 router = Router()
 
@@ -162,6 +165,7 @@ class DunningIssueIn(Schema):
 
 
 class DunningNoticeOut(Schema):
+    id: UUID
     level: int
     label: str
     issued_at: date
@@ -194,6 +198,8 @@ class OpenItemDetailOut(OpenItemOut):
     credit_notes: list[CreditRefOut]
     payments: list[PaymentOut]
     dunning: list[DunningNoticeOut]
+    # Best-effort vorbelegte Schuldner-E-Mail für den Mahnungsversand-Dialog.
+    recipient_email: str | None = None
 
 
 class CorrectionIn(Schema):
@@ -504,6 +510,7 @@ def get_open_item(request, invoice_id: UUID):
     payments = [_payment_out(p, reversed_ids) for p in payment_rows]
     notices = [
         DunningNoticeOut(
+            id=n.id,
             level=n.level_id,
             label=n.level.label,
             issued_at=n.issued_at,
@@ -549,6 +556,7 @@ def get_open_item(request, invoice_id: UUID):
         credit_notes=credit_notes,
         payments=payments,
         dunning=notices,
+        recipient_email=beleg_versand_service.debtor_email(inv),
     )
 
 
@@ -786,6 +794,7 @@ def issue_dunning_notice(request, invoice_id: UUID, payload: DunningIssueIn):
     return Status(
         201,
         DunningNoticeOut(
+            id=notice.id,
             level=notice.level_id,
             label=notice.level.label,
             issued_at=notice.issued_at,
@@ -793,3 +802,46 @@ def issue_dunning_notice(request, invoice_id: UUID, payload: DunningIssueIn):
             created_by=notice.created_by.display_name if notice.created_by_id else None,
         ),
     )
+
+
+# --- Mahnungsversand per E-Mail --------------------------------------------
+
+class DunningEmailIn(Schema):
+    # Optionaler Adress-Override; leer → serverseitig ermittelte Schuldner-EMAIL.
+    to_address: str | None = None
+
+
+class DunningEmailOut(Schema):
+    sent: bool
+    to_address: str
+
+
+@router.post(
+    "/dunning-notices/{notice_id}/send-email",
+    response=DunningEmailOut,
+    auth=django_auth,
+)
+def send_dunning_email(request, notice_id: UUID, payload: DunningEmailIn):
+    """Versendet eine ausgestellte Mahnung/Zahlungserinnerung als E-Mail an den
+    Schuldner, mit der Rechnung als PDF-Anhang.
+
+    Recht VERSENDEN: eine Mahnung ist nach außen wirkende Kundenkommunikation —
+    dasselbe Recht wie Rechnungs-/Angebotsversand und das Ausstellen der Mahnung.
+    Reine Zustellung (kein Statuswechsel, keine GoBD-Berührung). Betreff/Body je
+    Mahnstufe (Zahlungserinnerung sachlich-freundlich, Mahnung bestimmter). Fehler
+    passwortfrei → 422 (kein Empfänger/Konto, Schlüssel- oder SMTP-Fehler);
+    unbekannte Mahnung → 404.
+    """
+    actor, _ = require(request, "invoicing", "VERSENDEN")
+    try:
+        communication = beleg_versand_service.send_dunning_email(
+            actor, dunning_notice_id=notice_id, to_address=payload.to_address
+        )
+    except LookupError as exc:
+        raise HttpError(404, str(exc))
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    except (MailKeyError, MailSendError) as exc:
+        # Passwortfreie, klare Meldung an das UI statt eines 500-Leaks.
+        raise HttpError(422, str(exc))
+    return DunningEmailOut(sent=True, to_address=communication.counterpart_raw)

@@ -52,6 +52,8 @@ export interface Payment {
 }
 
 export interface DunningNotice {
+  /** Id der Mahnung — adressiert den Versand-Endpunkt (send-email). */
+  id: string;
   level: number;
   label: string;
   issued_at: string;
@@ -82,6 +84,8 @@ export interface OpenItemDetail extends OpenItem {
   credit_notes: CreditRef[];
   payments: Payment[];
   dunning: DunningNotice[];
+  /** Best-effort vorbelegte Schuldner-E-Mail für den Mahnungsversand-Dialog. */
+  recipient_email: string | null;
 }
 
 export interface DunningRow {
@@ -129,6 +133,12 @@ export interface DunningIssue {
   level: number;
   issued_at: string;
   note?: string | null;
+}
+
+/** Antwort des Mahnungsversands per E-Mail. */
+export interface DunningEmailResult {
+  sent: boolean;
+  to_address: string;
 }
 
 /** Rechnungskorrektur über ausgewählte Positionsnummern. */

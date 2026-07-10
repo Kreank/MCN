@@ -4,6 +4,7 @@ import { Observable, map } from 'rxjs';
 import {
   CorrectionInput,
   CreditOutcome,
+  DunningEmailResult,
   DunningIssue,
   DunningList,
   DunningNotice,
@@ -67,6 +68,19 @@ export class BuchhaltungService {
     return this.http.post<DunningNotice>(
       `${this.base}/invoices/${invoiceId}/dunning`,
       payload,
+    );
+  }
+
+  /**
+   * Eine ausgestellte Mahnung/Zahlungserinnerung als E-Mail an den Schuldner
+   * senden (Rechnung als PDF-Anhang). `toAddress` überschreibt die serverseitig
+   * ermittelte Schuldner-Adresse. Reine Zustellung; Fehler (kein Empfänger/Konto,
+   * SMTP) kommen als 422, unbekannte Mahnung als 404.
+   */
+  sendDunningEmail(noticeId: string, toAddress: string): Observable<DunningEmailResult> {
+    return this.http.post<DunningEmailResult>(
+      `${this.base}/dunning-notices/${noticeId}/send-email`,
+      { to_address: toAddress },
     );
   }
 

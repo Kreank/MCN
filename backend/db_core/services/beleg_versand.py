@@ -14,24 +14,30 @@ primärer INVOICE_RECIPIENT, ersatzweise INVOICE_DEBTOR. Fehler werden als
 ValueError gemeldet (→ 422); es werden keine personenbezogenen Werte in
 Fehlermeldungen aufgenommen.
 """
-from db_core.models import ContactPoint, Invoice, Quote
+from decimal import Decimal
+
+from db_core.models import ContactPoint, DunningNotice, Invoice, Payment, Quote
 from db_core.services import beleg_pdf as beleg_pdf_service
 from db_core.services import firma as firma_service
+from db_core.services.buchhaltung import PAYMENT_SIGN
 from db_core.services.mail import send_mail
 
 # Empfänger wie im PDF: primärer INVOICE_RECIPIENT gewinnt, sonst INVOICE_DEBTOR.
 # Reihenfolge = Priorität.
 _RECIPIENT_ROLES = ("INVOICE_RECIPIENT", "INVOICE_DEBTOR")
+# Schuldner der Rechnung (für den Mahnungsversand): der INVOICE_DEBTOR trägt die
+# Zahlungspflicht — er wird angemahnt. Ersatzweise der INVOICE_RECIPIENT.
+_DEBTOR_ROLES = ("INVOICE_DEBTOR", "INVOICE_RECIPIENT")
 
 
-def _recipient_party(invoice):
-    """Empfängerpartei der Rechnung (Party-Objekt) oder None.
+def _pick_party(invoice, roles):
+    """Erste passende Beteiligten-Partei nach Rollen-Priorität, sonst None.
 
-    Spiegelt die Auflösung aus beleg_pdf.render_invoice_pdf: der primäre
-    INVOICE_RECIPIENT gewinnt, ersatzweise der INVOICE_DEBTOR; innerhalb einer
-    Rolle der als primär markierte Beteiligte, sonst irgendeiner der Rolle.
+    `roles` ist eine nach Priorität geordnete Rollenfolge. Innerhalb einer Rolle
+    gewinnt der als primär markierte Beteiligte, sonst irgendeiner der Rolle.
+    Erwartet ein Invoice mit vorgeladenen `parties__party`.
     """
-    for role in _RECIPIENT_ROLES:
+    for role in roles:
         chosen = None
         for p in invoice.parties.all():
             if p.role == role:
@@ -41,6 +47,24 @@ def _recipient_party(invoice):
         if chosen is not None:
             return chosen.party
     return None
+
+
+def _recipient_party(invoice):
+    """Empfängerpartei der Rechnung (Party-Objekt) oder None.
+
+    Spiegelt die Auflösung aus beleg_pdf.render_invoice_pdf: der primäre
+    INVOICE_RECIPIENT gewinnt, ersatzweise der INVOICE_DEBTOR.
+    """
+    return _pick_party(invoice, _RECIPIENT_ROLES)
+
+
+def _debtor_party(invoice):
+    """Schuldnerpartei der Rechnung (Party-Objekt) oder None.
+
+    Für den Mahnungsversand: der INVOICE_DEBTOR gewinnt, ersatzweise der
+    INVOICE_RECIPIENT.
+    """
+    return _pick_party(invoice, _DEBTOR_ROLES)
 
 
 def primary_email(party_id):
@@ -139,6 +163,187 @@ def send_invoice_email(actor, *, invoice_id, to_address=None):
         else "Rechnung"
     )
     body = _body(invoice.invoice_number, company_name)
+    filename = beleg_pdf_service._safe_filename(invoice)
+
+    return send_mail(
+        actor,
+        to_address=address,
+        subject=subject,
+        body=body,
+        attachments=[(filename, pdf, "application/pdf")],
+        party_id=party.id if party is not None else None,
+        is_commercial=True,
+    )
+
+
+# --- Mahnungsversand -------------------------------------------------------
+# Eine bereits ausgestellte dunning_notice (Zahlungserinnerung/Mahnung) wird als
+# E-Mail an den Schuldner der Rechnung zugestellt, mit der Rechnung als PDF-Anhang.
+# Reine Zustellung — kein Statuswechsel an Rechnung/dunning_notice, keine
+# GoBD-Berührung. Betreff/Body richten sich nach dem Label der Mahnstufe
+# (Zahlungserinnerung = sachlich-freundlich, Mahnung = bestimmter). Gebühren/
+# Zinsen werden NICHT erfunden (B-22: fee/interest_note sind NULL).
+
+def debtor_email(invoice):
+    """Vorbelegte Schuldner-E-Mail der Rechnung (für die Dialog-Vorbelegung im UI).
+
+    Erwartet ein Invoice mit vorgeladenen `parties__party`.
+    """
+    party = _debtor_party(invoice)
+    return primary_email(party.id) if party is not None else None
+
+
+def _open_amount(invoice):
+    """Best-effort offener Betrag der Rechnung (Brutto minus Zahlungen), sonst None.
+
+    Verwendet dieselbe Vorzeichenkonvention wie die Buchhaltung (PAYMENT_SIGN):
+    Geldeingänge reduzieren, Rückflüsse/Stornos erhöhen den offenen Posten.
+    """
+    gross = invoice.gross_total
+    if gross is None:
+        return None
+    paid = Decimal("0.00")
+    for p in Payment.objects.filter(invoice_id=invoice.id).only(
+        "payment_type", "amount"
+    ):
+        paid += PAYMENT_SIGN.get(p.payment_type, 0) * p.amount
+    return gross - paid
+
+
+def _format_amount(amount, currency):
+    """Deutscher Betrag mit Währung (nur für die Textnachricht)."""
+    q = amount.quantize(Decimal("0.01"))
+    # 1234567.89 -> "1.234.567,89" (Tausenderpunkt, Dezimalkomma).
+    s = f"{q:,.2f}".replace(",", " ").replace(".", ",").replace(" ", ".")
+    return f"{s} {currency}"
+
+
+def _dunning_is_reminder(label):
+    """True für eine (freundliche) Zahlungserinnerung, False für eine (bestimmte)
+    Mahnung. Fällt auf den freundlichen Ton zurück, wenn das Label unklar ist."""
+    return "mahnung" not in (label or "").lower()
+
+
+def _dunning_subject(label, invoice_number):
+    """Betreff je Stufe: „{Stufen-Label} zu Rechnung {Nummer}"."""
+    number = invoice_number or "(ohne Nummer)"
+    stufe = label or "Zahlungserinnerung"
+    return f"{stufe} zu Rechnung {number}"
+
+
+def _dunning_body(label, invoice_number, company_name, open_amount, currency):
+    """Standard-Body je Stufe (Ton nach Label). Kein Erfinden von Gebühren/Zinsen."""
+    number = invoice_number or "(ohne Nummer)"
+    betrag_satz = None
+    if open_amount is not None and open_amount > 0:
+        betrag_satz = (
+            f"Der noch offene Betrag beträgt {_format_amount(open_amount, currency)}."
+        )
+
+    if _dunning_is_reminder(label):
+        lines = ["Sehr geehrte Damen und Herren,", ""]
+        lines.append(
+            f"zu unserer Rechnung {number} liegt uns bisher kein vollständiger "
+            "Zahlungseingang vor."
+        )
+        if betrag_satz:
+            lines.append(betrag_satz)
+        lines += [
+            "",
+            "Sollte sich Ihre Zahlung mit diesem Schreiben überschnitten haben, "
+            "betrachten Sie diese Erinnerung bitte als gegenstandslos. Andernfalls "
+            "bitten wir Sie, den offenen Betrag zeitnah auszugleichen. Die Rechnung "
+            "ist diesem Schreiben als PDF beigefügt.",
+            "",
+            "Für Rückfragen stehen wir Ihnen gerne zur Verfügung.",
+            "",
+            "Mit freundlichen Grüßen",
+        ]
+    else:
+        lines = ["Sehr geehrte Damen und Herren,", ""]
+        lines.append(
+            f"trotz unserer vorangegangenen Zahlungserinnerung ist die Rechnung "
+            f"{number} weiterhin offen."
+        )
+        if betrag_satz:
+            lines.append(betrag_satz)
+        lines += [
+            "",
+            "Wir fordern Sie hiermit auf, den offenen Betrag umgehend zu begleichen. "
+            "Die Rechnung ist diesem Schreiben als PDF beigefügt.",
+            "",
+            "Mit freundlichen Grüßen",
+        ]
+
+    if company_name:
+        lines.append(company_name)
+    return "\n".join(lines)
+
+
+def send_dunning_email(actor, *, dunning_notice_id, to_address=None):
+    """Versendet eine ausgestellte Mahnung/Zahlungserinnerung als E-Mail an den
+    Schuldner, mit der Rechnung als PDF-Anhang.
+
+    Reine Zustellung — kein Statuswechsel an Rechnung oder dunning_notice, keine
+    GoBD-Berührung. Betreff/Body richten sich nach dem Label der Mahnstufe.
+    Protokolliert über content.communication (channel EMAIL, direction AUSGEHEND,
+    is_commercial=True), verknüpft mit dem Schuldner.
+
+    `to_address` überschreibt die ermittelte Schuldner-Adresse (der Nutzer
+    bestätigt/korrigiert sie im Dialog); ohne Angabe wird die primäre EMAIL der
+    Schuldnerpartei genommen.
+
+    Fehler:
+      - Mahnung unbekannt → LookupError (→ 404 in der API).
+      - Rechnung nicht (mehr) veröffentlicht → ValueError (422).
+      - keine Empfänger-Adresse ermittelbar → ValueError (422).
+      - kein Mailkonto / SMTP-/Schlüsselfehler → aus send_mail
+        (ValueError bzw. MailSendError/MailKeyError), von der API als 422
+        passwortfrei abgebildet.
+
+    Gibt die protokollierte content.communication zurück (aus send_mail).
+    """
+    notice = (
+        DunningNotice.objects.filter(id=dunning_notice_id)
+        .select_related("level")
+        .prefetch_related("invoice__parties__party")
+        .first()
+    )
+    if notice is None:
+        raise LookupError("Mahnung nicht gefunden.")
+    invoice = notice.invoice
+    if invoice.status != "VEROEFFENTLICHT":
+        raise ValueError(
+            "Mahnungen können nur zu veröffentlichten Rechnungen versendet werden."
+        )
+
+    party = _debtor_party(invoice)
+    address = (to_address or "").strip() or None
+    if address is None and party is not None:
+        address = primary_email(party.id)
+    if not address:
+        raise ValueError(
+            "Für den Rechnungsschuldner ist keine E-Mail-Adresse hinterlegt. "
+            "Bitte eine Adresse angeben oder im Kontakt einen "
+            "E-Mail-Kommunikationsweg pflegen."
+        )
+
+    # PDF-Ausfertigung der Rechnung (holt die archivierte oder rendert/archiviert).
+    pdf = beleg_pdf_service.get_or_archive_invoice_pdf(actor, invoice.id)
+    if pdf is None:
+        # Bei VEROEFFENTLICHT nicht zu erwarten; defensiv statt 500.
+        raise ValueError("Die PDF-Ausfertigung der Rechnung konnte nicht erzeugt werden.")
+
+    profile = firma_service.get_company_profile()
+    company_name = (
+        profile.company_name if profile and profile.company_name else None
+    )
+    label = notice.level.label
+    subject = _dunning_subject(label, invoice.invoice_number)
+    body = _dunning_body(
+        label, invoice.invoice_number, company_name,
+        _open_amount(invoice), invoice.currency,
+    )
     filename = beleg_pdf_service._safe_filename(invoice)
 
     return send_mail(
