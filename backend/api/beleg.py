@@ -53,6 +53,10 @@ class QuoteListOut(Schema):
 class QuoteLineOut(Schema):
     position_number: int
     line_type: str
+    # NORMAL | ALTERNATIV | BEDARF — Alternativ/Bedarf zählen nicht in die Summe.
+    line_kind: str = "NORMAL"
+    # Abschnittsnummer (1-basiert), null = keinem Abschnitt zugeordnet.
+    rubrik: int | None = None
     description: str
     quantity: Decimal | None = None
     unit: str | None = None
@@ -61,6 +65,17 @@ class QuoteLineOut(Schema):
     tax_code: str | None = None
     tax_rate_percent: Decimal | None = None
     net_amount: Decimal | None = None
+    # Interner Kalkulations-Snapshot (nicht auf dem Kundenbeleg).
+    unit_cost: Decimal | None = None
+    markup_percent: Decimal | None = None
+    source_article_id: UUID | None = None
+    source_assembly_id: UUID | None = None
+
+
+class RubrikOut(Schema):
+    position_number: int
+    title: str
+    description: str | None = None
 
 
 class ProjectRefOut(Schema):
@@ -77,17 +92,30 @@ class QuoteDetailOut(QuoteOut):
     sent_at: datetime | None = None
     has_snapshot: bool = False
     content_hash: str | None = None
+    rubriken: list[RubrikOut] = []
     lines: list[QuoteLineOut]
 
 
 class QuoteLineIn(Schema):
     line_type: str
     description: str
+    line_kind: str = "NORMAL"
+    rubrik: int | None = None
     quantity: Decimal | None = None
     unit: str | None = None
     unit_price: Decimal | None = None
     discount_percent: Decimal | None = None
     tax_code: str | None = None
+    unit_cost: Decimal | None = None
+    markup_percent: Decimal | None = None
+    sale_price_group_id: UUID | None = None
+    source_article_id: UUID | None = None
+    source_assembly_id: UUID | None = None
+
+
+class RubrikIn(Schema):
+    title: str
+    description: str | None = None
 
 
 class QuoteIn(Schema):
@@ -96,7 +124,34 @@ class QuoteIn(Schema):
     project_id: UUID | None = None
     quote_date: date | None = None
     valid_until_date: date | None = None
+    rubriken: list[RubrikIn] = []
     lines: list[QuoteLineIn] = []
+
+
+# --- Kalkulationsübersicht -------------------------------------------------
+
+class KalkAbschnittOut(Schema):
+    """Ein Abschnitt der internen Kalkulation. `rubrik=null` = „Ohne Abschnitt"."""
+    rubrik: int | None = None
+    title: str
+    description: str | None = None
+    netto: Decimal
+    ek: Decimal
+    deckungsbeitrag: Decimal | None = None
+    marge_prozent: Decimal | None = None
+    # Sagt dem UI, dass die Marge nicht berechenbar war (fehlender EK), statt eine
+    # 0 zu zeigen, die wie „kein Gewinn" aussähe.
+    ek_vollstaendig: bool
+    positionen: int
+    positionen_ohne_ek: int
+    alternativ_netto: Decimal
+    bedarf_netto: Decimal
+    arbeitszeit: Decimal
+
+
+class KalkulationOut(Schema):
+    abschnitte: list[KalkAbschnittOut]
+    gesamt: KalkAbschnittOut
 
 
 class QuoteFilter(Schema):
@@ -158,20 +213,37 @@ def list_quotes(
     return QuoteListOut(items=items, total=total, page=page, page_size=page_size)
 
 
+def _rubrik_nummern(beleg):
+    """UUID → Abschnittsnummer. Die API spricht in Nummern, nicht in Fremdschlüsseln."""
+    return {r.id: r.position_number for r in beleg.rubriken.all()}
+
+
+def _rubriken_out(beleg):
+    return [
+        RubrikOut(
+            position_number=r.position_number, title=r.title, description=r.description
+        )
+        for r in sorted(beleg.rubriken.all(), key=lambda r: r.position_number)
+    ]
+
+
 def _quote_detail(quote_id):
     quote = (
         Quote.objects.filter(id=quote_id)
         .select_related("property__address", "project")
-        .prefetch_related("lines")
+        .prefetch_related("lines", "rubriken")
         .first()
     )
     if quote is None:
         raise HttpError(404, "Angebot nicht gefunden.")
 
+    nummern = _rubrik_nummern(quote)
     lines = [
         QuoteLineOut(
             position_number=l.position_number,
             line_type=l.line_type,
+            line_kind=l.line_kind,
+            rubrik=nummern.get(l.rubrik_id),
             description=l.description,
             quantity=l.quantity,
             unit=l.unit,
@@ -180,6 +252,10 @@ def _quote_detail(quote_id):
             tax_code=l.tax_code_id,
             tax_rate_percent=l.tax_rate_percent,
             net_amount=l.net_amount,
+            unit_cost=l.unit_cost,
+            markup_percent=l.markup_percent,
+            source_article_id=l.source_article_id,
+            source_assembly_id=l.source_assembly_id,
         )
         for l in sorted(quote.lines.all(), key=lambda l: l.position_number)
     ]
@@ -209,6 +285,7 @@ def _quote_detail(quote_id):
         sent_at=quote.sent_at,
         has_snapshot=quote.billing_snapshot is not None,
         content_hash=quote.content_hash,
+        rubriken=_rubriken_out(quote),
         lines=lines,
     )
 
@@ -227,11 +304,27 @@ def create_quote(request, payload: QuoteIn):
             project_id=payload.project_id,
             quote_date=payload.quote_date,
             valid_until_date=payload.valid_until_date,
+            rubriken=[r.dict() for r in payload.rubriken],
             lines=[line.dict() for line in payload.lines],
         )
     except ValueError as exc:
         raise HttpError(422, str(exc))
     return Status(201, _quote_detail(quote.id))
+
+
+@router.get("/quotes/{quote_id}/kalkulation", response=KalkulationOut)
+def quote_kalkulation(request, quote_id: UUID):
+    """Interne Kalkulationsübersicht je Abschnitt (EK, Deckungsbeitrag, Marge).
+
+    Enthält die Einkaufspreise — deshalb ein eigenes Recht: wer ein Angebot lesen
+    darf, darf nicht zwangsläufig die Marge sehen. `pricing/LESEN` gatet den
+    Artikelstamm samt EK und ist damit das passende Tor.
+    """
+    require(request, "pricing", "LESEN")
+    try:
+        return beleg_service.quote_kalkulation(quote_id)
+    except ValueError as exc:
+        raise HttpError(404, str(exc))
 
 
 @router.post("/quotes/{quote_id}/send", response=QuoteDetailOut, auth=django_auth)
@@ -292,6 +385,7 @@ class InvoiceDetailOut(InvoiceOut):
     has_snapshot: bool = False
     content_hash: str | None = None
     parties: list[InvoicePartyOut] = []
+    rubriken: list[RubrikOut] = []
     lines: list[QuoteLineOut]
 
 
@@ -303,6 +397,7 @@ class InvoiceIn(Schema):
     reference_invoice_id: UUID | None = None
     invoice_date: date | None = None
     due_date: date | None = None
+    rubriken: list[RubrikIn] = []
     lines: list[QuoteLineIn] = []
 
 
@@ -369,16 +464,19 @@ def _invoice_detail(invoice_id):
     invoice = (
         Invoice.objects.filter(id=invoice_id)
         .select_related("property__address", "project", "work_order")
-        .prefetch_related("lines", "parties__party")
+        .prefetch_related("lines", "parties__party", "rubriken")
         .first()
     )
     if invoice is None:
         raise HttpError(404, "Rechnung nicht gefunden.")
 
+    nummern = _rubrik_nummern(invoice)
     lines = [
         QuoteLineOut(
             position_number=l.position_number,
             line_type=l.line_type,
+            line_kind=l.line_kind,
+            rubrik=nummern.get(l.rubrik_id),
             description=l.description,
             quantity=l.quantity,
             unit=l.unit,
@@ -387,6 +485,10 @@ def _invoice_detail(invoice_id):
             tax_code=l.tax_code_id,
             tax_rate_percent=l.tax_rate_percent,
             net_amount=l.net_amount,
+            unit_cost=l.unit_cost,
+            markup_percent=l.markup_percent,
+            source_article_id=l.source_article_id,
+            source_assembly_id=l.source_assembly_id,
         )
         for l in sorted(invoice.lines.all(), key=lambda l: l.position_number)
     ]
@@ -430,6 +532,7 @@ def _invoice_detail(invoice_id):
         has_snapshot=invoice.billing_snapshot is not None,
         content_hash=invoice.content_hash,
         parties=parties,
+        rubriken=_rubriken_out(invoice),
         lines=lines,
     )
 
@@ -448,11 +551,22 @@ def create_invoice(request, payload: InvoiceIn):
             reference_invoice_id=payload.reference_invoice_id,
             invoice_date=payload.invoice_date,
             due_date=payload.due_date,
+            rubriken=[r.dict() for r in payload.rubriken],
             lines=[line.dict() for line in payload.lines],
         )
     except ValueError as exc:
         raise HttpError(422, str(exc))
     return Status(201, _invoice_detail(invoice.id))
+
+
+@router.get("/invoices/{invoice_id}/kalkulation", response=KalkulationOut)
+def invoice_kalkulation(request, invoice_id: UUID):
+    """Interne Kalkulationsübersicht je Abschnitt (enthält EK → `pricing/LESEN`)."""
+    require(request, "pricing", "LESEN")
+    try:
+        return beleg_service.invoice_kalkulation(invoice_id)
+    except ValueError as exc:
+        raise HttpError(404, str(exc))
 
 
 @router.post(

@@ -728,15 +728,27 @@ class QuoteLine(models.Model):
     (quantity/unit_price/net_amount/tax_code/tax_rate_percent). net_amount wird
     per CHECK erzwungen (kaufmännische Rundung) — die App muss es korrekt
     vorberechnen.
+
+    `line_type` sagt, WAS die Position ist; `line_kind` (0036), OB sie in die
+    Summe zählt (ALTERNATIV/BEDARF zählen nicht). Die Kalkulationsspalten (0033)
+    frieren die Herkunft und die Marge zum Zeitpunkt der Belegerstellung ein:
+    `unit_cost` = EK-Snapshot, `markup_percent` = Aufschlag-Snapshot (darf negativ
+    sein = bewusster Verlust), `source_article`/`source_assembly` = Herkunft.
     """
 
     id = models.UUIDField(primary_key=True)
     quote = models.ForeignKey(
         Quote, models.DO_NOTHING, db_column="quote_id", related_name="lines"
     )
+    rubrik = models.ForeignKey(
+        "BelegRubrik", models.DO_NOTHING, db_column="rubrik_id",
+        null=True, blank=True, related_name="quote_lines",
+    )
     position_number = models.IntegerField()
     # MATERIAL|ARBEITSZEIT|PAUSCHALE|FREMDLEISTUNG|FAHRT|ZUSCHLAG|TEXT|ZWISCHENSUMME
     line_type = models.TextField()
+    # NORMAL|ALTERNATIV|BEDARF (0036)
+    line_kind = models.TextField(db_default="NORMAL")
     description = models.TextField()
     quantity = models.DecimalField(
         max_digits=15, decimal_places=3, null=True, blank=True
@@ -761,6 +773,25 @@ class QuoteLine(models.Model):
     )
     net_amount = models.DecimalField(
         max_digits=15, decimal_places=2, null=True, blank=True
+    )
+    # Kalkulations-Snapshot (Migration 0033)
+    unit_cost = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True
+    )
+    markup_percent = models.DecimalField(
+        max_digits=9, decimal_places=3, null=True, blank=True
+    )
+    sale_price_group = models.ForeignKey(
+        "SalePriceGroup", models.DO_NOTHING, db_column="sale_price_group_id",
+        null=True, blank=True, related_name="quote_lines",
+    )
+    source_article = models.ForeignKey(
+        "Article", models.DO_NOTHING, db_column="source_article_id",
+        null=True, blank=True, related_name="quote_lines",
+    )
+    source_assembly = models.ForeignKey(
+        "Assembly", models.DO_NOTHING, db_column="source_assembly_id",
+        null=True, blank=True, related_name="quote_lines",
     )
     created_at = models.DateTimeField(db_default=Now())
     updated_at = models.DateTimeField(db_default=Now())
@@ -876,8 +907,14 @@ class InvoiceLine(models.Model):
     invoice = models.ForeignKey(
         Invoice, models.DO_NOTHING, db_column="invoice_id", related_name="lines"
     )
+    rubrik = models.ForeignKey(
+        "BelegRubrik", models.DO_NOTHING, db_column="rubrik_id",
+        null=True, blank=True, related_name="invoice_lines",
+    )
     position_number = models.IntegerField()
     line_type = models.TextField()
+    # NORMAL|ALTERNATIV|BEDARF (0036)
+    line_kind = models.TextField(db_default="NORMAL")
     description = models.TextField()
     quantity = models.DecimalField(
         max_digits=15, decimal_places=3, null=True, blank=True
@@ -903,6 +940,25 @@ class InvoiceLine(models.Model):
     net_amount = models.DecimalField(
         max_digits=15, decimal_places=2, null=True, blank=True
     )
+    # Kalkulations-Snapshot (Migration 0033)
+    unit_cost = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True
+    )
+    markup_percent = models.DecimalField(
+        max_digits=9, decimal_places=3, null=True, blank=True
+    )
+    sale_price_group = models.ForeignKey(
+        "SalePriceGroup", models.DO_NOTHING, db_column="sale_price_group_id",
+        null=True, blank=True, related_name="invoice_lines",
+    )
+    source_article = models.ForeignKey(
+        "Article", models.DO_NOTHING, db_column="source_article_id",
+        null=True, blank=True, related_name="invoice_lines",
+    )
+    source_assembly = models.ForeignKey(
+        "Assembly", models.DO_NOTHING, db_column="source_assembly_id",
+        null=True, blank=True, related_name="invoice_lines",
+    )
     created_at = models.DateTimeField(db_default=Now())
     updated_at = models.DateTimeField(db_default=Now())
 
@@ -912,6 +968,42 @@ class InvoiceLine(models.Model):
 
     def __str__(self):
         return f"{self.position_number}. {self.description}"
+
+
+class BelegRubrik(models.Model):
+    """invoicing.beleg_rubrik — Abschnitt/Titel eines Belegs (Migration 0033).
+
+    Gliedert Angebot ODER Rechnung (XOR per CHECK) in Abschnitte. Der Kunde sieht
+    im PDF die Zwischensumme je Abschnitt; die interne Kalkulationsübersicht (EK,
+    Aufschlag, Deckungsbeitrag je Abschnitt) rechnet der Service aus den
+    eingefrorenen Positionswerten — sie wird bewusst NICHT gespeichert, damit sie
+    nicht von den Positionen abdriften kann.
+
+    Die Rubriken folgen der Beleg-Einfrierung: ab Versand (Angebot) bzw.
+    Veröffentlichung (Rechnung) sind sie per Trigger unveränderlich.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    quote = models.ForeignKey(
+        Quote, models.DO_NOTHING, db_column="quote_id",
+        null=True, blank=True, related_name="rubriken",
+    )
+    invoice = models.ForeignKey(
+        Invoice, models.DO_NOTHING, db_column="invoice_id",
+        null=True, blank=True, related_name="rubriken",
+    )
+    position_number = models.IntegerField()
+    title = models.TextField()
+    description = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'invoicing"."beleg_rubrik'
+
+    def __str__(self):
+        return f"{self.position_number}. {self.title}"
 
 
 class Payment(models.Model):
