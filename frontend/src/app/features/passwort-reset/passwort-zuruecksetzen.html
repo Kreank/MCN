@@ -1,0 +1,104 @@
+<section class="pwreset" aria-labelledby="pwz-titel">
+  <div class="pwreset__card">
+    <div class="pwreset__brand">
+      <span class="pwreset__mark" aria-hidden="true">M</span>
+      <span class="pwreset__wordmark">
+        <span class="pwreset__name">MCN</span>
+        <span class="pwreset__sub">Leitstand</span>
+      </span>
+    </div>
+
+    <header class="pwreset__head">
+      <p class="pwreset__kicker">
+        <span class="pwreset__scale" aria-hidden="true"></span>
+        Zugang
+      </p>
+      <h1 id="pwz-titel" class="pwreset__titel">Passwort zurücksetzen</h1>
+    </header>
+
+    @if (erfolg()) {
+      <div #erfolgBox class="pwreset__alert pwreset__alert--ok" role="status" tabindex="-1">
+        <span class="pwreset__alert-mark" aria-hidden="true">✓</span>
+        <span>Ihr Passwort wurde gesetzt. Sie können sich jetzt neu anmelden.</span>
+      </div>
+      <p class="pwreset__links">
+        <a routerLink="/login">Zur Anmeldung</a>
+      </p>
+    } @else if (linkUngueltig()) {
+      <div class="pwreset__alert" role="alert" tabindex="-1">
+        <span class="pwreset__alert-mark" aria-hidden="true">!</span>
+        <span>
+          Der Link ist ungültig oder abgelaufen. Fordern Sie bitte einen neuen
+          Link an.
+        </span>
+      </div>
+      <p class="pwreset__links">
+        <a routerLink="/passwort-vergessen">Neuen Link anfordern</a>
+      </p>
+    } @else {
+      <p class="pwreset__hint" style="margin-bottom: var(--space-5)">
+        Vergeben Sie ein neues Passwort (mindestens 12 Zeichen).
+      </p>
+
+      @if (fehler(); as meldung) {
+        <div #fehlerBox class="pwreset__alert" role="alert" tabindex="-1">
+          <span class="pwreset__alert-mark" aria-hidden="true">!</span>
+          <span>{{ meldung }}</span>
+        </div>
+      }
+
+      <form class="pwreset__form" (submit)="$event.preventDefault(); absenden()" novalidate>
+        <div class="feld-gruppe">
+          <label class="feld-gruppe__label" for="pwz-neu">Neues Passwort</label>
+          <input
+            id="pwz-neu"
+            class="feld-gruppe__input"
+            type="password"
+            name="new-password"
+            autocomplete="new-password"
+            required
+            [attr.aria-invalid]="feldFehler() ? 'true' : null"
+            [attr.aria-describedby]="feldFehler() ? 'pwz-fehler' : null"
+            [value]="passwort()"
+            (input)="onPasswort($any($event.target).value)"
+            [disabled]="laedt()"
+          />
+        </div>
+
+        <div class="feld-gruppe">
+          <label class="feld-gruppe__label" for="pwz-wdh">Passwort wiederholen</label>
+          <input
+            id="pwz-wdh"
+            class="feld-gruppe__input"
+            type="password"
+            name="new-password-repeat"
+            autocomplete="new-password"
+            required
+            [attr.aria-invalid]="feldFehler() ? 'true' : null"
+            [attr.aria-describedby]="feldFehler() ? 'pwz-fehler' : null"
+            [value]="wiederholung()"
+            (input)="onWiederholung($any($event.target).value)"
+            [disabled]="laedt()"
+          />
+        </div>
+
+        @if (feldFehler(); as fmeldung) {
+          <p id="pwz-fehler" class="feld-gruppe__fehler" role="alert">{{ fmeldung }}</p>
+        }
+
+        <button
+          type="submit"
+          class="btn btn--primary pwreset__submit"
+          [disabled]="laedt()"
+          [attr.aria-busy]="laedt()"
+        >
+          {{ laedt() ? 'Wird gespeichert …' : 'Passwort setzen' }}
+        </button>
+      </form>
+
+      <p class="pwreset__links">
+        <a routerLink="/login">Zurück zur Anmeldung</a>
+      </p>
+    }
+  </div>
+</section>

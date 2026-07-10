@@ -167,3 +167,18 @@ MCN_MINIO_REGION = os.environ.get("MCN_MINIO_REGION", "us-east-1")
 # Fernet; print(Fernet.generate_key().decode())"`. Kein Default: ein leerer Wert
 # erzwingt die bewusste Bereitstellung (wie MCN_DB_PASSWORD).
 MCN_MAIL_KEY = os.environ.get("MCN_MAIL_KEY", "")
+
+# --- Passwort-Zurücksetzen (Einmal-Link per E-Mail) ------------------------
+# Gültigkeitsdauer des Reset-Tokens (django.contrib.auth.tokens.
+# default_token_generator liest PASSWORD_RESET_TIMEOUT). 12 Stunden = 43200 s,
+# wie im Hero-CRM. Der Token ist zustandslos und wird single-use, sobald sich
+# das Passwort (bzw. last_login) ändert — es gibt keine eigene Token-Tabelle.
+PASSWORD_RESET_TIMEOUT = 43200
+
+# Basis-URL des Frontends für den Reset-Link in der E-Mail. Der Link zeigt auf
+# die (anmeldefreie) Angular-Route /passwort-zuruecksetzen. In jeder Umgebung
+# außer der lokalen Entwicklung MUSS die öffentliche Frontend-URL gesetzt werden
+# (sonst verweist die Mail auf localhost).
+MCN_FRONTEND_BASE_URL = os.environ.get(
+    "MCN_FRONTEND_BASE_URL", "http://localhost:4200"
+)

@@ -1,15 +1,18 @@
+// Gemeinsames Layout der beiden anmeldefreien Reset-Seiten
+// (Passwort vergessen + Passwort zurücksetzen). Spiegelt bewusst die Anmeldung
+// (features/login), damit der Zugang als eine visuelle Einheit erscheint.
 :host {
   display: block;
 }
 
-.login {
+.pwreset {
   display: grid;
   place-items: center;
   min-height: calc(100vh - var(--header-h));
   padding: var(--space-6) var(--space-4);
 }
 
-.login__card {
+.pwreset__card {
   width: 100%;
   max-width: 26rem;
   padding: var(--space-6);
@@ -20,13 +23,13 @@
 }
 
 // -------------------------------- Marke -------------------------------------
-.login__brand {
+.pwreset__brand {
   display: flex;
   align-items: center;
   gap: var(--space-3);
   margin-bottom: var(--space-5);
 }
-.login__mark {
+.pwreset__mark {
   display: grid;
   place-items: center;
   width: 2.5rem;
@@ -38,18 +41,18 @@
   font-weight: 700;
   font-size: 1.35rem;
 }
-.login__wordmark {
+.pwreset__wordmark {
   display: flex;
   flex-direction: column;
   line-height: 1.1;
 }
-.login__name {
+.pwreset__name {
   font-family: var(--font-display);
   font-weight: 700;
   font-size: 1.25rem;
   letter-spacing: 0.02em;
 }
-.login__sub {
+.pwreset__sub {
   font-family: var(--font-mono);
   font-size: 0.66rem;
   letter-spacing: 0.22em;
@@ -58,10 +61,10 @@
 }
 
 // -------------------------------- Kopf --------------------------------------
-.login__head {
+.pwreset__head {
   margin-bottom: var(--space-5);
 }
-.login__kicker {
+.pwreset__kicker {
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -72,7 +75,7 @@
   text-transform: uppercase;
   color: var(--ink-faint);
 }
-.login__scale {
+.pwreset__scale {
   width: 2rem;
   height: 0.5rem;
   background-image: repeating-linear-gradient(
@@ -84,18 +87,18 @@
   );
   border-bottom: 1px solid var(--line-strong);
 }
-.login__titel {
+.pwreset__titel {
   font-size: var(--step-2);
   margin: 0 0 var(--space-2);
 }
-.login__hint {
+.pwreset__hint {
   margin: 0;
   color: var(--ink-muted);
   font-size: var(--step--1);
 }
 
-// ------------------------------- Fehler -------------------------------------
-.login__alert {
+// ------------------------- Meldungen (Fehler / Erfolg) ----------------------
+.pwreset__alert {
   display: flex;
   align-items: flex-start;
   gap: var(--space-3);
@@ -108,11 +111,16 @@
   color: var(--warn-ink);
   font-size: var(--step--1);
 }
-.login__alert:focus-visible {
+.pwreset__alert:focus-visible {
   outline: 2.5px solid var(--focus-ring);
   outline-offset: 2px;
 }
-.login__alert-mark {
+.pwreset__alert--ok {
+  border-color: color-mix(in srgb, var(--positive-ink) 45%, var(--line-strong));
+  background: var(--positive-tint);
+  color: var(--positive-ink);
+}
+.pwreset__alert-mark {
   flex: none;
   display: grid;
   place-items: center;
@@ -127,7 +135,7 @@
 }
 
 // -------------------------------- Form --------------------------------------
-.login__form {
+.pwreset__form {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
@@ -171,15 +179,22 @@
     opacity: 0.55;
     cursor: not-allowed;
   }
+  &[aria-invalid='true'] {
+    border-color: var(--warn-ink);
+  }
+}
+.feld-gruppe__fehler {
+  color: var(--warn-ink);
+  font-size: var(--step--1);
 }
 
-.login__submit {
+.pwreset__submit {
   margin-top: var(--space-2);
   width: 100%;
 }
 
-.login__vergessen {
-  margin: var(--space-4) 0 0;
+.pwreset__links {
+  margin: var(--space-5) 0 0;
   text-align: center;
   font-size: var(--step--1);
 

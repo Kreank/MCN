@@ -61,6 +61,36 @@ export class AuthService {
   }
 
   /**
+   * Fordert einen Passwort-Reset-Link an. Der Server antwortet aus Sicherheits-
+   * gründen IMMER gleich (200), egal ob die Adresse existiert — die Antwort
+   * verrät also nie, ob ein Konto zu dieser E-Mail besteht.
+   */
+  requestPasswordReset(email: string): Observable<{ detail: string }> {
+    return this.http.post<{ detail: string }>('/api/auth/password-reset/request', {
+      email,
+    });
+  }
+
+  /**
+   * Setzt das Passwort anhand des Einmal-Links (uid + token) neu. Kein
+   * automatisches Anmelden — der Nutzer meldet sich danach neu an.
+   *
+   * Fehler: 400 (Link ungültig/abgelaufen), 422 (neues Passwort zu schwach, mit
+   * deutschen Validator-Meldungen). Passwörter werden nie gespeichert/geloggt.
+   */
+  confirmPasswordReset(
+    uid: string,
+    token: string,
+    newPassword: string,
+  ): Observable<{ detail: string }> {
+    return this.http.post<{ detail: string }>('/api/auth/password-reset/confirm', {
+      uid,
+      token,
+      new_password: newPassword,
+    });
+  }
+
+  /**
    * Ändert das eigene Passwort. Der Server hält die Sitzung gültig
    * (update_session_auth_hash) — kein erneutes Anmelden nötig. Passwörter
    * werden nie geloggt oder gespeichert.

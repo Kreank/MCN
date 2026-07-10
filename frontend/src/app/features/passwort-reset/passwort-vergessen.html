@@ -1,0 +1,78 @@
+<section class="pwreset" aria-labelledby="pwv-titel">
+  <div class="pwreset__card">
+    <div class="pwreset__brand">
+      <span class="pwreset__mark" aria-hidden="true">M</span>
+      <span class="pwreset__wordmark">
+        <span class="pwreset__name">MCN</span>
+        <span class="pwreset__sub">Leitstand</span>
+      </span>
+    </div>
+
+    <header class="pwreset__head">
+      <p class="pwreset__kicker">
+        <span class="pwreset__scale" aria-hidden="true"></span>
+        Zugang
+      </p>
+      <h1 id="pwv-titel" class="pwreset__titel">Passwort vergessen</h1>
+      @if (!gesendet()) {
+        <p class="pwreset__hint">
+          E-Mail-Adresse eingeben — wir senden einen Link zum Zurücksetzen.
+        </p>
+      }
+    </header>
+
+    @if (gesendet()) {
+      <div #bestaetigung class="pwreset__alert pwreset__alert--ok" role="status" tabindex="-1">
+        <span class="pwreset__alert-mark" aria-hidden="true">✓</span>
+        <span>
+          Falls ein Konto zu dieser Adresse existiert, haben wir eine E-Mail mit
+          einem Link geschickt. Der Link ist 12 Stunden gültig.
+        </span>
+      </div>
+
+      <p class="pwreset__links">
+        <a routerLink="/login">Zurück zur Anmeldung</a>
+      </p>
+    } @else {
+      @if (fehler(); as meldung) {
+        <div #fehlerBox class="pwreset__alert" role="alert" tabindex="-1">
+          <span class="pwreset__alert-mark" aria-hidden="true">!</span>
+          <span>{{ meldung }}</span>
+        </div>
+      }
+
+      <form class="pwreset__form" (submit)="$event.preventDefault(); absenden()" novalidate>
+        <div class="feld-gruppe">
+          <label class="feld-gruppe__label" for="pwv-email">E-Mail-Adresse</label>
+          <input
+            id="pwv-email"
+            class="feld-gruppe__input"
+            type="email"
+            name="email"
+            autocomplete="email"
+            inputmode="email"
+            autocapitalize="none"
+            spellcheck="false"
+            required
+            [value]="email()"
+            (input)="onEmail($any($event.target).value)"
+            [disabled]="laedt()"
+          />
+        </div>
+
+        <button
+          type="submit"
+          class="btn btn--primary pwreset__submit"
+          [disabled]="laedt()"
+          [attr.aria-busy]="laedt()"
+        >
+          {{ laedt() ? 'Wird gesendet …' : 'Link anfordern' }}
+        </button>
+      </form>
+
+      <p class="pwreset__links">
+        <a routerLink="/login">Zurück zur Anmeldung</a>
+      </p>
+    }
+  </div>
+</section>

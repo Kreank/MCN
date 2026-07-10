@@ -8,6 +8,21 @@ export const routes: Routes = [
     title: 'Anmeldung — MCN Leitstand',
     loadComponent: () => import('./features/login/login').then((m) => m.Login),
   },
+  // Passwort-Reset — anmeldefrei (wie /login), erreichbar ohne Sitzung.
+  {
+    path: 'passwort-vergessen',
+    title: 'Passwort vergessen — MCN Leitstand',
+    loadComponent: () =>
+      import('./features/passwort-reset/passwort-vergessen').then((m) => m.PasswortVergessen),
+  },
+  {
+    path: 'passwort-zuruecksetzen',
+    title: 'Passwort zurücksetzen — MCN Leitstand',
+    loadComponent: () =>
+      import('./features/passwort-reset/passwort-zuruecksetzen').then(
+        (m) => m.PasswortZuruecksetzen,
+      ),
+  },
   // Alles Übrige ist anmeldepflichtig — ein Wächter am gemeinsamen Elternknoten.
   // Bereiche mit Modulrecht tragen zusätzlich einen darfGuard (spiegelt die
   // Server-Durchsetzung; verhindert Zugriff per direkter URL/returnUrl).

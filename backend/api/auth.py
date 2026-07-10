@@ -16,24 +16,37 @@ Diese vier Endpunkte tragen `auth=None`, weil sie erreichbar sein müssen, bevor
 eine Sitzung besteht. Alles andere in der API ist ab jetzt anmeldepflichtig
 (globales `auth=django_auth` auf der NinjaAPI-Instanz).
 """
+import logging
+import threading
 from uuid import UUID
 
+from django.conf import settings
 from django.contrib.auth import (
     authenticate,
+    get_user_model,
     login,
     logout,
     update_session_auth_hash,
 )
 from django.contrib.auth.password_validation import validate_password
+from django.contrib.auth.tokens import default_token_generator
 from django.core.exceptions import ValidationError
+from django.core.mail import EmailMessage, get_connection
+from django.db import connection as db_connection
 from django.middleware.csrf import get_token
+from django.utils.encoding import force_bytes, force_str
+from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from ninja import Router, Schema
 from ninja.errors import HttpError
 from ninja.security import django_auth
 from ninja.utils import check_csrf
 
+from db_core import mail_crypto
 from db_core.models import AppUser
+from db_core.services import mail as mail_service
 from db_core.services import rechte as rechte_service
+
+logger = logging.getLogger(__name__)
 
 router = Router()
 
@@ -196,3 +209,192 @@ def me(request):
     if not request.user.is_authenticated:
         raise HttpError(401, "Nicht angemeldet.")
     return _me(request.user)
+
+
+# ---------------------------------------------------------------------------
+# Passwort vergessen — Reset per Einmal-Link über den Mailversand
+# ---------------------------------------------------------------------------
+#
+# Beide Endpunkte tragen `auth=None` (sie müssen ohne Sitzung erreichbar sein)
+# und holen die CSRF-Prüfung selbst nach (`_require_csrf`, wie login/logout).
+#
+# Der Token ist Djangos zustandsloser `default_token_generator` — KEINE eigene
+# Tabelle, KEINE Migration. Er wird single-use, sobald sich das Passwort ändert
+# (`_make_hash_value` bindet den Passwort-Hash), und läuft nach
+# PASSWORD_RESET_TIMEOUT (12 h) ab.
+#
+# Sicherheitsleitplanken (nicht verhandelbar):
+#   * Anti-Enumeration: /request antwortet IMMER mit demselben 200, egal ob die
+#     Adresse existiert. Der eigentliche Versand läuft in einem Hintergrund-Thread
+#     — so hängt auch die AntwortZEIT nicht davon ab, ob ein Konto existiert oder
+#     wie lange der SMTP-Server braucht (sonst wäre die Existenz über Timing
+#     ablesbar).
+#   * Kein Token/Passwort in Logs, Responses, Fehlern ODER in content.communication.
+#     Deshalb wird die Reset-Mail bewusst NICHT über
+#     `db_core.services.mail.send_mail` verschickt: send_mail protokolliert Betreff
+#     und Body wortgetreu in content.communication — der Link (mit Token) würde
+#     dort landen. Außerdem verlangt send_mail einen `actor` (app_user) für die
+#     Audit-Transaktion, den es in diesem anonymen Fluss gar nicht gibt. Der Link
+#     steht ausschließlich in der E-Mail an den Nutzer; es wird NICHTS
+#     protokolliert. Wir nutzen aber dieselbe Absenderkonto-Infrastruktur
+#     (mail_service.get_mail_account + mail_crypto) read-only weiter.
+
+User = get_user_model()
+
+# Eine einzige, unspezifische Meldung für unbekannte uid, kaputten/abgelaufenen
+# Token und deaktiviertes Konto — nichts davon verrät, woran es lag (kein
+# Enumerations-/Detail-Leak).
+_INVALID_LINK = "Der Link ist ungültig oder abgelaufen."
+
+# Immer dieselbe Antwort auf /request, unabhängig davon, ob ein Konto existiert.
+_REQUEST_DETAIL = "Falls ein Konto existiert, wurde eine E-Mail gesendet."
+
+
+def _reset_link(user) -> str:
+    """Baut den Reset-Link auf die anmeldefreie Frontend-Route."""
+    uidb64 = urlsafe_base64_encode(force_bytes(user.pk))
+    token = default_token_generator.make_token(user)
+    base = settings.MCN_FRONTEND_BASE_URL.rstrip("/")
+    return f"{base}/passwort-zuruecksetzen?uid={uidb64}&token={token}"
+
+
+def _send_reset_email(to_address: str, reset_link: str) -> None:
+    """Versendet die Reset-Mail über das aktive Absenderkonto — OHNE
+    content.communication-Zeile (der Link/Token darf nirgends persistiert oder
+    protokolliert werden).
+
+    Läuft im Hintergrund-Thread (siehe `_run_in_background`). Jede Ausnahme wird
+    geschluckt: der Client hat längst 200 erhalten, und ein Fehler darf weder als
+    500 durchschlagen (Anti-Enumeration) noch den Token in ein Log tragen.
+
+    Ist KEIN Absenderkonto konfiguriert, passiert bewusst nichts (der Admin muss
+    unter Einstellungen → Mailversand ein SMTP-Konto hinterlegen). Auch das ist
+    kein Fehler nach außen — /request hat trotzdem mit 200 geantwortet.
+    """
+    try:
+        account = mail_service.get_mail_account()
+        if account is None:
+            return
+
+        password = ""
+        if account.password_encrypted is not None:
+            password = mail_crypto.decrypt(account.password_encrypted)
+
+        connection = get_connection(
+            host=account.host,
+            port=account.port,
+            username=account.username or "",
+            password=password,
+            use_tls=(account.security == "STARTTLS"),
+            use_ssl=(account.security == "SSL"),
+            fail_silently=False,
+        )
+        from_email = (
+            f"{account.from_name} <{account.from_address}>"
+            if account.from_name else account.from_address
+        )
+        body = (
+            "Sie haben das Zurücksetzen Ihres MCN-Passworts angefordert.\n\n"
+            "Über den folgenden Link vergeben Sie ein neues Passwort:\n"
+            f"{reset_link}\n\n"
+            "Der Link ist 12 Stunden gültig. Falls Sie das nicht waren, "
+            "ignorieren Sie diese E-Mail — Ihr Passwort bleibt unverändert.\n"
+        )
+        message = EmailMessage(
+            subject="Passwort zurücksetzen — MCN",
+            body=body,
+            from_email=from_email,
+            to=[to_address],
+            connection=connection,
+        )
+        message.send(fail_silently=False)
+    except Exception:
+        # Bewusst still: KEINE Details, KEIN Token/Link, KEIN Passwort in ein Log.
+        # Nur ein generischer Hinweis ohne Empfänger/Link.
+        logger.warning("Versand der Passwort-Reset-Mail fehlgeschlagen.")
+
+
+def _run_in_background(target, *args) -> None:
+    """Feuert die Zustellung in einem Daemon-Thread ab, damit die Antwortzeit von
+    /request NICHT davon abhängt, ob ein Konto existiert oder wie langsam der
+    SMTP-Server ist (Anti-Enumeration, auch über Timing).
+
+    Der Thread erhält seine eigene DB-Verbindung; die wird am Ende geschlossen,
+    damit keine Verbindung leakt. (In Tests wird diese Funktion synchron
+    gepatcht — dann übernimmt der Test-Framework-Kontext die Verbindung.)
+    """
+    def _wrapped():
+        try:
+            target(*args)
+        finally:
+            db_connection.close()
+
+    threading.Thread(target=_wrapped, daemon=True).start()
+
+
+class PasswordResetRequestIn(Schema):
+    email: str
+
+
+@router.post("/password-reset/request", auth=None)
+def password_reset_request(request, payload: PasswordResetRequestIn):
+    """Fordert einen Reset-Link an. Antwortet IMMER identisch mit 200 — egal ob
+    die Adresse existiert (Anti-Enumeration). Existiert ein aktives Konto, geht
+    im Hintergrund eine Mail mit einem Einmal-Link raus."""
+    _require_csrf(request)
+
+    email = (payload.email or "").strip()
+    if email:
+        user = User.objects.filter(email__iexact=email).first()
+        # Nur an existierende, AKTIVE Konten senden. Alles andere: schweigend
+        # überspringen — die Antwort bleibt in jedem Fall dieselbe.
+        if user is not None and user.is_active and user.email:
+            link = _reset_link(user)
+            _run_in_background(_send_reset_email, user.email, link)
+
+    return {"detail": _REQUEST_DETAIL}
+
+
+class PasswordResetConfirmIn(Schema):
+    uid: str
+    token: str
+    new_password: str
+
+
+@router.post("/password-reset/confirm", auth=None)
+def password_reset_confirm(request, payload: PasswordResetConfirmIn):
+    """Setzt das Passwort anhand von uid + Einmal-Token neu.
+
+    Ungültige/abgelaufene Token, unbekannte uid und deaktivierte Konten führen zu
+    EINER einheitlichen 400-Meldung (kein Enumerations-/Detail-Leak). Ein zu
+    schwaches Passwort → 422 mit den Validator-Meldungen (nie das Passwort selbst).
+    Keine automatische Anmeldung — der Nutzer meldet sich anschließend neu an.
+    Passwörter/Token werden nie geloggt.
+    """
+    _require_csrf(request)
+
+    # 1) uid dekodieren + Nutzer laden. Jeder Fehlerpfad → einheitliches 400.
+    try:
+        uid = force_str(urlsafe_base64_decode(payload.uid))
+        user = User.objects.get(pk=uid)
+    except (TypeError, ValueError, OverflowError, User.DoesNotExist):
+        raise HttpError(400, _INVALID_LINK)
+
+    # 2) Token prüfen (zustandslos, wird durch spätere Passwortänderung ungültig)
+    #    und deaktivierte Konten ausschließen — beides mit derselben Meldung.
+    #    check_token wird IMMER ausgewertet (nicht per and/or kurzgeschlossen),
+    #    damit die Antwortzeit nicht verrät, ob das Konto aktiv ist.
+    token_ok = default_token_generator.check_token(user, payload.token)
+    if not user.is_active or not token_ok:
+        raise HttpError(400, _INVALID_LINK)
+
+    # 3) Passwortstärke erst NACH gültigem Token prüfen (422, ohne Passwort im Text).
+    try:
+        validate_password(payload.new_password, user=user)
+    except ValidationError as exc:
+        raise HttpError(422, " ".join(exc.messages))
+
+    # 4) Setzen + speichern. Der geänderte Hash entwertet den Token (single-use).
+    user.set_password(payload.new_password)
+    user.save(update_fields=["password"])
+    return {"detail": "Passwort gesetzt. Bitte melden Sie sich neu an."}

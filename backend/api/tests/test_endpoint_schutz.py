@@ -39,6 +39,11 @@ WHITELIST = {
     "/api/auth/login",
     "/api/auth/logout",
     "/api/auth/me",
+    # Passwort vergessen: beide vor der Sitzung erreichbar (auth=None), mit
+    # eigener CSRF-Prüfung. /request antwortet bewusst immer 200 (Anti-
+    # Enumeration), /confirm setzt anhand eines Einmal-Tokens ein neues Passwort.
+    "/api/auth/password-reset/request",
+    "/api/auth/password-reset/confirm",
 }
 
 # Authentifiziert (auth=django_auth), aber bewusst OHNE Modul-Recht: jeder darf

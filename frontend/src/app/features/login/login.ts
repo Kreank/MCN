@@ -1,5 +1,5 @@
 import { Component, ElementRef, inject, signal, viewChild } from '@angular/core';
-import { ActivatedRoute, Router } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { AuthService } from '../../core/auth.service';
 import { rechtFuerPfad } from '../../core/bereiche';
 
@@ -9,7 +9,7 @@ import { rechtFuerPfad } from '../../core/bereiche';
  */
 @Component({
   selector: 'app-login',
-  imports: [],
+  imports: [RouterLink],
   templateUrl: './login.html',
   styleUrl: './login.scss',
 })
