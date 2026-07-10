@@ -151,6 +151,14 @@ export const routes: Routes = [
         loadComponent: () => import('./features/aufgaben/aufgaben').then((m) => m.Aufgaben),
       },
       {
+        // Vier-Augen-Anträge. Die Liste verlangt nur security/LESEN; Genehmigen
+        // und Ablehnen gatet der Server zusätzlich mit security/FREIGEBEN.
+        path: 'freigaben',
+        title: 'Freigaben — MCN Leitstand',
+        canActivate: [darfGuard('security', 'LESEN')],
+        loadComponent: () => import('./features/freigaben/freigaben').then((m) => m.Freigaben),
+      },
+      {
         path: 'mitarbeiter',
         pathMatch: 'full',
         title: 'Mitarbeiter — MCN Leitstand',
@@ -204,6 +212,34 @@ export const routes: Routes = [
             (m) => m.BuchhaltungDetail,
           ),
       },
+      // Belegerfassung (Eingangsrechnungen, accounting.receipt). Die statische
+      // Route 'stammdaten' MUSS vor ':id' stehen, sonst schluckt der Parameter sie.
+      {
+        path: 'belegerfassung',
+        pathMatch: 'full',
+        title: 'Belegerfassung — MCN Leitstand',
+        canActivate: [darfGuard('accounting', 'LESEN')],
+        loadComponent: () =>
+          import('./features/belegerfassung/belegerfassung').then((m) => m.Belegerfassung),
+      },
+      {
+        path: 'belegerfassung/stammdaten',
+        title: 'Kontierung — MCN Leitstand',
+        canActivate: [darfGuard('accounting', 'LESEN')],
+        loadComponent: () =>
+          import('./features/accounting-stammdaten/accounting-stammdaten').then(
+            (m) => m.AccountingStammdaten,
+          ),
+      },
+      {
+        path: 'belegerfassung/:id',
+        title: 'Eingangsbeleg — MCN Leitstand',
+        canActivate: [darfGuard('accounting', 'LESEN')],
+        loadComponent: () =>
+          import('./features/beleg-eingang-detail/beleg-eingang-detail').then(
+            (m) => m.BelegEingangDetail,
+          ),
+      },
       {
         path: 'auswertungen',
         pathMatch: 'full',
@@ -228,6 +264,35 @@ export const routes: Routes = [
         loadComponent: () =>
           import('./features/auswertungen-kunden/auswertungen-kunden').then(
             (m) => m.AuswertungenKunden,
+          ),
+      },
+      {
+        path: 'auswertungen/projekte',
+        title: 'Projekte-Auswertung — MCN Leitstand',
+        canActivate: [darfGuard('invoicing', 'LESEN')],
+        loadComponent: () =>
+          import('./features/auswertungen-projekte/auswertungen-projekte').then(
+            (m) => m.AuswertungenProjekte,
+          ),
+      },
+      {
+        path: 'auswertungen/artikel',
+        title: 'Artikel-Auswertung — MCN Leitstand',
+        canActivate: [darfGuard('invoicing', 'LESEN')],
+        loadComponent: () =>
+          import('./features/auswertungen-artikel/auswertungen-artikel').then(
+            (m) => m.AuswertungenArtikel,
+          ),
+      },
+      {
+        // Personaldaten (DSGVO): eigenes hr-Recht — NUR_LESEN/DISPOSITION kommen
+        // nicht rein. Die Landing blendet die Kachel serverseitig entsprechend aus.
+        path: 'auswertungen/mitarbeitende',
+        title: 'Mitarbeitenden-Auswertung — MCN Leitstand',
+        canActivate: [darfGuard('hr', 'LESEN')],
+        loadComponent: () =>
+          import('./features/auswertungen-mitarbeitende/auswertungen-mitarbeitende').then(
+            (m) => m.AuswertungenMitarbeitende,
           ),
       },
       {
@@ -278,6 +343,15 @@ export const routes: Routes = [
         canActivate: [darfGuard('company', 'LESEN')],
         loadComponent: () =>
           import('./features/niederlassungen/niederlassungen').then((m) => m.Niederlassungen),
+      },
+      {
+        // Rechtematrix & Rollenzuordnungen. Lesen genügt für die Ansicht; das
+        // Ändern gatet der Server mit security/AENDERN (UI schaltet read-only).
+        path: 'einstellungen/rechte',
+        title: 'Rechte & Rollen — MCN Leitstand',
+        canActivate: [darfGuard('security', 'LESEN')],
+        loadComponent: () =>
+          import('./features/rechtematrix/rechtematrix').then((m) => m.Rechtematrix),
       },
       { path: '**', redirectTo: 'uebersicht' },
     ],

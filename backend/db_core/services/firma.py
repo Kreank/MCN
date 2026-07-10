@@ -17,6 +17,7 @@ import uuid
 
 from db_core.db_context import business_transaction
 from db_core.models import Branch, CompanyProfile, DunningLevel, Trade
+from db_core.services import vier_augen
 
 # --- Firmenprofil (Singleton) ----------------------------------------------
 
@@ -27,6 +28,11 @@ _PROFILE_FIELDS = (
     "commercial_register", "bank_name", "iban", "bic", "managing_director",
     "managing_director_title", "default_language", "logo_file_id",
 )
+
+# Bankdaten sind Vier-Augen-pflichtig (security.four_eyes_action 'BANKDATEN'):
+# eine ÄNDERUNG an einem bestehenden Profil wird nicht direkt geschrieben,
+# sondern als Freigabeantrag angelegt; erst die Genehmigung wendet sie an.
+_BANK_FIELDS = ("bank_name", "iban", "bic")
 
 
 def get_company_profile():
@@ -47,11 +53,16 @@ def _clean(value):
 def update_company_profile(actor_app_user_id, **fields):
     """Legt das Firmenprofil an oder aktualisiert es (Upsert des Singletons).
 
+    Gibt `(profile, pending_approval)` zurück: `pending_approval` ist der
+    Freigabeantrag (security.approval_request), falls die Änderung Bankdaten
+    (IBAN/BIC/Bankname) eines BESTEHENDEN Profils betrifft — diese werden NICHT
+    direkt geschrieben, sondern in einen Vier-Augen-Antrag (BANKDATEN) gelegt und
+    erst durch dessen Genehmigung angewandt. Alle übrigen Felder werden sofort
+    übernommen. Beim erstmaligen Anlegen gibt es noch keine schützenswerten
+    Bestandsdaten; dort werden Bankdaten direkt gesetzt (Bootstrapping).
+
     Nur Felder aus der Whitelist werden übernommen. `company_name` ist beim
-    Anlegen Pflicht und darf nicht leer werden. Bankdaten-Änderungen sind laut
-    Roadmap perspektivisch Vier-Augen-pflichtig (four_eyes 'BANKDATEN'); dessen
-    Durchsetzung hängt am noch nicht gebauten Vier-Augen-Flow und ist hier nicht
-    umgesetzt — die Änderung wird per Trigger auditiert.
+    Anlegen Pflicht und darf nicht leer werden.
     """
     unknown = set(fields) - set(_PROFILE_FIELDS)
     if unknown:
@@ -82,16 +93,38 @@ def update_company_profile(actor_app_user_id, **fields):
                 id=uuid.uuid4(), is_singleton=True,
                 **{k: values.get(k) for k in _PROFILE_FIELDS if k in values},
             )
-        return profile
+        return profile, None
 
     if "company_name" in values and not values["company_name"]:
         raise ValueError("Firmenname darf nicht leer sein.")
-    for key, val in values.items():
-        setattr(profile, key, val)
-    with business_transaction(actor_app_user_id):
-        profile.save(update_fields=[k for k in values] + ["updated_at"])
-    profile.refresh_from_db()
-    return profile
+
+    # Bankdaten heraustrennen: nur die tatsächlich geänderten Felder lösen einen
+    # Vier-Augen-Antrag aus (unveränderte Werte nicht).
+    bank_changes = {
+        k: values[k]
+        for k in _BANK_FIELDS
+        if k in values and values[k] != getattr(profile, k)
+    }
+    direct = {k: v for k, v in values.items() if k not in bank_changes}
+
+    if direct:
+        for key, val in direct.items():
+            setattr(profile, key, val)
+        with business_transaction(actor_app_user_id):
+            profile.save(update_fields=list(direct) + ["updated_at"])
+        profile.refresh_from_db()
+
+    pending = None
+    if bank_changes:
+        pending = vier_augen.request_approval(
+            actor_app_user_id,
+            action_code="BANKDATEN",
+            payload=bank_changes,
+            target_table="company.company_profile",
+            target_id=profile.id,
+            reason="Änderung der Firmen-Bankverbindung",
+        )
+    return profile, pending
 
 
 # --- Niederlassungen --------------------------------------------------------

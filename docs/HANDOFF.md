@@ -14,7 +14,9 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 > **Auth/Login + Rechtematrix stehen** (eigenes Login, kein SSO); die gesamte API
 > ist anmeldepflichtig. **Der Schreibpfad ist verdrahtet**: „+ Neu", Statusaktionen
 > und Freigaben laufen aus dem UI durch Rechte, Statusautomaten und DB-Trigger.
-> **808 Backend-Tests grün**, db_core-Migrationen bis **0027**, accounts bis **0002**.
+> Dazu **Vier-Augen-Freigaben**, **Belegerfassung** (Eingangsrechnungen) und die
+> **Rechtematrix-Pflege** als UI.
+> **1051 Backend-Tests grün**, db_core-Migrationen bis **0035**, accounts bis **0002**.
 
 ---
 
@@ -23,39 +25,62 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 **Das System ist bedienbar.** Auth, Rechtematrix und der komplette Schreibpfad
 stehen: Aus dem UI laufen „+ Neu", Statusaktionen, Freigaben, Zahlungen und
 Stornos durch Rechteprüfung, Service-Schicht, Statusautomaten und DB-Trigger.
-Alle Fachschemata der Roadmap sind gebaut außer **Belegerfassung** und
-**HR-Steuer/Bank** — beide brauchen eine Entscheidung (siehe unten).
+**Alle Fachschemata der Roadmap sind gebaut** außer **HR-Steuer/Bank**.
 
-### Drei Entscheidungen, die nur der User treffen kann
+### Die drei früheren Entscheidungen sind gefallen (E1–E3 erledigt)
 
-**E1) Belegerfassung / Eingangsrechnungen.** Zentrale Entwurfsfrage: eigene
-`receipt`-Tabelle **oder** eine gerichtete `invoice` (Eingang/Ausgang per Flag)?
-Dazu fehlen `ledger_account` und `cost_center` komplett. GoBD-relevant.
-Feldquelle: `docs/roadmap/09-buchhaltung.md`.
+**E1) Belegerfassung → eigene `receipt`-Tabelle im neuen Schema `accounting`.**
+Nicht eine gerichtete `invoice`. Begründung in `migrations/0031`: `invoicing` ist
+die GoBD-gesicherte AUSGANGSseite (Belegkreis, Snapshot/Hash, Festschreibung);
+Eingangsbelege haben eigene Nummern- (`EB-00001`) und Statuslogik. Dazu
+`ledger_account` + `cost_center` (0030). UI unter `/belegerfassung`.
 
-**E2) HR-Steuer- und Bankdaten.** Aus Migration 0019 bewusst ausgeklammert.
-Besondere Kategorie nach DSGVO Art. 9/32. Offen: Verschlüsselung at rest
-(pgcrypto?), Schlüsselverwaltung — und die Durchsetzung des Vier-Augen-Prinzips.
-`security.four_eyes_action` kennt die Aktion 'BANKDATEN', aber **einen
-Vier-Augen-Flow gibt es nicht**. Dasselbe gilt schon jetzt für die Firmen-IBAN
-aus Migration 0023.
+**E2) Vier-Augen-Flow ist gebaut** (`security.approval_request`, Migration 0028).
+Zwei Muster über eine Tabelle: **Applier** (die Änderung liegt im `payload` und
+wird erst durch `approve()` geschrieben — so die Firmen-Bankdaten) und
+**Torfunktion** (`claim`/`consume` — so Storno/Rechnungskorrektur). UI unter
+`/freigaben`. **HR-Steuer/Bank bleibt offen** (DSGVO Art. 9/32, Verschlüsselung
+at rest, Schlüsselverwaltung) — der Flow dafür steht aber jetzt bereit.
 
-**E3) Beleg-PDF-Archivierung (MinIO).** Container `mitra-crm-minio` existiert,
-läuft aber nicht; im Backend ist **kein** S3-/MinIO-Client vorhanden (weder
-boto3 noch minio). Das Schema ist fertig: `content.file` + `content.file_link`
-mit dem Einmaligkeits-Index aus Migration 0032. Braucht eine
-Infrastruktur-Entscheidung.
+**E3) Beleg-PDF-Archivierung läuft über das offizielle `minio`-SDK** (nicht
+boto3), `db_core/storage.py`. Erster PDF-Abruf rendert, legt in MinIO ab und
+registriert `content.file`/`file_link`; Folgeabrufe liefern das Archiv. Bei nicht
+erreichbarem Speicher **degradiert** der Endpunkt auf On-the-fly-Rendering statt
+zu scheitern. E2E-Test überspringt sauber ohne laufenden Server.
+
+### Invarianten des Vier-Augen-Flows (nicht versehentlich „vereinfachen")
+
+- **Die Genehmigung ist an den `payload` gebunden, nicht nur an Aktion + Ziel.**
+  Storno und Rechnungskorrektur teilen sich den `action_code`
+  RECHNUNGSKORREKTUR. Ohne Payload-Bindung ließe sich eine genehmigte
+  Teilgutschrift („Position 1") als **Vollstorno** der ganzen Rechnung einlösen —
+  ein Review hat genau das reproduziert. `find_grant(..., payload=...)`.
+- **`claim()` verbraucht die Genehmigung in DERSELBEN Transaktion wie die
+  Aktion** (`SELECT … FOR UPDATE`). Nicht auf „Aktion ausführen, danach
+  `consume()`" zurückbauen: zwei parallele Requests lösten sonst dieselbe
+  Genehmigung doppelt ein, und ein Fehler nach dem Schreiben hinterließe einen
+  Beleg mit unverbrauchter Genehmigung. Scheitert die Aktion fachlich (422),
+  rollt das Verbrauchen mit zurück — die Genehmigung bleibt gültig.
+- **Entscheidungen filtern auf `status='ANGEFORDERT'`** und prüfen `updated == 1`.
+  Der DB-Trigger lässt GENEHMIGT→GENEHMIGT als No-Op durch; ohne den Filter
+  überschriebe ein zweiter Genehmiger den Entscheider und triebe den Applier
+  erneut.
+- **Der `payload` wird nur an den Antragsteller und an Entscheider
+  (`security/FREIGEBEN`) ausgeliefert** (`payload_verborgen`). `security/LESEN`
+  hält auch NUR_LESEN — sonst läse jede Nur-Lese-Rolle die beantragte IBAN mit.
+  Spätestens mit HR-Bankdaten wäre das ein DSGVO-Leck.
 
 ### Ableitbare Reste (kein Entscheidungsbedarf, einfach bauen)
 
-- **Vier-Augen-Flow** (`security.four_eyes_action`): existiert als Stammdaten,
-  wird nirgends durchgesetzt. Betrifft Bankdaten, Rechnungskorrektur,
-  Dubletten-Merge, Massenexport, KI-Massenaktionen.
-- **Rechtematrix-Pflege-UI**: `security.role_permission` ist nur per SQL
-  änderbar. Der Bereich „Einstellungen" (Nav-Mark 95) ist der natürliche Ort.
-- **Weitere Auswertungs-Dashboards** (Projekte, Artikel, Mitarbeitende).
-  Achtung: **Marge** braucht die EK-Ebene und ist aus Belegzeilen nicht
-  ableitbar (ggf. über den `billing_snapshot`).
+- **Vier-Augen auf weitere Aktionen ausrollen**: der Flow steht, angeschlossen
+  sind bislang nur BANKDATEN (Applier) und RECHNUNGSKORREKTUR (Tor). Die
+  Stammdaten `security.four_eyes_action` kennen außerdem Dubletten-Merge,
+  Massenexport und KI-Massenaktionen. **Muster:** liegt die ganze Änderung im
+  `payload` → Applier in `_APPLIERS`; ist die Durchführung ein eigener Ablauf →
+  `claim()` in derselben Transaktion wie die Aktion.
+- **Marge** braucht die EK-Ebene und ist aus Belegzeilen nicht
+  ableitbar (ggf. über den `billing_snapshot`). Die Dashboards Projekte, Artikel
+  und Mitarbeitende sind gebaut.
 - **Plantafel Drag & Drop** (Umplanen ruft `POST /planung/einsaetze/{id}/schedule`,
   der Endpunkt existiert).
 - **DATANORM-Import** (Artikelstamm) und **DATEV/Lexware-Export**.
@@ -339,6 +364,9 @@ Nav-Reihenfolge (Marks 00–60), alle committet, je Tests + Browser + Review:
 | Buchhaltung (80) | **Offene Posten** + Detail-Mappe (Übersicht/Zahlungen/Mahnverlauf, **Storno-/Gutschrift-Referenzen**) + **Mahnwesen-Screen**. Services: Zahlung/Mahnung + **Storno/Rechnungskorrektur** (STORNO/GUTSCHRIFT, `POST …/cancel`,`/correction`) getestet | `/api/buchhaltung` |
 | Auswertungen (90) | Landing + **Umsatz-/Projektübersicht** (KPIs, Umsatzverlauf, Projekte nach Gewerk) | `/api/auswertungen/…` |
 | Einstellungen (95) | **Firmenprofil, Mahnstufen (6), Gewerke, Niederlassungen** (`company.*`, NEUES Schema 0023). Das Firmenprofil speist Aussteller und Fußzeile des Beleg-PDF | `/api/company`, `/api/buchhaltung/dunning-levels` |
+| Freigaben (62) | **Vier-Augen-Anträge** (`security.approval_request`, 0028): Liste + Statusfilter, Genehmigen/Ablehnen (Pflicht-Begründung)/Zurückziehen. Payload nur für Antragsteller und Entscheider | `/api/security/approvals` |
+| Belegerfassung (82) | **Eingangsrechnungen** (`accounting.*`, NEUES Schema 0030/0031): Liste + Beleg-Mappe (Positionen/Verlauf), Editor, Statusautomat ERFASST→GEPRUEFT→FREIGEGEBEN→GEBUCHT/ABGELEHNT, Freigabe-Tor (Kontierung je Position), Stammdaten (Buchungskonten/Kostenstellen) | `/api/accounting` |
+| Einstellungen · Rechte | **Rechtematrix-Editor** (Rolle × Modul × Aktion + row_scope) + **Rollenzuordnungen**. Härtungen: keine Selbst-Erweiterung, keine Selbstzuweisung, letzte ADMINISTRATION geschützt | `/api/security/{roles,permissions,users,user-roles}` |
 | Mein Profil | Anzeigename/E-Mail/Rollen read-only + **Passwort ändern** (Sitzung bleibt gültig) | `/api/auth/password` |
 
 **Der Schreibpfad ist verdrahtet.** In allen Bereichen gibt es „+ Neu",

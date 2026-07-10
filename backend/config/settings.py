@@ -81,6 +81,12 @@ DATABASES = {
         "PORT": os.environ.get("MCN_DB_PORT", "55432"),
         # Isolationsstufe NICHT konfigurieren: Django/PostgreSQL-Default ist
         # READ COMMITTED, genau wie db/README.md es verbindlich vorschreibt.
+        "TEST": {
+            # Erlaubt nebenläufige pytest-Läufe (z. B. mehrere Agenten) auf
+            # getrennten Wegwerf-Datenbanken. Ohne die Variable bleibt es beim
+            # Django-Default `test_<NAME>`.
+            "NAME": os.environ.get("MCN_TEST_DB_NAME") or None,
+        },
     }
 }
 
@@ -138,3 +144,17 @@ CORS_ALLOWED_ORIGINS = os.environ.get(
     "MCN_CORS_ORIGINS", "http://localhost:4200"
 ).split(",")
 CORS_ALLOW_CREDENTIALS = True
+
+# --- Objektspeicher (MinIO / S3) für die GoBD-Beleg-Archivierung -----------
+# Binärdaten (Beleg-PDFs) liegen im Object Storage; die Datenbank hält nur den
+# Steckbrief (content.file: storage_key, sha256, size). Zugangsdaten kommen
+# ausschließlich aus der Umgebung (niemals ins Repo), analog zu MCN_DB_*.
+# Für die lokale Entwicklung sind die MinIO-Standardwerte voreingestellt; in
+# jeder anderen Umgebung MUSS access/secret über die Env gesetzt werden.
+MCN_MINIO_ENDPOINT = os.environ.get("MCN_MINIO_ENDPOINT", "http://127.0.0.1:9100")
+MCN_MINIO_ACCESS_KEY = os.environ.get("MCN_MINIO_ACCESS_KEY", "minioadmin")
+MCN_MINIO_SECRET_KEY = os.environ.get("MCN_MINIO_SECRET_KEY", "minioadmin")
+MCN_MINIO_BUCKET = os.environ.get("MCN_MINIO_BUCKET", "mcn-belege")
+# Region ist für MinIO bedeutungslos, aber der S3-Signaturalgorithmus braucht
+# einen Wert; us-east-1 ist der MinIO-Default.
+MCN_MINIO_REGION = os.environ.get("MCN_MINIO_REGION", "us-east-1")

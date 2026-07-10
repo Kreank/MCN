@@ -1,0 +1,196 @@
+<section class="stamm" aria-labelledby="stamm-titel">
+  <header class="page-head">
+    <div>
+      <p class="page-head__kicker">
+        <span class="page-head__scale" aria-hidden="true"></span>
+        Belegerfassung · Stammdaten
+      </p>
+      <h1 id="stamm-titel" class="page-head__titel">Kontierung</h1>
+    </div>
+    <a class="btn" routerLink="/belegerfassung">← Belegerfassung</a>
+  </header>
+
+  <p class="page-hint">
+    Buchungskonten und Kostenstellen für die Kontierung von Eingangsbelegen. Nicht
+    mehr genutzte Einträge werden deaktiviert, nicht gelöscht — so behalten alte
+    Belege ihre Zuordnung.
+  </p>
+
+  <div class="segment" role="group" aria-label="Zwischen Buchungskonten und Kostenstellen wechseln">
+    <button
+      type="button"
+      class="segment__btn"
+      [class.is-active]="bereich() === 'konten'"
+      [attr.aria-pressed]="bereich() === 'konten'"
+      (click)="waehleBereich('konten')"
+    >
+      Buchungskonten
+    </button>
+    <button
+      type="button"
+      class="segment__btn"
+      [class.is-active]="bereich() === 'kostenstellen'"
+      [attr.aria-pressed]="bereich() === 'kostenstellen'"
+      (click)="waehleBereich('kostenstellen')"
+    >
+      Kostenstellen
+    </button>
+  </div>
+
+  @if (meldung(); as m) {
+    <p class="note note--error stamm__melde" role="alert">{{ m }}</p>
+  }
+
+  @switch (state().kind) {
+    @case ('loading') {
+      <p class="lade-hinweis" role="status">Stammdaten werden geladen.</p>
+    }
+    @case ('forbidden') {
+      <app-kein-zugriff [detail]="$any(state()).detail" />
+    }
+    @case ('error') {
+      <p class="note note--error" role="alert">
+        Die Stammdaten konnten nicht geladen werden. Bitte erneut versuchen.
+      </p>
+    }
+    @case ('ready') {
+      <!-- ============================ Buchungskonten ==================== -->
+      @if (bereich() === 'konten') {
+        @if (darfAnlegen()) {
+          <form class="neu-form" [formGroup]="ledgerForm" (ngSubmit)="ledgerAnlegen()" novalidate>
+            <app-feld [control]="ledgerForm.controls.account_number" label="Kontonummer" [pflicht]="true" hinweis="z. B. 4400" />
+            <app-feld [control]="ledgerForm.controls.label" label="Bezeichnung" [pflicht]="true" />
+            <app-feld [control]="ledgerForm.controls.account_type" label="Kontoart" typ="select" [pflicht]="true" [optionen]="accountTypeOptionen" />
+            <app-feld [control]="ledgerForm.controls.chart_of_accounts" label="Kontenrahmen" typ="select" platzhalter="— ohne —" [optionen]="chartOptionen" hinweis="Optional." />
+            <button type="submit" class="btn btn--primary" [disabled]="laedt()">Konto anlegen</button>
+          </form>
+        }
+
+        <div class="tabelle-rahmen">
+          <table class="katalog-tabelle">
+            <caption class="sr-only">Buchungskonten mit Nummer, Bezeichnung, Art und Status</caption>
+            <thead>
+              <tr>
+                <th scope="col">Konto</th>
+                <th scope="col">Bezeichnung</th>
+                <th scope="col">Art</th>
+                <th scope="col">Rahmen</th>
+                <th scope="col">Status</th>
+                @if (darfAendern()) { <th scope="col"><span class="sr-only">Aktionen</span></th> }
+              </tr>
+            </thead>
+            <tbody>
+              @for (a of ledgers(); track a.id) {
+                <tr>
+                  <th scope="row"><code>{{ a.account_number }}</code></th>
+                  <td>
+                    @if (bearbeite() === 'l:' + a.id) {
+                      <app-feld [control]="editLabel" label="Bezeichnung" [pflicht]="true" />
+                    } @else {
+                      {{ a.label }}
+                    }
+                  </td>
+                  <td>{{ typLabel(a.account_type) }}</td>
+                  <td>{{ a.chart_of_accounts || '—' }}</td>
+                  <td>
+                    <span class="status" [class.status--aktiv]="a.active" [class.status--inaktiv]="!a.active">
+                      <span aria-hidden="true">{{ a.active ? '●' : '○' }}</span>
+                      {{ a.active ? 'Aktiv' : 'Inaktiv' }}
+                    </span>
+                  </td>
+                  @if (darfAendern()) {
+                    <td class="aktionen-zelle">
+                      @if (bearbeite() === 'l:' + a.id) {
+                        <div class="zeilen-aktionen">
+                          <button type="button" class="btn btn--primary" [disabled]="laedt()" (click)="speichereLedger(a)">Speichern</button>
+                          <button type="button" class="btn" [disabled]="laedt()" (click)="abbrechen()">Abbrechen</button>
+                        </div>
+                      } @else {
+                        <div class="zeilen-aktionen">
+                          <button type="button" class="btn" (click)="starteLedger(a)">Umbenennen</button>
+                          <button type="button" class="btn" [disabled]="laedt()" (click)="umschaltenLedger(a)">
+                            {{ a.active ? 'Deaktivieren' : 'Aktivieren' }}
+                          </button>
+                        </div>
+                      }
+                    </td>
+                  }
+                </tr>
+              } @empty {
+                <tr>
+                  <td [attr.colspan]="darfAendern() ? 6 : 5" class="tabelle-leer">Noch keine Buchungskonten angelegt.</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+
+      <!-- ============================ Kostenstellen ==================== -->
+      @if (bereich() === 'kostenstellen') {
+        @if (darfAnlegen()) {
+          <form class="neu-form" [formGroup]="costCenterForm" (ngSubmit)="ccAnlegen()" novalidate>
+            <app-feld [control]="costCenterForm.controls.code" label="Nummer" [pflicht]="true" hinweis="z. B. KST-100" />
+            <app-feld [control]="costCenterForm.controls.label" label="Bezeichnung" [pflicht]="true" />
+            <button type="submit" class="btn btn--primary" [disabled]="laedt()">Kostenstelle anlegen</button>
+          </form>
+        }
+
+        <div class="tabelle-rahmen">
+          <table class="katalog-tabelle">
+            <caption class="sr-only">Kostenstellen mit Nummer, Bezeichnung und Status</caption>
+            <thead>
+              <tr>
+                <th scope="col">Nummer</th>
+                <th scope="col">Bezeichnung</th>
+                <th scope="col">Status</th>
+                @if (darfAendern()) { <th scope="col"><span class="sr-only">Aktionen</span></th> }
+              </tr>
+            </thead>
+            <tbody>
+              @for (c of costCenters(); track c.id) {
+                <tr>
+                  <th scope="row"><code>{{ c.code }}</code></th>
+                  <td>
+                    @if (bearbeite() === 'c:' + c.id) {
+                      <app-feld [control]="editLabel" label="Bezeichnung" [pflicht]="true" />
+                    } @else {
+                      {{ c.label }}
+                    }
+                  </td>
+                  <td>
+                    <span class="status" [class.status--aktiv]="c.active" [class.status--inaktiv]="!c.active">
+                      <span aria-hidden="true">{{ c.active ? '●' : '○' }}</span>
+                      {{ c.active ? 'Aktiv' : 'Inaktiv' }}
+                    </span>
+                  </td>
+                  @if (darfAendern()) {
+                    <td class="aktionen-zelle">
+                      @if (bearbeite() === 'c:' + c.id) {
+                        <div class="zeilen-aktionen">
+                          <button type="button" class="btn btn--primary" [disabled]="laedt()" (click)="speichereCc(c)">Speichern</button>
+                          <button type="button" class="btn" [disabled]="laedt()" (click)="abbrechen()">Abbrechen</button>
+                        </div>
+                      } @else {
+                        <div class="zeilen-aktionen">
+                          <button type="button" class="btn" (click)="starteCc(c)">Umbenennen</button>
+                          <button type="button" class="btn" [disabled]="laedt()" (click)="umschaltenCc(c)">
+                            {{ c.active ? 'Deaktivieren' : 'Aktivieren' }}
+                          </button>
+                        </div>
+                      }
+                    </td>
+                  }
+                </tr>
+              } @empty {
+                <tr>
+                  <td [attr.colspan]="darfAendern() ? 4 : 3" class="tabelle-leer">Noch keine Kostenstellen angelegt.</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    }
+  }
+</section>

@@ -1,0 +1,161 @@
+.stamm {
+  max-width: 66rem;
+  margin: 0 auto;
+}
+
+// ============================== Seitenkopf ==================================
+.page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-3);
+}
+.page-head__kicker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+}
+.page-head__scale {
+  width: 2.5rem;
+  height: 0.5rem;
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--line-strong) 0,
+    var(--line-strong) 1px,
+    transparent 1px,
+    transparent 0.5rem
+  );
+  border-bottom: 1.5px solid var(--line-strong);
+}
+.page-head__titel {
+  font-size: var(--step-3);
+}
+.page-hint {
+  margin: 0 0 var(--space-5);
+  max-width: 46rem;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+// ============================== Segment =====================================
+.segment {
+  display: inline-flex;
+  flex-wrap: wrap;
+  padding: 3px;
+  margin-bottom: var(--space-5);
+  background: var(--surface-sunken);
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius);
+}
+.segment__btn {
+  min-height: 38px;
+  padding: 0 var(--space-4);
+  border: none;
+  border-radius: calc(var(--radius) - 2px);
+  background: transparent;
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+
+  &:hover {
+    color: var(--ink);
+  }
+  &.is-active {
+    background: var(--command);
+    color: var(--on-command);
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+.stamm__melde {
+  margin-bottom: var(--space-5);
+}
+
+// ============================== Anlege-Form =================================
+.neu-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  margin-bottom: var(--space-5);
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+
+  app-feld {
+    flex: 1 1 12rem;
+  }
+}
+
+// ============================== Katalogtabelle ==============================
+.tabelle-rahmen {
+  overflow-x: auto;
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+.katalog-tabelle {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 44rem;
+
+  th,
+  td {
+    text-align: left;
+    padding: var(--space-3) var(--space-4);
+    vertical-align: middle;
+    border-bottom: 1px solid var(--line);
+  }
+  thead th {
+    font-size: var(--step--1);
+    color: var(--ink-muted);
+  }
+  tbody tr:last-child th,
+  tbody tr:last-child td {
+    border-bottom: none;
+  }
+  code {
+    font-family: var(--font-mono);
+    font-size: var(--step--1);
+  }
+}
+.tabelle-leer {
+  color: var(--ink-muted);
+  font-style: italic;
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: 600;
+  font-size: var(--step--1);
+}
+.status--aktiv {
+  color: var(--positive-ink);
+}
+.status--inaktiv {
+  color: var(--ink-muted);
+}
+.aktionen-zelle {
+  white-space: nowrap;
+}
+.zeilen-aktionen {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}

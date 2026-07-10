@@ -1,0 +1,240 @@
+<section class="beleg" aria-labelledby="beleg-titel">
+  <header class="page-head">
+    <div class="page-head__text">
+      <p class="page-head__kicker">
+        <span class="page-head__scale" aria-hidden="true"></span>
+        Belegerfassung · Eingangsbelege
+      </p>
+      <h1 id="beleg-titel" class="page-head__titel">Eingangsbelege</h1>
+      <p class="page-head__hint">
+        Eingangsrechnungen mit Kontierung, Prüfung und Freigabe (GoBD-relevant).
+        Belegnummer und Summen vergibt der Server verbindlich.
+      </p>
+    </div>
+    <div class="page-head__aktionen">
+      <a class="btn" routerLink="/belegerfassung/stammdaten">Stammdaten →</a>
+      @if (darfAnlegen()) {
+        <button type="button" class="btn btn--primary" (click)="neuOeffnen()">
+          <span aria-hidden="true">＋</span> Neuer Beleg
+        </button>
+      }
+    </div>
+  </header>
+
+  @if (meldung(); as m) {
+    <div
+      class="melde melde--{{ m.art }} beleg__melde"
+      [attr.role]="m.art === 'fehler' ? 'alert' : 'status'"
+    >
+      <span class="melde__mark" aria-hidden="true">{{ m.art === 'fehler' ? '!' : '✓' }}</span>
+      <span class="melde__text">
+        <strong>{{ m.art === 'fehler' ? 'Fehler:' : 'Erledigt:' }}</strong> {{ m.text }}
+      </span>
+      <button type="button" class="melde__zu" (click)="meldungSchliessen()" aria-label="Meldung schließen">
+        <span aria-hidden="true">✕</span>
+      </button>
+    </div>
+  }
+
+  <div class="controls">
+    <div class="search">
+      <label class="search__label" for="beleg-suche">Belege durchsuchen</label>
+      <div class="search__field">
+        <span class="search__icon" aria-hidden="true">⌕</span>
+        <input
+          id="beleg-suche"
+          class="search__input"
+          type="search"
+          inputmode="search"
+          autocomplete="off"
+          placeholder="Belegnummer oder Lieferanten-Rechnungsnummer"
+          [value]="query()"
+          (input)="onSearch($any($event.target).value)"
+        />
+      </div>
+    </div>
+
+    <div class="segment" role="group" aria-label="Nach Status filtern">
+      @for (seg of segments; track seg.label) {
+        <button
+          type="button"
+          class="segment__btn"
+          [class.is-active]="status() === seg.value"
+          [attr.aria-pressed]="status() === seg.value"
+          (click)="selectSegment(seg.value)"
+        >
+          {{ seg.label }}
+        </button>
+      }
+    </div>
+  </div>
+
+  <p class="sr-only" role="status">{{ resultSummary() }}</p>
+
+  @switch (state().kind) {
+    @case ('loading') {
+      <ul class="rows" aria-hidden="true">
+        @for (s of skeletons; track $index) {
+          <li class="row row--skeleton">
+            <span class="sk sk--badge"></span>
+            <span class="sk-block">
+              <span class="sk sk--line"></span>
+              <span class="sk sk--chips"></span>
+            </span>
+            <span class="sk sk--sum"></span>
+          </li>
+        }
+      </ul>
+    }
+
+    @case ('forbidden') {
+      <app-kein-zugriff [detail]="$any(state()).detail" />
+    }
+
+    @case ('error') {
+      <div class="note note--error" role="alert">
+        <h2 class="note__titel">Verbindung zur Belegerfassung unterbrochen</h2>
+        <p class="note__text">Die Eingangsbelege ließen sich nicht laden. Prüfe die Verbindung und lade den Bereich erneut.</p>
+        <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
+      </div>
+    }
+
+    @case ('ready') {
+      @if ($any(state()).data.items.length === 0) {
+        <div class="note note--empty">
+          <h2 class="note__titel">Keine Belege für diese Auswahl</h2>
+          <p class="note__text">Eingangsbelege entstehen über „Neuer Beleg" und die KI-gestützte Erfassung.</p>
+        </div>
+      } @else {
+        <ul class="rows">
+          @for (r of $any(state()).data.items; track r.id) {
+            <li>
+              <a class="row" [routerLink]="['/belegerfassung', r.id]">
+                <span class="row__badge" aria-hidden="true">EB</span>
+                <span class="row__body">
+                  <span class="row__title">
+                    {{ r.receipt_number }}
+                    @if (r.supplier) { <span class="row__supplier">· {{ r.supplier }}</span> }
+                  </span>
+                  <span class="row__meta">
+                    <span class="row__date">Beleg {{ d(r.receipt_date) }}</span>
+                    @if (r.supplier_invoice_number) {
+                      <span class="row__ref">Nr. {{ r.supplier_invoice_number }}</span>
+                    }
+                    <span class="stamp {{ statusClass(r.status) }}">{{ statusLabel(r.status) }}</span>
+                  </span>
+                </span>
+                <span class="row__sum">{{ euro(r.gross_total) }}</span>
+              </a>
+            </li>
+          }
+        </ul>
+
+        <nav class="pager" aria-label="Blättern">
+          <button type="button" class="btn" (click)="prev()" [disabled]="page() <= 1">Zurück</button>
+          <span class="pager__pos" aria-hidden="true">Seite {{ page() }} von {{ totalPages() }}</span>
+          <button type="button" class="btn" (click)="next()" [disabled]="page() >= totalPages()">Weiter</button>
+        </nav>
+      }
+    }
+  }
+
+  <!-- ---------------------------- Beleg anlegen ------------------------- -->
+  <app-dialog [offen]="neuOffen()" titel="Neuer Eingangsbeleg" (schliessen)="neuSchliessen()">
+    <form id="neu-beleg-form" class="dialog-form" (submit)="$event.preventDefault(); neuAbsenden()" novalidate>
+      @if (formularMeldung(); as fm) {
+        <div class="melde melde--fehler" role="alert" #fehlerBanner tabindex="-1">
+          <span class="melde__mark" aria-hidden="true">!</span>
+          <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+        </div>
+      }
+
+      <p class="dialog-hinweis">
+        Der Beleg entsteht im Status <strong>Erfasst</strong>. Die Belegnummer
+        (EB-…) vergibt die Datenbank; Netto, Steuer und Brutto rechnet der Server
+        verbindlich. Die Kontierung ist hier optional, spätestens zur Freigabe
+        aber Pflicht.
+      </p>
+
+      <app-referenz-wahl
+        [control]="neuForm.controls.supplier_party_id"
+        label="Lieferant"
+        [pflicht]="true"
+        platzhalter="Name suchen"
+        hinweis="Kreditor aus dem Kontaktstamm."
+        [suche]="lieferantSuche"
+      />
+
+      <div class="datum-paar">
+        <app-feld [control]="neuForm.controls.receipt_date" label="Belegdatum" typ="datum" [pflicht]="true" />
+        <app-feld [control]="neuForm.controls.due_date" label="Fällig bis" typ="datum" hinweis="Optional; nicht vor dem Belegdatum." />
+      </div>
+      <div class="datum-paar">
+        <app-feld [control]="neuForm.controls.received_date" label="Eingangsdatum" typ="datum" hinweis="Optional; sonst Belegdatum." />
+        <app-feld [control]="neuForm.controls.supplier_invoice_number" label="Rechnungsnr. des Lieferanten" hinweis="Optional." />
+      </div>
+
+      <fieldset class="pos-editor">
+        <legend class="pos-editor__legende">Positionen</legend>
+        @for (zeile of zeilen(); track $index; let i = $index) {
+          <div class="pos-zeile">
+            <div class="pos-zeile__kopf">
+              <span class="pos-zeile__nr" aria-hidden="true">Position {{ i + 1 }}</span>
+              <button
+                type="button"
+                class="pos-zeile__weg"
+                (click)="zeileEntfernen(i)"
+                [disabled]="zeilen().length <= 1"
+                [attr.aria-label]="'Position ' + (i + 1) + ' entfernen'"
+              >
+                <span aria-hidden="true">✕</span>
+              </button>
+            </div>
+            <app-feld [control]="$any(zeile).controls.description" label="Bezeichnung" [pflicht]="true" platzhalter="z. B. Kupferrohr 18 mm" />
+            <div class="pos-zeile__zahlen">
+              <app-feld [control]="$any(zeile).controls.quantity" label="Menge" typ="zahl" [pflicht]="true" hinweis="z. B. 12,5" />
+              <app-feld [control]="$any(zeile).controls.unit" label="Einheit" platzhalter="z. B. Stk" />
+              <app-feld [control]="$any(zeile).controls.unit_price" label="Einzelpreis (netto)" typ="zahl" [pflicht]="true" hinweis="z. B. 4,90" />
+              <app-feld [control]="$any(zeile).controls.tax_code" label="Steuersatz" typ="select" [optionen]="taxCodeOptionen" />
+            </div>
+            <div class="pos-zeile__kontierung">
+              <app-feld
+                [control]="$any(zeile).controls.ledger_account_id"
+                label="Buchungskonto"
+                typ="select"
+                platzhalter="— nicht kontiert —"
+                [optionen]="ledgerOptionen()"
+                hinweis="Für die Freigabe erforderlich."
+              />
+              <app-feld
+                [control]="$any(zeile).controls.cost_center_id"
+                label="Kostenstelle"
+                typ="select"
+                platzhalter="— keine —"
+                [optionen]="costCenterOptionen()"
+              />
+            </div>
+          </div>
+        }
+        <button type="button" class="btn pos-editor__add" (click)="zeileHinzufuegen()">
+          <span aria-hidden="true">＋</span> Position hinzufügen
+        </button>
+      </fieldset>
+
+      <app-feld [control]="neuForm.controls.notes" label="Notiz" typ="textarea" hinweis="Optional; interner Vermerk." />
+    </form>
+
+    <div dialog-aktionen class="dialog__aktionen">
+      <button type="button" class="btn" [disabled]="neuLaedt()" (click)="neuSchliessen()">Abbrechen</button>
+      <button
+        type="submit"
+        form="neu-beleg-form"
+        class="btn btn--primary"
+        [disabled]="neuLaedt()"
+        [attr.aria-busy]="neuLaedt()"
+      >
+        {{ neuLaedt() ? 'Wird angelegt …' : 'Beleg anlegen' }}
+      </button>
+    </div>
+  </app-dialog>
+</section>

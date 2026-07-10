@@ -1,0 +1,183 @@
+<section class="freigaben" aria-labelledby="freigaben-titel">
+  <header class="page-head">
+    <div>
+      <p class="page-head__kicker">
+        <span class="page-head__scale" aria-hidden="true"></span>
+        Sicherheit · Vier-Augen-Prinzip
+      </p>
+      <h1 id="freigaben-titel" class="page-head__titel">Freigaben</h1>
+    </div>
+    <p class="page-head__hint">
+      Anträge, die eine zweite Person freigeben muss (z. B. Bankdaten,
+      Rechnungskorrektur). Entscheiden darf nur, wer den Antrag nicht selbst
+      gestellt hat.
+    </p>
+  </header>
+
+  <div class="controls">
+    <div class="segment" role="group" aria-label="Nach Status filtern">
+      @for (seg of segments; track seg.label) {
+        <button
+          type="button"
+          class="segment__btn"
+          [class.is-active]="status() === seg.value"
+          [attr.aria-pressed]="status() === seg.value"
+          (click)="selectSegment(seg.value)"
+        >
+          {{ seg.label }}
+        </button>
+      }
+    </div>
+  </div>
+
+  <p class="sr-only" role="status">{{ resultSummary() }}</p>
+
+  @if (meldung(); as m) {
+    <div
+      class="meldung"
+      [class.meldung--erfolg]="m.art === 'erfolg'"
+      [class.meldung--fehler]="m.art === 'fehler'"
+      [attr.role]="m.art === 'fehler' ? 'alert' : 'status'"
+    >
+      <span class="meldung__mark" aria-hidden="true">{{ m.art === 'erfolg' ? '✓' : '!' }}</span>
+      <span class="meldung__text">{{ m.text }}</span>
+      <button type="button" class="meldung__zu" (click)="meldungSchliessen()" aria-label="Meldung schließen">
+        ✕
+      </button>
+    </div>
+  }
+
+  @switch (state().kind) {
+    @case ('loading') {
+      <ul class="karten" aria-hidden="true">
+        @for (s of skeletons; track $index) {
+          <li class="karte karte--skeleton">
+            <span class="sk sk--titel"></span>
+            <span class="sk sk--zeile"></span>
+            <span class="sk sk--block"></span>
+          </li>
+        }
+      </ul>
+    }
+
+    @case ('forbidden') {
+      <app-kein-zugriff [detail]="$any(state()).detail" />
+    }
+
+    @case ('error') {
+      <div class="note note--error" role="alert">
+        <h2 class="note__titel">Freigaben ließen sich nicht laden</h2>
+        <p class="note__text">Prüfe die Verbindung und lade den Bereich erneut.</p>
+        <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
+      </div>
+    }
+
+    @case ('ready') {
+      @if ($any(state()).data.length === 0) {
+        <div class="note note--empty">
+          <h2 class="note__titel">Keine Anträge</h2>
+          <p class="note__text">
+            Für diese Auswahl liegen keine Freigabeanträge vor.
+          </p>
+        </div>
+      } @else {
+        <ul class="karten">
+          @for (a of $any(state()).data; track a.id) {
+            <li class="karte">
+              <div class="karte__kopf">
+                <div class="karte__ident">
+                  <span class="karte__aktion">{{ a.action_label }}</span>
+                  <span class="karte__code">{{ a.action_code }}</span>
+                </div>
+                <span class="stamp {{ statusClass(a.status) }}">{{ statusLabel(a.status) }}</span>
+              </div>
+
+              <dl class="meta">
+                <div class="meta__row">
+                  <dt class="meta__dt">Antragsteller</dt>
+                  <dd class="meta__dd">
+                    {{ a.requested_by_name ?? '—' }}
+                    <span class="meta__zeit">· {{ d(a.requested_at) }}</span>
+                  </dd>
+                </div>
+                @if (a.reason) {
+                  <div class="meta__row">
+                    <dt class="meta__dt">Grund</dt>
+                    <dd class="meta__dd">{{ a.reason }}</dd>
+                  </div>
+                }
+                @if (a.status !== 'ANGEFORDERT' && a.decided_by_name) {
+                  <div class="meta__row">
+                    <dt class="meta__dt">Entscheidung</dt>
+                    <dd class="meta__dd">
+                      {{ a.decided_by_name }}
+                      <span class="meta__zeit">· {{ d(a.decided_at) }}</span>
+                    </dd>
+                  </div>
+                }
+                @if (a.decision_note) {
+                  <div class="meta__row">
+                    <dt class="meta__dt">Anmerkung</dt>
+                    <dd class="meta__dd">{{ a.decision_note }}</dd>
+                  </div>
+                }
+              </dl>
+
+              <div class="payload">
+                <p class="payload__titel">Beantragte Änderung</p>
+                @if (a.payload_verborgen) {
+                  <p class="payload__hinweis">
+                    <span class="payload__schloss" aria-hidden="true">🔒</span>
+                    Inhalt nur für Entscheider sichtbar
+                  </p>
+                } @else if (payloadEintraege(a).length === 0) {
+                  <p class="payload__hinweis">Keine Detailangaben.</p>
+                } @else {
+                  <dl class="payload__liste">
+                    @for (e of payloadEintraege(a); track e.label) {
+                      <div class="payload__row">
+                        <dt class="payload__dt">{{ e.label }}</dt>
+                        <dd class="payload__dd">{{ e.wert }}</dd>
+                      </div>
+                    }
+                  </dl>
+                }
+              </div>
+
+              @if (darfEntscheidenUeber(a) || darfZurueckziehen(a)) {
+                <div class="aktionen">
+                  @if (darfEntscheidenUeber(a)) {
+                    <button type="button" class="btn btn--primary" (click)="aktionOeffnen('approve', a)">
+                      Genehmigen
+                    </button>
+                    <button type="button" class="btn btn--gefahr" (click)="aktionOeffnen('reject', a)">
+                      Ablehnen
+                    </button>
+                  }
+                  @if (darfZurueckziehen(a)) {
+                    <button type="button" class="btn" (click)="aktionOeffnen('withdraw', a)">
+                      Zurückziehen
+                    </button>
+                  }
+                </div>
+              }
+            </li>
+          }
+        </ul>
+      }
+    }
+  }
+</section>
+
+<app-bestaetigung
+  [offen]="aktion() !== null"
+  [titel]="dialogTitel()"
+  [text]="dialogText()"
+  [bestaetigenLabel]="dialogLabel()"
+  [gefahr]="dialogGefahr()"
+  [begruendungPflicht]="dialogBegruendung()"
+  begruendungLabel="Begründung der Ablehnung"
+  [laedt]="aktionLaedt()"
+  (bestaetigen)="aktionBestaetigen($event)"
+  (abbrechen)="aktionAbbrechen()"
+/>

@@ -1,0 +1,118 @@
+<section class="dashboard" aria-labelledby="ar-titel">
+  <header class="page-head">
+    <div>
+      <p class="page-head__kicker">
+        <a class="page-head__back" routerLink="/auswertungen">← Auswertungen</a>
+      </p>
+      <h1 id="ar-titel" class="page-head__titel">Artikel &amp; Leistungen</h1>
+    </div>
+    <p class="page-head__hint">
+      Meistverwendete Positionen und Umsatz je Artikel/Leistung aus den
+      Belegzeilen veröffentlichter Rechnungen. Korrekturbelege sind
+      ausgeschlossen (nicht positionsweise zurechenbar).
+    </p>
+  </header>
+
+  @switch (state().kind) {
+    @case ('loading') {
+      <p class="lade-hinweis" role="status">Artikelkennzahlen werden geladen …</p>
+    }
+    @case ('forbidden') {
+      <app-kein-zugriff [detail]="$any(state()).detail" />
+    }
+    @case ('error') {
+      <div class="note note--error" role="alert">
+        <h2 class="note__titel">Kennzahlen konnten nicht geladen werden</h2>
+        <p class="note__text">Die Auswertungs-Schnittstelle war nicht erreichbar.</p>
+        <div class="note__aktionen">
+          <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
+        </div>
+      </div>
+    }
+    @case ('ready') {
+      <div class="kpi-reihe" role="group" aria-label="Artikelkennzahlen">
+        <div class="kpi kpi--stark">
+          <span class="kpi__label">Umsatz aus Positionen (netto)</span>
+          <span class="kpi__wert">{{ euro(daten()!.net_total) }}</span>
+        </div>
+        <div class="kpi">
+          <span class="kpi__label">Positionen gesamt</span>
+          <span class="kpi__wert">{{ daten()!.line_count }}</span>
+          <span class="kpi__sub">berechnete Belegzeilen</span>
+        </div>
+      </div>
+
+      <!-- Top-Positionen nach Umsatz -->
+      <section class="panel" aria-labelledby="top-titel">
+        <h2 id="top-titel" class="panel__titel">Top-Positionen nach Nettoumsatz</h2>
+        @if (artikelBars().length === 0) {
+          <div class="tab-platzhalter"><p>Es liegen noch keine berechneten Belegzeilen vor.</p></div>
+        } @else {
+          <ul class="balken">
+            @for (b of artikelBars(); track b.label) {
+              <li class="balken__zeile">
+                <span class="balken__label">{{ b.label }}</span>
+                <div class="balken__spur">
+                  <div class="balken__fuellung" [style.width.%]="b.widthPct"></div>
+                </div>
+                <span class="balken__wert">{{ b.display }}</span>
+              </li>
+            }
+          </ul>
+
+          <div class="tabelle-wrap">
+            <table class="tabelle">
+              <thead>
+                <tr>
+                  <th scope="col">Artikel / Leistung</th>
+                  <th scope="col" class="num">Vorkommen</th>
+                  <th scope="col" class="num">Menge</th>
+                  <th scope="col" class="num">Umsatz netto</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (a of daten()!.articles; track a.description) {
+                  <tr>
+                    <td>{{ a.description }}</td>
+                    <td class="num">{{ a.count }}</td>
+                    <td class="num">{{ menge(a.quantity_total) }}</td>
+                    <td class="num betrag">{{ euro(a.net_total) }}</td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+      </section>
+
+      <!-- Umsatz nach Positionsart -->
+      <section class="panel" aria-labelledby="typ-titel">
+        <h2 id="typ-titel" class="panel__titel">Umsatz nach Positionsart</h2>
+        @if (daten()!.by_type.length === 0) {
+          <div class="tab-platzhalter"><p>Keine berechneten Positionen im Zeitraum.</p></div>
+        } @else {
+          <div class="tabelle-wrap">
+            <table class="tabelle">
+              <thead>
+                <tr>
+                  <th scope="col">Positionsart</th>
+                  <th scope="col" class="num">Vorkommen</th>
+                  <th scope="col" class="num">Umsatz netto</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (t of daten()!.by_type; track t.line_type) {
+                  <tr>
+                    <td>{{ typeLabel(t.line_type) }}</td>
+                    <td class="num">{{ t.count }}</td>
+                    <td class="num betrag">{{ euro(t.net_total) }}</td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+      </section>
+    }
+  }
+</section>

@@ -21,6 +21,7 @@ from api.auftrag import router as auftrag_router
 from api.auth import router as auth_router
 from api.auswertungen import router as auswertungen_router
 from api.beleg import router as beleg_router
+from api.belegerfassung import router as belegerfassung_router
 from api.buchhaltung import router as buchhaltung_router
 from api.firma import router as firma_router
 from api.identity import router as identity_router
@@ -29,6 +30,7 @@ from api.mitarbeiter import router as mitarbeiter_router
 from api.planung import router as planung_router
 from api.projekt import router as projekt_router
 from api.property import router as property_router
+from api.security import router as security_router
 
 # Cookie-basierte Session-Auth für die ganze API; django-ninja aktiviert damit
 # zugleich den CSRF-Schutz für unsichere Methoden.
@@ -54,3 +56,5 @@ api.add_router("/hr", mitarbeiter_router, tags=["hr"])
 api.add_router("/pricing", artikel_router, tags=["pricing"])
 api.add_router("/auswertungen", auswertungen_router, tags=["auswertungen"])
 api.add_router("/company", firma_router, tags=["company"])
+api.add_router("/security", security_router, tags=["security"])
+api.add_router("/accounting", belegerfassung_router, tags=["accounting"])

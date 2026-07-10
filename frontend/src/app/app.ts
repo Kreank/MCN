@@ -41,12 +41,19 @@ export class App {
     // Einsätze) → Zwischenschritt 55 statt Renummerierung der Folgepunkte.
     { path: '/wartung', label: 'Wartung', mark: '55', recht: ['workflow', 'LESEN'] },
     { path: '/aufgaben', label: 'Aufgaben', mark: '60', recht: ['workflow', 'LESEN'] },
+    // Vier-Augen-Freigaben sind bereichsübergreifende Governance (Bankdaten,
+    // Rechnungskorrektur) — sie hängen an keinem Fachbereich, stehen aber bei
+    // der Arbeitsorganisation. Zwischenschritt 62 statt Renummerierung.
+    { path: '/freigaben', label: 'Freigaben', mark: '62', recht: ['security', 'LESEN'] },
     // Personal/HR liegt fachlich zwischen interner Arbeitsorganisation (Aufgaben)
     // und dem Stammdaten-Cluster (Artikel) → Zwischenschritt 65 statt
     // Renummerierung der Folgepunkte.
     { path: '/mitarbeiter', label: 'Mitarbeiter', mark: '65', recht: ['hr', 'LESEN'] },
     { path: '/artikel', label: 'Artikel', mark: '70', recht: ['pricing', 'LESEN'] },
     { path: '/buchhaltung', label: 'Buchhaltung', mark: '80', recht: ['invoicing', 'LESEN'] },
+    // Eingangsrechnungen (accounting.receipt): eigener Belegkreis EB-, eigenes
+    // Rechte-Modul — deshalb neben, nicht unter der Buchhaltung.
+    { path: '/belegerfassung', label: 'Belegerfassung', mark: '82', recht: ['accounting', 'LESEN'] },
     { path: '/auswertungen', label: 'Auswertungen', mark: '90', recht: ['invoicing', 'LESEN'] },
     // Einstellungen: nur für Rollen, die etwas ändern dürfen (Firmenprofil/
     // Gewerke/Niederlassungen = company/AENDERN, Mahnstufen = invoicing/AENDERN).
@@ -57,6 +64,8 @@ export class App {
       rechtOder: [
         ['company', 'AENDERN'],
         ['invoicing', 'AENDERN'],
+        // Rechtematrix/Rollenpflege liegt als Unterseite unter Einstellungen.
+        ['security', 'AENDERN'],
       ],
     },
   ];

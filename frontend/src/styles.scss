@@ -115,6 +115,17 @@ button {
   color: var(--accent-ink);
   background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
+// Abschlaegiger Endzustand (abgelehnt, verworfen). Die Marke fuehrt bewusst kein
+// Rot — Gewicht entsteht ueber kraeftige Kontur und Tiefe statt ueber Signalfarbe
+// (vgl. .btn--gefahr, das aus demselben Grund Amber traegt). Der Stempel traegt
+// immer den Status als Text; Farbe ist nie alleiniger Traeger.
+.stamp--negativ {
+  border-color: var(--ink);
+  color: var(--ink);
+  background: var(--neutral-tint);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
 
 // ----------------------------------------------------------------------------
 // Terminkategorie-Chip: Farbpunkt (dekorativ) + IMMER der Name als Text.

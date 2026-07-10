@@ -1,0 +1,281 @@
+:host {
+  display: block;
+}
+
+// ---- Kopfzone (projiziert in die Mappe) -----------------------------------
+.kopf-summe {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: var(--step-1);
+  color: var(--ink);
+}
+
+.detail-melde {
+  margin-bottom: var(--space-4);
+}
+
+// Hinweis-/Warnbanner (Marke führt kein Rot → Amber-Ton für Warnungen).
+.detail-hinweis {
+  max-width: none;
+  margin-bottom: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--step--1);
+}
+.note--warn {
+  border-color: color-mix(in srgb, var(--warn-ink) 45%, var(--line-strong));
+  background: var(--warn-tint);
+  color: var(--warn-ink);
+}
+
+// ============================ Positionstabelle ==============================
+.pos-wrap {
+  overflow-x: auto;
+}
+.pos {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--step-0);
+  min-width: 40rem;
+}
+.pos th,
+.pos td {
+  padding: var(--space-3) var(--space-3);
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+.pos thead th {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  border-bottom: 1.5px solid var(--line-strong);
+  white-space: nowrap;
+}
+.pos__nr {
+  width: 3rem;
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+}
+.pos__num {
+  text-align: right;
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+.pos__desc {
+  display: block;
+  color: var(--ink);
+  font-weight: 600;
+}
+.pos__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: 0.35rem;
+}
+.pos__tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25em;
+  padding: 0.1em 0.5em;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--ink-muted);
+}
+.pos__tag--konto {
+  color: var(--accent-ink);
+  border-color: color-mix(in srgb, var(--accent-ink) 40%, var(--line-strong));
+}
+.pos__tag--offen {
+  color: var(--warn-ink);
+  border-color: color-mix(in srgb, var(--warn-ink) 45%, var(--line-strong));
+  background: var(--warn-tint);
+}
+
+.pos tfoot td {
+  border-bottom: none;
+  padding-top: var(--space-3);
+}
+.pos__sumlabel {
+  text-align: right;
+  font-weight: 400;
+  color: var(--ink-muted);
+}
+.pos--gross th,
+.pos--gross td {
+  font-weight: 700;
+  color: var(--ink);
+  font-size: var(--step-1);
+  border-top: 1.5px solid var(--line-strong);
+}
+.pos-hinweis {
+  margin: var(--space-3) 0 0;
+  font-size: var(--step--1);
+  color: var(--ink-faint);
+}
+
+// ============================ Statusverlauf =================================
+.verlauf {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.verlauf__eintrag {
+  display: flex;
+  gap: var(--space-3);
+}
+.verlauf__marke {
+  flex: none;
+  width: 0.75rem;
+  height: 0.75rem;
+  margin-top: 0.4rem;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--surface);
+  box-shadow: 0 0 0 1.5px var(--line-strong);
+}
+.verlauf__inhalt {
+  flex: 1;
+  min-width: 0;
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--line);
+}
+.verlauf__kopf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+.verlauf__von {
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+.verlauf__meta {
+  margin: var(--space-2) 0 0;
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+.verlauf__grund {
+  margin: var(--space-2) 0 0;
+  font-style: italic;
+  color: var(--ink);
+}
+
+// ============================ Notiz (Übersicht) =============================
+.notiz {
+  margin-top: var(--space-5);
+  padding: var(--space-4);
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.notiz__titel {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+  margin-bottom: var(--space-2);
+}
+.notiz__text {
+  margin: 0;
+  color: var(--ink);
+  white-space: pre-wrap;
+}
+
+// ============================ Editor (Dialog) ===============================
+.dialog-hinweis {
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+.datum-paar {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+@media (max-width: 520px) {
+  .datum-paar {
+    grid-template-columns: 1fr;
+  }
+}
+.pos-editor {
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.pos-editor__legende {
+  padding: 0 var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+}
+.pos-zeile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  background: var(--surface-sunken, var(--surface));
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--radius);
+}
+.pos-zeile__kopf {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.pos-zeile__nr {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--ink-muted);
+}
+.pos-zeile__weg {
+  min-height: 32px;
+  min-width: 32px;
+  border: 1.5px solid color-mix(in srgb, var(--warn-ink) 45%, var(--line-strong));
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--warn-ink);
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    border-color: var(--warn-ink);
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+  &:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+}
+.pos-zeile__zahlen,
+.pos-zeile__kontierung {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+@media (max-width: 520px) {
+  .pos-zeile__zahlen,
+  .pos-zeile__kontierung {
+    grid-template-columns: 1fr;
+  }
+}
+.pos-editor__add {
+  align-self: flex-start;
+}

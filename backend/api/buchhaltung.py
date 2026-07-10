@@ -30,10 +30,12 @@ from ninja.responses import Status
 from ninja.security import django_auth
 
 from api.permissions import require
+from db_core.db_context import business_transaction
 from db_core.models import DunningLevel, DunningNotice, Invoice, Payment
 from db_core.services import beleg as beleg_service
 from db_core.services import buchhaltung as buchhaltung_service
 from db_core.services import firma as firma_service
+from db_core.services import vier_augen
 from db_core.services.buchhaltung import PAYMENT_SIGN
 
 router = Router()
@@ -196,6 +198,90 @@ class OpenItemDetailOut(OpenItemOut):
 
 class CorrectionIn(Schema):
     positions: list[int]
+
+
+class PendingApprovalOut(Schema):
+    """Antwort, wenn eine Rechnungskorrektur/ein Storno erst einen genehmigten
+    Vier-Augen-Antrag braucht (RECHNUNGSKORREKTUR)."""
+    pending_approval: UUID
+    action_code: str
+    detail: str
+
+
+# Zielreferenz der Vier-Augen-Anträge für Rechnungsvorgänge.
+_INVOICE_TARGET = "invoicing.invoice"
+
+
+class _KeineGenehmigung(Exception):
+    """Intern: es liegt keine passende, unverbrauchte Genehmigung vor."""
+
+
+def _korrektur_payload(operation, positions):
+    """Die Beschreibung des Vorgangs, über den der Entscheider entscheidet.
+
+    Sie identifiziert die Genehmigung mit: nur wer GENAU diesen Vorgang genehmigt
+    bekommen hat, darf ihn ausführen.
+    """
+    return {"operation": operation, "positions": positions}
+
+
+def _mit_genehmigung(actor, invoice_id, *, operation, positions, label, aktion):
+    """Führt `aktion` nur mit einer passenden Vier-Augen-Genehmigung aus.
+
+    RECHNUNGSKORREKTUR deckt laut four_eyes-Stammdaten „Rechnungskorrektur/Storno
+    nach Veröffentlichung" ab — Storno UND Korrektur sind gleichermaßen
+    genehmigungspflichtig, teilen sich also einen `action_code`. Deshalb wird die
+    Genehmigung zusätzlich an den **Payload** gebunden: sonst ließe sich eine
+    genehmigte Teilgutschrift („Position 1") als Vollstorno der ganzen Rechnung
+    einlösen.
+
+    Verbraucht wird die Genehmigung in DERSELBEN Transaktion wie die Aktion
+    (`claim` mit `SELECT … FOR UPDATE`):
+      * Zwei parallele Einlöser können nicht beide denselben Grant nutzen.
+      * Scheitert die Aktion fachlich (422), rollt auch das Verbrauchen zurück —
+        die Genehmigung bleibt gültig.
+      * Es gibt kein Zeitfenster, in dem der Beleg geschrieben, die Genehmigung
+        aber noch unverbraucht ist.
+    """
+    payload = _korrektur_payload(operation, positions)
+    try:
+        with business_transaction(actor):
+            grant = vier_augen.claim(
+                actor, action_code="RECHNUNGSKORREKTUR",
+                target_table=_INVOICE_TARGET, target_id=invoice_id, payload=payload,
+            )
+            if grant is None:
+                raise _KeineGenehmigung
+            return aktion(), None
+    except _KeineGenehmigung:
+        pass
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+
+    # Kein gültiger Grant → (deduplizierten) Antrag anlegen und 202 melden.
+    pending = vier_augen.find_pending(
+        "RECHNUNGSKORREKTUR", target_table=_INVOICE_TARGET, target_id=invoice_id
+    )
+    if pending is None or (pending.payload or {}) != payload:
+        pending = vier_augen.request_approval(
+            actor,
+            action_code="RECHNUNGSKORREKTUR",
+            payload=payload,
+            target_table=_INVOICE_TARGET,
+            target_id=invoice_id,
+            reason=label,
+        )
+    return None, Status(
+        202,
+        PendingApprovalOut(
+            pending_approval=pending.id,
+            action_code="RECHNUNGSKORREKTUR",
+            detail=(
+                f"{label} ist Vier-Augen-pflichtig. Ein Freigabeantrag wurde "
+                "angelegt und muss von einer zweiten Person genehmigt werden."
+            ),
+        ),
+    )
 
 
 class DunningRowOut(Schema):
@@ -468,14 +554,25 @@ def get_open_item(request, invoice_id: UUID):
 
 # --- Schreibende Endpoints (Session-Auth Pflicht) --------------------------
 
-@router.post("/invoices/{invoice_id}/cancel", response={201: CreditRefOut}, auth=django_auth)
+@router.post(
+    "/invoices/{invoice_id}/cancel",
+    response={201: CreditRefOut, 202: PendingApprovalOut},
+    auth=django_auth,
+)
 def cancel_invoice(request, invoice_id: UUID):
-    """Storniert eine veröffentlichte Rechnung durch einen Stornobeleg (STORNO)."""
+    """Storniert eine veröffentlichte Rechnung durch einen Stornobeleg (STORNO).
+
+    Vier-Augen-pflichtig (RECHNUNGSKORREKTUR): ohne genehmigten Antrag wird ein
+    Freigabeantrag angelegt (202) statt storniert; erst der genehmigte Antrag
+    lässt den Storno zu (201)."""
     actor, _ = require(request, "invoicing", "STORNIEREN")
-    try:
-        credit = beleg_service.create_cancellation(actor, invoice_id=invoice_id)
-    except ValueError as exc:
-        raise HttpError(422, str(exc))
+    credit, pending_response = _mit_genehmigung(
+        actor, invoice_id, operation="STORNO", positions=None,
+        label="Rechnungsstorno",
+        aktion=lambda: beleg_service.create_cancellation(actor, invoice_id=invoice_id),
+    )
+    if pending_response is not None:
+        return pending_response
     return Status(
         201,
         CreditRefOut(
@@ -486,18 +583,27 @@ def cancel_invoice(request, invoice_id: UUID):
 
 
 @router.post(
-    "/invoices/{invoice_id}/correction", response={201: CreditRefOut}, auth=django_auth
+    "/invoices/{invoice_id}/correction",
+    response={201: CreditRefOut, 202: PendingApprovalOut},
+    auth=django_auth,
 )
 def correct_invoice(request, invoice_id: UUID, payload: CorrectionIn):
-    """Erzeugt eine Rechnungskorrektur (GUTSCHRIFT) über die angegebenen Positionen."""
+    """Erzeugt eine Rechnungskorrektur (GUTSCHRIFT) über die angegebenen Positionen.
+
+    Vier-Augen-pflichtig (RECHNUNGSKORREKTUR): ohne genehmigten Antrag wird ein
+    Freigabeantrag angelegt (202); erst der genehmigte Antrag lässt die Korrektur
+    zu (201)."""
     # Korrektur/Gutschrift eines veröffentlichten Belegs = Storno-Folgebeleg → STORNIEREN.
     actor, _ = require(request, "invoicing", "STORNIEREN")
-    try:
-        credit = beleg_service.create_correction(
+    credit, pending_response = _mit_genehmigung(
+        actor, invoice_id, operation="GUTSCHRIFT", positions=payload.positions,
+        label="Rechnungskorrektur",
+        aktion=lambda: beleg_service.create_correction(
             actor, invoice_id=invoice_id, positions=payload.positions
-        )
-    except ValueError as exc:
-        raise HttpError(422, str(exc))
+        ),
+    )
+    if pending_response is not None:
+        return pending_response
     return Status(
         201,
         CreditRefOut(

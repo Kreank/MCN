@@ -16,8 +16,24 @@ from db_core.services import beleg as beleg_service
 from db_core.services import buchhaltung as buchhaltung_service
 from db_core.services import identity as identity_service
 from db_core.services import property as property_service
+from db_core.services import vier_augen
 
 User = get_user_model()
+
+
+def _genehmigen(invoice_id, decider_app_user_id):
+    """Genehmigt den offenen RECHNUNGSKORREKTUR-Antrag zur Rechnung.
+
+    Der Entscheider muss ein anderer sein als der Antragsteller (Vier-Augen);
+    in den Tests stellt der `_logged_in_client`-Nutzer den Antrag, die
+    `app_user`-Fixture entscheidet.
+    """
+    pending = vier_augen.find_pending(
+        "RECHNUNGSKORREKTUR", target_table="invoicing.invoice", target_id=invoice_id
+    )
+    assert pending is not None, "Der erste Aufruf muss einen Freigabeantrag anlegen."
+    vier_augen.approve(decider_app_user_id, request_id=pending.id)
+    return pending
 
 
 def _logged_in_client(client):
@@ -178,9 +194,34 @@ def test_mahnliste(admin_client, seeded):
 
 
 @pytest.mark.django_db
-def test_cancel_eingeloggt_und_referenz(client, seeded):
+def test_cancel_ohne_genehmigung_legt_antrag_an(client, seeded):
+    """Ohne genehmigten Vier-Augen-Antrag wird nicht storniert, sondern beantragt.
+
+    Ein zweiter Aufruf dedupliziert auf denselben Antrag (kein Antrags-Wildwuchs).
+    """
     inv = seeded["inv"]
     c = _logged_in_client(client)
+    r = c.post(f"/api/buchhaltung/invoices/{inv.id}/cancel", content_type="application/json")
+    assert r.status_code == 202, r.content
+    assert r.json()["action_code"] == "RECHNUNGSKORREKTUR"
+    antrag_id = r.json()["pending_approval"]
+    r2 = c.post(f"/api/buchhaltung/invoices/{inv.id}/cancel", content_type="application/json")
+    assert r2.status_code == 202
+    assert r2.json()["pending_approval"] == antrag_id
+    # Nichts wurde geschrieben: kein Folgebeleg am Ursprung.
+    assert c.get(f"/api/buchhaltung/invoices/{inv.id}").json()["credit_notes"] == []
+
+
+@pytest.mark.django_db
+def test_cancel_eingeloggt_und_referenz(client, seeded, app_user):
+    inv = seeded["inv"]
+    c = _logged_in_client(client)
+    # Erster Aufruf legt nur den Freigabeantrag an (202); erst die Genehmigung
+    # durch eine zweite Person lässt den Storno zu.
+    assert c.post(
+        f"/api/buchhaltung/invoices/{inv.id}/cancel", content_type="application/json"
+    ).status_code == 202
+    _genehmigen(inv.id, app_user.id)
     r = c.post(f"/api/buchhaltung/invoices/{inv.id}/cancel", content_type="application/json")
     assert r.status_code == 201, r.content
     body = r.json()
@@ -192,6 +233,11 @@ def test_cancel_eingeloggt_und_referenz(client, seeded):
     # Der Stornobeleg verweist zurück auf den Ursprung.
     storno_detail = c.get(f"/api/buchhaltung/invoices/{body['id']}").json()
     assert storno_detail["origin"]["id"] == str(inv.id)
+    # Einmaligkeit: die Genehmigung ist verbraucht, ein weiterer Storno braucht
+    # einen neuen Antrag.
+    assert c.post(
+        f"/api/buchhaltung/invoices/{inv.id}/cancel", content_type="application/json"
+    ).status_code == 202
 
 
 @pytest.mark.django_db
@@ -202,10 +248,16 @@ def test_cancel_ohne_login_abgelehnt(anonymous_client, seeded):
 
 
 @pytest.mark.django_db
-def test_correction_eingeloggt(client, seeded):
+def test_correction_eingeloggt(client, seeded, app_user):
+    inv = seeded["inv"]
     c = _logged_in_client(client)
+    assert c.post(
+        f"/api/buchhaltung/invoices/{inv.id}/correction",
+        data={"positions": [1]}, content_type="application/json",
+    ).status_code == 202
+    _genehmigen(inv.id, app_user.id)
     r = c.post(
-        f"/api/buchhaltung/invoices/{seeded['inv'].id}/correction",
+        f"/api/buchhaltung/invoices/{inv.id}/correction",
         data={"positions": [1]}, content_type="application/json",
     )
     assert r.status_code == 201, r.content
@@ -213,13 +265,24 @@ def test_correction_eingeloggt(client, seeded):
 
 
 @pytest.mark.django_db
-def test_correction_unbekannte_position_422(client, seeded):
+def test_correction_unbekannte_position_422(client, seeded, app_user):
+    """Scheitert die Korrektur fachlich, bleibt die Genehmigung unverbraucht."""
+    inv = seeded["inv"]
     c = _logged_in_client(client)
+    assert c.post(
+        f"/api/buchhaltung/invoices/{inv.id}/correction",
+        data={"positions": [99]}, content_type="application/json",
+    ).status_code == 202
+    _genehmigen(inv.id, app_user.id)
     r = c.post(
-        f"/api/buchhaltung/invoices/{seeded['inv'].id}/correction",
+        f"/api/buchhaltung/invoices/{inv.id}/correction",
         data={"positions": [99]}, content_type="application/json",
     )
     assert r.status_code == 422
+    # Die Genehmigung darf durch den gescheiterten Versuch nicht verfallen.
+    assert vier_augen.find_grant(
+        "RECHNUNGSKORREKTUR", target_table="invoicing.invoice", target_id=inv.id
+    ) is not None
 
 
 @pytest.mark.django_db
@@ -415,3 +478,81 @@ def test_detail_payment_id_und_storno_flags(admin_client, seeded):
         data={}, content_type="application/json",
     )
     assert r2.status_code == 422
+
+
+# --- Vier-Augen: Genehmigung ist an die konkrete Operation gebunden ---------
+
+@pytest.mark.django_db
+def test_genehmigte_gutschrift_ist_kein_freibrief_fuer_storno(client, seeded, app_user):
+    """Eine für eine Teilgutschrift erteilte Genehmigung darf NICHT als Vollstorno
+    eingelöst werden.
+
+    Beide Vorgänge teilen sich den action_code RECHNUNGSKORREKTUR. Ohne Bindung an
+    den Payload (operation + positions) hätte der Entscheider einer Gutschrift über
+    Position 1 zugestimmt, ausgeführt würde ein Storno der ganzen Rechnung.
+    """
+    inv = seeded["inv"]
+    c = _logged_in_client(client)
+    # Antrag für die GUTSCHRIFT über Position 1 stellen und genehmigen lassen.
+    assert c.post(
+        f"/api/buchhaltung/invoices/{inv.id}/correction",
+        data={"positions": [1]}, content_type="application/json",
+    ).status_code == 202
+    _genehmigen(inv.id, app_user.id)
+
+    # Der Storno darf die Gutschrift-Genehmigung nicht verbrauchen: 202 statt 201.
+    r = c.post(f"/api/buchhaltung/invoices/{inv.id}/cancel", content_type="application/json")
+    assert r.status_code == 202, r.content
+    assert c.get(f"/api/buchhaltung/invoices/{inv.id}").json()["credit_notes"] == []
+
+    # Die Gutschrift-Genehmigung ist unangetastet und lässt die Gutschrift zu.
+    r2 = c.post(
+        f"/api/buchhaltung/invoices/{inv.id}/correction",
+        data={"positions": [1]}, content_type="application/json",
+    )
+    assert r2.status_code == 201, r2.content
+    assert r2.json()["invoice_type"] == "GUTSCHRIFT"
+
+
+@pytest.mark.django_db
+def test_genehmigung_gilt_nicht_fuer_andere_positionen(client, seeded, app_user):
+    """Genehmigt wurde Position 1 — eine Korrektur über Position 2 ist ein anderer
+    Vorgang und braucht eine eigene Genehmigung."""
+    inv = seeded["inv"]
+    c = _logged_in_client(client)
+    assert c.post(
+        f"/api/buchhaltung/invoices/{inv.id}/correction",
+        data={"positions": [1]}, content_type="application/json",
+    ).status_code == 202
+    _genehmigen(inv.id, app_user.id)
+
+    r = c.post(
+        f"/api/buchhaltung/invoices/{inv.id}/correction",
+        data={"positions": [2]}, content_type="application/json",
+    )
+    assert r.status_code == 202, r.content
+
+
+@pytest.mark.django_db
+def test_gescheiterte_korrektur_verbraucht_genehmigung_nicht(client, seeded, app_user):
+    """Die Genehmigung wird in derselben Transaktion wie die Aktion verbraucht:
+    scheitert die Aktion fachlich (422), bleibt die Genehmigung gültig."""
+    inv = seeded["inv"]
+    c = _logged_in_client(client)
+    # Antrag über eine nicht existierende Position — der Antrag selbst ist zulässig.
+    assert c.post(
+        f"/api/buchhaltung/invoices/{inv.id}/correction",
+        data={"positions": [99]}, content_type="application/json",
+    ).status_code == 202
+    _genehmigen(inv.id, app_user.id)
+
+    # Ausführung scheitert fachlich …
+    assert c.post(
+        f"/api/buchhaltung/invoices/{inv.id}/correction",
+        data={"positions": [99]}, content_type="application/json",
+    ).status_code == 422
+    # … und die Genehmigung ist deshalb NICHT verbraucht.
+    assert vier_augen.find_grant(
+        "RECHNUNGSKORREKTUR", target_table="invoicing.invoice", target_id=inv.id,
+        payload={"operation": "GUTSCHRIFT", "positions": [99]},
+    ) is not None

@@ -502,12 +502,19 @@ def get_invoice(request, invoice_id: UUID):
 
 @router.get("/invoices/{invoice_id}/pdf")
 def invoice_pdf(request, invoice_id: UUID):
-    """PDF-Ausfertigung einer veröffentlichten Rechnung (on-the-fly gerendert).
+    """PDF-Ausfertigung einer veröffentlichten Rechnung.
+
+    Beim ersten Abruf wird die Ausfertigung GoBD-fest archiviert (MinIO +
+    content.file/file_link); jeder weitere Abruf liefert dieselbe archivierte
+    Datei aus. Ist der Objektspeicher nicht erreichbar, wird on-the-fly
+    ausgeliefert (Degradation) und die Archivierung später nachgeholt.
 
     Nur festgeschriebene Belege (VEROEFFENTLICHT) erhalten eine Ausfertigung; für
-    Entwürfe/unbekannte Belege → 404."""
-    require(request, "invoicing", "LESEN")
-    pdf = beleg_pdf_service.render_invoice_pdf(invoice_id)
+    Entwürfe/unbekannte Belege → 404. Das Archivieren ist ein automatischer
+    Nebeneffekt des Lesens (kein eigenes Recht) — die actor_id wird nur als
+    uploaded_by/created_by fürs Audit geführt; die DB-Tore bleiben unberührt."""
+    actor, _ = require(request, "invoicing", "LESEN")
+    pdf = beleg_pdf_service.get_or_archive_invoice_pdf(actor, invoice_id)
     if pdf is None:
         raise HttpError(404, "Veröffentlichte Rechnung nicht gefunden.")
     invoice = Invoice.objects.filter(id=invoice_id).only("invoice_number").first()

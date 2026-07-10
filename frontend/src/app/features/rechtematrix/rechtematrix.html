@@ -1,0 +1,311 @@
+<section class="rechte" aria-labelledby="rechte-titel">
+  <header class="page-head">
+    <div>
+      <p class="page-head__kicker">
+        <span class="page-head__scale" aria-hidden="true"></span>
+        Einstellungen · Sicherheit
+      </p>
+      <h1 id="rechte-titel" class="page-head__titel">Rechtematrix</h1>
+    </div>
+  </header>
+
+  <app-einstellungen-nav />
+
+  <p class="page-hint">
+    Welche Rolle in welchem Modul welche Aktion ausführen darf — und in welchem
+    Umfang. Rechte addieren sich über die Rollen eines Kontos; bei überlappenden
+    Zuordnungen gewinnt die weiteste Sicht.
+  </p>
+
+  @switch (state().kind) {
+    @case ('loading') {
+      <p class="lade-hinweis" role="status">Rechtematrix wird geladen.</p>
+    }
+    @case ('forbidden') {
+      <app-kein-zugriff [detail]="verbotenDetail()" />
+    }
+    @case ('error') {
+      <p class="note note--error" role="alert">
+        Die Rechtematrix konnte nicht geladen werden. Bitte erneut versuchen.
+      </p>
+    }
+    @case ('ready') {
+      @if (!darfAendern()) {
+        <p class="note" role="note">
+          <span aria-hidden="true">🔒 </span>
+          Sie können die Rechte einsehen, aber nicht ändern
+          (fehlendes Recht „Rechte &amp; Sicherheit / Ändern“).
+        </p>
+      }
+
+      <!-- Abschnitts-Umschalter: zwei getrennte Ansichten. Als Buttons mit
+           aria-pressed (nicht als Tablist) — jeder Button ist einzeln per Tab
+           erreichbar und mit Enter/Space bedienbar. -->
+      <div class="abschnitt-wahl" role="group" aria-label="Ansicht wählen">
+        <button
+          type="button"
+          class="abschnitt-btn"
+          [class.is-aktiv]="abschnitt() === 'matrix'"
+          [attr.aria-pressed]="abschnitt() === 'matrix'"
+          (click)="abschnitt.set('matrix')"
+        >
+          Rechtematrix
+        </button>
+        <button
+          type="button"
+          class="abschnitt-btn"
+          [class.is-aktiv]="abschnitt() === 'zuordnungen'"
+          [attr.aria-pressed]="abschnitt() === 'zuordnungen'"
+          (click)="abschnitt.set('zuordnungen')"
+        >
+          Rollenzuordnungen
+        </button>
+      </div>
+
+      <!-- ============================ Abschnitt 1: Matrix ==================== -->
+      @if (abschnitt() === 'matrix') {
+        <div class="matrix-bereich">
+          <h2 class="sr-only" id="matrix-ueberschrift">Rechtematrix</h2>
+
+          <!-- Rollen-Umschalter: eine Rolle zur Zeit, sonst wird die 3D-Matrix
+               unbedienbar. -->
+          <div class="rollen-wahl" role="group" aria-label="Rolle wählen">
+            <span class="rollen-wahl__label" aria-hidden="true">Rolle</span>
+            @for (r of roles(); track r.code) {
+              <button
+                type="button"
+                class="rollen-btn"
+                [class.is-aktiv]="aktiveRolle() === r.code"
+                [attr.aria-pressed]="aktiveRolle() === r.code"
+                (click)="waehleRolle(r.code)"
+              >
+                {{ r.label }}
+                <span class="rollen-btn__code">{{ r.code }}</span>
+              </button>
+            }
+          </div>
+
+          <p class="hinweis-eigene">
+            <span aria-hidden="true">ⓘ</span>
+            <span>
+              <strong>Sichtbarkeit „Eigene“ ist projektweit fail-closed.</strong>
+              Nur bei <em>Aufgaben</em> und <em>Einsätzen</em> filtert sie wirklich
+              auf eigene Zeilen; überall sonst führt „Eigene“ zu einer
+              Zugriffsverweigerung (403) statt zu gefilterten Daten. Setzen Sie sie
+              nur dort, wo die Rolle die entsprechenden Zeilen wirklich sehen soll.
+            </span>
+          </p>
+
+          @if (matrixMeldung(); as m) {
+            <p class="note note--error" role="alert">
+              <span aria-hidden="true">▲</span> {{ m }}
+            </p>
+          }
+
+          <div class="matrix-scroll">
+            <table class="matrix">
+              <caption class="sr-only">
+                Berechtigungen der Rolle {{ aktiveRolleLabel() }}: Module in den
+                Zeilen, Aktionen in den Spalten. Jede Zelle ist ein Schalter.
+              </caption>
+              <thead>
+                <tr>
+                  <th scope="col" class="matrix__ecke">Modul</th>
+                  @for (a of actions(); track a) {
+                    <th scope="col" class="matrix__aktion">
+                      <span class="matrix__aktion-label">{{ aktionLabel(a) }}</span>
+                      <span class="matrix__aktion-code">{{ a }}</span>
+                    </th>
+                  }
+                </tr>
+              </thead>
+              <tbody>
+                @for (m of modules(); track m) {
+                  <tr>
+                    <th scope="row" class="matrix__modul">
+                      <span class="matrix__modul-label">{{ modulLabel(m) }}</span>
+                      <span class="matrix__modul-code">{{ m }}</span>
+                    </th>
+                    @for (a of actions(); track a) {
+                      @let z = zelle(m, a);
+                      <td class="matrix__zelle" [class.is-erlaubt]="z.allowed">
+                        <label class="zelle-check">
+                          <input
+                            type="checkbox"
+                            class="zelle-check__box"
+                            [checked]="z.allowed"
+                            [disabled]="!darfAendern()"
+                            [attr.aria-label]="
+                              'Modul ' + modulLabel(m) + ', Aktion ' + aktionLabel(a) +
+                              (z.allowed ? ' — erlaubt' : ' — nicht erlaubt')
+                            "
+                            (change)="umschalten(m, a, $any($event.target).checked)"
+                          />
+                        </label>
+
+                        @if (z.allowed) {
+                          <label class="zelle-scope">
+                            <span class="sr-only">
+                              Sichtbarkeit für Modul {{ modulLabel(m) }}, Aktion
+                              {{ aktionLabel(a) }}
+                            </span>
+                            <select
+                              class="zelle-scope__select"
+                              [value]="z.row_scope"
+                              [disabled]="!darfAendern()"
+                              (change)="scopeAendern(m, a, $any($event.target).value)"
+                            >
+                              @for (o of scopeOptionen; track o.wert) {
+                                <option [value]="o.wert">{{ o.label }}</option>
+                              }
+                            </select>
+                          </label>
+                        }
+                      </td>
+                    }
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        </div>
+      }
+
+      <!-- ====================== Abschnitt 2: Rollenzuordnungen =============== -->
+      @if (abschnitt() === 'zuordnungen') {
+        <div class="zuordnungen-bereich">
+          <h2 class="sr-only">Rollenzuordnungen</h2>
+
+          @if (zuordnungErfolg(); as m) {
+            <p class="note note--erfolg" role="status">{{ m }}</p>
+          }
+          @if (zuordnungMeldung(); as m) {
+            <p class="note note--error" role="alert">
+              <span aria-hidden="true">▲</span> {{ m }}
+            </p>
+          }
+
+          <div class="tabelle-rahmen">
+            <table class="benutzer-tabelle">
+              <caption class="sr-only">
+                Benutzer mit ihren aktiven Rollen und den Aktionen zum Zuweisen und
+                Beenden
+              </caption>
+              <thead>
+                <tr>
+                  <th scope="col">Benutzer</th>
+                  <th scope="col">Status</th>
+                  <th scope="col">Aktive Rollen</th>
+                  @if (darfAendern()) {
+                    <th scope="col"><span class="sr-only">Aktionen</span></th>
+                  }
+                </tr>
+              </thead>
+              <tbody>
+                @for (b of benutzer(); track b.id) {
+                  <tr>
+                    <th scope="row">{{ b.display_name }}</th>
+                    <td>
+                      <span class="chip chip--status">{{ b.status }}</span>
+                    </td>
+                    <td>
+                      @if (b.zuordnungen.length) {
+                        <ul class="rollen-liste">
+                          @for (z of b.zuordnungen; track z.id) {
+                            <li class="rollen-liste__item">
+                              <span class="chip chip--rolle">{{ z.role_label }}</span>
+                              @if (darfAendern()) {
+                                <button
+                                  type="button"
+                                  class="rollen-liste__end"
+                                  (click)="starteBeenden(b, z)"
+                                  [attr.aria-label]="
+                                    'Rolle ' + z.role_label + ' von ' + b.display_name +
+                                    ' beenden'
+                                  "
+                                >
+                                  <span aria-hidden="true">✕</span>
+                                </button>
+                              }
+                            </li>
+                          }
+                        </ul>
+                      } @else {
+                        <span class="keine-rollen">Keine aktive Rolle</span>
+                      }
+                    </td>
+                    @if (darfAendern()) {
+                      <td class="aktionen-zelle">
+                        <button type="button" class="btn" (click)="starteZuweisen(b)">
+                          Rolle zuweisen
+                        </button>
+                      </td>
+                    }
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        </div>
+      }
+    }
+  }
+</section>
+
+<!-- ============================ Dialog: Rolle zuweisen ==================== -->
+<app-dialog
+  [offen]="!!zuweisenFuer()"
+  [titel]="zuweisenFuer() ? 'Rolle zuweisen — ' + zuweisenFuer()!.display_name : 'Rolle zuweisen'"
+  [escapeSchliesst]="!zuweisenLaedt()"
+  [backdropSchliesst]="!zuweisenLaedt()"
+  (schliessen)="zuweisenSchliessen()"
+>
+  <form class="zuweisen-form" [formGroup]="zuweisenForm" (ngSubmit)="zuweisenAbsenden()" novalidate>
+    <app-feld
+      [control]="zuweisenForm.controls.role_code"
+      label="Rolle"
+      typ="select"
+      platzhalter="Rolle wählen"
+      [optionen]="rollenOptionen()"
+      [pflicht]="true"
+    />
+    <app-feld
+      [control]="zuweisenForm.controls.valid_from"
+      label="Gültig ab"
+      typ="datum"
+      hinweis="Optional — ohne Angabe gilt die Zuordnung ab heute."
+    />
+
+    @if (zuweisenMeldung(); as m) {
+      <p class="note note--error" role="alert">
+        <span aria-hidden="true">▲</span> {{ m }}
+      </p>
+    }
+  </form>
+
+  <div dialog-aktionen class="dialog__aktionen">
+    <button type="button" class="btn" [disabled]="zuweisenLaedt()" (click)="zuweisenSchliessen()">
+      Abbrechen
+    </button>
+    <button
+      type="button"
+      class="btn btn--primary"
+      [disabled]="zuweisenLaedt()"
+      (click)="zuweisenAbsenden()"
+    >
+      {{ zuweisenLaedt() ? 'Zuweisen …' : 'Zuweisen' }}
+    </button>
+  </div>
+</app-dialog>
+
+<!-- ======================= Bestätigung: Zuordnung beenden ================= -->
+<app-bestaetigung
+  [offen]="!!beendenZiel()"
+  titel="Rollenzuordnung beenden?"
+  [text]="beendenText()"
+  bestaetigenLabel="Beenden"
+  [gefahr]="true"
+  [laedt]="beendenLaedt()"
+  (bestaetigen)="beendenBestaetigen()"
+  (abbrechen)="beendenAbbrechen()"
+/>

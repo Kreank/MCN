@@ -20,6 +20,11 @@ export const BEREICH_RECHT: Record<string, readonly [string, string]> = {
   auswertungen: ['invoicing', 'LESEN'],
   artikel: ['pricing', 'LESEN'],
   leistungen: ['pricing', 'LESEN'],
+  // Eingangsrechnungen (accounting.receipt) — eigener Belegkreis, eigenes Recht.
+  belegerfassung: ['accounting', 'LESEN'],
+  // Vier-Augen-Anträge: die Liste selbst verlangt nur security/LESEN; das
+  // Entscheiden gatet der Server mit security/FREIGEBEN.
+  freigaben: ['security', 'LESEN'],
   // Einstellungen: Read-Zugang mit company/LESEN (alle Rollen); die einzelnen
   // Unterseiten und das Bearbeiten gaten feiner (invoicing bzw. AENDERN).
   einstellungen: ['company', 'LESEN'],

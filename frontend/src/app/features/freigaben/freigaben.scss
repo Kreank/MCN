@@ -1,0 +1,332 @@
+// Vier-Augen-Freigaben. Layout wie die übrigen Listenbereiche (Seitenkopf +
+// Segmentfilter), die Anträge selbst als Karten (mehr Kontext je Zeile als eine
+// reine Liste). Der ABGELEHNT-Stempel nutzt die globale Klasse `.stamp--negativ`
+// aus styles.scss — die Marke führt bewusst kein Rot.
+.freigaben {
+  max-width: 62rem;
+  margin: 0 auto;
+}
+
+// ============================== Seitenkopf ==================================
+.page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-6);
+}
+.page-head__kicker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+}
+.page-head__scale {
+  width: 2.5rem;
+  height: 0.5rem;
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--line-strong) 0,
+    var(--line-strong) 1px,
+    transparent 1px,
+    transparent 0.5rem
+  );
+  border-bottom: 1.5px solid var(--line-strong);
+}
+.page-head__titel {
+  font-size: var(--step-3);
+}
+.page-head__hint {
+  margin: 0;
+  max-width: 28rem;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+// ============================== Steuerung ===================================
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+.segment {
+  display: inline-flex;
+  flex-wrap: wrap;
+  padding: 3px;
+  background: var(--surface-sunken);
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius);
+}
+.segment__btn {
+  min-height: 38px;
+  padding: 0 var(--space-4);
+  border: none;
+  border-radius: calc(var(--radius) - 2px);
+  background: transparent;
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+
+  &:hover {
+    color: var(--ink);
+  }
+  &.is-active {
+    background: var(--command);
+    color: var(--on-command);
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+
+// ============================== Erfolg/Fehler-Meldung =======================
+.meldung {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-5);
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-size: var(--step-0);
+}
+.meldung--erfolg {
+  border-color: color-mix(in srgb, var(--positive-ink) 55%, var(--line-strong));
+  background: var(--positive-tint);
+  color: var(--positive-ink);
+}
+// Fehlermeldungen tragen projektweit den Amber-Ton (vgl. .melde--fehler und
+// .note--error in styles.scss) — die Marke führt kein Rot.
+.meldung--fehler {
+  border-color: color-mix(in srgb, var(--warn-ink) 45%, var(--line-strong));
+  background: var(--warn-tint);
+  color: var(--warn-ink);
+}
+.meldung__mark {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+.meldung__text {
+  flex: 1;
+}
+.meldung__zu {
+  flex: none;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+  padding: 0.25rem;
+  border-radius: var(--radius-sm);
+
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+
+// ============================== Antragskarten ===============================
+.karten {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.karte {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-1);
+  padding: var(--space-4) var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.karte__kopf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.karte__ident {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+.karte__aktion {
+  font-size: var(--step-1);
+  font-weight: 600;
+  color: var(--ink);
+}
+.karte__code {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+// ---- Metadaten (Antragsteller/Grund/Entscheidung) -------------------------
+.meta {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.meta__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem var(--space-3);
+}
+.meta__dt {
+  flex: 0 0 8.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  padding-top: 0.15rem;
+}
+.meta__dd {
+  flex: 1 1 14rem;
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--step-0);
+}
+.meta__zeit {
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+}
+
+// ---- Beantragte Änderung (Payload) ----------------------------------------
+.payload {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  padding: var(--space-3) var(--space-4);
+}
+.payload__titel {
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.payload__hinweis {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: var(--step--1);
+  font-style: italic;
+}
+.payload__schloss {
+  font-style: normal;
+}
+.payload__liste {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.payload__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem var(--space-3);
+}
+.payload__dt {
+  flex: 0 0 8rem;
+  font-weight: 600;
+  color: var(--ink-muted);
+  font-size: var(--step--1);
+}
+.payload__dd {
+  flex: 1 1 12rem;
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  word-break: break-word;
+}
+
+// ---- Aktionen -------------------------------------------------------------
+.aktionen {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+// ============================== Skelett =====================================
+.karte--skeleton {
+  gap: var(--space-3);
+}
+.sk {
+  display: block;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  position: relative;
+  overflow: hidden;
+}
+.sk--titel {
+  width: 40%;
+  height: 1.25rem;
+}
+.sk--zeile {
+  width: 60%;
+  height: 0.85rem;
+}
+.sk--block {
+  width: 100%;
+  height: 3rem;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .sk::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(
+      90deg,
+      transparent,
+      color-mix(in srgb, var(--surface) 60%, transparent),
+      transparent
+    );
+    animation: sk-shimmer 1.4s ease-in-out infinite;
+  }
+}
+@keyframes sk-shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}

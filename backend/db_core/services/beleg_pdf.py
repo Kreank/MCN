@@ -1,19 +1,42 @@
 """Beleg-PDF: erzeugt on-the-fly ein Rechnungs-/Gutschrift-PDF aus den
-(eingefrorenen) Belegdaten.
+(eingefrorenen) Belegdaten und archiviert es beim ersten Abruf GoBD-fest.
 
 Rein lesende Ausgabe — eine veröffentlichte Rechnung ist unveränderlich (B-30),
 daher entspricht das aus den Live-Modelldaten gerenderte PDF dem festgeschriebenen
-Beleg. Die persistente GoBD-Archivierung (content.document + file_link,
-Einmaligkeits-Index) über MinIO ist ein späterer Schritt und NICHT Voraussetzung
-der Veröffentlichung.
+Beleg.
+
+Archivierung (GoBD, eine Ausfertigung je Beleg):
+Beim ERSTEN Abruf des PDF einer veröffentlichten Rechnung wird die Ausfertigung
+gerendert, in den Objektspeicher (MinIO) gelegt und als ``content.file``
+(sha256, size, storage_key, mime application/pdf) registriert sowie per
+``content.file_link`` (link_category='BELEG_PDF') an den Beleg gebunden. Jeder
+weitere Abruf liefert **dieselbe** archivierte Datei aus dem Speicher, nicht neu
+gerendert. Die Einmaligkeit erzwingt der partielle UNIQUE-Index aus Migration
+0032 physisch; den Wettlauf zweier paralleler Erstabrufe fängt die API mit
+Nachselektion ab (Finding P-1), ohne 500.
+
+Degradation: Ist der Objektspeicher nicht erreichbar/authentifizierbar, bleibt
+der Beleg **zugänglich** — es wird on-the-fly ausgeliefert und die Archivierung
+mit einer klaren Log-Warnung übersprungen. Ein kaputter Objektspeicher darf den
+Beleg nie unzugänglich machen; die Archivierung wird beim nächsten Abruf
+nachgeholt, sobald der Speicher wieder da ist.
 
 Nutzt fpdf2 (reines Python). Beträge in deutscher Formatierung.
 """
+import logging
+import uuid
 from decimal import Decimal
 
+from django.db import IntegrityError, connection
 from fpdf import FPDF
 
+from db_core import storage as storage_module
+from db_core.db_context import business_transaction
 from db_core.models import CompanyProfile, Invoice
+
+log = logging.getLogger(__name__)
+
+_BELEG_PDF_CATEGORY = "BELEG_PDF"
 
 # Fallback-Aussteller, solange kein Firmenprofil gepflegt ist (kein Absturz).
 _FALLBACK_NAME = "MCN Gebäudeservice"
@@ -237,3 +260,183 @@ def _num(value):
     q = Decimal(value)
     s = f"{q.normalize():f}" if q == q.to_integral() else f"{q}"
     return s.replace(".", ",")
+
+
+# --- GoBD-Archivierung (content.file + content.file_link) -------------------
+# Kein ORM-Model auf content.* (das Schema existiert database-first, ein neues
+# managed=False-Model verlangte eine State-only-Migration). Registrierung daher
+# als schlankes Hand-SQL innerhalb der business_transaction — dieselben Tore
+# (Trigger, Constraints, Audit-Kontext) wie jeder andere fachliche Write.
+
+def _archived_storage_key(invoice_id):
+    """storage_key der bereits archivierten BELEG_PDF-Ausfertigung, sonst None.
+
+    Reine Leseabfrage (Autocommit). Der partielle UNIQUE-Index (Migration 0032)
+    garantiert höchstens eine solche Zeile je Rechnung.
+    """
+    with connection.cursor() as cur:
+        cur.execute(
+            """
+            SELECT f.storage_key
+              FROM content.file_link fl
+              JOIN content.file f ON f.id = fl.file_id
+             WHERE fl.invoice_id = %s AND fl.link_category = %s
+             LIMIT 1
+            """,
+            [str(invoice_id), _BELEG_PDF_CATEGORY],
+        )
+        row = cur.fetchone()
+    return row[0] if row else None
+
+
+def _register_beleg_file(actor_app_user_id, invoice_id, *, storage_key,
+                         original_filename, sha256, size_bytes):
+    """Registriert content.file + content.file_link in EINER Transaktion.
+
+    Wirft IntegrityError, wenn parallel bereits eine BELEG_PDF-Ausfertigung
+    verlinkt wurde (partieller UNIQUE-Index) — der Aufrufer behandelt den
+    Wettlauf mit Nachselektion. Bei diesem Fehler rollt die atomic-Transaktion
+    beide Inserts zurück (kein verwaister content.file-Steckbrief).
+    """
+    with business_transaction(actor_app_user_id):
+        with connection.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO content.file
+                    (id, storage_key, original_filename, mime_type,
+                     size_bytes, sha256, uploaded_by)
+                VALUES (gen_random_uuid(), %s, %s, 'application/pdf', %s, %s, %s)
+                RETURNING id
+                """,
+                [storage_key, original_filename, size_bytes, sha256,
+                 str(actor_app_user_id)],
+            )
+            file_id = cur.fetchone()[0]
+            cur.execute(
+                """
+                INSERT INTO content.file_link
+                    (id, file_id, invoice_id, link_category, created_by)
+                VALUES (gen_random_uuid(), %s, %s, %s, %s)
+                """,
+                [str(file_id), str(invoice_id), _BELEG_PDF_CATEGORY,
+                 str(actor_app_user_id)],
+            )
+    return file_id
+
+
+def _safe_filename(invoice):
+    raw = invoice.invoice_number or str(invoice.id)
+    safe = "".join(ch for ch in raw if ch.isalnum() or ch in "-_")
+    return f"{safe or 'beleg'}.pdf"
+
+
+def get_or_archive_invoice_pdf(actor_app_user_id, invoice_id):
+    """Liefert die (archivierte) PDF-Ausfertigung einer veröffentlichten Rechnung.
+
+    Ablauf:
+      1. Ist bereits eine BELEG_PDF-Ausfertigung archiviert → deren Bytes aus dem
+         Objektspeicher ausliefern (nicht neu rendern; GoBD: eine Ausfertigung).
+      2. Sonst on-the-fly rendern, in MinIO ablegen und als content.file +
+         content.file_link registrieren.
+      3. Wettlauf (Finding P-1): Verliert der zweite Erstabruf den UNIQUE-Index
+         (IntegrityError), wird die vom Gewinner archivierte Datei nachselektiert
+         und ausgeliefert — kein 500.
+
+    Gibt None zurück, wenn die Rechnung nicht existiert oder nicht veröffentlicht
+    ist (Endpunkt → 404). Bei nicht erreichbarem Objektspeicher degradiert die
+    Funktion bewusst: sie liefert die on-the-fly gerenderten Bytes und überspringt
+    die Archivierung mit einer Log-Warnung (der Beleg bleibt zugänglich).
+    """
+    # 1) Bereits archiviert? Dann exakt diese Datei ausliefern.
+    existing_key = _archived_storage_key(invoice_id)
+    if existing_key is not None:
+        served = _serve_archived(existing_key)
+        if served is not None:
+            return served
+        # Objektspeicher gerade nicht erreichbar: Steckbrief existiert, Objekt
+        # (noch) nicht abrufbar → on-the-fly ausliefern (Degradation), nicht neu
+        # archivieren (der Link ist bereits vergeben).
+        pdf = render_invoice_pdf(invoice_id)
+        if pdf is not None:
+            log.warning(
+                "Beleg-PDF %s ist archiviert, der Objektspeicher aber nicht "
+                "erreichbar; liefere on-the-fly aus.", invoice_id,
+            )
+        return pdf
+
+    # 2) Rendern (None ⇒ nicht veröffentlicht/unbekannt ⇒ 404 in der API).
+    pdf = render_invoice_pdf(invoice_id)
+    if pdf is None:
+        return None
+
+    invoice = Invoice.objects.filter(id=invoice_id).only(
+        "id", "invoice_number"
+    ).first()
+
+    # 3) Archivieren. Jeder Speicher-/DB-Fehler degradiert auf on-the-fly.
+    try:
+        storage = storage_module.get_storage()
+        # Pro Versuch ein eigener, kollisionsfreier storage_key (uuid): so haben
+        # zwei parallele Erstabrufe garantiert VERSCHIEDENE Objekte — der einzige
+        # Wettlauf-Punkt bleibt der partielle UNIQUE-Index auf file_link, und der
+        # Verlierer räumt beim Cleanup nur SEIN eigenes Objekt ab, nie das des
+        # Gewinners. Der sha256 der Bytes wird davon unabhängig als
+        # content.file.sha256 registriert (put_object berechnet ihn aus den Bytes).
+        storage_key = f"belege/rechnung/{invoice_id}/{uuid.uuid4()}.pdf"
+        info = storage.put_object(storage_key, pdf, content_type="application/pdf")
+    except storage_module.StorageError as exc:
+        log.warning(
+            "Beleg-PDF %s: Objektspeicher nicht verfügbar (%s); liefere "
+            "on-the-fly aus, Archivierung wird beim nächsten Abruf nachgeholt.",
+            invoice_id, exc,
+        )
+        return pdf
+
+    try:
+        _register_beleg_file(
+            actor_app_user_id, invoice_id,
+            storage_key=info.storage_key,
+            original_filename=_safe_filename(invoice),
+            sha256=info.sha256,
+            size_bytes=info.size_bytes,
+        )
+    except IntegrityError:
+        # Wettlauf verloren: ein paralleler Erstabruf hat die Ausfertigung schon
+        # verlinkt. Eigenes (verwaistes) Objekt best-effort entfernen, die vom
+        # Gewinner archivierte Datei nachselektieren und ausliefern.
+        _best_effort_remove(storage, info.storage_key)
+        winner_key = _archived_storage_key(invoice_id)
+        if winner_key is not None:
+            served = _serve_archived(winner_key)
+            if served is not None:
+                return served
+        log.warning(
+            "Beleg-PDF %s: Wettlauf verloren, Gewinner-Objekt nicht abrufbar; "
+            "liefere on-the-fly aus.", invoice_id,
+        )
+        return pdf
+
+    # Frisch archiviert: die soeben abgelegten Bytes ausliefern (== im Speicher).
+    return pdf
+
+
+def _serve_archived(storage_key):
+    """Lädt die archivierten Bytes; None, wenn der Objektspeicher gerade fehlt."""
+    try:
+        return storage_module.get_storage().get_object(storage_key)
+    except storage_module.StorageError as exc:
+        log.warning(
+            "Beleg-PDF: archiviertes Objekt %s nicht abrufbar (%s).",
+            storage_key, exc,
+        )
+        return None
+
+
+def _best_effort_remove(storage, storage_key):
+    try:
+        storage.remove_object(storage_key)
+    except storage_module.StorageError as exc:  # pragma: no cover - Best-Effort
+        log.warning(
+            "Beleg-PDF: verwaistes Objekt %s konnte nicht entfernt werden (%s).",
+            storage_key, exc,
+        )

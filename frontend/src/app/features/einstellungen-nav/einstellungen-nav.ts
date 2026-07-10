@@ -1,7 +1,13 @@
-import { Component } from '@angular/core';
+import { Component, computed, inject } from '@angular/core';
 import { RouterLink, RouterLinkActive } from '@angular/router';
+import { AuthService } from '../../core/auth.service';
 
-/** Unternavigation der Einstellungen (Firmenprofil · Mahnstufen · Gewerke · Niederlassungen). */
+/** Unternavigation der Einstellungen (Firmenprofil · Mahnstufen · Gewerke ·
+ * Niederlassungen · Rechte & Rollen).
+ *
+ * „Rechte & Rollen" wird nur gezeigt, wenn `security/LESEN` vorliegt: die Rolle
+ * BUCHHALTUNG sieht das Einstellungen-Nav (über `invoicing/AENDERN`), hat dieses
+ * Recht aber nicht — der Link führte sonst auf „Kein Zugriff". */
 @Component({
   selector: 'app-einstellungen-nav',
   imports: [RouterLink, RouterLinkActive],
@@ -18,6 +24,9 @@ import { RouterLink, RouterLinkActive } from '@angular/router';
       <a routerLink="/einstellungen/niederlassungen" routerLinkActive="is-active"
         >Niederlassungen</a
       >
+      @if (darfRechteSehen()) {
+        <a routerLink="/einstellungen/rechte" routerLinkActive="is-active">Rechte &amp; Rollen</a>
+      }
     </nav>
   `,
   styles: [
@@ -56,4 +65,7 @@ import { RouterLink, RouterLinkActive } from '@angular/router';
     `,
   ],
 })
-export class EinstellungenNav {}
+export class EinstellungenNav {
+  private readonly auth = inject(AuthService);
+  protected readonly darfRechteSehen = computed(() => this.auth.darf('security', 'LESEN'));
+}

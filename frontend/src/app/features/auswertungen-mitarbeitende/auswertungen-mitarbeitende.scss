@@ -1,0 +1,186 @@
+:host {
+  display: block;
+}
+
+.page-head__back {
+  color: var(--accent-ink);
+  text-decoration: none;
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+}
+.page-head__back:hover {
+  text-decoration: underline;
+}
+
+// ============================ Jahr-Navigation ===============================
+.jahrnav {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: var(--space-4) 0 0;
+}
+.jahrnav__wert {
+  font-family: var(--font-mono);
+  font-size: var(--step-1);
+  font-weight: 600;
+  color: var(--ink);
+  min-width: 4ch;
+  text-align: center;
+}
+
+.panel__hint {
+  margin: calc(-1 * var(--space-2)) 0 var(--space-4);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+// ============================ KPI-Kacheln ===================================
+.kpi-reihe {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: var(--space-4);
+  margin: var(--space-5) 0;
+}
+.kpi {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-4) var(--space-5);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--radius);
+}
+.kpi--stark {
+  border-left-color: var(--accent);
+}
+.kpi__label {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.kpi__wert {
+  font-family: var(--font-display);
+  font-size: var(--step-2);
+  font-weight: 600;
+  color: var(--ink);
+}
+.kpi--stark .kpi__wert {
+  color: var(--accent-ink);
+}
+.kpi__sub {
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+// ============================ Panels ========================================
+.panel {
+  margin-top: var(--space-5);
+  padding: var(--space-5);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+.panel__titel {
+  margin: 0 0 var(--space-4);
+  font-size: var(--step-1);
+  color: var(--ink);
+}
+
+// ============================ Balken ========================================
+.balken {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.balken__zeile {
+  display: grid;
+  grid-template-columns: minmax(7rem, 14rem) 1fr auto;
+  align-items: center;
+  gap: var(--space-3);
+}
+.balken__label {
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.balken__spur {
+  height: 0.9rem;
+  background: var(--surface-sunken);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.balken__fuellung {
+  height: 100%;
+  min-width: 2px;
+  background: color-mix(in srgb, var(--accent) 55%, var(--surface));
+  border-radius: var(--radius-sm);
+}
+.balken__wert {
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+  text-align: right;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .balken__fuellung {
+    transition: width 0.3s ease;
+  }
+}
+
+// ============================ Tabelle =======================================
+.tabelle-wrap {
+  overflow-x: auto;
+}
+.tabelle {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--step--1);
+  min-width: 34rem;
+
+  th,
+  td {
+    padding: var(--space-3) var(--space-4);
+    text-align: left;
+    border-bottom: 1px solid var(--line);
+  }
+  th {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+    white-space: nowrap;
+  }
+  tbody tr:last-child td {
+    border-bottom: none;
+  }
+  .num {
+    text-align: right;
+    white-space: nowrap;
+    font-family: var(--font-mono);
+  }
+  .betrag {
+    font-weight: 600;
+    color: var(--ink);
+  }
+}
+.zelle-link {
+  color: var(--accent-ink);
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+}

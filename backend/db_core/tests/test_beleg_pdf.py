@@ -76,7 +76,7 @@ def test_aussteller_fallback_ohne_profil():
 @pytest.mark.django_db
 def test_pdf_nutzt_firmenprofil_als_aussteller(app_user):
     inv = _published_invoice(app_user)
-    profile = firma_service.update_company_profile(
+    profile, _ = firma_service.update_company_profile(
         app_user.id, company_name="Mitra Sanitär GmbH",
         street="Industriestraße 5", postal_code="12345", city="Musterstadt",
         tax_number="12/345/67890", iban="DE12500105170648489890",

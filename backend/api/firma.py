@@ -42,6 +42,10 @@ class CompanyProfileOut(Schema):
     managing_director_title: str | None = None
     default_language: str | None = None
     logo_file_id: UUID | None = None
+    # Gesetzt, wenn eine Bankdaten-Änderung einen Vier-Augen-Antrag ausgelöst hat
+    # (BANKDATEN): die IBAN/BIC-Änderung wurde NICHT geschrieben, sondern wartet
+    # auf Genehmigung. Die übrigen Felder sind bereits übernommen.
+    pending_bank_approval: UUID | None = None
 
 
 class CompanyProfileIn(Schema):
@@ -121,7 +125,7 @@ class TradePatch(Schema):
 
 # --- Mapper ----------------------------------------------------------------
 
-def _profile_out(p):
+def _profile_out(p, pending_bank_approval=None):
     if p is None:
         return CompanyProfileOut(exists=False)
     return CompanyProfileOut(
@@ -134,6 +138,7 @@ def _profile_out(p):
         iban=p.iban, bic=p.bic, managing_director=p.managing_director,
         managing_director_title=p.managing_director_title,
         default_language=p.default_language, logo_file_id=p.logo_file_id,
+        pending_bank_approval=pending_bank_approval,
     )
 
 
@@ -166,10 +171,10 @@ def put_profile(request, payload: CompanyProfileIn):
     # Nur gesetzte Felder übernehmen (partielles Update; unset bleibt unverändert).
     fields = payload.model_dump(exclude_unset=True)
     try:
-        profile = firma_service.update_company_profile(actor, **fields)
+        profile, pending = firma_service.update_company_profile(actor, **fields)
     except ValueError as exc:
         raise HttpError(422, str(exc))
-    return _profile_out(profile)
+    return _profile_out(profile, pending_bank_approval=pending.id if pending else None)
 
 
 # --- Niederlassungen -------------------------------------------------------

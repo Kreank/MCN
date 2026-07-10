@@ -56,6 +56,21 @@ class ResourceNumberDefault(Func):
     output_field = models.TextField()
 
 
+class ReceiptNumberDefault(Func):
+    """DB-seitiger Default für accounting.receipt.receipt_number (Migration 0031).
+
+    Eigene Sequenz statt workflow.next_number(): der Eingangsbeleg ist ein FREMDER
+    Beleg; seine Ordnungsnummer (EB-#####) ist eine interne Erfassungs-/Ablage-
+    nummer, kein GoBD-Ausgangsbelegkreis (Muster hr.employee). Ohne diesen
+    db_default setzte die ORM einen leeren String ein und höbe den Spalten-Default
+    aus (CHECK receipt_number ~ '^EB-[0-9]{5,}$' schlüge fehl).
+    """
+
+    function = ""
+    template = "'EB-' || lpad(nextval('accounting.receipt_number_seq')::text, 5, '0')"
+    output_field = models.TextField()
+
+
 class _NextNumber(Func):
     """DB-seitiger Default über workflow.next_number(prefix) — vergibt fortlaufende
     Fachnummern (Format PREFIX-JJJJ-NNNNNN) in der DB (Migration 0010). Subklassen
@@ -1998,6 +2013,70 @@ class RolePermission(models.Model):
         return f"{self.role_id}/{self.module}/{self.action}={self.allowed}"
 
 
+class FourEyesAction(models.Model):
+    """security.four_eyes_action — Vier-Augen-pflichtige Aktionen (Migration 0026 db/).
+
+    Codeliste (BANKDATEN, RECHNUNGSKORREKTUR, …); PK ist der Code. Nur-Lese-Nutzung
+    im Backend (Auswahl gültiger Aktionen); Pflege per Migration.
+    """
+
+    action_code = models.TextField(primary_key=True)
+    label = models.TextField()
+    active = models.BooleanField(db_default=True)
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'security"."four_eyes_action'
+
+    def __str__(self):
+        return self.action_code
+
+
+class ApprovalRequest(models.Model):
+    """security.approval_request — Vier-Augen-Antrag/Freigabe (Migration 0028 db_core).
+
+    Statusautomat ANGEFORDERT -> GENEHMIGT | ABGELEHNT | ZURUECKGEZOGEN (Trigger).
+    Kernregel physisch: `decided_by <> requested_by` (CHECK). `applied_at` markiert
+    den Einmal-Verbrauch einer erteilten Genehmigung.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    action = models.ForeignKey(
+        FourEyesAction,
+        models.DO_NOTHING,
+        db_column="action_code",
+        related_name="approval_requests",
+    )
+    status = models.TextField()  # ANGEFORDERT | GENEHMIGT | ABGELEHNT | ZURUECKGEZOGEN
+    payload = models.JSONField(db_default={})
+    target_table = models.TextField(null=True, blank=True)
+    target_id = models.UUIDField(null=True, blank=True)
+    reason = models.TextField(null=True, blank=True)
+    requested_by = models.ForeignKey(
+        AppUser, models.DO_NOTHING, db_column="requested_by",
+        related_name="approval_requests_made",
+    )
+    requested_at = models.DateTimeField(db_default=Now())
+    decided_by = models.ForeignKey(
+        AppUser, models.DO_NOTHING, db_column="decided_by", null=True, blank=True,
+        related_name="approval_requests_decided",
+    )
+    decided_at = models.DateTimeField(null=True, blank=True)
+    decision_note = models.TextField(null=True, blank=True)
+    applied_at = models.DateTimeField(null=True, blank=True)
+    version = models.IntegerField(db_default=models.Value(1))
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'security"."approval_request'
+
+    def __str__(self):
+        return f"{self.action_id}/{self.status}"
+
+
 class CompanyProfile(models.Model):
     """company.company_profile — Firmenprofil (Singleton, Migration 0023 db_core).
 
@@ -2092,3 +2171,154 @@ class Trade(models.Model):
 
     def __str__(self):
         return f"{self.code} — {self.label}"
+
+
+# ---------------------------------------------------------------------------
+# accounting.* — Buchungskonten, Kostenstellen und Eingangsbelege (0030/0031)
+# ---------------------------------------------------------------------------
+
+class LedgerAccount(models.Model):
+    """accounting.ledger_account — Buchungskonto (Migration 0030).
+
+    Stammdaten zur Kontierung von Eingangsbelegen. Kein Kontenrahmen geseedet
+    (die Roadmap nennt SKR03/SKR04 nur als wählbaren Rahmen, ohne konkreten
+    Kontenplan). `account_type` ist die buchhalterische Grundklassifikation
+    (AKTIV/PASSIV/AUFWAND/ERTRAG). Archivieren über `active`, kein Löschen.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    account_number = models.TextField()
+    label = models.TextField()
+    account_type = models.TextField()  # AKTIV | PASSIV | AUFWAND | ERTRAG
+    chart_of_accounts = models.TextField(null=True, blank=True)  # SKR03 | SKR04
+    active = models.BooleanField(db_default=True)
+    notes = models.TextField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        AppUser, models.DO_NOTHING, db_column="created_by",
+        related_name="created_ledger_accounts",
+    )
+    version = models.IntegerField(db_default=models.Value(1))
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'accounting"."ledger_account'
+
+    def __str__(self):
+        return f"{self.account_number} — {self.label}"
+
+
+class CostCenter(models.Model):
+    """accounting.cost_center — Kostenstelle (Migration 0030).
+
+    Freistehende Stammdaten; die Zuordnung erfolgt je Beleg-Position
+    (receipt_line.cost_center). Archivieren über `active`, kein Löschen.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    code = models.TextField(unique=True)
+    label = models.TextField()
+    active = models.BooleanField(db_default=True)
+    notes = models.TextField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        AppUser, models.DO_NOTHING, db_column="created_by",
+        related_name="created_cost_centers",
+    )
+    version = models.IntegerField(db_default=models.Value(1))
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'accounting"."cost_center'
+
+    def __str__(self):
+        return f"{self.code} — {self.label}"
+
+
+class Receipt(models.Model):
+    """accounting.receipt — Eingangsbeleg/Eingangsrechnung (Migration 0031).
+
+    Eigene Tabelle (nicht invoicing.invoice): Lieferant (Pflicht), eigene
+    Erfassungsnummer (EB-…, eigene Sequenz, KEIN Ausgangsbelegkreis), eigener
+    Statusautomat ERFASST→GEPRUEFT→FREIGEGEBEN→GEBUCHT (+ABGELEHNT). Beträge
+    werden serverseitig aus den Positionen gerechnet. Kein Löschen (GoBD).
+    """
+
+    id = models.UUIDField(primary_key=True)
+    # Nummernvergabe bleibt in der DB-Sequenz; siehe ReceiptNumberDefault.
+    receipt_number = models.TextField(db_default=ReceiptNumberDefault())
+    supplier_party = models.ForeignKey(
+        Party, models.DO_NOTHING, db_column="supplier_party_id",
+        related_name="supplier_receipts",
+    )
+    supplier_invoice_number = models.TextField(null=True, blank=True)
+    receipt_date = models.DateField()
+    received_date = models.DateField()
+    due_date = models.DateField(null=True, blank=True)
+    currency = models.CharField(max_length=3, db_default="EUR")
+    net_total = models.DecimalField(max_digits=15, decimal_places=2, db_default=0)
+    tax_total = models.DecimalField(max_digits=15, decimal_places=2, db_default=0)
+    gross_total = models.DecimalField(max_digits=15, decimal_places=2, db_default=0)
+    # ERFASST | GEPRUEFT | FREIGEGEBEN | GEBUCHT | ABGELEHNT
+    status = models.TextField()
+    rejection_reason = models.TextField(null=True, blank=True)
+    notes = models.TextField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        AppUser, models.DO_NOTHING, db_column="created_by",
+        related_name="created_receipts",
+    )
+    version = models.IntegerField(db_default=models.Value(1))
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'accounting"."receipt'
+
+    def __str__(self):
+        return f"{self.receipt_number} ({self.status})"
+
+
+class ReceiptLine(models.Model):
+    """accounting.receipt_line — Eingangsbeleg-Position (Migration 0031).
+
+    Steuersatz per FK auf die bestehende invoicing.tax_code (keine zweite Liste).
+    Kontierung: Buchungskonto und Kostenstelle je Position. net_amount =
+    round(quantity * unit_price, 2) (DB-CHECK). Nur in ERFASST/GEPRUEFT
+    veränderbar (Trigger).
+    """
+
+    id = models.UUIDField(primary_key=True)
+    receipt = models.ForeignKey(
+        Receipt, models.DO_NOTHING, db_column="receipt_id", related_name="lines"
+    )
+    position_number = models.IntegerField()
+    description = models.TextField()
+    quantity = models.DecimalField(max_digits=15, decimal_places=3)
+    unit = models.TextField(null=True, blank=True)
+    unit_price = models.DecimalField(max_digits=15, decimal_places=2)
+    tax_code = models.ForeignKey(
+        TaxCode, models.DO_NOTHING, db_column="tax_code",
+        related_name="receipt_lines",
+    )
+    tax_rate_percent = models.DecimalField(max_digits=5, decimal_places=2)
+    net_amount = models.DecimalField(max_digits=15, decimal_places=2)
+    ledger_account = models.ForeignKey(
+        LedgerAccount, models.DO_NOTHING, db_column="ledger_account_id",
+        null=True, blank=True, related_name="receipt_lines",
+    )
+    cost_center = models.ForeignKey(
+        CostCenter, models.DO_NOTHING, db_column="cost_center_id",
+        null=True, blank=True, related_name="receipt_lines",
+    )
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'accounting"."receipt_line'
+
+    def __str__(self):
+        return f"{self.position_number}. {self.description}"

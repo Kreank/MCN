@@ -1,0 +1,300 @@
+@switch (state().kind) {
+  @case ('loading') {
+    <p class="lade-hinweis" role="status">Eingangsbeleg wird geladen …</p>
+  }
+
+  @case ('forbidden') {
+    <app-kein-zugriff [detail]="$any(state()).detail" />
+  }
+
+  @case ('error') {
+    <div class="note note--error" role="alert">
+      <h2 class="note__titel">Eingangsbeleg konnte nicht geladen werden</h2>
+      <p class="note__text">Die Belegerfassung war nicht erreichbar oder der Beleg existiert nicht.</p>
+      <div class="note__aktionen">
+        <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
+        <a class="btn" routerLink="/belegerfassung">Zur Belegerfassung</a>
+      </div>
+    </div>
+  }
+
+  @case ('ready') {
+    <app-mappe
+      kicker="Eingangsbeleg {{ daten()!.receipt_number }}"
+      [titel]="daten()!.supplier || 'Eingangsbeleg'"
+      backLink="/belegerfassung"
+      backLabel="Belegerfassung"
+      [tabs]="tabs"
+      [(aktiv)]="tab"
+    >
+      <span mappe-kopf class="stamp {{ statusClass(daten()!.status) }}">{{ statusLabel(daten()!.status) }}</span>
+      <span mappe-kopf class="kopf-summe">{{ euro(daten()!.gross_total) }}</span>
+      @if (darfAendern() && bearbeitbar()) {
+        <button mappe-kopf type="button" class="btn" (click)="bearbeitenOeffnen()">Bearbeiten</button>
+      }
+      @for (a of aktionen(); track a.key) {
+        <button
+          mappe-kopf
+          type="button"
+          class="btn"
+          [class.btn--primary]="a.primary && !a.gefahr"
+          [class.btn--gefahr]="a.gefahr"
+          (click)="aktionStarten(a)"
+        >
+          {{ a.label }}
+        </button>
+      }
+
+      @if (meldung(); as m) {
+        <div
+          class="melde melde--{{ m.art }} detail-melde"
+          [attr.role]="m.art === 'fehler' ? 'alert' : 'status'"
+        >
+          <span class="melde__mark" aria-hidden="true">{{ m.art === 'fehler' ? '!' : '✓' }}</span>
+          <span class="melde__text">
+            <strong>{{ m.art === 'fehler' ? 'Fehler:' : 'Erledigt:' }}</strong> {{ m.text }}
+          </span>
+          <button type="button" class="melde__zu" (click)="meldungSchliessen()" aria-label="Meldung schließen">
+            <span aria-hidden="true">✕</span>
+          </button>
+        </div>
+      }
+
+      @if (daten()!.status === 'ABGELEHNT' && daten()!.rejection_reason) {
+        <div class="note note--warn detail-hinweis" role="note">
+          <strong>Ablehnungsgrund:</strong> {{ daten()!.rejection_reason }}
+        </div>
+      }
+
+      @if (tab() === 'positionen') {
+        @if (bearbeitbar() && unkontierte().length) {
+          <div class="note note--warn detail-hinweis" role="note">
+            <strong>Kontierung fehlt:</strong>
+            {{ unkontierte().length === 1 ? 'Position' : 'Positionen' }}
+            {{ unkontierte().join(', ') }}
+            {{ unkontierte().length === 1 ? 'hat' : 'haben' }} noch kein Buchungskonto.
+            Die Freigabe verlangt für jede Position ein Konto.
+          </div>
+        }
+
+        @if (daten()!.lines.length === 0) {
+          <div class="tab-platzhalter"><p>Dieser Beleg enthält noch keine Positionen.</p></div>
+        } @else {
+          <div class="pos-wrap">
+            <table class="pos">
+              <thead>
+                <tr>
+                  <th class="pos__nr" scope="col">Pos.</th>
+                  <th scope="col">Bezeichnung &amp; Kontierung</th>
+                  <th class="pos__num" scope="col">Menge</th>
+                  <th class="pos__num" scope="col">Einzelpreis</th>
+                  <th class="pos__num" scope="col">Netto</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (l of daten()!.lines; track l.position_number) {
+                  <tr>
+                    <td class="pos__nr">{{ l.position_number }}</td>
+                    <td>
+                      <span class="pos__desc">{{ l.description }}</span>
+                      <span class="pos__tags">
+                        <span class="pos__tag">{{ taxLabel(l.tax_code, l.tax_rate_percent) }}</span>
+                        @if (l.ledger_account_label) {
+                          <span class="pos__tag pos__tag--konto">▤ {{ l.ledger_account_label }}</span>
+                        } @else {
+                          <span class="pos__tag pos__tag--offen">▲ nicht kontiert</span>
+                        }
+                        @if (l.cost_center_label) {
+                          <span class="pos__tag">◇ {{ l.cost_center_label }}</span>
+                        }
+                      </span>
+                    </td>
+                    <td class="pos__num">{{ menge(l.quantity, l.unit) }}</td>
+                    <td class="pos__num">{{ euro(l.unit_price) }}</td>
+                    <td class="pos__num">{{ euro(l.net_amount) }}</td>
+                  </tr>
+                }
+              </tbody>
+              <tfoot>
+                <tr>
+                  <th colspan="4" scope="row" class="pos__sumlabel">Nettobetrag</th>
+                  <td class="pos__num">{{ euro(daten()!.net_total) }}</td>
+                </tr>
+                <tr>
+                  <th colspan="4" scope="row" class="pos__sumlabel">zzgl. Steuer</th>
+                  <td class="pos__num">{{ euro(daten()!.tax_total) }}</td>
+                </tr>
+                <tr class="pos--gross">
+                  <th colspan="4" scope="row" class="pos__sumlabel">Gesamtbetrag (brutto)</th>
+                  <td class="pos__num">{{ euro(daten()!.gross_total) }}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+          <p class="pos-hinweis">Netto, Steuer und Brutto rechnet der Server verbindlich (Rundung je Steuergruppe).</p>
+        }
+      }
+
+      @if (tab() === 'verlauf') {
+        @if (daten()!.history.length === 0) {
+          <div class="tab-platzhalter"><p>Noch keine Statusänderungen protokolliert.</p></div>
+        } @else {
+          <ol class="verlauf">
+            @for (ev of daten()!.history; track $index) {
+              <li class="verlauf__eintrag">
+                <span class="verlauf__marke" aria-hidden="true"></span>
+                <div class="verlauf__inhalt">
+                  <div class="verlauf__kopf">
+                    <span class="stamp {{ statusClass(ev.to_status) }}">{{ statusLabel(ev.to_status) }}</span>
+                    @if (ev.from_status) {
+                      <span class="verlauf__von">aus {{ statusLabel(ev.from_status) }}</span>
+                    }
+                  </div>
+                  <p class="verlauf__meta">
+                    {{ zeitpunkt(ev.occurred_at) }}
+                    @if (ev.changed_by) { · {{ ev.changed_by }} }
+                  </p>
+                  @if (ev.reason) {
+                    <p class="verlauf__grund">„{{ ev.reason }}"</p>
+                  }
+                </div>
+              </li>
+            }
+          </ol>
+        }
+      }
+
+      @if (tab() === 'uebersicht') {
+        <dl class="feld-raster">
+          <div class="feld"><dt class="feld__label">Belegnummer</dt><dd class="feld__wert feld__wert--mono">{{ daten()!.receipt_number }}</dd></div>
+          <div class="feld"><dt class="feld__label">Status</dt><dd class="feld__wert">{{ statusLabel(daten()!.status) }}</dd></div>
+          <div class="feld"><dt class="feld__label">Lieferant</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.supplier">{{ daten()!.supplier || '—' }}</dd></div>
+          <div class="feld"><dt class="feld__label">Rechnungsnr. (Lieferant)</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.supplier_invoice_number">{{ daten()!.supplier_invoice_number || '—' }}</dd></div>
+          <div class="feld"><dt class="feld__label">Belegdatum</dt><dd class="feld__wert">{{ daten()!.receipt_date }}</dd></div>
+          <div class="feld"><dt class="feld__label">Eingangsdatum</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.received_date">{{ daten()!.received_date || '—' }}</dd></div>
+          <div class="feld"><dt class="feld__label">Fällig bis</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.due_date">{{ daten()!.due_date || '—' }}</dd></div>
+          <div class="feld"><dt class="feld__label">Währung</dt><dd class="feld__wert">{{ daten()!.currency }}</dd></div>
+          <div class="feld"><dt class="feld__label">Netto</dt><dd class="feld__wert">{{ euro(daten()!.net_total) }}</dd></div>
+          <div class="feld"><dt class="feld__label">Steuer</dt><dd class="feld__wert">{{ euro(daten()!.tax_total) }}</dd></div>
+          <div class="feld"><dt class="feld__label">Gesamt (brutto)</dt><dd class="feld__wert">{{ euro(daten()!.gross_total) }}</dd></div>
+        </dl>
+        @if (daten()!.notes) {
+          <div class="notiz">
+            <h2 class="notiz__titel">Notiz</h2>
+            <p class="notiz__text">{{ daten()!.notes }}</p>
+          </div>
+        }
+      }
+    </app-mappe>
+
+    <!-- ---------------------------- Beleg bearbeiten ---------------------- -->
+    <app-dialog [offen]="editOffen()" titel="Eingangsbeleg bearbeiten" (schliessen)="bearbeitenSchliessen()">
+      <form id="edit-beleg-form" class="dialog-form" (submit)="$event.preventDefault(); bearbeitenAbsenden()" novalidate>
+        @if (editMeldung(); as fm) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+          </div>
+        }
+
+        <p class="dialog-hinweis">
+          Bearbeiten ist nur im Status Erfasst/Geprüft möglich. Die Summen rechnet
+          der Server neu; die Belegnummer bleibt unverändert.
+        </p>
+
+        <app-referenz-wahl
+          [control]="editForm.controls.supplier_party_id"
+          label="Lieferant"
+          [pflicht]="true"
+          platzhalter="Anderen Lieferanten suchen"
+          [hinweis]="'Aktuell: ' + (daten()!.supplier || 'unbekannt') + '. Zum Wechseln suchen.'"
+          [suche]="lieferantSuche"
+        />
+
+        <div class="datum-paar">
+          <app-feld [control]="editForm.controls.receipt_date" label="Belegdatum" typ="datum" [pflicht]="true" />
+          <app-feld [control]="editForm.controls.due_date" label="Fällig bis" typ="datum" hinweis="Optional; nicht vor dem Belegdatum." />
+        </div>
+        <div class="datum-paar">
+          <app-feld [control]="editForm.controls.received_date" label="Eingangsdatum" typ="datum" hinweis="Optional." />
+          <app-feld [control]="editForm.controls.supplier_invoice_number" label="Rechnungsnr. des Lieferanten" hinweis="Optional." />
+        </div>
+
+        <fieldset class="pos-editor">
+          <legend class="pos-editor__legende">Positionen</legend>
+          @for (zeile of zeilen(); track $index; let i = $index) {
+            <div class="pos-zeile">
+              <div class="pos-zeile__kopf">
+                <span class="pos-zeile__nr" aria-hidden="true">Position {{ i + 1 }}</span>
+                <button
+                  type="button"
+                  class="pos-zeile__weg"
+                  (click)="zeileEntfernen(i)"
+                  [disabled]="zeilen().length <= 1"
+                  [attr.aria-label]="'Position ' + (i + 1) + ' entfernen'"
+                >
+                  <span aria-hidden="true">✕</span>
+                </button>
+              </div>
+              <app-feld [control]="$any(zeile).controls.description" label="Bezeichnung" [pflicht]="true" />
+              <div class="pos-zeile__zahlen">
+                <app-feld [control]="$any(zeile).controls.quantity" label="Menge" typ="zahl" [pflicht]="true" />
+                <app-feld [control]="$any(zeile).controls.unit" label="Einheit" platzhalter="z. B. Stk" />
+                <app-feld [control]="$any(zeile).controls.unit_price" label="Einzelpreis (netto)" typ="zahl" [pflicht]="true" />
+                <app-feld [control]="$any(zeile).controls.tax_code" label="Steuersatz" typ="select" [optionen]="taxCodeOptionen" />
+              </div>
+              <div class="pos-zeile__kontierung">
+                <app-feld
+                  [control]="$any(zeile).controls.ledger_account_id"
+                  label="Buchungskonto"
+                  typ="select"
+                  platzhalter="— nicht kontiert —"
+                  [optionen]="ledgerOptionen()"
+                  hinweis="Für die Freigabe erforderlich."
+                />
+                <app-feld
+                  [control]="$any(zeile).controls.cost_center_id"
+                  label="Kostenstelle"
+                  typ="select"
+                  platzhalter="— keine —"
+                  [optionen]="costCenterOptionen()"
+                />
+              </div>
+            </div>
+          }
+          <button type="button" class="btn pos-editor__add" (click)="zeileHinzufuegen()">
+            <span aria-hidden="true">＋</span> Position hinzufügen
+          </button>
+        </fieldset>
+
+        <app-feld [control]="editForm.controls.notes" label="Notiz" typ="textarea" hinweis="Optional; interner Vermerk." />
+      </form>
+
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="editLaedt()" (click)="bearbeitenSchliessen()">Abbrechen</button>
+        <button
+          type="submit"
+          form="edit-beleg-form"
+          class="btn btn--primary"
+          [disabled]="editLaedt()"
+          [attr.aria-busy]="editLaedt()"
+        >
+          {{ editLaedt() ? 'Wird gespeichert …' : 'Änderungen speichern' }}
+        </button>
+      </div>
+    </app-dialog>
+
+    <app-bestaetigung
+      [offen]="aktion() !== null"
+      [titel]="aktion()?.titel ?? ''"
+      [text]="aktionText()"
+      [bestaetigenLabel]="aktion()?.label ?? 'Bestätigen'"
+      [gefahr]="aktion()?.gefahr ?? false"
+      [begruendungPflicht]="aktion()?.begruendung ?? false"
+      begruendungLabel="Begründung der Ablehnung"
+      [laedt]="aktionLaedt()"
+      (bestaetigen)="aktionBestaetigen($event)"
+      (abbrechen)="aktionAbbrechen()"
+    />
+  }
+}

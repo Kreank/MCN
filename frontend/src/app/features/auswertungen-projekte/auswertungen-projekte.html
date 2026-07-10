@@ -1,0 +1,117 @@
+<section class="dashboard" aria-labelledby="pr-titel">
+  <header class="page-head">
+    <div>
+      <p class="page-head__kicker">
+        <a class="page-head__back" routerLink="/auswertungen">← Auswertungen</a>
+      </p>
+      <h1 id="pr-titel" class="page-head__titel">Projekte</h1>
+    </div>
+    <p class="page-head__hint">
+      Anzahl und Umsatzvolumen nach Status, angenäherte Durchlaufzeit und
+      Top-Projekte nach Nettoumsatz veröffentlichter Rechnungen.
+    </p>
+  </header>
+
+  @switch (state().kind) {
+    @case ('loading') {
+      <p class="lade-hinweis" role="status">Projektkennzahlen werden geladen …</p>
+    }
+    @case ('forbidden') {
+      <app-kein-zugriff [detail]="$any(state()).detail" />
+    }
+    @case ('error') {
+      <div class="note note--error" role="alert">
+        <h2 class="note__titel">Kennzahlen konnten nicht geladen werden</h2>
+        <p class="note__text">Die Auswertungs-Schnittstelle war nicht erreichbar.</p>
+        <div class="note__aktionen">
+          <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
+        </div>
+      </div>
+    }
+    @case ('ready') {
+      <div class="kpi-reihe" role="group" aria-label="Projektkennzahlen">
+        <div class="kpi kpi--stark">
+          <span class="kpi__label">Projekte gesamt</span>
+          <span class="kpi__wert">{{ daten()!.total }}</span>
+          <span class="kpi__sub">{{ daten()!.open }} offen · {{ daten()!.closed }} abgeschlossen</span>
+        </div>
+        <div class="kpi">
+          <span class="kpi__label">Ø Alter offener Projekte</span>
+          <span class="kpi__wert">{{ days(daten()!.throughput.avg_open_age_days) }}</span>
+          <span class="kpi__sub">seit Anlage</span>
+        </div>
+        <div class="kpi">
+          <span class="kpi__label">Ø Durchlaufzeit</span>
+          <span class="kpi__wert">{{ days(daten()!.throughput.avg_closed_duration_days) }}</span>
+          <span class="kpi__sub">abgeschlossene Projekte (angenähert)</span>
+        </div>
+      </div>
+
+      <!-- Volumen nach Status -->
+      <section class="panel" aria-labelledby="status-titel">
+        <h2 id="status-titel" class="panel__titel">Anzahl und Umsatz nach Status</h2>
+        <div class="tabelle-wrap">
+          <table class="tabelle">
+            <thead>
+              <tr>
+                <th scope="col">Status</th>
+                <th scope="col" class="num">Projekte</th>
+                <th scope="col" class="num">Umsatz netto</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (s of daten()!.by_status; track s.status) {
+                <tr>
+                  <td>{{ statusLabel(s.status) }}</td>
+                  <td class="num">{{ s.count }}</td>
+                  <td class="num betrag">{{ euro(s.net_total) }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Top-Projekte -->
+      <section class="panel" aria-labelledby="top-titel">
+        <h2 id="top-titel" class="panel__titel">Top-Projekte nach Nettoumsatz</h2>
+        @if (topBars().length === 0) {
+          <div class="tab-platzhalter"><p>Es liegen noch keine veröffentlichten Rechnungen mit Projektbezug vor.</p></div>
+        } @else {
+          <ul class="balken">
+            @for (b of topBars(); track b.label) {
+              <li class="balken__zeile">
+                <span class="balken__label">{{ b.label }}</span>
+                <div class="balken__spur">
+                  <div class="balken__fuellung" [style.width.%]="b.widthPct"></div>
+                </div>
+                <span class="balken__wert">{{ b.display }}</span>
+              </li>
+            }
+          </ul>
+
+          <div class="tabelle-wrap">
+            <table class="tabelle">
+              <thead>
+                <tr>
+                  <th scope="col">Projekt</th>
+                  <th scope="col">Nummer</th>
+                  <th scope="col" class="num">Umsatz netto</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (p of daten()!.top_projects; track p.project_id) {
+                  <tr>
+                    <td><a class="zelle-link" [routerLink]="['/projekte', p.project_id]">{{ p.name }}</a></td>
+                    <td>{{ p.project_number }}</td>
+                    <td class="num betrag">{{ euro(p.net_total) }}</td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+      </section>
+    }
+  }
+</section>

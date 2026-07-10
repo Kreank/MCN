@@ -1,0 +1,137 @@
+<section class="dashboard" aria-labelledby="ma-titel">
+  <header class="page-head">
+    <div>
+      <p class="page-head__kicker">
+        <a class="page-head__back" routerLink="/auswertungen">← Auswertungen</a>
+      </p>
+      <h1 id="ma-titel" class="page-head__titel">Mitarbeitende</h1>
+    </div>
+    <p class="page-head__hint">
+      Auslastung (Ist-Arbeitszeit), Urlaubsverbrauch je Person und Abwesenheiten
+      nach Art. Personaldaten (DSGVO): Krankheitszeiten werden ausschließlich
+      unternehmensweit aggregiert ausgewiesen, niemals je Person.
+    </p>
+  </header>
+
+  <div class="jahrnav" role="group" aria-label="Jahr wechseln">
+    <button type="button" class="btn" (click)="prevYear()" aria-label="Vorheriges Jahr">‹</button>
+    <span class="jahrnav__wert" aria-live="polite">{{ year() }}</span>
+    <button type="button" class="btn" (click)="nextYear()" aria-label="Nächstes Jahr">›</button>
+  </div>
+
+  @switch (state().kind) {
+    @case ('loading') {
+      <p class="lade-hinweis" role="status">Mitarbeiterkennzahlen werden geladen …</p>
+    }
+    @case ('forbidden') {
+      <app-kein-zugriff [detail]="$any(state()).detail" />
+    }
+    @case ('error') {
+      <div class="note note--error" role="alert">
+        <h2 class="note__titel">Kennzahlen konnten nicht geladen werden</h2>
+        <p class="note__text">Die Auswertungs-Schnittstelle war nicht erreichbar.</p>
+        <div class="note__aktionen">
+          <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
+        </div>
+      </div>
+    }
+    @case ('ready') {
+      <div class="kpi-reihe" role="group" aria-label="Mitarbeiterkennzahlen">
+        <div class="kpi kpi--stark">
+          <span class="kpi__label">Mitarbeitende</span>
+          <span class="kpi__wert">{{ daten()!.employee_count }}</span>
+          <span class="kpi__sub">aktiv im Jahr {{ daten()!.year }}</span>
+        </div>
+        <div class="kpi">
+          <span class="kpi__label">Ist-Arbeitszeit gesamt</span>
+          <span class="kpi__wert">{{ stunden(daten()!.total_worked_hours) }}</span>
+        </div>
+        <div class="kpi">
+          <span class="kpi__label">Abwesenheitstage gesamt</span>
+          <span class="kpi__wert">{{ tage(daten()!.total_absence_days) }}</span>
+          <span class="kpi__sub">genehmigt, alle Arten</span>
+        </div>
+      </div>
+
+      <!-- Auslastung je Person -->
+      <section class="panel" aria-labelledby="last-titel">
+        <h2 id="last-titel" class="panel__titel">Auslastung (Ist-Arbeitszeit) je Person</h2>
+        @if (daten()!.people.length === 0) {
+          <div class="tab-platzhalter"><p>Für das Jahr {{ daten()!.year }} liegen keine Mitarbeitenden vor.</p></div>
+        } @else {
+          <ul class="balken">
+            @for (b of stundenBars(); track b.label) {
+              <li class="balken__zeile">
+                <span class="balken__label">{{ b.label }}</span>
+                <div class="balken__spur">
+                  <div class="balken__fuellung" [style.width.%]="b.widthPct"></div>
+                </div>
+                <span class="balken__wert">{{ b.display }}</span>
+              </li>
+            }
+          </ul>
+
+          <div class="tabelle-wrap">
+            <table class="tabelle">
+              <thead>
+                <tr>
+                  <th scope="col">Mitarbeiter/in</th>
+                  <th scope="col">Nummer</th>
+                  <th scope="col" class="num">Ist-Stunden</th>
+                  <th scope="col" class="num">Urlaub Anspruch</th>
+                  <th scope="col" class="num">Urlaub genommen</th>
+                  <th scope="col" class="num">Urlaub Rest</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (p of daten()!.people; track p.employee_id) {
+                  <tr>
+                    <td><a class="zelle-link" [routerLink]="['/mitarbeiter', p.employee_id]">{{ p.display_name }}</a></td>
+                    <td>{{ p.employee_number }}</td>
+                    <td class="num betrag">{{ stunden(p.worked_hours) }}</td>
+                    <td class="num">{{ tage(p.vacation_entitlement) }}</td>
+                    <td class="num">{{ tage(p.vacation_used) }}</td>
+                    <td class="num">{{ tage(p.vacation_remaining) }}</td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+      </section>
+
+      <!-- Abwesenheiten nach Art (aggregiert) -->
+      <section class="panel" aria-labelledby="abw-titel">
+        <h2 id="abw-titel" class="panel__titel">Abwesenheiten nach Art (unternehmensweit)</h2>
+        <p class="panel__hint">
+          Aggregierte Tagessummen aller Mitarbeitenden — auch die Krankheitsquote
+          wird nur als Gesamtzahl gezeigt, ohne Personenbezug.
+        </p>
+        @if (daten()!.absence_by_type.length === 0) {
+          <div class="tab-platzhalter"><p>Im Jahr {{ daten()!.year }} sind keine genehmigten Abwesenheiten erfasst.</p></div>
+        } @else {
+          <div class="tabelle-wrap">
+            <table class="tabelle">
+              <thead>
+                <tr>
+                  <th scope="col">Art</th>
+                  <th scope="col" class="num">Tage</th>
+                  <th scope="col" class="num">Anträge</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (a of daten()!.absence_by_type; track a.absence_type) {
+                  <tr>
+                    <td>{{ absenceLabel(a.absence_type) }}</td>
+                    <td class="num betrag">{{ tage(a.days) }}</td>
+                    <td class="num">{{ a.count }}</td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+      </section>
+    }
+  }
+</section>

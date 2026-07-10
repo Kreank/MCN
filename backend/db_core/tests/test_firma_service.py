@@ -20,13 +20,16 @@ from db_core.services import firma as firma_service
 
 @pytest.mark.django_db
 def test_profile_upsert_legt_einmalig_an_und_aktualisiert(app_user):
-    p1 = firma_service.update_company_profile(
+    # Erstanlage schreibt die Bankdaten direkt (kein Bestand, den es zu schützen gäbe).
+    p1, pending = firma_service.update_company_profile(
         app_user.id, company_name="Mitra Sanitär GmbH", city="Musterstadt",
         iban="DE12500105170648489890",
     )
     assert p1.company_name == "Mitra Sanitär GmbH"
+    assert pending is None
+    assert p1.iban == "DE12500105170648489890"
     # Zweiter Aufruf aktualisiert dieselbe (einzige) Zeile, legt keine neue an.
-    p2 = firma_service.update_company_profile(app_user.id, city="Neustadt")
+    p2, _ = firma_service.update_company_profile(app_user.id, city="Neustadt")
     assert CompanyProfile.objects.count() == 1
     assert p2.id == p1.id
     assert p2.city == "Neustadt"
@@ -42,7 +45,7 @@ def test_profile_anlegen_ohne_namen_scheitert(app_user):
 @pytest.mark.django_db
 def test_profile_leeres_land_faellt_auf_default(app_user):
     """Ein geleertes NOT-NULL-Feld (country) darf nie NULL werden (kein 500)."""
-    p = firma_service.update_company_profile(
+    p, _ = firma_service.update_company_profile(
         app_user.id, company_name="Ohne Land GmbH", country="", default_language=""
     )
     assert p.country == "DE"  # DB-Default statt NULL
