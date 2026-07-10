@@ -49,12 +49,60 @@
           type="search"
           inputmode="search"
           autocomplete="off"
-          placeholder="Nummer oder Bezeichnung"
+          placeholder="Nummer, Bezeichnung oder Matchcode"
+          [attr.aria-describedby]="modus() === 'artikel' ? 'artikel-suche-hilfe' : null"
           [value]="query()"
           (input)="onSearch($any($event.target).value)"
         />
       </div>
+      @if (modus() === 'artikel') {
+        <p id="artikel-suche-hilfe" class="search__hilfe">
+          <span class="search__hilfe-lead">Operatoren:</span>
+          <span class="search__op"><code class="search__op-z">+</code> alle Begriffe (UND)</span>
+          <span class="search__op"><code class="search__op-z">|</code> einer der Begriffe (ODER)</span>
+          <span class="search__op"><code class="search__op-z">*</code> Platzhalter</span>
+        </p>
+      }
     </div>
+
+    @if (modus() === 'artikel') {
+      <div class="spalten" #spaltenWrapEl>
+        <button
+          type="button"
+          class="btn spalten__btn"
+          [class.is-active]="spaltenOffen()"
+          [attr.aria-expanded]="spaltenOffen()"
+          aria-controls="spalten-menu"
+          (click)="spaltenMenuToggle()"
+        >
+          <span class="spalten__icon" aria-hidden="true">≡</span>
+          Spalten
+          @if (aktiveSpalten().length) {
+            <span class="spalten__zahl">{{ aktiveSpalten().length }}<span class="sr-only"> Spalten aktiv</span></span>
+          }
+        </button>
+        @if (spaltenOffen()) {
+          <div id="spalten-menu" class="spalten__menu" role="group" aria-label="Zusätzliche Spalten der Artikelliste wählen">
+            <p class="spalten__titel">Zusätzliche Spalten</p>
+            <ul class="spalten__liste">
+              @for (s of verfuegbareSpalten; track s.key) {
+                <li class="spalten__item">
+                  <label class="spalten__label">
+                    <input
+                      type="checkbox"
+                      class="spalten__check"
+                      [checked]="spalteAktiv(s.key)"
+                      (change)="spalteUmschalten(s.key)"
+                    />
+                    <span>{{ s.label }}</span>
+                  </label>
+                </li>
+              }
+            </ul>
+          </div>
+        }
+      </div>
+    }
 
     <div class="segment" role="group" aria-label="Zwischen Artikel und Leistungen wechseln">
       <button
@@ -128,6 +176,19 @@
                       <span class="stamp">{{ lineTypeLabel(a.line_type) }}</span>
                       <span>je {{ a.unit }}</span>
                     </span>
+                    @if (aktiveSpalten().length) {
+                      <span class="row__extras">
+                        @for (s of aktiveSpalten(); track s.key) {
+                          <span class="row__extra">
+                            <span class="row__extra-label">{{ s.label }}:</span>
+                            <span
+                              class="row__extra-wert"
+                              [class.row__extra-wert--leer]="spaltenWert(a, s.key) === '—'"
+                            >{{ spaltenWert(a, s.key) }}</span>
+                          </span>
+                        }
+                      </span>
+                    }
                   </span>
                   <span class="row__sum">{{ euro(a.list_price) }}</span>
                 </a>

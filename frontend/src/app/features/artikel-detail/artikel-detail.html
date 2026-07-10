@@ -34,6 +34,11 @@
           <span aria-hidden="true">✎</span> Bearbeiten
         </button>
       }
+      @if (darfAnlegen()) {
+        <button mappe-kopf type="button" class="btn" (click)="kopierenOeffnen()">
+          <span aria-hidden="true">⧉</span> Kopieren
+        </button>
+      }
       @if (darfAendern() && daten()!.status === 'AKTIV') {
         <button mappe-kopf type="button" class="btn" [disabled]="statusLaedt()" (click)="deaktivierenFragen()">
           Deaktivieren
@@ -394,6 +399,35 @@
         <button type="button" class="btn" [disabled]="bearbeitenLaedt()" (click)="bearbeitenSchliessen()">Abbrechen</button>
         <button type="submit" form="artikel-form" class="btn btn--primary" [disabled]="bearbeitenLaedt()" [attr.aria-busy]="bearbeitenLaedt()">
           {{ bearbeitenLaedt() ? 'Wird gespeichert …' : 'Speichern' }}
+        </button>
+      </div>
+    </app-dialog>
+
+    <!-- ---------------------------- Kopieren ----------------------------- -->
+    <app-dialog [offen]="kopierenOffen()" titel="Artikel kopieren" (schliessen)="kopierenSchliessen()">
+      <form id="kopieren-form" class="dialog-form" (submit)="$event.preventDefault(); kopierenAbsenden()" novalidate>
+        @if (kopierenMeldung(); as fm) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+          </div>
+        }
+        <p class="dialog-form__hinweis">
+          Kopiert Stammdaten, Verkaufspreise und den Lieferantenbezug von
+          „{{ daten()!.article_number }}“. Die GTIN wird nicht kopiert (sie
+          identifiziert genau ein Produkt).
+        </p>
+        <app-feld
+          [control]="kopierenForm.controls.article_number"
+          label="Neue Artikelnummer"
+          [pflicht]="true"
+          hinweis="Eindeutig; keine automatische Vergabe."
+        />
+      </form>
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="kopierenLaedt()" (click)="kopierenSchliessen()">Abbrechen</button>
+        <button type="submit" form="kopieren-form" class="btn btn--primary" [disabled]="kopierenLaedt()" [attr.aria-busy]="kopierenLaedt()">
+          {{ kopierenLaedt() ? 'Wird kopiert …' : 'Kopie anlegen' }}
         </button>
       </div>
     </app-dialog>

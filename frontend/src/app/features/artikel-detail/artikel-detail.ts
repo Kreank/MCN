@@ -8,7 +8,7 @@ import {
   signal,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { ActivatedRoute, RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { map } from 'rxjs';
 import { Mappe, MappeTab } from '../../shared/mappe/mappe';
@@ -160,6 +160,7 @@ function ganzzahlValidator(control: { value: unknown }) {
 })
 export class ArtikelDetail {
   private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
   private readonly svc = inject(ArtikelService);
   private readonly accountingSvc = inject(BelegerfassungService);
   private readonly partySvc = inject(PartyService);
@@ -208,6 +209,7 @@ export class ArtikelDetail {
 
   // --- Rechte (nur UI-Sichtbarkeit; der Server setzt sie durch) -----------
   protected readonly darfAendern = computed(() => this.auth.darf('pricing', 'AENDERN'));
+  protected readonly darfAnlegen = computed(() => this.auth.darf('pricing', 'ANLEGEN'));
   protected readonly darfKostenstellen = computed(() =>
     this.auth.darf('accounting', 'LESEN'),
   );
@@ -282,6 +284,17 @@ export class ArtikelDetail {
   // --- Status ändern (Deaktivieren hinter Bestätigung) ---------------------
   protected readonly statusOffen = signal(false);
   protected readonly statusLaedt = signal(false);
+
+  // --- Kopieren (Hero „Kopieren"): neuer Artikel aus diesem ----------------
+  protected readonly kopierenOffen = signal(false);
+  protected readonly kopierenLaedt = signal(false);
+  protected readonly kopierenMeldung = signal<string | null>(null);
+  protected readonly kopierenForm = this.fb.group({
+    article_number: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.required],
+    }),
+  });
 
   constructor() {
     if (this.darfKostenstellen()) this.kostenstellenLaden();
@@ -546,6 +559,50 @@ export class ArtikelDetail {
           art: 'fehler',
           text: apiFehlerZuweisen(err, this.bearbeitenForm).formular ?? 'Statuswechsel fehlgeschlagen.',
         });
+      },
+    });
+  }
+
+  // ---- Kopieren -----------------------------------------------------------
+  kopierenOeffnen(): void {
+    const art = this.daten();
+    if (!art) return;
+    this.kopierenMeldung.set(null);
+    serverFehlerZuruecksetzen(this.kopierenForm);
+    // Vorschlag: alte Nummer + Suffix, editierbar.
+    this.kopierenForm.reset({ article_number: `${art.article_number}-KOPIE` });
+    this.kopierenOffen.set(true);
+  }
+
+  kopierenSchliessen(): void {
+    if (this.kopierenLaedt()) return;
+    this.kopierenOffen.set(false);
+  }
+
+  kopierenAbsenden(): void {
+    const art = this.daten();
+    if (this.kopierenLaedt() || !art) return;
+    serverFehlerZuruecksetzen(this.kopierenForm);
+    this.kopierenMeldung.set(null);
+    felderAlsBeruehrtMarkieren(this.kopierenForm);
+    if (this.kopierenForm.invalid) return;
+
+    const nummer = this.kopierenForm.controls.article_number.value.trim();
+    this.kopierenLaedt.set(true);
+    this.svc.copyArticle(art.id, { article_number: nummer }).subscribe({
+      next: (neu) => {
+        this.kopierenLaedt.set(false);
+        this.kopierenOffen.set(false);
+        this.meldung.set({
+          art: 'erfolg',
+          text: `Kopie „${neu.article_number}“ wurde angelegt. Die GTIN wurde nicht übernommen.`,
+        });
+        // Zum neuen Artikel navigieren (die Mappe lädt frisch über paramMap).
+        this.router.navigate(['/artikel', neu.id]);
+      },
+      error: (err) => {
+        this.kopierenLaedt.set(false);
+        this.kopierenMeldung.set(apiFehlerZuweisen(err, this.kopierenForm).formular);
       },
     });
   }

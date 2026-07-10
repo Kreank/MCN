@@ -23,6 +23,15 @@ export interface Article {
   line_type: ArticleLineType;
   status: StammStatus;
   list_price: string | null;
+  // Zusatzfelder für die Spaltenwahl der Artikelliste (Hero-Spalten). Kommen
+  // bereits im Listen-Item mit — keine Extra-Requests.
+  matchcode: string | null;
+  product_group: string | null;
+  gtin: string | null;
+  manufacturer_name: string | null;
+  tax_code: TaxCode | string | null;
+  price_unit: number;
+  supplier_name: string | null;
 }
 
 export interface ArticlePage {
@@ -144,6 +153,13 @@ export interface AssemblyIn {
   name: string;
   unit: string;
   description?: string | null;
+}
+
+/** Artikel kopieren (POST /articles/{id}/copy). Nur die neue Artikelnummer ist
+ *  nötig; der Server dupliziert Stammdaten, VK-Gruppen und Lieferantenbezug —
+ *  die GTIN bewusst NICHT. Recht pricing/ANLEGEN. */
+export interface ArticleCopyIn {
+  article_number: string;
 }
 
 export interface ArticleSalePriceIn {

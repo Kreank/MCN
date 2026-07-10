@@ -145,6 +145,119 @@
   }
 }
 
+// Suchoperator-Hilfe unter dem Feld (dezent, aria-describedby verweist darauf).
+.search__hilfe {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-3);
+  margin: var(--space-2) 0 0;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+.search__hilfe-lead {
+  font-weight: 600;
+}
+.search__op {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+}
+.search__op-z {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  padding: 0 0.3rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--ink);
+}
+
+// ============================ Spaltenwahl ===================================
+.spalten {
+  position: relative;
+  flex: none;
+}
+.spalten__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+
+  &.is-active {
+    border-color: var(--ink);
+  }
+}
+.spalten__icon {
+  font-size: 1.1rem;
+  line-height: 1;
+}
+.spalten__zahl {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.35rem;
+  height: 1.35rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: var(--command);
+  color: var(--on-command);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+.spalten__menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  min-width: 15rem;
+  padding: var(--space-3);
+  background: var(--surface);
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-2);
+}
+.spalten__titel {
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.spalten__liste {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.spalten__label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: var(--step-0);
+  color: var(--ink);
+
+  &:hover {
+    background: var(--surface-sunken);
+  }
+}
+.spalten__check {
+  width: 1.05rem;
+  height: 1.05rem;
+  accent-color: var(--command);
+  cursor: pointer;
+
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+
 .segment {
   display: inline-flex;
   padding: 3px;
@@ -253,6 +366,40 @@
 }
 .row__nr {
   font-family: var(--font-mono);
+}
+
+// Eingeblendete Zusatzspalten je Karte (Spaltenwahl). Jedes Feld trägt seine
+// Beschriftung, damit es außerhalb einer Tabellen-Kopfzeile verständlich bleibt.
+.row__extras {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  margin-top: var(--space-1, 0.25rem);
+  padding-top: var(--space-2);
+  border-top: 1px dashed var(--line);
+  font-size: var(--step--1);
+}
+.row__extra {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  min-width: 0;
+}
+.row__extra-label {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.row__extra-wert {
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.row__extra-wert--leer {
+  color: var(--ink-faint);
 }
 .row__sum {
   flex: none;

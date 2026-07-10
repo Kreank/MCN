@@ -2,6 +2,7 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import {
+  ArticleCopyIn,
   ArticleDetail,
   ArticleIn,
   ArticleKalkulation,
@@ -74,6 +75,13 @@ export class ArtikelService {
   /** Leistung/Baugruppe anlegen. Erfordert Recht pricing.ANLEGEN. */
   createAssembly(payload: AssemblyIn): Observable<AssemblyDetail> {
     return this.http.post<AssemblyDetail>(`${this.base}/assemblies`, payload);
+  }
+
+  /** Artikel unter neuer Nummer duplizieren (Hero „Kopieren"). Kopiert
+   *  Stammdaten, VK-Gruppen und Lieferantenbezug — GTIN bewusst nicht. Recht
+   *  pricing.ANLEGEN. Leere/vergebene Nummer → 422. */
+  copyArticle(id: string, payload: ArticleCopyIn): Observable<ArticleDetail> {
+    return this.http.post<ArticleDetail>(`${this.base}/articles/${id}/copy`, payload);
   }
 
   /** Artikelstammdaten ändern. Erfordert Recht pricing.AENDERN. Nur gesetzte

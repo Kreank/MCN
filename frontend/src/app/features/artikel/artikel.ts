@@ -15,6 +15,7 @@ import { BelegerfassungService } from '../../core/belegerfassung.service';
 import { PartyService } from '../../core/party.service';
 import { AuthService } from '../../core/auth.service';
 import {
+  Article,
   ArticleIn,
   ArticleLineType,
   ArticlePage,
@@ -39,6 +40,35 @@ import {
 
 type Modus = 'artikel' | 'leistungen';
 type Meldung = { art: 'erfolg' | 'fehler'; text: string };
+
+/** Eine wählbare Zusatzspalte der Artikelliste. `key` ist ein Feld des
+ *  Listen-Items (kommt bereits mit, kein Extra-Request). */
+interface SpaltenDef {
+  key: keyof Article;
+  label: string;
+}
+
+/** Zusätzlich zu den Standardspalten (Bezeichnung/Nummer/Typ/Einheit/Preis)
+ *  wählbare Spalten. Reihenfolge = Anzeigereihenfolge. */
+const VERFUEGBARE_SPALTEN: SpaltenDef[] = [
+  { key: 'matchcode', label: 'Matchcode' },
+  { key: 'product_group', label: 'Kategorie' },
+  { key: 'gtin', label: 'EAN / GTIN' },
+  { key: 'manufacturer_name', label: 'Hersteller' },
+  { key: 'supplier_name', label: 'Lieferant' },
+  { key: 'tax_code', label: 'MwSt.' },
+  { key: 'price_unit', label: 'Preiseinheit' },
+];
+
+const SPALTEN_STORAGE_PREFIX = 'mcn.artikel.spalten';
+
+/** Kurzbeschriftung der Steuerschlüssel für die Listenanzeige. */
+const TAX_CODE_KURZ: Record<string, string> = {
+  DE_19: '19 %',
+  DE_7: '7 %',
+  DE_0: '0 %',
+  DE_13B: '§13b',
+};
 
 type ViewState =
   | { kind: 'loading' }
@@ -75,6 +105,10 @@ function ganzzahlValidator(control: { value: unknown }) {
   imports: [RouterLink, ReactiveFormsModule, KeinZugriff, Dialog, Feld, ReferenzWahl],
   templateUrl: './artikel.html',
   styleUrl: './artikel.scss',
+  host: {
+    '(document:keydown.escape)': 'spaltenMenuSchliessen()',
+    '(document:click)': 'aufDokumentKlick($event)',
+  },
 })
 export class Artikel {
   private readonly svc = inject(ArtikelService);
@@ -218,6 +252,94 @@ export class Artikel {
     if (t === 0) return `Keine ${wort} gefunden.`;
     return `${t} Einträge gefunden, Seite ${s.data.page} von ${this.totalPages()}.`;
   });
+
+  // --- Spaltenwahl (nur Artikel; im localStorage je Nutzer gemerkt) --------
+  protected readonly verfuegbareSpalten = VERFUEGBARE_SPALTEN;
+  protected readonly spaltenOffen = signal(false);
+  /** Schlüssel der aktuell eingeblendeten Zusatzspalten. */
+  protected readonly gewaehlteSpalten = signal<string[]>(this.spaltenLaden());
+  /** Wählmenü-Wrapper — für Klick-außerhalb-schließt. */
+  private readonly spaltenWrapEl =
+    viewChild<ElementRef<HTMLElement>>('spaltenWrapEl');
+
+  /** Eingeblendete Spalten in definierter Reihenfolge (für das Rendern). */
+  protected readonly aktiveSpalten = computed<SpaltenDef[]>(() => {
+    const gewaehlt = new Set(this.gewaehlteSpalten());
+    return VERFUEGBARE_SPALTEN.filter((s) => gewaehlt.has(s.key));
+  });
+
+  private spaltenStorageKey(): string {
+    const uid = this.auth.user()?.id ?? 'anon';
+    return `${SPALTEN_STORAGE_PREFIX}.${uid}`;
+  }
+
+  private spaltenLaden(): string[] {
+    try {
+      const roh = localStorage.getItem(this.spaltenStorageKey());
+      if (!roh) return [];
+      const gelesen = JSON.parse(roh);
+      if (!Array.isArray(gelesen)) return [];
+      // Nur bekannte Schlüssel übernehmen (Stand kann veraltet sein).
+      const bekannt = new Set(VERFUEGBARE_SPALTEN.map((s) => s.key as string));
+      return gelesen.filter((k) => typeof k === 'string' && bekannt.has(k));
+    } catch {
+      return [];
+    }
+  }
+
+  private spaltenSpeichern(keys: string[]): void {
+    try {
+      localStorage.setItem(this.spaltenStorageKey(), JSON.stringify(keys));
+    } catch {
+      // localStorage nicht verfügbar/voll — Auswahl gilt nur für diese Sitzung.
+    }
+  }
+
+  spaltenMenuToggle(): void {
+    this.spaltenOffen.update((o) => !o);
+  }
+
+  spaltenMenuSchliessen(): void {
+    if (this.spaltenOffen()) this.spaltenOffen.set(false);
+  }
+
+  spalteAktiv(key: string): boolean {
+    return this.gewaehlteSpalten().includes(key);
+  }
+
+  spalteUmschalten(key: string): void {
+    this.gewaehlteSpalten.update((aktuell) => {
+      const neu = aktuell.includes(key)
+        ? aktuell.filter((k) => k !== key)
+        : [...aktuell, key];
+      this.spaltenSpeichern(neu);
+      return neu;
+    });
+  }
+
+  /** Klick außerhalb des Wählmenüs schließt es (Menü bleibt bei Klick darin). */
+  aufDokumentKlick(event: MouseEvent): void {
+    if (!this.spaltenOffen()) return;
+    const wrap = this.spaltenWrapEl()?.nativeElement;
+    if (wrap && !wrap.contains(event.target as Node)) {
+      this.spaltenOffen.set(false);
+    }
+  }
+
+  /** Anzeigewert einer Zusatzspalte für ein Listen-Item. */
+  spaltenWert(a: Article, key: string): string {
+    if (key === 'tax_code') {
+      return a.tax_code ? TAX_CODE_KURZ[a.tax_code] ?? a.tax_code : '—';
+    }
+    if (key === 'price_unit') {
+      const n = a.price_unit ?? 1;
+      return n === 1
+        ? 'je 1'
+        : `je ${new Intl.NumberFormat('de-DE').format(n)}`;
+    }
+    const wert = (a as unknown as Record<string, unknown>)[key];
+    return wert == null || wert === '' ? '—' : String(wert);
+  }
 
   constructor() {
     this.searchInput$
