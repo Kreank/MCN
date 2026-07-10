@@ -104,6 +104,23 @@ export interface ProjectMini {
   name: string;
 }
 
+// GET /api/workflow/service_cases/{id}/transitions
+// Ein erlaubter nächster Status eines Vorgangs (zur Laufzeit aus
+// workflow.status_transition gelesen). `recht` = das je Übergang nötige
+// Modulrecht: FREIGEBEN für die Beauftragung, sonst AENDERN.
+export interface ServiceCaseTransition {
+  to_status: ServiceCaseStatus;
+  label: string;
+  reason_required: boolean;
+  recht: 'AENDERN' | 'FREIGEBEN';
+}
+
+// POST /api/workflow/service_cases/{id}/status
+export interface ServiceCaseStatusInput {
+  to_status: ServiceCaseStatus;
+  reason: string | null;
+}
+
 // --- Projekt-Cockpit: Logbuch & Checklisten --------------------------------
 export type LogCategory = 'NOTIZ' | 'ANRUF' | 'ABSPRACHE' | 'ENTSCHEIDUNG' | 'SYSTEM';
 

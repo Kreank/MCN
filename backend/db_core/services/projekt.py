@@ -12,6 +12,7 @@ nur der Initialzustand NEU angelegt — Statuswechsel folgen als eigener Slice.
 import uuid
 
 from db_core.db_context import business_transaction
+from db_core.gate_errors import as_business_error
 from db_core.models import (
     AppUser,
     Checklist,
@@ -22,6 +23,8 @@ from db_core.models import (
     ProjectProperty,
     Property,
     ServiceCase,
+    StatusCatalog,
+    StatusTransition,
 )
 from db_core.services._validation import (
     ensure_all_exist,
@@ -32,6 +35,8 @@ from db_core.services._validation import (
 LOG_CATEGORIES = ("NOTIZ", "ANRUF", "ABSPRACHE", "ENTSCHEIDUNG", "SYSTEM")
 
 PRIORITIES = ("NORMAL", "DRINGEND", "NOTFALL")
+
+SERVICE_CASE_ENTITY = "service_case"
 
 
 def create_project(
@@ -156,4 +161,87 @@ def create_service_case(
             version=1,
         )
         case.refresh_from_db()
+    return case
+
+
+def service_case_status_recht(to_status):
+    """Recht, das ein Vorgangs-Statuswechsel verlangt.
+
+    Der Übergang FREIGABE_AUSSTEHEND → BEAUFTRAGT ist die eigentliche
+    Beauftragung/Freigabe des Vorgangs (aus ihm entsteht der Auftrag); das ist
+    ein Freigabetor und verlangt workflow.FREIGEBEN. Alle übrigen Wechsel sind
+    workflow.AENDERN. BEAUFTRAGT ist im Statusmodell nur aus FREIGABE_AUSSTEHEND
+    erreichbar (0010), daher genügt das Ziel als Kriterium — wie beim Auftrag
+    (FREIGEGEBEN). So kann ein Konto mit AENDERN, aber ohne FREIGEBEN, den
+    Vorgang nicht beauftragen.
+    """
+    return "FREIGEBEN" if to_status == "BEAUFTRAGT" else "AENDERN"
+
+
+def service_case_transitions(from_status):
+    """Erlaubte nächste Status eines Vorgangs im gegebenen Ausgangsstatus.
+
+    Liest die Kanten ZUR LAUFZEIT aus workflow.status_transition und reichert
+    Label + Reihenfolge aus workflow.status_catalog an. Rückgabe: nach
+    sort_order sortierte Liste von Dicts {to_status, label, reason_required,
+    recht} (recht = das je Übergang nötige Modulrecht, s. o.).
+    """
+    catalog = {
+        c.status: c for c in StatusCatalog.objects.filter(entity=SERVICE_CASE_ENTITY)
+    }
+    rows = []
+    for edge in StatusTransition.objects.filter(
+        entity=SERVICE_CASE_ENTITY, from_status=from_status
+    ):
+        cat = catalog.get(edge.to_status)
+        rows.append(
+            {
+                "to_status": edge.to_status,
+                "label": cat.label if cat else edge.to_status,
+                "reason_required": edge.requires_reason,
+                "recht": service_case_status_recht(edge.to_status),
+                "_sort": cat.sort_order if cat else 0,
+            }
+        )
+    rows.sort(key=lambda r: r["_sort"])
+    for r in rows:
+        del r["_sort"]
+    return rows
+
+
+def advance_service_case_status(
+    actor_app_user_id, *, service_case_id, to_status, reason=None
+):
+    """Führt einen Statuswechsel des Vorgangs (service_case) durch.
+
+    Prüft den Übergang vorab gegen workflow.status_transition (→ ValueError/422
+    statt DB-500) und verlangt bei begründungspflichtigen Übergängen einen
+    reason. Der DB-Trigger validate_status_change ist die maßgebliche Instanz;
+    scheitert er (z. B. weil die Pipeline nebenläufig geändert wurde), übersetzt
+    as_business_error den P0001 in einen ValueError (→422).
+
+    Unbekannter Vorgang → ValueError; die API prüft die Existenz vorab und
+    antwortet dort mit 404.
+    """
+    case = ServiceCase.objects.filter(id=service_case_id).first()
+    if case is None:
+        raise ValueError("Vorgang nicht gefunden.")
+    allowed = {
+        e.to_status: e.requires_reason
+        for e in StatusTransition.objects.filter(
+            entity=SERVICE_CASE_ENTITY, from_status=case.status
+        )
+    }
+    if to_status not in allowed:
+        raise ValueError(f"Übergang {case.status} → {to_status} ist nicht erlaubt.")
+    if allowed[to_status] and not (reason and reason.strip()):
+        raise ValueError(
+            f"Übergang {case.status} → {to_status} erfordert eine Begründung."
+        )
+    with as_business_error():
+        with business_transaction(
+            actor_app_user_id, status_reason=reason.strip() if reason else None
+        ):
+            ServiceCase.objects.filter(id=service_case_id).update(status=to_status)
+    case.refresh_from_db()
     return case

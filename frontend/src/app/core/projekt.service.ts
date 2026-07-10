@@ -13,6 +13,8 @@ import {
   ServiceCaseCreate,
   ServiceCaseDetail,
   ServiceCaseRef,
+  ServiceCaseStatusInput,
+  ServiceCaseTransition,
 } from './projekt.model';
 
 /** Typisierter Zugriff auf die Projekt-API (dev-Proxy: /api -> :8000). */
@@ -39,6 +41,28 @@ export class ProjektService {
   getServiceCase(id: string): Observable<ServiceCaseDetail> {
     return this.http.get<ServiceCaseDetail>(
       `/api/workflow/service_cases/${id}`,
+    );
+  }
+
+  /** Erlaubte nächste Status eines Vorgangs (Recht workflow.LESEN). */
+  getServiceCaseTransitions(id: string): Observable<ServiceCaseTransition[]> {
+    return this.http.get<ServiceCaseTransition[]>(
+      `/api/workflow/service_cases/${id}/transitions`,
+    );
+  }
+
+  /**
+   * Statuswechsel eines Vorgangs durchführen. Recht workflow.AENDERN — außer
+   * Wechsel nach BEAUFTRAGT (Beauftragung/Freigabe), den der Server als
+   * Freigabetor mit workflow.FREIGEBEN prüft.
+   */
+  advanceServiceCaseStatus(
+    id: string,
+    payload: ServiceCaseStatusInput,
+  ): Observable<ServiceCaseDetail> {
+    return this.http.post<ServiceCaseDetail>(
+      `/api/workflow/service_cases/${id}/status`,
+      payload,
     );
   }
 

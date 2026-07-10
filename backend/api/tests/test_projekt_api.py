@@ -289,3 +289,128 @@ def test_create_service_case_ohne_recht_403(client_with_role, seeded):
         content_type="application/json",
     )
     assert r.status_code == 403
+
+
+# --- Vorgangs-Statuswechsel: transitions + status --------------------------
+
+def _neuer_vorgang(app_user):
+    obj = property_service.create_property(
+        app_user.id, name="Statusobjekt", property_type="WEG",
+        street="S", postal_code="1", city="Berlin",
+    )
+    return projekt_service.create_service_case(
+        app_user.id, property_id=obj.id, subject="Statusvorgang",
+    )
+
+
+@pytest.mark.django_db
+def test_transitions_endpoint_liefert_naechste_status(admin_client, app_user):
+    case = _neuer_vorgang(app_user)
+    r = admin_client.get(f"/api/workflow/service_cases/{case.id}/transitions")
+    assert r.status_code == 200
+    body = r.json()
+    by = {t["to_status"]: t for t in body}
+    assert set(by) == {"IN_PRUEFUNG", "ABGELEHNT"}
+    assert by["IN_PRUEFUNG"]["label"] == "In Prüfung"
+    assert by["IN_PRUEFUNG"]["reason_required"] is False
+    assert by["IN_PRUEFUNG"]["recht"] == "AENDERN"
+    assert by["ABGELEHNT"]["reason_required"] is True
+
+
+@pytest.mark.django_db
+def test_transitions_endpoint_unbekannter_vorgang_404(admin_client, seeded):
+    r = admin_client.get(f"/api/workflow/service_cases/{uuid.uuid4()}/transitions")
+    assert r.status_code == 404
+
+
+@pytest.mark.django_db
+def test_status_gueltiger_uebergang(admin_client, app_user):
+    case = _neuer_vorgang(app_user)
+    r = admin_client.post(
+        f"/api/workflow/service_cases/{case.id}/status",
+        data={"to_status": "IN_PRUEFUNG"},
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    body = r.json()
+    assert body["status"] == "IN_PRUEFUNG"
+    # Der Statusverlauf zeigt den neuen Eintrag.
+    assert any(
+        h["from_status"] == "NEU" and h["to_status"] == "IN_PRUEFUNG"
+        for h in body["history"]
+    )
+
+
+@pytest.mark.django_db
+def test_status_begruendungspflichtig_ohne_grund_422(admin_client, app_user):
+    case = _neuer_vorgang(app_user)
+    r = admin_client.post(
+        f"/api/workflow/service_cases/{case.id}/status",
+        data={"to_status": "ABGELEHNT"},
+        content_type="application/json",
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.django_db
+def test_status_ungueltiger_uebergang_422(admin_client, app_user):
+    case = _neuer_vorgang(app_user)
+    r = admin_client.post(
+        f"/api/workflow/service_cases/{case.id}/status",
+        data={"to_status": "BEAUFTRAGT"},
+        content_type="application/json",
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.django_db
+def test_status_unbekannter_vorgang_404(admin_client, seeded):
+    r = admin_client.post(
+        f"/api/workflow/service_cases/{uuid.uuid4()}/status",
+        data={"to_status": "IN_PRUEFUNG"},
+        content_type="application/json",
+    )
+    assert r.status_code == 404
+
+
+@pytest.mark.django_db
+def test_status_freigabe_uebergang_ohne_freigeben_recht_403(
+    client_with_role, app_user
+):
+    """FREIGABE_AUSSTEHEND → BEAUFTRAGT verlangt workflow.FREIGEBEN. DISPOSITION
+    hat AENDERN (Scope ALLE), aber kein FREIGEBEN → 403, obwohl der Übergang
+    fachlich gültig wäre."""
+    case = _neuer_vorgang(app_user)
+    # Als Akteur mit vollen Rechten in FREIGABE_AUSSTEHEND bringen.
+    projekt_service.advance_service_case_status(
+        app_user.id, service_case_id=case.id, to_status="IN_PRUEFUNG"
+    )
+    projekt_service.advance_service_case_status(
+        app_user.id, service_case_id=case.id, to_status="FREIGABE_AUSSTEHEND"
+    )
+    c = client_with_role("DISPOSITION")
+    r = c.post(
+        f"/api/workflow/service_cases/{case.id}/status",
+        data={"to_status": "BEAUFTRAGT"},
+        content_type="application/json",
+    )
+    assert r.status_code == 403
+
+
+@pytest.mark.django_db
+def test_status_freigabe_uebergang_mit_freigeben_recht(admin_client, app_user):
+    """Der Freigabe-Übergang gelingt mit FREIGEBEN-Recht (ADMINISTRATION)."""
+    case = _neuer_vorgang(app_user)
+    projekt_service.advance_service_case_status(
+        app_user.id, service_case_id=case.id, to_status="IN_PRUEFUNG"
+    )
+    projekt_service.advance_service_case_status(
+        app_user.id, service_case_id=case.id, to_status="FREIGABE_AUSSTEHEND"
+    )
+    r = admin_client.post(
+        f"/api/workflow/service_cases/{case.id}/status",
+        data={"to_status": "BEAUFTRAGT"},
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    assert r.json()["status"] == "BEAUFTRAGT"

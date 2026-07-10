@@ -315,11 +315,9 @@ def get_project_checklists(request, project_id: UUID):
     return result
 
 
-@router.get("/service_cases/{case_id}", response=ServiceCaseDetailOut)
-def get_service_case(request, case_id: UUID):
-    """Detail eines Vorgangs inkl. Liegenschaft, Projekt, Melder und
-    Statusverlauf (append-only aus workflow.status_change)."""
-    require(request, "workflow", "LESEN")
+def _service_case_detail(case_id):
+    """Baut das Vorgangsdetail (Liegenschaft, Projekt, Melder, Statusverlauf)
+    oder wirft 404. Von Lese- und Schreibendpunkten geteilt."""
     case = (
         ServiceCase.objects.filter(id=case_id)
         .select_related("property__address", "project", "reported_by_party")
@@ -379,6 +377,81 @@ def get_service_case(request, case_id: UUID):
         reported_by=reporter,
         history=history,
     )
+
+
+@router.get("/service_cases/{case_id}", response=ServiceCaseDetailOut)
+def get_service_case(request, case_id: UUID):
+    """Detail eines Vorgangs inkl. Liegenschaft, Projekt, Melder und
+    Statusverlauf (append-only aus workflow.status_change)."""
+    require(request, "workflow", "LESEN")
+    return _service_case_detail(case_id)
+
+
+# --- Vorgang: Statuswechsel ------------------------------------------------
+
+class ServiceCaseTransitionOut(Schema):
+    to_status: str
+    label: str
+    reason_required: bool
+    # Modulrecht, das dieser Übergang verlangt: FREIGEBEN für die Beauftragung
+    # (FREIGABE_AUSSTEHEND → BEAUFTRAGT), sonst AENDERN. Das Frontend blendet den
+    # Knopf nur bei darf('workflow', recht) ein.
+    recht: str
+
+
+class ServiceCaseStatusIn(Schema):
+    to_status: str
+    reason: str | None = None
+
+
+@router.get(
+    "/service_cases/{case_id}/transitions", response=list[ServiceCaseTransitionOut]
+)
+def get_service_case_transitions(request, case_id: UUID):
+    """Erlaubte nächste Status eines Vorgangs — zur Laufzeit aus
+    workflow.status_transition gelesen (seit 0042 konfigurierbar), Labels aus
+    workflow.status_catalog. Read-only (Recht workflow.LESEN)."""
+    require(request, "workflow", "LESEN")
+    case = ServiceCase.objects.filter(id=case_id).only("id", "status").first()
+    if case is None:
+        raise HttpError(404, "Vorgang nicht gefunden.")
+    return projekt_service.service_case_transitions(case.status)
+
+
+@router.post(
+    "/service_cases/{case_id}/status",
+    response=ServiceCaseDetailOut,
+    auth=django_auth,
+)
+def advance_service_case_status(request, case_id: UUID, payload: ServiceCaseStatusIn):
+    """Statuswechsel eines Vorgangs durchführen (gegen workflow.status_transition
+    validiert; der DB-Trigger ist die maßgebliche Instanz).
+
+    Recht: Der Übergang FREIGABE_AUSSTEHEND → BEAUFTRAGT ist die eigentliche
+    Beauftragung/Freigabe (Freigabetor) und verlangt workflow.FREIGEBEN; alle
+    übrigen Wechsel workflow.AENDERN. So kann ein Konto mit AENDERN, aber ohne
+    FREIGEBEN, den Vorgang nicht beauftragen.
+
+    Torfunktion `require` (fail-closed), nicht `require_scoped`: der Vorgang
+    hängt an einem Projekt, das der Akteur womöglich nicht sehen darf, und diese
+    Ansicht wertet den row_scope nicht aus. Ein Konto mit Scope EIGENE (Monteur)
+    erhält daher 403 — analog zum Anlegen (create_service_case), das genau
+    dieses Rechte-Loch geschlossen hat. Unbekannter Vorgang → 404 (vor dem
+    Service geprüft, damit er nicht als 422 durchschlägt)."""
+    action = projekt_service.service_case_status_recht(payload.to_status)
+    actor, _ = require(request, "workflow", action)
+    if not ServiceCase.objects.filter(id=case_id).exists():
+        raise HttpError(404, "Vorgang nicht gefunden.")
+    try:
+        projekt_service.advance_service_case_status(
+            actor,
+            service_case_id=case_id,
+            to_status=payload.to_status,
+            reason=payload.reason,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _service_case_detail(case_id)
 
 
 # --- Schreibende Cockpit-Endpoints (Session-Auth Pflicht) ------------------

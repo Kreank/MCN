@@ -19,6 +19,20 @@
   }
 
   @case ('ready') {
+    @if (meldung(); as m) {
+      <div
+        class="melde melde--{{ m.art === 'erfolg' ? 'erfolg' : 'fehler' }} vorgang-detail__melde"
+        [attr.role]="m.art === 'fehler' ? 'alert' : 'status'"
+      >
+        <span class="melde__mark" aria-hidden="true">{{ m.art === 'fehler' ? '!' : '✓' }}</span>
+        <span class="melde__text">
+          <strong>{{ m.art === 'fehler' ? 'Fehler:' : 'Erledigt:' }}</strong> {{ m.text }}
+        </span>
+        <button type="button" class="melde__zu" (click)="meldungSchliessen()" aria-label="Meldung schließen">
+          <span aria-hidden="true">✕</span>
+        </button>
+      </div>
+    }
     <app-mappe
       kicker="Vorgang {{ daten()!.case_number }}"
       [titel]="daten()!.subject"
@@ -31,6 +45,15 @@
       <span mappe-kopf class="stamp {{ statusClass(daten()!.status) }}">{{ statusLabel(daten()!.status) }}</span>
 
       @if (tab() === 'uebersicht') {
+        @if (erlaubteUebergaenge().length > 0) {
+          <div class="tab-toolbar" role="group" aria-label="Statusaktionen">
+            @for (t of erlaubteUebergaenge(); track t.to_status) {
+              <button type="button" class="btn" (click)="statusFragen(t)">
+                {{ t.label }}
+              </button>
+            }
+          </div>
+        }
         <dl class="feld-raster">
           <div class="feld"><dt class="feld__label">Vorgangsnummer</dt><dd class="feld__wert">{{ daten()!.case_number }}</dd></div>
           <div class="feld"><dt class="feld__label">Status</dt><dd class="feld__wert">{{ statusLabel(daten()!.status) }}</dd></div>
@@ -92,5 +115,19 @@
         <app-dateien [ziel]="dateienZiel()" />
       }
     </app-mappe>
+
+    @if (gewaehlt(); as t) {
+      <app-bestaetigung
+        [offen]="true"
+        [titel]="dialogTitel()"
+        [text]="dialogText()"
+        [bestaetigenLabel]="t.label"
+        [gefahr]="gewaehltGefahr()"
+        [begruendungPflicht]="t.reason_required"
+        [laedt]="statusLaedt()"
+        (bestaetigen)="statusBestaetigen($event)"
+        (abbrechen)="statusAbbrechen()"
+      />
+    }
   }
 }

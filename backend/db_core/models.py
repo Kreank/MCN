@@ -655,6 +655,58 @@ class StatusChange(models.Model):
         return f"{self.entity} {self.from_status}->{self.to_status}"
 
 
+class StatusCatalog(models.Model):
+    """workflow.status_catalog — Vokabular des Statusautomaten je Entity
+    (Migration 0042, Pipeline-Editor): deutsches Label, Reihenfolge und die
+    Anfangs-/Final-/Freeze-Marker.
+
+    Read-only Stammdaten. Liefert die Labels für die erlaubten Übergänge; wird
+    zur Laufzeit gelesen, damit eine über den Editor geänderte Pipeline sofort
+    wirkt. Zusammengesetzter PK (entity, status).
+    """
+
+    pk = models.CompositePrimaryKey("entity", "status")
+    entity = models.TextField()  # service_case|work_order|service_job|quote
+    status = models.TextField()
+    label = models.TextField()
+    sort_order = models.IntegerField()
+    is_initial = models.BooleanField()
+    is_final = models.BooleanField()
+    is_frozen = models.BooleanField()
+
+    class Meta:
+        managed = False
+        db_table = 'workflow"."status_catalog'
+
+    def __str__(self):
+        return f"{self.entity}:{self.status}"
+
+
+class StatusTransition(models.Model):
+    """workflow.status_transition — erlaubte Statusübergänge je Entity
+    (Migration 0010, seit 0042 über den Pipeline-Editor konfigurierbar).
+
+    requires_reason erzwingt eine Begründung (app.status_reason). Hier nur
+    lesend: die Übergänge werden ZUR LAUFZEIT ausgewertet (nicht hartkodiert),
+    damit eine editierte Pipeline nicht vom UI/Service abweicht. Der DB-Trigger
+    validate_status_change bleibt die maßgebliche Instanz. Zusammengesetzter PK
+    (entity, from_status, to_status).
+    """
+
+    pk = models.CompositePrimaryKey("entity", "from_status", "to_status")
+    entity = models.TextField()
+    from_status = models.TextField()
+    to_status = models.TextField()
+    requires_reason = models.BooleanField()
+
+    class Meta:
+        managed = False
+        db_table = 'workflow"."status_transition'
+
+    def __str__(self):
+        return f"{self.entity}:{self.from_status}->{self.to_status}"
+
+
 class Task(models.Model):
     """workflow.task — Aufgabe (leichtgewichtiges To-do, Migration 0005).
 

@@ -2,6 +2,18 @@
   display: block;
 }
 
+.vorgang-detail__melde {
+  max-width: 64rem;
+  margin: 0 auto var(--space-4);
+}
+
+.tab-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
 .beschreibung {
   margin: var(--space-4) 0 0;
   max-width: 44rem;
