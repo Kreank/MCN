@@ -16,13 +16,23 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 > und Freigaben laufen aus dem UI durch Rechte, Statusautomaten und DB-Trigger.
 > Dazu **Vier-Augen-Freigaben**, **Belegerfassung** (Eingangsrechnungen) und die
 > **Rechtematrix-Pflege** als UI.
-> **1196 Backend-Tests grün**, db_core-Migrationen bis **0035**, accounts bis **0002**.
-> Zuletzt gebaut: **Datei-Ablage im UI** (neun Mappen) und **Artikeldialog +
-> Historie + Stamm-Übernahme per Häkchen**. Als Nächstes: **IDS Connect**
-> (Fundament steht: `pricing.supplier_connection` mit `source_system='IDS_CONNECT'`,
-> `shop_url`, `credential_reference`; vier Anbindungen vorhanden. Es fehlt der
-> Ablauf: Warenkorb im Händler-Shop öffnen, Rückgabe entgegennehmen, Positionen
-> ins Angebot übernehmen).
+> **1376 Backend-Tests grün**, db_core-Migrationen bis **0047**, accounts bis **0002**.
+> Stand 2026-07-11 (Hero-Paritäts-Ausbau, viele Slices an einem Tag — Details in
+> `git log`): Artikelstamm nach Hero-Vorbild (Felder/VK-Gruppen/Lieferant/Bild,
+> Suchoperatoren + · | · *, Spaltenwahl, Kopieren), **Marge/Deckungsbeitrag** in
+> den Auswertungen (fehlender EK = „unbekannt", nie 0/100), **Storno/Gutschrift-UI**
+> (ehrlicher 201/202-Vier-Augen-Fluss), **Kontaktmappe** verdrahtet (Ansprech-
+> partner/Adressen/Kommunikationswege + Aufgaben-Tab), **Aufgaben-Formular** mit
+> Zuweisung/Verknüpfung + Bearbeiten, **Vorgangs-Statuswechsel** + **Kanban-Board**
+> (Projektassistent), und der **Mailversand** (SMTP-Fundament: Fernet-verschlüsseltes
+> `company.mail_account`, Schlüssel aus `MCN_MAIL_KEY`, Testmail; Rechnungsversand
+> per E-Mail in Arbeit). Analyse aller offenen Hero-Bereiche: Memory
+> `hero-vollsurvey-2026-07`.
+> **Noch offen (aus dem Vollsurvey):** Mailversand-Ausbau (Angebots-PDF + -versand,
+> Mahnungsversand, Passwort-vergessen, OAuth-Absenderkonten), DATEV/Lexware-Export,
+> Skonto, Abschlags→Schlussrechnung-Anrechnung, XRechnung/ZUGFeRD (gesetzl. Pflicht!),
+> Wartungs-Fälligkeits-Scheduler, Firmenlogo aufs PDF, freier Termin ohne Auftrag
+> (Grundsatzentscheidung), IDS-Connect-Ablauf.
 
 ---
 
