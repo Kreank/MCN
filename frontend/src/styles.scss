@@ -488,6 +488,26 @@ button {
   background: var(--warn-tint);
   color: var(--warn-ink);
 }
+// „Wartet auf Freigabe" (Vier-Augen-Antrag angelegt) — bewusst Accent statt
+// Erfolg-Gruen: es wurde noch NICHTS ausgefuehrt. Der Text traegt den Status.
+.melde--warten {
+  border-color: color-mix(in srgb, var(--accent-ink) 45%, var(--line-strong));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent-ink);
+}
+.melde__link {
+  color: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  white-space: nowrap;
+
+  &:focus-visible {
+    outline: 2.5px solid currentColor;
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+}
 
 @media (prefers-reduced-motion: reduce) {
   *,

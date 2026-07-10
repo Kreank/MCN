@@ -45,12 +45,12 @@
           Mahnung erzeugen
         </button>
       }
-      @if (darfStornieren()) {
+      @if (darfStornieren() && !istFolgebeleg()) {
         <button mappe-kopf type="button" class="btn" (click)="korrekturOeffnen()">
           Rechnungskorrektur
         </button>
       }
-      @if (darfStornieren() && !hatStorno()) {
+      @if (darfStornieren() && !istFolgebeleg() && !hatStorno()) {
         <button mappe-kopf type="button" class="btn btn--gefahr" (click)="stornoFragen()">
           Rechnung stornieren
         </button>
@@ -61,9 +61,12 @@
           class="melde melde--{{ m.art }} detail-melde"
           [attr.role]="m.art === 'fehler' ? 'alert' : 'status'"
         >
-          <span class="melde__mark" aria-hidden="true">{{ m.art === 'fehler' ? '!' : '✓' }}</span>
+          <span class="melde__mark" aria-hidden="true">{{ meldeMark(m.art) }}</span>
           <span class="melde__text">
-            <strong>{{ m.art === 'fehler' ? 'Fehler:' : 'Erledigt:' }}</strong> {{ m.text }}
+            <strong>{{ meldeWort(m.art) }}</strong> {{ m.text }}
+            @if (m.art === 'warten') {
+              <a class="melde__link" routerLink="/freigaben">Zu den Freigaben</a>
+            }
           </span>
           <button type="button" class="melde__zu" (click)="meldungSchliessen()" aria-label="Meldung schließen">
             <span aria-hidden="true">✕</span>
@@ -270,7 +273,9 @@
         }
         <p class="dialog-hinweis">
           Für die gewählten Positionen entsteht eine <strong>Gutschrift</strong> als Folgebeleg.
-          Dieser Schritt lässt sich nicht rückgängig machen.
+          Die Rechnungskorrektur ist vier-augen-pflichtig: Liegt noch keine Genehmigung vor,
+          wird zunächst nur ein Freigabeantrag gestellt (eine zweite Person genehmigt ihn unter
+          „Freigaben"). Dieser Schritt lässt sich nicht rückgängig machen.
         </p>
         @if (korrekturLinesLaden()) {
           <p class="lade-hinweis" role="status">Positionen werden geladen …</p>
@@ -323,7 +328,7 @@
     <app-bestaetigung
       [offen]="stornoOffen()"
       titel="Rechnung stornieren?"
-      text="Es wird ein Stornobeleg erzeugt, der die Rechnung vollständig ausgleicht. Der Vorgang lässt sich nicht rückgängig machen."
+      text="Es wird eine Stornorechnung über den vollen Betrag erzeugt, die die Rechnung ausgleicht. Die Ursprungsrechnung bleibt aus GoBD-Gründen unverändert erhalten (kein Löschen). Der Vorgang ist vier-augen-pflichtig: Liegt noch keine Genehmigung vor, wird zunächst nur ein Freigabeantrag gestellt und eine zweite Person muss ihn genehmigen. Der Storno lässt sich nicht rückgängig machen."
       bestaetigenLabel="Rechnung stornieren"
       [gefahr]="true"
       [laedt]="stornoLaedt()"

@@ -1,8 +1,9 @@
-import { HttpClient, HttpParams } from '@angular/common/http';
+import { HttpClient, HttpParams, HttpResponse } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
-import { Observable } from 'rxjs';
+import { Observable, map } from 'rxjs';
 import {
   CorrectionInput,
+  CreditOutcome,
   DunningIssue,
   DunningList,
   DunningNotice,
@@ -11,6 +12,7 @@ import {
   OpenItemQuery,
   PaymentDetail,
   PaymentRecord,
+  PendingApproval,
 } from './buchhaltung.model';
 import { CreditRef } from './beleg.model';
 
@@ -68,16 +70,46 @@ export class BuchhaltungService {
     );
   }
 
-  /** Veröffentlichte Rechnung stornieren (Stornobeleg); erzeugt Folgebeleg. */
-  cancelInvoice(invoiceId: string): Observable<CreditRef> {
-    return this.http.post<CreditRef>(`${this.base}/invoices/${invoiceId}/cancel`, {});
+  /**
+   * Veröffentlichte Rechnung stornieren (Stornobeleg). Vier-Augen-pflichtig:
+   * Der Endpunkt liefert 201 (Folgebeleg erzeugt) ODER 202 (Freigabeantrag
+   * angelegt, wartet auf Genehmigung). Beide Fälle werden über den HTTP-Status
+   * unterschieden — deshalb `observe: 'response'` statt nur des Bodys.
+   */
+  cancelInvoice(invoiceId: string): Observable<CreditOutcome> {
+    return this.http
+      .post<CreditRef | PendingApproval>(
+        `${this.base}/invoices/${invoiceId}/cancel`,
+        {},
+        { observe: 'response' },
+      )
+      .pipe(map((res) => this.deuteFolgebeleg(res)));
   }
 
-  /** Rechnungskorrektur (Gutschrift) über die angegebenen Positionen. */
-  correctInvoice(invoiceId: string, payload: CorrectionInput): Observable<CreditRef> {
-    return this.http.post<CreditRef>(
-      `${this.base}/invoices/${invoiceId}/correction`,
-      payload,
-    );
+  /**
+   * Rechnungskorrektur (Gutschrift) über die angegebenen Positionen. Ebenfalls
+   * Vier-Augen-pflichtig (201 erzeugt / 202 wartet auf Freigabe).
+   */
+  correctInvoice(invoiceId: string, payload: CorrectionInput): Observable<CreditOutcome> {
+    return this.http
+      .post<CreditRef | PendingApproval>(
+        `${this.base}/invoices/${invoiceId}/correction`,
+        payload,
+        { observe: 'response' },
+      )
+      .pipe(map((res) => this.deuteFolgebeleg(res)));
+  }
+
+  /**
+   * Deutet die Antwort von Storno/Korrektur: 202 = Freigabeantrag angelegt
+   * (noch nichts geschrieben), sonst (201) = Folgebeleg erzeugt.
+   */
+  private deuteFolgebeleg(
+    res: HttpResponse<CreditRef | PendingApproval>,
+  ): CreditOutcome {
+    if (res.status === 202) {
+      return { kind: 'wartet', pending: res.body as PendingApproval };
+    }
+    return { kind: 'erzeugt', credit: res.body as CreditRef };
   }
 }

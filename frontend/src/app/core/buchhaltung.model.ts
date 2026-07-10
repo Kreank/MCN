@@ -136,6 +136,30 @@ export interface CorrectionInput {
   positions: number[];
 }
 
+/**
+ * Antwort (HTTP 202), wenn Storno/Rechnungskorrektur erst einen genehmigten
+ * Vier-Augen-Antrag braucht (action_code RECHNUNGSKORREKTUR). Der Server hat
+ * einen Freigabeantrag angelegt (oder einen bestehenden wiederverwendet); es
+ * wurde NOCH NICHTS storniert/gutgeschrieben. Vertrag: PendingApprovalOut.
+ */
+export interface PendingApproval {
+  /** Id des angelegten/wiederverwendeten Freigabeantrags. */
+  pending_approval: string;
+  action_code: string;
+  detail: string;
+}
+
+/**
+ * Ergebnis von Storno bzw. Rechnungskorrektur. Der Endpunkt antwortet ENTWEDER
+ * mit 201 (Folgebeleg erzeugt — eine passende Genehmigung lag vor und wurde in
+ * derselben Transaktion verbraucht) ODER mit 202 (Vier-Augen-Antrag angelegt,
+ * wartet auf eine zweite Person). Das UI MUSS beide Fälle unterscheiden: bei
+ * `wartet` darf es NICHT so tun, als sei bereits storniert/gutgeschrieben.
+ */
+export type CreditOutcome =
+  | { kind: 'erzeugt'; credit: CreditRef }
+  | { kind: 'wartet'; pending: PendingApproval };
+
 /** Erlaubte Zahlungsarten der manuellen Erfassung (positiv wirkend).
  *  STORNO_BUCHUNG entsteht nur systemseitig über den Storno-Endpunkt. */
 export const PAYMENT_TYPES: { wert: string; label: string }[] = [

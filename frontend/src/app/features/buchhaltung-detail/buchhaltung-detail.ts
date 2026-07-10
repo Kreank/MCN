@@ -38,7 +38,8 @@ type ViewState =
   | VerbotenState
   | { kind: 'error' };
 
-type Meldung = { art: 'erfolg' | 'fehler'; text: string };
+// 'warten' = Vier-Augen-Antrag wurde angelegt, es wurde NOCH NICHTS ausgeführt.
+type Meldung = { art: 'erfolg' | 'fehler' | 'warten'; text: string };
 
 @Component({
   selector: 'app-buchhaltung-detail',
@@ -86,6 +87,16 @@ export class BuchhaltungDetail {
   protected readonly hatStorno = computed(() =>
     (this.daten()?.credit_notes ?? []).some((c) => c.invoice_type === 'STORNO'),
   );
+
+  /**
+   * Storno-/Gutschriftbelege sind selbst schon Folgebelege und lassen sich weder
+   * erneut stornieren noch korrigieren (der Server lehnt es mit 422 ab — die UI
+   * bietet es gar nicht erst an). Deckt sich mit `_CREDIT_TYPES` im Backend.
+   */
+  protected readonly istFolgebeleg = computed(() => {
+    const t = this.daten()?.invoice_type;
+    return t === 'STORNO' || t === 'GUTSCHRIFT';
+  });
 
   // --- Zahlung erfassen ----------------------------------------------------
   protected readonly zahlungOffen = signal(false);
@@ -181,6 +192,20 @@ export class BuchhaltungDetail {
 
   meldungSchliessen(): void {
     this.meldung.set(null);
+  }
+
+  /** Dekoratives Zeichen (aria-hidden) je Meldungsart. */
+  meldeMark(art: Meldung['art']): string {
+    if (art === 'fehler') return '!';
+    if (art === 'warten') return '⋯';
+    return '✓';
+  }
+
+  /** Wortmarke — der eigentliche Statusträger (WCAG: nie nur Farbe). */
+  meldeWort(art: Meldung['art']): string {
+    if (art === 'fehler') return 'Fehler:';
+    if (art === 'warten') return 'Freigabe angefordert:';
+    return 'Erledigt:';
   }
 
   private aktionsFehler(err: unknown): string {
@@ -296,12 +321,17 @@ export class BuchhaltungDetail {
     if (!d || this.stornoLaedt()) return;
     this.stornoLaedt.set(true);
     this.svc.cancelInvoice(d.id).subscribe({
-      next: (credit) => {
+      next: (ergebnis) => {
         this.stornoLaedt.set(false);
         this.stornoOffen.set(false);
+        if (ergebnis.kind === 'wartet') {
+          // 202: Es wurde NUR ein Freigabeantrag angelegt — nicht storniert.
+          this.meldung.set({ art: 'warten', text: ergebnis.pending.detail });
+          return;
+        }
         this.meldung.set({
           art: 'erfolg',
-          text: `Stornobeleg ${credit.invoice_number ?? '—'} wurde erzeugt.`,
+          text: `Stornobeleg ${ergebnis.credit.invoice_number ?? '—'} wurde erzeugt.`,
         });
         this.neuLaden();
       },
@@ -388,12 +418,17 @@ export class BuchhaltungDetail {
     this.korrekturMeldung.set(null);
     this.korrekturLaedt.set(true);
     this.svc.correctInvoice(d.id, { positions }).subscribe({
-      next: (credit) => {
+      next: (ergebnis) => {
         this.korrekturLaedt.set(false);
         this.korrekturOffen.set(false);
+        if (ergebnis.kind === 'wartet') {
+          // 202: Nur ein Freigabeantrag angelegt — es wurde nichts gutgeschrieben.
+          this.meldung.set({ art: 'warten', text: ergebnis.pending.detail });
+          return;
+        }
         this.meldung.set({
           art: 'erfolg',
-          text: `Rechnungskorrektur ${credit.invoice_number ?? '—'} (Gutschrift) wurde erzeugt.`,
+          text: `Rechnungskorrektur ${ergebnis.credit.invoice_number ?? '—'} (Gutschrift) wurde erzeugt.`,
         });
         this.neuLaden();
       },
