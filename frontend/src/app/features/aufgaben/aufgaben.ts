@@ -1,16 +1,19 @@
-import { Component, computed, inject, signal } from '@angular/core';
+import { Component, ElementRef, computed, inject, signal, viewChild } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { RouterLink } from '@angular/router';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
-import { Observable, Subject, debounceTime, distinctUntilChanged } from 'rxjs';
+import { Observable, Subject, debounceTime, distinctUntilChanged, map } from 'rxjs';
 import { AufgabeService } from '../../core/aufgabe.service';
+import { ProjektService } from '../../core/projekt.service';
+import { PartyService } from '../../core/party.service';
 import { AuthService } from '../../core/auth.service';
-import { Task, TaskCreate, TaskPage, TaskStatus } from '../../core/aufgabe.model';
+import { Task, TaskCreate, TaskPage, TaskStatus, TaskUpdate } from '../../core/aufgabe.model';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { VerbotenState, fehlerDetail, fehlerState, istVerboten } from '../../shared/http-fehler';
 import { Dialog } from '../../shared/dialog/dialog';
 import { Bestaetigung } from '../../shared/bestaetigung/bestaetigung';
 import { Feld } from '../../shared/formular/feld';
+import { ReferenzWahl, RefSuche } from '../../shared/formular/referenz-wahl';
 import { apiFehlerZuweisen } from '../../shared/formular/api-fehler';
 import {
   felderAlsBeruehrtMarkieren,
@@ -28,12 +31,14 @@ type Meldung = { art: 'erfolg' | 'fehler'; text: string };
 
 @Component({
   selector: 'app-aufgaben',
-  imports: [RouterLink, ReactiveFormsModule, KeinZugriff, Dialog, Bestaetigung, Feld],
+  imports: [RouterLink, ReactiveFormsModule, KeinZugriff, Dialog, Bestaetigung, Feld, ReferenzWahl],
   templateUrl: './aufgaben.html',
   styleUrl: './aufgaben.scss',
 })
 export class Aufgaben {
   private readonly svc = inject(AufgabeService);
+  private readonly projektSvc = inject(ProjektService);
+  private readonly partySvc = inject(PartyService);
   private readonly auth = inject(AuthService);
   private readonly fb = inject(FormBuilder);
 
@@ -54,19 +59,64 @@ export class Aufgaben {
   // --- Rechte (nur UI-Sichtbarkeit; der Server setzt sie durch) -----------
   protected readonly darfAnlegen = computed(() => this.auth.darf('workflow', 'ANLEGEN'));
   protected readonly darfAendern = computed(() => this.auth.darf('workflow', 'AENDERN'));
+  /**
+   * Darf der Akteur eine Aufgabe einer ANDEREN Person zuweisen? Nur bei
+   * row_scope 'ALLE' im Modul workflow. Wer nur 'EIGENE' hat (Monteur), sieht
+   * die Zuweisungs-Auswahl gar nicht — der Server erzwingt ihn ohnehin als
+   * Eigentümer. Reine Kosmetik; die Wahrheit liegt beim Server (403).
+   */
+  protected readonly darfZuweisen = computed(() => this.workflowScope('LESEN') === 'ALLE');
 
-  // --- Anlage-Dialog ------------------------------------------------------
-  protected readonly neuOffen = signal(false);
-  protected readonly neuLaedt = signal(false);
+  private workflowScope(action: string): string | null {
+    const u = this.auth.user();
+    const p = u?.permissions.find((x) => x.module === 'workflow' && x.action === action);
+    return p?.row_scope ?? null;
+  }
+
+  // --- Referenz-Suchen (Serversuche für die Combobox) ---------------------
+  protected readonly projektSuche: RefSuche = (q) =>
+    this.projektSvc.list({ page: 1, page_size: 20, q }).pipe(
+      map((p) => p.items.map((o) => ({ id: o.id, label: o.name, sub: o.project_number }))),
+    );
+  protected readonly parteiSuche: RefSuche = (q) =>
+    this.partySvc.list({ page: 1, page_size: 20, q }).pipe(
+      map((p) => p.items.map((o) => ({ id: o.id, label: o.display_name }))),
+    );
+  protected readonly nutzerSuche: RefSuche = (q) =>
+    this.svc.listAssignableUsers(q).pipe(
+      map((users) => users.map((u) => ({ id: u.id, label: u.display_name }))),
+    );
+
+  // --- Anlage-/Bearbeiten-Dialog ------------------------------------------
+  /** null = zu, 'neu' = anlegen, sonst die ID der bearbeiteten Aufgabe. */
+  protected readonly dialogModus = signal<'neu' | string | null>(null);
+  /** Die gerade bearbeitete Aufgabe (für die Anzeige der aktuellen Bezüge). */
+  protected readonly bearbeitenTask = signal<Task | null>(null);
+  protected readonly dialogLaedt = signal(false);
   protected readonly formularMeldung = signal<string | null>(null);
-  protected readonly neuForm = this.fb.group({
+  /** aria-live-Bestätigung nach „Speichern und neu" (Dialog bleibt offen). */
+  protected readonly neuNochmalMeldung = signal<string | null>(null);
+  protected readonly form = this.fb.group({
     title: this.fb.control('', {
       nonNullable: true,
       validators: [Validators.required, Validators.maxLength(200)],
     }),
     description: this.fb.control('', { nonNullable: true }),
     due_date: this.fb.control('', { nonNullable: true }),
+    assigned_to_user_id: this.fb.control('', { nonNullable: true }),
+    project_id: this.fb.control('', { nonNullable: true }),
+    party_id: this.fb.control('', { nonNullable: true }),
   });
+
+  private readonly dialogForm = viewChild<ElementRef<HTMLElement>>('dialogForm');
+
+  protected readonly istBearbeiten = computed(() => {
+    const m = this.dialogModus();
+    return m !== null && m !== 'neu';
+  });
+  protected readonly dialogTitel = computed(() =>
+    this.istBearbeiten() ? 'Aufgabe bearbeiten' : 'Neue Aufgabe',
+  );
 
   // --- Zeilen-Aktionen ----------------------------------------------------
   protected readonly meldung = signal<Meldung | null>(null);
@@ -151,46 +201,168 @@ export class Aufgaben {
       });
   }
 
-  // ---- Anlegen ------------------------------------------------------------
+  // ---- Dialog öffnen/schließen -------------------------------------------
+  private formLeeren(): void {
+    this.form.reset({
+      title: '',
+      description: '',
+      due_date: '',
+      assigned_to_user_id: '',
+      project_id: '',
+      party_id: '',
+    });
+  }
+
   neuOeffnen(): void {
-    this.neuForm.reset({ title: '', description: '', due_date: '' });
+    this.formLeeren();
     this.formularMeldung.set(null);
-    this.neuOffen.set(true);
+    this.neuNochmalMeldung.set(null);
+    this.bearbeitenTask.set(null);
+    this.dialogModus.set('neu');
+    this.titelFokus();
   }
 
-  neuSchliessen(): void {
-    if (this.neuLaedt()) return;
-    this.neuOffen.set(false);
+  bearbeitenOeffnen(t: Task): void {
+    // Nur die direkt sichtbaren Felder werden vorbelegt. Die Referenz-Comboboxen
+    // bleiben LEER: eine leere Combobox = „nicht ändern" (das Feld wird dann gar
+    // nicht mitgeschickt, der Server behält den Bezug via exclude_unset). Der
+    // aktuelle Bezug wird als Kontextzeile angezeigt; eine Auswahl ersetzt ihn.
+    this.form.reset({
+      title: t.title,
+      description: t.description ?? '',
+      due_date: t.due_date ?? '',
+      assigned_to_user_id: '',
+      project_id: '',
+      party_id: '',
+    });
+    this.formularMeldung.set(null);
+    this.neuNochmalMeldung.set(null);
+    this.bearbeitenTask.set(t);
+    this.dialogModus.set(t.id);
   }
 
-  neuAbsenden(): void {
-    if (this.neuLaedt()) return;
-    serverFehlerZuruecksetzen(this.neuForm);
-    this.formularMeldung.set(null);
-    felderAlsBeruehrtMarkieren(this.neuForm);
-    if (this.neuForm.invalid) return;
+  dialogSchliessen(): void {
+    if (this.dialogLaedt()) return;
+    this.dialogModus.set(null);
+    this.bearbeitenTask.set(null);
+  }
 
-    const v = this.neuForm.getRawValue();
+  private titelFokus(): void {
+    queueMicrotask(() => {
+      const feld = this.dialogForm()?.nativeElement.querySelector<HTMLInputElement>('input');
+      feld?.focus();
+    });
+  }
+
+  /** Anlage-Payload: leere optionale Felder werden zu null (= kein Bezug). */
+  private createPayload(): TaskCreate {
+    const v = this.form.getRawValue();
     const payload: TaskCreate = {
       title: v.title.trim(),
       description: v.description.trim() || null,
       due_date: v.due_date || null,
+      project_id: v.project_id || null,
+      party_id: v.party_id || null,
     };
+    // Zuweisung nur mitschicken, wenn der Akteur fremd zuweisen darf. Sonst
+    // erzwingt der Server ohnehin den Akteur als Eigentümer.
+    if (this.darfZuweisen()) {
+      payload.assigned_to_user_id = v.assigned_to_user_id || null;
+    }
+    return payload;
+  }
 
-    this.neuLaedt.set(true);
+  /**
+   * Bearbeiten-Payload: die sichtbaren Felder (Titel/Beschreibung/Fälligkeit)
+   * werden immer geschickt. Referenzen NUR, wenn in der Combobox etwas gewählt
+   * wurde — eine leere Combobox lässt den bestehenden Bezug unangetastet
+   * (Server: exclude_unset). So ersetzt eine Auswahl den Bezug, ohne dass ein
+   * versehentlich leeres Feld ihn löscht.
+   */
+  private updatePayload(): TaskUpdate {
+    const v = this.form.getRawValue();
+    const payload: TaskUpdate = {
+      title: v.title.trim(),
+      description: v.description.trim() || null,
+      due_date: v.due_date || null,
+    };
+    if (v.project_id) payload.project_id = v.project_id;
+    if (v.party_id) payload.party_id = v.party_id;
+    if (this.darfZuweisen() && v.assigned_to_user_id) {
+      payload.assigned_to_user_id = v.assigned_to_user_id;
+    }
+    return payload;
+  }
+
+  private formGueltig(): boolean {
+    serverFehlerZuruecksetzen(this.form);
+    this.formularMeldung.set(null);
+    felderAlsBeruehrtMarkieren(this.form);
+    return this.form.valid;
+  }
+
+  // ---- Anlegen ------------------------------------------------------------
+  /** Speichert und schließt den Dialog. */
+  neuAbsenden(): void {
+    this.anlegen(false);
+  }
+
+  /** Speichert und lässt den Dialog für die nächste Aufgabe offen. */
+  neuUndWeiter(): void {
+    this.anlegen(true);
+  }
+
+  private anlegen(undWeiter: boolean): void {
+    if (this.dialogLaedt() || !this.formGueltig()) return;
+    const payload = this.createPayload();
+
+    this.dialogLaedt.set(true);
     this.svc.create(payload).subscribe({
       next: () => {
-        this.neuLaedt.set(false);
-        this.neuOffen.set(false);
-        this.meldung.set({ art: 'erfolg', text: `Aufgabe „${payload.title}“ wurde angelegt.` });
+        this.dialogLaedt.set(false);
         this.page.set(1);
+        this.fetch();
+        if (undWeiter) {
+          this.formLeeren();
+          this.neuNochmalMeldung.set(`Aufgabe „${payload.title}“ angelegt. Nächste erfassen.`);
+          this.titelFokus();
+        } else {
+          this.dialogModus.set(null);
+          this.meldung.set({ art: 'erfolg', text: `Aufgabe „${payload.title}“ wurde angelegt.` });
+        }
+      },
+      error: (err) => {
+        this.dialogLaedt.set(false);
+        this.formularMeldung.set(apiFehlerZuweisen(err, this.form).formular);
+      },
+    });
+  }
+
+  // ---- Bearbeiten ---------------------------------------------------------
+  bearbeitenAbsenden(): void {
+    const id = this.dialogModus();
+    if (id === null || id === 'neu' || this.dialogLaedt() || !this.formGueltig()) return;
+    const payload = this.updatePayload();
+
+    this.dialogLaedt.set(true);
+    this.svc.update(id, payload).subscribe({
+      next: () => {
+        this.dialogLaedt.set(false);
+        this.dialogModus.set(null);
+        this.bearbeitenTask.set(null);
+        this.meldung.set({ art: 'erfolg', text: `Aufgabe „${payload.title}“ wurde gespeichert.` });
         this.fetch();
       },
       error: (err) => {
-        this.neuLaedt.set(false);
-        this.formularMeldung.set(apiFehlerZuweisen(err, this.neuForm).formular);
+        this.dialogLaedt.set(false);
+        this.formularMeldung.set(apiFehlerZuweisen(err, this.form).formular);
       },
     });
+  }
+
+  dialogAbsenden(): void {
+    if (this.istBearbeiten()) this.bearbeitenAbsenden();
+    else this.neuAbsenden();
   }
 
   // ---- Zeilen-Aktionen ----------------------------------------------------

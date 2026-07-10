@@ -341,3 +341,15 @@
     transform: translateX(100%);
   }
 }
+
+// Kontextzeile im Bearbeiten-Dialog: zeigt den aktuellen Bezug an, den eine
+// neue Auswahl in der darunterliegenden Combobox ersetzt.
+.ref-aktuell {
+  margin: 0 0 0.25rem;
+  font-size: 0.85rem;
+  color: var(--text-muted, #5b6b78);
+
+  strong {
+    color: var(--text, inherit);
+  }
+}

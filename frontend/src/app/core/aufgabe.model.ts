@@ -45,6 +45,23 @@ export interface TaskCreate {
   party_id?: string | null;
 }
 
+// Bearbeiten-Payload zu PATCH /api/workflow/tasks/{id}. Nur gesendete Felder
+// werden geändert (Server: exclude_unset). `null` löscht eine Zuordnung.
+export interface TaskUpdate {
+  title?: string;
+  description?: string | null;
+  due_date?: string | null;
+  assigned_to_user_id?: string | null;
+  project_id?: string | null;
+  party_id?: string | null;
+}
+
+// Schlanke Zuweisungs-Auswahlliste (GET /api/planung/users): nur id + Name.
+export interface AssignableUser {
+  id: string;
+  display_name: string;
+}
+
 export interface TaskQuery {
   page: number;
   page_size: number;

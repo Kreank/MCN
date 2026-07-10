@@ -12,7 +12,7 @@ from ninja.errors import HttpError
 from ninja.responses import Status
 from ninja.security import django_auth
 
-from api.permissions import require_create, require_scoped
+from api.permissions import require_scoped
 from db_core.models import Task
 from db_core.services import aufgabe as aufgabe_service
 
@@ -59,6 +59,17 @@ class TaskListOut(Schema):
 
 class TaskIn(Schema):
     title: str
+    description: str | None = None
+    due_date: date | None = None
+    assigned_to_user_id: UUID | None = None
+    project_id: UUID | None = None
+    party_id: UUID | None = None
+
+
+class TaskUpdate(Schema):
+    """Bearbeiten: nur die tatsächlich gesendeten Felder werden geändert
+    (`exclude_unset`). Statuswechsel läuft NICHT hierüber."""
+    title: str | None = None
     description: str | None = None
     due_date: date | None = None
     assigned_to_user_id: UUID | None = None
@@ -226,6 +237,46 @@ def create_task(request, payload: TaskIn):
     except ValueError as exc:
         raise HttpError(422, str(exc))
     return Status(201, _reload(task.id))
+
+
+@router.patch("/tasks/{task_id}", response=TaskOut, auth=django_auth)
+def update_task(request, task_id: UUID, payload: TaskUpdate):
+    """Aufgabe bearbeiten (Titel/Beschreibung/Fälligkeit/Zuweisung/Projekt/Kontakt).
+
+    Rechte exakt wie `create_task`: `require_scoped` auf workflow/AENDERN, und bei
+    Scope EIGENE …
+      * … ist nur die dem Akteur zugewiesene Aufgabe zugänglich (`_guard_own_task`
+        → fremde/nicht existierende Aufgabe = 404, verrät die Existenz nicht);
+      * … darf die Aufgabe nicht an eine andere Person umgehängt werden — eine
+        fremde Zuweisung wird abgelehnt (403), eine leere Zuweisung fällt auf den
+        Akteur zurück (er würde sich sonst selbst aus dem Sichtfeld schreiben).
+
+    Nur gesendete Felder werden geändert (`exclude_unset`). Statuswechsel bleibt
+    den eigenen Endpunkten vorbehalten. Unbekannte Fremdschlüssel → 422.
+    """
+    actor, scope = require_scoped(request, "workflow", "AENDERN")
+    _guard_own_task(task_id, actor, scope)
+    if scope != "EIGENE" and not Task.objects.filter(id=task_id).exists():
+        # Bei EIGENE hat _guard_own_task schon 404 geworfen; bei ALLE fehlt die
+        # Existenzprüfung, sonst würde ein fehlender Satz als 422 durchschlagen.
+        raise HttpError(404, "Aufgabe nicht gefunden.")
+
+    data = payload.dict(exclude_unset=True)
+    if scope == "EIGENE" and "assigned_to_user_id" in data:
+        assigned = data["assigned_to_user_id"]
+        if assigned not in (None, actor):
+            raise HttpError(
+                403,
+                "Ihre Rolle erlaubt nur eigene Datensätze; eine Aufgabe kann "
+                "nicht einer anderen Person zugewiesen werden.",
+            )
+        data["assigned_to_user_id"] = actor
+
+    try:
+        aufgabe_service.update_task(actor, task_id, **data)
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _reload(task_id)
 
 
 @router.post("/tasks/{task_id}/complete", response=TaskOut, auth=django_auth)

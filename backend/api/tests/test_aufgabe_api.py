@@ -118,3 +118,139 @@ def test_complete_404(client, db):
     c = _logged_in_client(client, with_app_user=True)
     r = c.post(f"/api/workflow/tasks/{uuid.uuid4()}/complete")
     assert r.status_code == 404
+
+
+# --- Bearbeiten (PATCH) ----------------------------------------------------
+
+@pytest.mark.django_db
+def test_patch_aendert_felder(admin_client, seeded):
+    task = seeded["open"]
+    r = admin_client.patch(
+        f"/api/workflow/tasks/{task.id}",
+        data={
+            "title": "Neuer Titel",
+            "description": "Frische Beschreibung",
+            "due_date": "2026-12-24",
+        },
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    body = r.json()
+    assert body["title"] == "Neuer Titel"
+    assert body["description"] == "Frische Beschreibung"
+    assert body["due_date"] == "2026-12-24"
+    task.refresh_from_db()
+    assert task.title == "Neuer Titel"
+
+
+@pytest.mark.django_db
+def test_patch_nur_gesendete_felder(admin_client, seeded):
+    """exclude_unset: ein nicht gesendetes Feld bleibt unverändert."""
+    task = seeded["open"]
+    original_project = task.project_id
+    r = admin_client.patch(
+        f"/api/workflow/tasks/{task.id}",
+        data={"title": "Nur Titel geändert"},
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    task.refresh_from_db()
+    assert task.title == "Nur Titel geändert"
+    # Projektbezug (nicht gesendet) unangetastet.
+    assert task.project_id == original_project
+
+
+@pytest.mark.django_db
+def test_patch_setzt_zuweisung_und_kontakt(admin_client, seeded):
+    from db_core.services import identity as identity_service
+
+    empf = AppUser.objects.create(
+        id=uuid.uuid4(), display_name="Empfänger", status="ACTIVE", version=1
+    )
+    partei = identity_service.create_person(
+        seeded["app_user"].id, first_name="Klara", last_name="Kontakt"
+    )
+    task = seeded["open"]
+    r = admin_client.patch(
+        f"/api/workflow/tasks/{task.id}",
+        data={
+            "assigned_to_user_id": str(empf.id),
+            "party_id": str(partei.id),
+        },
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    body = r.json()
+    assert body["assigned_to"]["id"] == str(empf.id)
+    assert body["party"]["id"] == str(partei.id)
+
+
+@pytest.mark.django_db
+def test_patch_unbekannter_benutzer_422(admin_client, seeded):
+    task = seeded["open"]
+    r = admin_client.patch(
+        f"/api/workflow/tasks/{task.id}",
+        data={"assigned_to_user_id": str(uuid.uuid4())},
+        content_type="application/json",
+    )
+    assert r.status_code == 422, r.content
+
+
+@pytest.mark.django_db
+def test_patch_unbekanntes_projekt_422(admin_client, seeded):
+    task = seeded["open"]
+    r = admin_client.patch(
+        f"/api/workflow/tasks/{task.id}",
+        data={"project_id": str(uuid.uuid4())},
+        content_type="application/json",
+    )
+    assert r.status_code == 422, r.content
+
+
+@pytest.mark.django_db
+def test_patch_leerer_titel_422(admin_client, seeded):
+    task = seeded["open"]
+    r = admin_client.patch(
+        f"/api/workflow/tasks/{task.id}",
+        data={"title": "  "},
+        content_type="application/json",
+    )
+    assert r.status_code == 422, r.content
+
+
+@pytest.mark.django_db
+def test_patch_404_auf_unbekannter_aufgabe(admin_client, db):
+    r = admin_client.patch(
+        f"/api/workflow/tasks/{uuid.uuid4()}",
+        data={"title": "Egal"},
+        content_type="application/json",
+    )
+    assert r.status_code == 404, r.content
+
+
+@pytest.mark.django_db
+def test_patch_beruehrt_status_nicht(admin_client, seeded):
+    """Bearbeiten ist kein Statuswechsel: eine erledigte Aufgabe bleibt erledigt."""
+    task = seeded["done"]
+    task.refresh_from_db()
+    assert task.status == "ERLEDIGT"
+    r = admin_client.patch(
+        f"/api/workflow/tasks/{task.id}",
+        data={"title": "Titel trotz erledigt geändert"},
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    assert r.json()["status"] == "ERLEDIGT"
+    task.refresh_from_db()
+    assert task.status == "ERLEDIGT"
+    assert task.completed_at is not None
+
+
+@pytest.mark.django_db
+def test_patch_ohne_login_abgelehnt(anonymous_client, seeded):
+    r = anonymous_client.patch(
+        f"/api/workflow/tasks/{seeded['open'].id}",
+        data={"title": "Anon"},
+        content_type="application/json",
+    )
+    assert r.status_code in (401, 403)

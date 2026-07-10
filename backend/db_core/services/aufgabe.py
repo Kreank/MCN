@@ -46,6 +46,65 @@ def create_task(
     return task
 
 
+#: Sentinel für „Feld nicht übergeben" — trennt „nicht gesetzt" von „auf None
+#: gesetzt" (Löschen einer optionalen Zuordnung). Die API reicht nur die
+#: tatsächlich übergebenen Felder durch (exclude_unset).
+_UNSET = object()
+
+
+def update_task(
+    actor_app_user_id,
+    task_id,
+    *,
+    title=_UNSET,
+    description=_UNSET,
+    due_date=_UNSET,
+    assigned_to_user_id=_UNSET,
+    project_id=_UNSET,
+    party_id=_UNSET,
+):
+    """Ändert die inhaltlichen Felder einer Aufgabe — nur die übergebenen.
+
+    Ausdrücklich KEIN Statuswechsel: Erledigen/Verwerfen/Wiederöffnen laufen über
+    die eigenen Funktionen (mit ihrer completed_by/at-Konsistenz). Ein nicht
+    übergebenes Feld (`_UNSET`) bleibt unverändert; `None` löscht eine optionale
+    Zuordnung. Unbekannte Fremdschlüssel → ValueError (die API übersetzt in 422).
+    """
+    if title is not _UNSET and (not title or not title.strip()):
+        raise ValueError("title darf nicht leer sein.")
+    if assigned_to_user_id is not _UNSET:
+        ensure_exists(AppUser, assigned_to_user_id, "Benutzer")
+    if project_id is not _UNSET:
+        ensure_exists(Project, project_id, "Projekt")
+    if party_id is not _UNSET:
+        ensure_party_usable(party_id, "Kontakt")
+
+    with business_transaction(actor_app_user_id):
+        task = _load(task_id)
+        update_fields = []
+        if title is not _UNSET:
+            task.title = title.strip()
+            update_fields.append("title")
+        if description is not _UNSET:
+            task.description = description
+            update_fields.append("description")
+        if due_date is not _UNSET:
+            task.due_date = due_date
+            update_fields.append("due_date")
+        if assigned_to_user_id is not _UNSET:
+            task.assigned_to_id = assigned_to_user_id
+            update_fields.append("assigned_to")
+        if project_id is not _UNSET:
+            task.project_id = project_id
+            update_fields.append("project")
+        if party_id is not _UNSET:
+            task.party_id = party_id
+            update_fields.append("party")
+        if update_fields:
+            task.save(update_fields=update_fields)
+    return task
+
+
 def _load(task_id):
     task = Task.objects.filter(id=task_id).first()
     if task is None:

@@ -126,6 +126,98 @@ def test_administration_darf_weiterhin_fremd_zuweisen():
 
 
 @pytest.mark.django_db
+def test_monteur_darf_eigene_aufgabe_bearbeiten():
+    creator = make_app_user("Dispo")
+    client, monteur = _monteur_client()
+    task = aufgabe_service.create_task(
+        creator.id, title="Meine", assigned_to_user_id=monteur.id
+    )
+    r = client.patch(
+        f"/api/workflow/tasks/{task.id}",
+        data={"title": "Von mir umbenannt"},
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    assert r.json()["title"] == "Von mir umbenannt"
+    # Weiterhin sich selbst zugewiesen — bleibt im Sichtfeld.
+    assert r.json()["assigned_to"]["id"] == str(monteur.id)
+
+
+@pytest.mark.django_db
+def test_monteur_kann_eigene_aufgabe_nicht_fremd_zuweisen():
+    """PATCH spiegelt create_task: Umhängen auf eine fremde Person → 403."""
+    creator = make_app_user("Dispo")
+    fremd = make_app_user("Fremde Person")
+    client, monteur = _monteur_client()
+    task = aufgabe_service.create_task(
+        creator.id, title="Meine", assigned_to_user_id=monteur.id
+    )
+    r = client.patch(
+        f"/api/workflow/tasks/{task.id}",
+        data={"assigned_to_user_id": str(fremd.id)},
+        content_type="application/json",
+    )
+    assert r.status_code == 403, r.content
+    assert "andere" in r.json()["detail"].lower()
+    # Zuweisung unverändert (kein stiller Wegschreiben).
+    task.refresh_from_db()
+    assert task.assigned_to_id == monteur.id
+
+
+@pytest.mark.django_db
+def test_monteur_leere_zuweisung_faellt_auf_akteur():
+    """Leert der Monteur die Zuweisung, wird er selbst wieder Eigentümer."""
+    creator = make_app_user("Dispo")
+    client, monteur = _monteur_client()
+    task = aufgabe_service.create_task(
+        creator.id, title="Meine", assigned_to_user_id=monteur.id
+    )
+    r = client.patch(
+        f"/api/workflow/tasks/{task.id}",
+        data={"assigned_to_user_id": None},
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    assert r.json()["assigned_to"]["id"] == str(monteur.id)
+
+
+@pytest.mark.django_db
+def test_monteur_kann_fremde_aufgabe_nicht_bearbeiten():
+    """Fremde Aufgabe → 404 (Existenz nicht verraten), nicht 403."""
+    creator = make_app_user("Dispo")
+    fremd = make_app_user("Fremder Monteur")
+    client, _monteur = _monteur_client()
+    task = aufgabe_service.create_task(
+        creator.id, title="Fremde", assigned_to_user_id=fremd.id
+    )
+    r = client.patch(
+        f"/api/workflow/tasks/{task.id}",
+        data={"title": "Heimlich geändert"},
+        content_type="application/json",
+    )
+    assert r.status_code == 404, r.content
+    assert "nicht gefunden" in r.json()["detail"].lower()
+    task.refresh_from_db()
+    assert task.title == "Fremde"
+
+
+@pytest.mark.django_db
+def test_administration_darf_aufgabe_fremd_umhaengen():
+    """Gegenprobe: Scope ALLE darf per PATCH an eine andere Person zuweisen."""
+    creator = make_app_user("Dispo")
+    empf = make_app_user("Empfänger")
+    client, _admin = _admin_client()
+    task = aufgabe_service.create_task(creator.id, title="Delegierbar")
+    r = client.patch(
+        f"/api/workflow/tasks/{task.id}",
+        data={"assigned_to_user_id": str(empf.id)},
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    assert r.json()["assigned_to"]["id"] == str(empf.id)
+
+
+@pytest.mark.django_db
 def test_monteur_darf_eigene_aufgabe_abschliessen():
     creator = make_app_user("Dispo")
     client, monteur = _monteur_client()

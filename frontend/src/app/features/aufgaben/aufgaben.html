@@ -140,6 +140,14 @@
 
               @if (darfAendern()) {
                 <span class="row__aktionen">
+                  <button
+                    type="button"
+                    class="mini"
+                    [disabled]="aktionBusyId() === t.id"
+                    (click)="bearbeitenOeffnen(t)"
+                  >
+                    Bearbeiten
+                  </button>
                   @if (t.status === 'OFFEN') {
                     <button
                       type="button"
@@ -182,9 +190,19 @@
     }
   }
 
-  <!-- ------------------------------ Anlage-Dialog ------------------------- -->
-  <app-dialog [offen]="neuOffen()" titel="Neue Aufgabe" (schliessen)="neuSchliessen()">
-    <form id="neu-aufgabe-form" class="dialog-form" (submit)="$event.preventDefault(); neuAbsenden()" novalidate>
+  <!-- --------------------- Anlage-/Bearbeiten-Dialog ---------------------- -->
+  <app-dialog
+    [offen]="dialogModus() !== null"
+    [titel]="dialogTitel()"
+    (schliessen)="dialogSchliessen()"
+  >
+    <form
+      #dialogForm
+      id="aufgabe-form"
+      class="dialog-form"
+      (submit)="$event.preventDefault(); dialogAbsenden()"
+      novalidate
+    >
       @if (formularMeldung(); as fm) {
         <div class="melde melde--fehler" role="alert">
           <span class="melde__mark" aria-hidden="true">!</span>
@@ -192,39 +210,103 @@
         </div>
       }
 
+      @if (neuNochmalMeldung(); as nm) {
+        <div class="melde melde--erfolg" role="status">
+          <span class="melde__mark" aria-hidden="true">✓</span>
+          <span class="melde__text">{{ nm }}</span>
+        </div>
+      }
+
       <app-feld
-        [control]="neuForm.controls.title"
+        [control]="form.controls.title"
         label="Titel"
         [pflicht]="true"
         platzhalter="Kurz und eindeutig"
       />
       <app-feld
-        [control]="neuForm.controls.description"
+        [control]="form.controls.description"
         label="Beschreibung"
         typ="textarea"
         hinweis="Optionale Details zur Aufgabe."
       />
       <app-feld
-        [control]="neuForm.controls.due_date"
+        [control]="form.controls.due_date"
         label="Fälligkeit"
         typ="datum"
         hinweis="Optional."
       />
+
+      @if (darfZuweisen()) {
+        @if (istBearbeiten() && bearbeitenTask()?.assigned_to; as a) {
+          <p class="ref-aktuell">Aktuell zugewiesen: <strong>{{ a.display_name }}</strong> — eine Auswahl ersetzt die Zuweisung.</p>
+        }
+        <app-referenz-wahl
+          [control]="form.controls.assigned_to_user_id"
+          label="Zugewiesen an"
+          [suche]="nutzerSuche"
+          [hinweis]="istBearbeiten() ? 'Leer lassen = unverändert.' : 'Optional. Ohne Auswahl bleibt die Aufgabe ohne Zuständigen.'"
+          platzhalter="Person suchen …"
+          leerText="Keine passende Person."
+        />
+      }
+      @if (istBearbeiten() && bearbeitenTask()?.project; as p) {
+        <p class="ref-aktuell">Aktuelles Projekt: <strong>{{ p.name }}</strong> ({{ p.project_number }}) — eine Auswahl ersetzt den Bezug.</p>
+      }
+      <app-referenz-wahl
+        [control]="form.controls.project_id"
+        label="Projekt"
+        [suche]="projektSuche"
+        [hinweis]="istBearbeiten() ? 'Leer lassen = unverändert.' : 'Optionaler Projektbezug.'"
+        platzhalter="Projekt suchen …"
+        leerText="Kein passendes Projekt."
+      />
+      @if (istBearbeiten() && bearbeitenTask()?.party; as k) {
+        <p class="ref-aktuell">Aktueller Kontakt: <strong>{{ k.display_name }}</strong> — eine Auswahl ersetzt den Bezug.</p>
+      }
+      <app-referenz-wahl
+        [control]="form.controls.party_id"
+        label="Kontakt"
+        [suche]="parteiSuche"
+        [hinweis]="istBearbeiten() ? 'Leer lassen = unverändert.' : 'Optionaler Kontaktbezug.'"
+        platzhalter="Kontakt suchen …"
+        leerText="Kein passender Kontakt."
+      />
     </form>
 
     <div dialog-aktionen class="dialog__aktionen">
-      <button type="button" class="btn" [disabled]="neuLaedt()" (click)="neuSchliessen()">
+      <button type="button" class="btn" [disabled]="dialogLaedt()" (click)="dialogSchliessen()">
         Abbrechen
       </button>
-      <button
-        type="submit"
-        form="neu-aufgabe-form"
-        class="btn btn--primary"
-        [disabled]="neuLaedt()"
-        [attr.aria-busy]="neuLaedt()"
-      >
-        {{ neuLaedt() ? 'Wird angelegt …' : 'Aufgabe anlegen' }}
-      </button>
+      @if (istBearbeiten()) {
+        <button
+          type="submit"
+          form="aufgabe-form"
+          class="btn btn--primary"
+          [disabled]="dialogLaedt()"
+          [attr.aria-busy]="dialogLaedt()"
+        >
+          {{ dialogLaedt() ? 'Wird gespeichert …' : 'Speichern' }}
+        </button>
+      } @else {
+        <button
+          type="button"
+          class="btn"
+          [disabled]="dialogLaedt()"
+          [attr.aria-busy]="dialogLaedt()"
+          (click)="neuUndWeiter()"
+        >
+          Speichern und neu
+        </button>
+        <button
+          type="submit"
+          form="aufgabe-form"
+          class="btn btn--primary"
+          [disabled]="dialogLaedt()"
+          [attr.aria-busy]="dialogLaedt()"
+        >
+          {{ dialogLaedt() ? 'Wird angelegt …' : 'Aufgabe anlegen' }}
+        </button>
+      }
     </div>
   </app-dialog>
 
