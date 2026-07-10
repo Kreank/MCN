@@ -297,3 +297,72 @@ def test_arbeitszeit_wird_je_abschnitt_summiert(app_user):
     )
     k = beleg_service.quote_kalkulation(q.id)
     assert k["abschnitte"][0]["arbeitszeit"] == Decimal("3.500")
+
+
+# --- Bearbeiten des Entwurfs ------------------------------------------------
+
+@pytest.mark.django_db
+def test_update_quote_ersetzt_positionen_und_abschnitte(app_user):
+    obj = _property(app_user)
+    q = beleg_service.create_quote(
+        app_user.id, property_id=obj.id, title="Erst",
+        rubriken=[{"title": "Alt"}],
+        lines=[_mat("Alte Position", 1, 10, rubrik=1)],
+    )
+    beleg_service.update_quote(
+        app_user.id, quote_id=q.id, title="Dann",
+        rubriken=[{"title": "Neu A"}, {"title": "Neu B"}],
+        lines=[_mat("Neue Position", 2, 25, rubrik=2)],
+    )
+    q.refresh_from_db()
+    assert q.title == "Dann"
+    assert q.net_total == Decimal("50.00")
+    assert [r.title for r in sorted(q.rubriken.all(), key=lambda r: r.position_number)] == [
+        "Neu A", "Neu B"
+    ]
+    zeilen = list(q.lines.all())
+    assert len(zeilen) == 1
+    assert zeilen[0].description == "Neue Position"
+    assert zeilen[0].rubrik.title == "Neu B"
+
+
+@pytest.mark.django_db
+def test_update_quote_nach_versand_verboten(app_user):
+    """Ab VERSENDET friert die DB den Beleg ein (B-30) — der Service sagt es klar."""
+    obj = _property(app_user)
+    q = beleg_service.create_quote(
+        app_user.id, property_id=obj.id, title="Versandt", quote_date="2026-07-01",
+        lines=[_mat("A", 1, 100)],
+    )
+    beleg_service.send_quote(app_user.id, quote_id=q.id)
+    with pytest.raises(ValueError, match="unveränderlich"):
+        beleg_service.update_quote(app_user.id, quote_id=q.id, title="Doch nicht")
+
+
+@pytest.mark.django_db
+def test_update_quote_nur_kopf_laesst_positionen_stehen(app_user):
+    obj = _property(app_user)
+    q = beleg_service.create_quote(
+        app_user.id, property_id=obj.id, title="Kopf",
+        lines=[_mat("Bleibt", 1, 10)],
+    )
+    beleg_service.update_quote(app_user.id, quote_id=q.id, title="Neuer Titel")
+    q.refresh_from_db()
+    assert q.title == "Neuer Titel"
+    assert [line.description for line in q.lines.all()] == ["Bleibt"]
+    assert q.net_total == Decimal("10.00")
+
+
+@pytest.mark.django_db
+def test_update_quote_position_ohne_abschnitt_fail_loud(app_user):
+    """Werden Positionen ersetzt, ohne die Abschnitte mitzuschicken, zeigt eine
+    Position ins Leere — das muss auffallen, nicht still passieren."""
+    obj = _property(app_user)
+    q = beleg_service.create_quote(
+        app_user.id, property_id=obj.id, title="X",
+        rubriken=[{"title": "Dach"}], lines=[_mat("A", 1, 10, rubrik=1)],
+    )
+    with pytest.raises(ValueError, match="Abschnitt 1 existiert nicht"):
+        beleg_service.update_quote(
+            app_user.id, quote_id=q.id, lines=[_mat("A", 1, 10, rubrik=1)],
+        )

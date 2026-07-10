@@ -1,0 +1,508 @@
+:host {
+  display: block;
+}
+
+.editor {
+  max-width: 78rem;
+  margin: 0 auto;
+  // Platz, damit die sticky Kalkulationsleiste den Inhalt nicht verdeckt.
+  padding-bottom: var(--space-6);
+}
+
+// ============================== Kopf ========================================
+.ed-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+.ed-head__kicker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+}
+.ed-head__titel {
+  font-size: var(--step-3);
+}
+.ed-head__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 0;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+.ed-head__nr {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--ink);
+}
+.ed-head__rechts {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+.ed-head__dirty {
+  border-color: color-mix(in srgb, var(--warn-ink) 55%, var(--line-strong));
+  color: var(--warn-ink);
+  background: var(--warn-tint);
+}
+.ed-head__gesichert {
+  font-size: 0.72rem;
+  color: var(--positive-ink);
+}
+
+.ed-melde {
+  margin-bottom: var(--space-4);
+}
+.ed-ro-hinweis {
+  margin-bottom: var(--space-5);
+  border-color: color-mix(in srgb, var(--warn-ink) 45%, var(--line-strong));
+  background: var(--warn-tint);
+}
+
+// ============================== Aktionsleiste ===============================
+.ed-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.ed-bar__spacer {
+  flex: 1;
+}
+.ed-hint {
+  margin: 0 0 var(--space-4);
+  font-size: var(--step--1);
+  color: var(--warn-ink);
+}
+
+// ============================== Kopffelder ==================================
+.ed-kopf {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  gap: var(--space-5);
+  margin-bottom: var(--space-6);
+  padding: var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.ed-kopf__datum {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+@media (max-width: 720px) {
+  .ed-kopf {
+    grid-template-columns: 1fr;
+    gap: var(--space-4);
+  }
+}
+
+// ============================== Arbeitsbereich ==============================
+.ed-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 20rem;
+  gap: var(--space-5);
+  align-items: start;
+}
+@media (max-width: 960px) {
+  .ed-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+// ------------------------------ Positionen ---------------------------------
+.ed-pos__kopf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+.ed-pos__titel {
+  font-size: var(--step-2);
+}
+.pos-scroll {
+  overflow-x: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.sektion {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.sektion--ohne {
+  background: var(--surface-sunken);
+  border-style: dashed;
+  border-color: var(--line-strong);
+}
+.sektion__kopf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--line);
+}
+.sektion__ident {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.sektion__nr {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--radius);
+  border: 1.5px solid color-mix(in srgb, var(--accent-ink) 45%, var(--line-strong));
+  color: var(--accent-ink);
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+.sektion__titel {
+  font-size: var(--step-1);
+}
+.sektion__titel--ohne {
+  font-size: var(--step-0);
+  color: var(--ink-muted);
+}
+.sektion__desc {
+  margin: var(--space-1) 0 0;
+  font-size: var(--step--1);
+}
+.sektion__akt {
+  flex: none;
+  display: flex;
+  gap: var(--space-2);
+}
+.sektion__leer {
+  margin: 0;
+  padding: var(--space-4);
+  font-size: var(--step--1);
+  color: var(--ink-faint);
+}
+
+// ------------------------------ Positionsliste -----------------------------
+.poslist {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.posrow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--paper);
+}
+.posrow--text {
+  border-left-color: var(--ink-faint);
+}
+// Neben-/Bedarfsposition: klar abgesetzt (gestrichelte Kontur + Stempel), nie nur Farbe.
+.posrow--neben {
+  border-left-style: dashed;
+  border-left-color: var(--accent-ink);
+  background: var(--surface-sunken);
+}
+.posrow__haupt {
+  min-width: 0;
+}
+.posrow__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.posrow__typ {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.posrow__desc {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.posrow__zahlen {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-1) 0 0;
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+.posrow__betrag {
+  text-align: right;
+  white-space: nowrap;
+}
+.posrow__net {
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+.posrow__net--neben {
+  color: var(--ink-muted);
+}
+.posrow__net--leer {
+  font-size: var(--step--1);
+  color: var(--ink-faint);
+}
+.posrow__akt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  justify-content: flex-end;
+}
+.posrow__secsel {
+  min-height: 34px;
+  max-width: 9rem;
+  font-size: var(--step--1);
+}
+
+@media (max-width: 620px) {
+  .posrow {
+    grid-template-columns: 1fr;
+  }
+  .posrow__betrag,
+  .posrow__akt {
+    justify-content: flex-start;
+    text-align: left;
+  }
+}
+
+// ------------------------------ Icon-Buttons -------------------------------
+.ibtn {
+  display: inline-grid;
+  place-items: center;
+  min-width: 34px;
+  min-height: 34px;
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+
+  &:hover:not(:disabled) {
+    border-color: var(--ink);
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+  &:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+}
+.ibtn--weg {
+  border-color: color-mix(in srgb, var(--warn-ink) 45%, var(--line-strong));
+  color: var(--warn-ink);
+
+  &:hover:not(:disabled) {
+    border-color: var(--warn-ink);
+  }
+}
+
+// ============================== Palette =====================================
+.palette {
+  position: sticky;
+  top: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.palette__titel {
+  font-size: var(--step-1);
+}
+.palette__seg {
+  display: flex;
+}
+.palette__seg .segment__btn {
+  flex: 1;
+}
+.palette__feld {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.palette__liste {
+  border-top: 1px solid var(--line);
+  padding-top: var(--space-3);
+  max-height: 26rem;
+  overflow-y: auto;
+}
+.palette__hinweis {
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--ink-faint);
+}
+.palette__hinweis--fehler {
+  color: var(--warn-ink);
+}
+.paloptions {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.paloption {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--paper);
+}
+.paloption__text {
+  flex: 1;
+  min-width: 0;
+}
+.paloption__z1 {
+  margin: 0;
+  font-size: var(--step--1);
+  overflow-wrap: anywhere;
+}
+.paloption__z2 {
+  margin: var(--space-1) 0 0;
+  color: var(--ink-faint);
+}
+.paloption__add {
+  flex: none;
+  min-height: 36px;
+  font-size: var(--step--1);
+}
+
+@media (max-width: 960px) {
+  .palette {
+    position: static;
+  }
+}
+
+// ============================== Kalkulationsleiste ==========================
+.kalk {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  margin-top: var(--space-6);
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  background: var(--command);
+  color: var(--on-command);
+  box-shadow: var(--shadow-2);
+}
+.kalk__scroll {
+  overflow-x: auto;
+}
+.kalk__tab {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--step--1);
+}
+.kalk__tab th,
+.kalk__tab td {
+  padding: var(--space-2) var(--space-4);
+  text-align: left;
+  white-space: nowrap;
+}
+.kalk__tab thead th {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--on-command-muted);
+  border-bottom: 1px solid var(--command-line);
+}
+.kalk__tab tbody tr + tr th,
+.kalk__tab tbody tr + tr td {
+  border-top: 1px solid var(--command-line);
+}
+.kalk__num {
+  text-align: right !important;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.kalk__name {
+  font-weight: 600;
+}
+.kalk__neben {
+  display: block;
+  margin-top: var(--space-1);
+  font-size: 0.62rem;
+  color: var(--on-command-muted);
+}
+.kalk__unbekannt {
+  color: var(--warn);
+}
+.kalk__hinw {
+  display: block;
+  font-size: 0.6rem;
+  color: var(--warn);
+}
+.kalk__gesamt th,
+.kalk__gesamt td {
+  border-top: 2px solid var(--accent) !important;
+  font-weight: 700;
+  color: var(--on-command);
+}
+
+// ============================== Dialoge =====================================
+.pos-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+@media (max-width: 520px) {
+  .pos-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.pos-markup {
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+}
+.pos-texthinweis {
+  margin: 0;
+  font-size: var(--step--1);
+}

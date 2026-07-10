@@ -395,3 +395,35 @@ def test_add_assembly_components_ohne_recht_403(client_with_role, seeded):
         content_type="application/json",
     )
     assert r.status_code == 403
+
+
+@pytest.mark.django_db
+def test_suche_blendet_inaktive_artikel_aus(admin_client, app_user):
+    """Ein deaktivierter Artikel darf nicht wieder im Angebot landen.
+
+    Gelöscht werden kann er nicht (trg_article_no_delete) — also muss die Suche
+    ihn ausblenden, sonst hat das Deaktivieren keine Wirkung.
+    """
+    from db_core.services import artikel as artikel_service
+
+    aktiv = artikel_service.create_article(
+        app_user.id, article_number="SUCH-AKTIV", description="Sichtbar", unit="Stk"
+    )
+    inaktiv = artikel_service.create_article(
+        app_user.id, article_number="SUCH-INAKTIV", description="Ausrangiert", unit="Stk"
+    )
+    artikel_service.set_article_status(
+        app_user.id, article_id=inaktiv.id, status="INAKTIV"
+    )
+
+    nummern = lambda r: {i["article_number"] for i in r.json()["items"]}
+
+    r = admin_client.get("/api/pricing/articles?q=SUCH-")
+    assert r.status_code == 200
+    assert nummern(r) == {"SUCH-AKTIV"}, "Inaktiver Artikel darf nicht erscheinen."
+
+    # Wer ihn ausdrücklich sehen will, bekommt ihn.
+    r2 = admin_client.get("/api/pricing/articles?q=SUCH-&status=INAKTIV")
+    assert nummern(r2) == {"SUCH-INAKTIV"}
+    r3 = admin_client.get("/api/pricing/articles?q=SUCH-&status=ALLE")
+    assert nummern(r3) == {"SUCH-AKTIV", "SUCH-INAKTIV"}

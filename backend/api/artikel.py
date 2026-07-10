@@ -125,7 +125,14 @@ def list_articles(
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=100),
 ):
-    """Artikel auflisten: Suche (Nummer/Beschreibung), Typ-/Statusfilter."""
+    """Artikel auflisten: Suche (Nummer/Beschreibung), Typ-/Statusfilter.
+
+    Standardmäßig nur AKTIVE Artikel. Ein Artikel wird nie gelöscht (GoBD,
+    `trg_article_no_delete`), sondern auf INAKTIV gesetzt — er darf dann aber auch
+    nicht mehr in der Suche auftauchen, sonst landet ausrangiertes Material
+    wieder im Angebot. Wer ihn ausdrücklich sehen will, fragt `status=INAKTIV`
+    oder `status=ALLE` an.
+    """
     require(request, "pricing", "LESEN")
     qs = Article.objects.all()
     if filters.q:
@@ -135,8 +142,12 @@ def list_articles(
         )
     if filters.line_type:
         qs = qs.filter(line_type=filters.line_type)
-    if filters.status:
+    if filters.status == "ALLE":
+        pass
+    elif filters.status:
         qs = qs.filter(status=filters.status)
+    else:
+        qs = qs.filter(status="AKTIV")
     qs = qs.order_by("article_number", "id")
 
     total = qs.count()

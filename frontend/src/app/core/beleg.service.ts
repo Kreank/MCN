@@ -7,10 +7,12 @@ import {
   InvoicePage,
   InvoicePartyCreate,
   InvoiceQuery,
+  Kalkulation,
   QuoteCreate,
   QuoteDetail,
   QuotePage,
   QuoteQuery,
+  QuoteUpdate,
 } from './beleg.model';
 
 /** Typisierter Zugriff auf die Beleg-API (dev-Proxy: /api -> :8000). */
@@ -35,6 +37,19 @@ export class BelegService {
     return this.http.get<QuoteDetail>(`${this.base}/${id}`);
   }
 
+  /**
+   * Interne Kalkulationsübersicht je Abschnitt (EK, Deckungsbeitrag, Marge).
+   * Verlangt `pricing/LESEN` — wer den Beleg lesen darf, sieht nicht zwingend die
+   * Marge. Ein 403 ist hier also ein normaler Zustand, kein Fehler.
+   */
+  kalkulation(id: string): Observable<Kalkulation> {
+    return this.http.get<Kalkulation>(`${this.base}/${id}/kalkulation`);
+  }
+
+  invoiceKalkulation(id: string): Observable<Kalkulation> {
+    return this.http.get<Kalkulation>(`/api/invoicing/invoices/${id}/kalkulation`);
+  }
+
   listInvoices(query: InvoiceQuery): Observable<InvoicePage> {
     let params = new HttpParams()
       .set('page', query.page)
@@ -57,6 +72,15 @@ export class BelegService {
   /** Neues Angebot (Status ENTWURF) mit Positionen anlegen. */
   createQuote(payload: QuoteCreate): Observable<QuoteDetail> {
     return this.http.post<QuoteDetail>(this.base, payload);
+  }
+
+  /**
+   * Angebotsentwurf speichern (PUT). Positionen und Abschnitte werden vollständig
+   * ersetzt — der Editor schickt immer den ganzen Beleg. 422, wenn das Angebot
+   * bereits versendet ist. Der Server berechnet Summen und Kalkulation neu.
+   */
+  updateQuote(id: string, payload: QuoteUpdate): Observable<QuoteDetail> {
+    return this.http.put<QuoteDetail>(`${this.base}/${id}`, payload);
   }
 
   /** Angebot versenden — unumkehrbar: DB vergibt die AN-Nummer und friert ein. */

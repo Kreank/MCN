@@ -12,3 +12,7 @@ staticfiles/
 .idea/
 .vscode/
 Thumbs.db
+
+# Händlerdaten (DATANORM): Einkaufspreise, gehören nicht ins Repo
+/DATANORM/
+/Hero Wissen/

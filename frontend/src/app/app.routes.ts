@@ -131,6 +131,15 @@ export const routes: Routes = [
         loadComponent: () => import('./features/dokumente/dokumente').then((m) => m.Dokumente),
       },
       {
+        // Angebotseditor. MUSS vor 'dokumente/:id' stehen, sonst schluckt der
+        // Parameter das statische Segment 'angebot'.
+        path: 'dokumente/angebot/:id',
+        title: 'Angebot bearbeiten — MCN Leitstand',
+        canActivate: [darfGuard('invoicing', 'AENDERN')],
+        loadComponent: () =>
+          import('./features/angebot-editor/angebot-editor').then((m) => m.AngebotEditor),
+      },
+      {
         path: 'dokumente/:id',
         title: 'Beleg — MCN Leitstand',
         canActivate: [darfGuard('invoicing', 'LESEN')],

@@ -88,6 +88,34 @@ def create_article(
     return article
 
 
+ARTICLE_STATUS = ("AKTIV", "INAKTIV")
+
+
+def set_article_status(actor_app_user_id, *, article_id, status):
+    """Setzt den Artikelstatus (AKTIV/INAKTIV).
+
+    Es gibt kein Löschen: `trg_article_no_delete` verbietet es physisch, und
+    Belegpositionen verweisen über `source_article_id` auf den Artikel — ein
+    gelöschter Artikel zerrisse die Historie. Ausrangiertes Material wird deshalb
+    auf INAKTIV gesetzt; die Artikelsuche blendet es dann aus, bestehende Belege
+    behalten ihren Bezug.
+    """
+    if status not in ARTICLE_STATUS:
+        raise ValueError(
+            f"Ungültiger Status '{status}'. Erlaubt: {', '.join(ARTICLE_STATUS)}."
+        )
+    article = Article.objects.filter(id=article_id).first()
+    if article is None:
+        raise ValueError("Artikel nicht gefunden.")
+    if article.status == status:
+        return article
+    article.status = status
+    with business_transaction(actor_app_user_id):
+        article.save(update_fields=["status", "updated_at"])
+    article.refresh_from_db()
+    return article
+
+
 def _prepare_component(comp, pos):
     """Validiert eine Stücklisten-Position und liefert die DB-Spaltenwerte.
 

@@ -1,0 +1,545 @@
+<!-- Screenreader-Ansagen für Struktur-/Verschiebe-Aktionen -->
+<p class="sr-only" aria-live="polite">{{ ansage() }}</p>
+
+@switch (state().kind) {
+  @case ('loading') {
+    <p class="lade-hinweis" role="status">Angebot wird geladen …</p>
+  }
+  @case ('forbidden') {
+    <app-kein-zugriff [detail]="$any(state()).detail" />
+  }
+  @case ('error') {
+    <div class="note note--error" role="alert">
+      <h2 class="note__titel">Angebot nicht ladbar</h2>
+      <p class="note__text">
+        Das Angebot konnte nicht geladen werden. Bitte erneut versuchen.
+      </p>
+      <div class="note__aktionen">
+        <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
+        <a class="btn" routerLink="/dokumente">Zu den Dokumenten</a>
+      </div>
+    </div>
+  }
+  @case ('ready') {
+    @if (quote(); as q) {
+      <div class="editor" [class.editor--ro]="readonly()">
+        <!-- ============================ Kopf ============================ -->
+        <header class="ed-head">
+          <div class="ed-head__ident">
+            <p class="ed-head__kicker">Angebot bearbeiten</p>
+            <h1 class="ed-head__titel">{{ q.title || 'Ohne Titel' }}</h1>
+            <p class="ed-head__meta">
+              <span class="ed-head__nr">{{ q.quote_number ?? 'Entwurf' }}</span>
+              <span aria-hidden="true">·</span>
+              <span>{{ q.property.name }}</span>
+              <span aria-hidden="true">·</span>
+              <span>{{ q.property.city }}</span>
+            </p>
+          </div>
+          <div class="ed-head__rechts">
+            <span class="stamp" [class]="statusClass(q.status)">{{ statusLabel(q.status) }}</span>
+            @if (dirty()) {
+              <span class="stamp ed-head__dirty" title="Es gibt ungespeicherte Änderungen">
+                <span aria-hidden="true">●</span> Ungespeichert
+              </span>
+            } @else {
+              <span class="ed-head__gesichert">Gespeichert</span>
+            }
+          </div>
+        </header>
+
+        @if (meldung(); as m) {
+          <div
+            class="ed-melde melde"
+            [class.melde--erfolg]="m.art === 'erfolg'"
+            [class.melde--fehler]="m.art === 'fehler'"
+            role="status"
+          >
+            <span class="melde__mark" aria-hidden="true">{{ m.art === 'erfolg' ? '✓' : '!' }}</span>
+            <span class="melde__text">
+              <strong>{{ m.art === 'erfolg' ? 'Erledigt' : 'Fehler' }}.</strong> {{ m.text }}
+            </span>
+            <button type="button" class="melde__zu" (click)="meldungSchliessen()" aria-label="Meldung schließen">✕</button>
+          </div>
+        }
+
+        @if (readonly()) {
+          <div class="ed-ro-hinweis note" role="note">
+            <h2 class="note__titel">Nur lesen</h2>
+            <p class="note__text">
+              Dieses Angebot ist im Status „{{ statusLabel(q.status) }}" und damit
+              eingefroren. Es kann nicht mehr bearbeitet oder gespeichert werden —
+              GoBD-konform bleibt der versendete Beleg unverändert.
+            </p>
+            <div class="note__aktionen">
+              <a class="btn" [routerLink]="['/dokumente', q.id]">Zur Beleg-Mappe</a>
+            </div>
+          </div>
+        }
+
+        <!-- ===================== Aktionsleiste ===================== -->
+        <div class="ed-bar">
+          <a class="btn" [routerLink]="['/dokumente', q.id]">Zurück zur Mappe</a>
+          <span class="ed-bar__spacer"></span>
+          @if (!readonly()) {
+            <button
+              type="button"
+              class="btn btn--primary"
+              [disabled]="saving() || !dirty()"
+              [attr.aria-busy]="saving()"
+              (click)="speichern()"
+            >
+              {{ saving() ? 'Wird gespeichert …' : 'Speichern' }}
+            </button>
+            @if (darfVersenden()) {
+              <button
+                type="button"
+                class="btn btn--gefahr"
+                [disabled]="!kannVersenden()"
+                [title]="dirty() ? 'Bitte zuerst speichern' : 'Angebot verbindlich versenden'"
+                (click)="versendenFragen()"
+              >
+                Versenden …
+              </button>
+            }
+          }
+        </div>
+
+        @if (!readonly() && dirty() && darfVersenden()) {
+          <p class="ed-hint">
+            Zum Versenden zuerst speichern — versendet wird immer der gespeicherte Stand.
+          </p>
+        }
+
+        <!-- ===================== Kopffelder ===================== -->
+        <section class="ed-kopf" [formGroup]="kopfForm" aria-label="Angebotskopf">
+          <app-feld
+            [control]="kopfForm.controls.title"
+            label="Titel"
+            [pflicht]="true"
+            hinweis="Erscheint als Überschrift des Angebots."
+          />
+          <div class="ed-kopf__datum">
+            <app-feld [control]="kopfForm.controls.quote_date" label="Angebotsdatum" typ="datum" />
+            <app-feld [control]="kopfForm.controls.valid_until_date" label="Gültig bis" typ="datum" />
+          </div>
+        </section>
+
+        <!-- ===================== Arbeitsbereich ===================== -->
+        <div class="ed-grid">
+          <!-- ------------- Abschnitte + Positionen ------------- -->
+          <main class="ed-pos" aria-label="Positionen">
+            <div class="ed-pos__kopf">
+              <h2 class="ed-pos__titel">Positionen &amp; Abschnitte</h2>
+              @if (!readonly()) {
+                <button type="button" class="btn ed-pos__addsec" (click)="rubrikNeu()">
+                  + Abschnitt
+                </button>
+              }
+            </div>
+
+            <div class="pos-scroll">
+              @for (g of gruppen(); track g.rubrik?.uid ?? 'ohne'; let gi = $index) {
+                @if (g.rubrik !== null || g.lines.length > 0) {
+                  <section
+                    class="sektion"
+                    [class.sektion--ohne]="g.rubrik === null"
+                    [attr.aria-label]="g.rubrik ? 'Abschnitt ' + g.rubrik.title : 'Ohne Abschnitt'"
+                  >
+                    <header class="sektion__kopf">
+                      <div class="sektion__ident">
+                        @if (g.rubrik) {
+                          <span class="sektion__nr">{{ gi + 1 }}</span>
+                          <div>
+                            <h3 class="sektion__titel">{{ g.rubrik.title }}</h3>
+                            @if (g.rubrik.description) {
+                              <p class="sektion__desc">{{ g.rubrik.description }}</p>
+                            }
+                          </div>
+                        } @else {
+                          <h3 class="sektion__titel sektion__titel--ohne">Ohne Abschnitt</h3>
+                        }
+                      </div>
+                      @if (!readonly() && g.rubrik; as r) {
+                        <div class="sektion__akt">
+                          <button
+                            type="button"
+                            class="ibtn"
+                            [disabled]="gi === 0"
+                            (click)="rubrikVerschieben(r, -1)"
+                            [attr.aria-label]="'Abschnitt ' + r.title + ' nach oben'"
+                          >
+                            <span aria-hidden="true">▲</span>
+                          </button>
+                          <button
+                            type="button"
+                            class="ibtn"
+                            [disabled]="gi >= rubriken().length - 1"
+                            (click)="rubrikVerschieben(r, 1)"
+                            [attr.aria-label]="'Abschnitt ' + r.title + ' nach unten'"
+                          >
+                            <span aria-hidden="true">▼</span>
+                          </button>
+                          <button type="button" class="ibtn" (click)="rubrikBearbeiten(r)" [attr.aria-label]="'Abschnitt ' + r.title + ' umbenennen'">
+                            <span aria-hidden="true">✎</span>
+                          </button>
+                          <button type="button" class="ibtn ibtn--weg" (click)="rubrikEntfernen(r)" [attr.aria-label]="'Abschnitt ' + r.title + ' entfernen'">
+                            <span aria-hidden="true">✕</span>
+                          </button>
+                        </div>
+                      }
+                    </header>
+
+                    @if (g.lines.length === 0) {
+                      <p class="sektion__leer">
+                        Keine Positionen in diesem Abschnitt.
+                        @if (!readonly()) { Über die Palette rechts Positionen hinzufügen. }
+                      </p>
+                    } @else {
+                      <ul class="poslist">
+                        @for (l of g.lines; track l.uid; let li = $index) {
+                          <li
+                            class="posrow"
+                            [class.posrow--text]="istText(l.line_type)"
+                            [class.posrow--neben]="istNebenposition(l.line_kind)"
+                          >
+                            <div class="posrow__haupt">
+                              <div class="posrow__meta">
+                                <span class="posrow__typ">{{ lineTypeLabel(l.line_type) }}</span>
+                                @if (istNebenposition(l.line_kind)) {
+                                  <span class="stamp stamp--type posrow__kind">{{ lineKindLabel(l.line_kind) }}</span>
+                                }
+                              </div>
+                              <p class="posrow__desc">{{ l.description }}</p>
+                              @if (!istText(l.line_type)) {
+                                <p class="posrow__zahlen">
+                                  <span>{{ menge(l.quantity, l.unit) }}</span>
+                                  <span aria-hidden="true">×</span>
+                                  <span>{{ euro(l.unit_price) }}</span>
+                                  @if (l.discount_percent) {
+                                    <span class="posrow__rabatt">− {{ prozent(l.discount_percent) }}</span>
+                                  }
+                                </p>
+                              }
+                            </div>
+
+                            <div class="posrow__betrag">
+                              @if (istText(l.line_type)) {
+                                <span class="posrow__net posrow__net--leer">—</span>
+                              } @else if (l.netAmount !== null) {
+                                @if (istNebenposition(l.line_kind)) {
+                                  <span class="posrow__net posrow__net--neben">({{ euro(l.netAmount) }})</span>
+                                } @else {
+                                  <span class="posrow__net">{{ euro(l.netAmount) }}</span>
+                                }
+                              } @else {
+                                <span class="posrow__net posrow__net--leer" title="Betrag wird nach dem Speichern vom Server berechnet">nach Speichern</span>
+                              }
+                            </div>
+
+                            @if (!readonly()) {
+                              <div class="posrow__akt">
+                                <button type="button" class="ibtn" (click)="zeileOeffnen(l)" aria-label="Position bearbeiten">
+                                  <span aria-hidden="true">✎</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  class="ibtn"
+                                  [disabled]="li === 0"
+                                  (click)="zeileVerschieben(l, -1)"
+                                  aria-label="Position nach oben"
+                                >
+                                  <span aria-hidden="true">▲</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  class="ibtn"
+                                  [disabled]="li >= g.lines.length - 1"
+                                  (click)="zeileVerschieben(l, 1)"
+                                  aria-label="Position nach unten"
+                                >
+                                  <span aria-hidden="true">▼</span>
+                                </button>
+                                <label class="posrow__seclabel">
+                                  <span class="sr-only">Abschnitt der Position</span>
+                                  <!--
+                                    `selected` je Option statt `[value]` am <select>:
+                                    das Property-Binding am <select> greift, bevor die
+                                    @for-Optionen existieren, und der Wert verpufft —
+                                    jede Zeile stünde dann auf „Ohne Abschnitt", obwohl
+                                    sie einem Abschnitt zugeordnet ist.
+                                  -->
+                                  <select
+                                    class="feld-gruppe__input feld-gruppe__select posrow__secsel"
+                                    (change)="zeileAbschnittWechseln(l, $any($event.target).value)"
+                                  >
+                                    <option value="" [selected]="!l.rubrikUid">Ohne Abschnitt</option>
+                                    @for (r of rubriken(); track r.uid; let ri = $index) {
+                                      <option [value]="r.uid" [selected]="r.uid === l.rubrikUid">
+                                        {{ ri + 1 }}. {{ r.title }}
+                                      </option>
+                                    }
+                                  </select>
+                                </label>
+                                <button type="button" class="ibtn ibtn--weg" (click)="zeileEntfernen(l)" aria-label="Position entfernen">
+                                  <span aria-hidden="true">✕</span>
+                                </button>
+                              </div>
+                            }
+                          </li>
+                        }
+                      </ul>
+                    }
+                  </section>
+                }
+              }
+            </div>
+          </main>
+
+          <!-- ------------- Palette ------------- -->
+          @if (!readonly()) {
+            <aside class="palette" aria-label="Artikel- und Leistungspalette">
+              <h2 class="palette__titel">Palette</h2>
+              <div class="palette__seg segment" role="tablist" aria-label="Palettenquelle">
+                <button
+                  type="button"
+                  class="segment__btn"
+                  role="tab"
+                  [class.is-active]="paletteModus() === 'artikel'"
+                  [attr.aria-selected]="paletteModus() === 'artikel'"
+                  (click)="setPaletteModus('artikel')"
+                >
+                  Artikel
+                </button>
+                <button
+                  type="button"
+                  class="segment__btn"
+                  role="tab"
+                  [class.is-active]="paletteModus() === 'leistungen'"
+                  [attr.aria-selected]="paletteModus() === 'leistungen'"
+                  (click)="setPaletteModus('leistungen')"
+                >
+                  Leistungen
+                </button>
+              </div>
+
+              <label class="palette__feld">
+                <span class="feld-gruppe__label">Suche</span>
+                <input
+                  class="feld-gruppe__input"
+                  type="text"
+                  [placeholder]="paletteModus() === 'artikel' ? 'Artikel suchen …' : 'Leistung suchen …'"
+                  (input)="onPaletteSuche($any($event.target).value)"
+                />
+              </label>
+
+              <label class="palette__feld">
+                <span class="feld-gruppe__label">Zielabschnitt</span>
+                <!-- `selected` je Option — siehe Kommentar beim Positions-Select. -->
+                <select
+                  class="feld-gruppe__input feld-gruppe__select"
+                  (change)="onZielRubrik($any($event.target).value)"
+                >
+                  @for (o of zielOptionen(); track o.wert) {
+                    <option [value]="o.wert" [selected]="o.wert === (zielRubrik() ?? '')">
+                      {{ o.label }}
+                    </option>
+                  }
+                </select>
+              </label>
+
+              <button type="button" class="btn palette__frei" (click)="freieZeile()">
+                + Freie Position
+              </button>
+
+              <div class="palette__liste" aria-live="polite">
+                @if (paletteLaedt()) {
+                  <p class="palette__hinweis">Wird gesucht …</p>
+                } @else if (paletteFehler()) {
+                  <p class="palette__hinweis palette__hinweis--fehler">
+                    Palette nicht verfügbar (fehlendes Recht „Artikel lesen" oder Serverfehler).
+                  </p>
+                } @else if (paletteTreffer().length === 0) {
+                  <p class="palette__hinweis">Keine Treffer. Suchbegriff eingeben.</p>
+                } @else {
+                  <ul class="paloptions">
+                    @for (t of paletteTreffer(); track t.id) {
+                      <li class="paloption">
+                        <div class="paloption__text">
+                          <p class="paloption__z1">{{ t.zeile1 }}</p>
+                          <p class="paloption__z2">{{ t.zeile2 }}</p>
+                        </div>
+                        <button
+                          type="button"
+                          class="btn paloption__add"
+                          (click)="uebernehmenAusPalette(t.id)"
+                          [attr.aria-label]="'„' + t.zeile1 + '“ übernehmen'"
+                        >
+                          Übernehmen
+                        </button>
+                      </li>
+                    }
+                  </ul>
+                }
+              </div>
+            </aside>
+          }
+        </div>
+
+        <!-- ===================== Kalkulationsleiste ===================== -->
+        @if (!kalkVerborgen()) {
+          @if (kalk(); as k) {
+            <section class="kalk" aria-label="Kalkulationsübersicht (Einkauf, Deckungsbeitrag, Marge)">
+              <div class="kalk__scroll">
+                <table class="kalk__tab">
+                  <caption class="sr-only">
+                    Kalkulation je Abschnitt: Netto, Einkauf, Deckungsbeitrag, Marge und Arbeitszeit.
+                    Vom Server berechnet. Fehlt bei Positionen der Einkaufspreis, steht bei
+                    Deckungsbeitrag und Marge ein Gedankenstrich.
+                  </caption>
+                  <thead>
+                    <tr>
+                      <th scope="col">Abschnitt</th>
+                      <th scope="col" class="kalk__num">Netto</th>
+                      <th scope="col" class="kalk__num">Einkauf</th>
+                      <th scope="col" class="kalk__num">Deckungsbeitrag</th>
+                      <th scope="col" class="kalk__num">Marge</th>
+                      <th scope="col" class="kalk__num">Arbeitszeit</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    @for (a of k.abschnitte; track a.rubrik ?? 'ohne') {
+                      <tr>
+                        <th scope="row" class="kalk__name">
+                          {{ a.title }}
+                          @if (hatBetrag(a.alternativ_netto) || hatBetrag(a.bedarf_netto)) {
+                            <span class="kalk__neben">
+                              @if (hatBetrag(a.alternativ_netto)) { Alt. ({{ euro(a.alternativ_netto) }}) }
+                              @if (hatBetrag(a.bedarf_netto)) { Bedarf ({{ euro(a.bedarf_netto) }}) }
+                            </span>
+                          }
+                        </th>
+                        <td class="kalk__num">{{ euro(a.netto) }}</td>
+                        <td class="kalk__num">{{ euro(a.ek) }}</td>
+                        @if (a.ek_vollstaendig) {
+                          <td class="kalk__num">{{ euro(a.deckungsbeitrag) }}</td>
+                          <td class="kalk__num">{{ prozent(a.marge_prozent) }}</td>
+                        } @else {
+                          <td class="kalk__num kalk__unbekannt" [title]="a.positionen_ohne_ek + ' Position(en) ohne Einkaufspreis'">
+                            <span aria-hidden="true">—</span>
+                            <span class="sr-only">unbekannt, {{ a.positionen_ohne_ek }} Positionen ohne Einkaufspreis</span>
+                            <span class="kalk__hinw">{{ a.positionen_ohne_ek }} ohne EK</span>
+                          </td>
+                          <td class="kalk__num kalk__unbekannt">
+                            <span aria-hidden="true">—</span>
+                            <span class="sr-only">Marge unbekannt (Einkaufspreis fehlt)</span>
+                          </td>
+                        }
+                        <td class="kalk__num">{{ stunden(a.arbeitszeit) }}</td>
+                      </tr>
+                    }
+                  </tbody>
+                  <tfoot>
+                    <tr class="kalk__gesamt">
+                      <th scope="row" class="kalk__name">{{ k.gesamt.title || 'Gesamt' }}</th>
+                      <td class="kalk__num">{{ euro(k.gesamt.netto) }}</td>
+                      <td class="kalk__num">{{ euro(k.gesamt.ek) }}</td>
+                      @if (k.gesamt.ek_vollstaendig) {
+                        <td class="kalk__num">{{ euro(k.gesamt.deckungsbeitrag) }}</td>
+                        <td class="kalk__num">{{ prozent(k.gesamt.marge_prozent) }}</td>
+                      } @else {
+                        <td class="kalk__num kalk__unbekannt">
+                          <span aria-hidden="true">—</span>
+                          <span class="sr-only">unbekannt, {{ k.gesamt.positionen_ohne_ek }} Positionen ohne Einkaufspreis</span>
+                          <span class="kalk__hinw">{{ k.gesamt.positionen_ohne_ek }} ohne EK</span>
+                        </td>
+                        <td class="kalk__num kalk__unbekannt"><span aria-hidden="true">—</span></td>
+                      }
+                      <td class="kalk__num">{{ stunden(k.gesamt.arbeitszeit) }}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </section>
+          }
+        }
+      </div>
+    }
+  }
+}
+
+<!-- ===================== Positionsdetail-Dialog ===================== -->
+<app-dialog [offen]="posOffen()" titel="Position bearbeiten" (schliessen)="posDialogSchliessen()">
+  <form class="dialog-form" [formGroup]="posForm" (ngSubmit)="posSpeichern()">
+    @if (posFormMeldung(); as f) {
+      <div class="melde melde--fehler" role="alert">
+        <span class="melde__mark" aria-hidden="true">!</span>
+        <span class="melde__text">{{ f }}</span>
+      </div>
+    }
+    <app-feld [control]="posForm.controls.description" label="Bezeichnung" typ="textarea" [pflicht]="true" />
+    <div class="pos-grid">
+      <app-feld [control]="posForm.controls.line_type" label="Positionsart" typ="select" [optionen]="lineTypeOptionen" />
+      @if (!posIstText()) {
+        <app-feld [control]="posForm.controls.line_kind" label="Wertung" typ="select" [optionen]="lineKindOptionen" />
+      }
+    </div>
+    @if (!posIstText()) {
+      <div class="pos-grid">
+        <app-feld [control]="posForm.controls.quantity" label="Menge" typ="zahl" [pflicht]="true" />
+        <app-feld [control]="posForm.controls.unit" label="Einheit" hinweis="z. B. Stk, m, h" />
+      </div>
+      <div class="pos-grid">
+        <app-feld [control]="posForm.controls.unit_price" label="Einzelpreis (VK)" typ="zahl" [pflicht]="true" hinweis="Netto, in Euro" />
+        <app-feld [control]="posForm.controls.unit_cost" label="Einkaufspreis (EK)" typ="zahl" hinweis="Interne Kalkulation" />
+      </div>
+      <div class="pos-grid">
+        <app-feld [control]="posForm.controls.discount_percent" label="Rabatt %" typ="zahl" />
+        <app-feld [control]="posForm.controls.tax_code" label="Steuersatz" typ="select" [optionen]="taxCodeOptionen" />
+      </div>
+      @if (markupVorschau(); as mv) {
+        <p class="pos-markup" role="status">
+          Abgeleiteter Aufschlag: <strong>{{ mv }} %</strong>
+          <span class="pos-markup__hinw">(Vorschau — der Server bestätigt beim Speichern.)</span>
+        </p>
+      }
+    } @else {
+      <p class="pos-texthinweis">
+        Text- und Zwischensummenzeilen tragen keinen Betrag und zählen nicht in die Summe.
+      </p>
+    }
+
+    <div dialog-aktionen class="dialog__aktionen">
+      <button type="button" class="btn" (click)="posDialogSchliessen()">Abbrechen</button>
+      <button type="submit" class="btn btn--primary">Übernehmen</button>
+    </div>
+  </form>
+</app-dialog>
+
+<!-- ===================== Abschnitt-Dialog ===================== -->
+<app-dialog
+  [offen]="rubrikOffen()"
+  [titel]="rubrikForm.controls.title.value ? 'Abschnitt bearbeiten' : 'Neuer Abschnitt'"
+  (schliessen)="rubrikDialogSchliessen()"
+>
+  <form class="dialog-form" [formGroup]="rubrikForm" (ngSubmit)="rubrikSpeichern()">
+    <app-feld [control]="rubrikForm.controls.title" label="Titel des Abschnitts" [pflicht]="true" />
+    <app-feld [control]="rubrikForm.controls.description" label="Beschreibung" typ="textarea" hinweis="Optional" />
+    <div dialog-aktionen class="dialog__aktionen">
+      <button type="button" class="btn" (click)="rubrikDialogSchliessen()">Abbrechen</button>
+      <button type="submit" class="btn btn--primary">Speichern</button>
+    </div>
+  </form>
+</app-dialog>
+
+<!-- ===================== Versenden (unumkehrbar) ===================== -->
+<app-bestaetigung
+  [offen]="versendenOffen()"
+  titel="Angebot verbindlich versenden?"
+  text="Das Angebot wird versendet und dabei eingefroren: Die Datenbank vergibt eine feste Angebotsnummer, Positionen und Preise lassen sich danach nicht mehr ändern. Das kann nicht rückgängig gemacht werden."
+  bestaetigenLabel="Versenden"
+  [gefahr]="true"
+  [laedt]="versendenLaedt()"
+  (bestaetigen)="versendenBestaetigen()"
+  (abbrechen)="versendenAbbrechen()"
+/>

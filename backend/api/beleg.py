@@ -312,6 +312,43 @@ def create_quote(request, payload: QuoteIn):
     return Status(201, _quote_detail(quote.id))
 
 
+class QuoteUpdateIn(Schema):
+    """Der Editor schickt immer den ganzen Beleg: Positionen und Abschnitte werden
+    vollständig ersetzt. Weggelassene Kopffelder bleiben unverändert."""
+    title: str | None = None
+    quote_date: date | None = None
+    valid_until_date: date | None = None
+    rubriken: list[RubrikIn] | None = None
+    lines: list[QuoteLineIn] | None = None
+
+
+@router.put("/quotes/{quote_id}", response=QuoteDetailOut, auth=django_auth)
+def update_quote(request, quote_id: UUID, payload: QuoteUpdateIn):
+    """Angebotsentwurf ändern. Ab VERSENDET friert die DB den Beleg ein (422)."""
+    actor, _ = require(request, "invoicing", "AENDERN")
+    gesetzt = payload.model_dump(exclude_unset=True)
+    try:
+        beleg_service.update_quote(
+            actor,
+            quote_id=quote_id,
+            title=payload.title,
+            # Sentinel `...` unterscheidet „leeren" (None) von „nicht ändern".
+            quote_date=payload.quote_date if "quote_date" in gesetzt else ...,
+            valid_until_date=(
+                payload.valid_until_date if "valid_until_date" in gesetzt else ...
+            ),
+            rubriken=[r.dict() for r in payload.rubriken or []],
+            lines=(
+                [line.dict() for line in payload.lines]
+                if payload.lines is not None
+                else None
+            ),
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _quote_detail(quote_id)
+
+
 @router.get("/quotes/{quote_id}/kalkulation", response=KalkulationOut)
 def quote_kalkulation(request, quote_id: UUID):
     """Interne Kalkulationsübersicht je Abschnitt (EK, Deckungsbeitrag, Marge).

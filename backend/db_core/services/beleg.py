@@ -323,6 +323,79 @@ def create_quote(
     return quote
 
 
+# Solange ein Angebot in diesen Status steht, sind Kopf, Abschnitte und Positionen
+# änderbar (DB-Trigger protect_quote_lines / protect_beleg_rubrik). Ab VERSENDET
+# friert die Datenbank den Beleg ein (B-30).
+QUOTE_EDITIERBAR = ("ENTWURF", "INTERN_GEPRUEFT", "FREIGEGEBEN")
+
+
+def update_quote(
+    actor_app_user_id,
+    *,
+    quote_id,
+    title=None,
+    quote_date=...,
+    valid_until_date=...,
+    lines=None,
+    rubriken=None,
+):
+    """Ändert ein Angebot, solange es nicht versendet ist.
+
+    Positionen und Abschnitte werden **vollständig ersetzt**, wenn `lines`
+    übergeben wird — der Editor schickt immer den ganzen Beleg. Ein Teil-Update
+    einzelner Positionen wäre bei umsortierten Positionsnummern nicht eindeutig.
+
+    `quote_date`/`valid_until_date` nutzen den Sentinel `...`, damit ein bewusstes
+    Leeren (None) von „nicht ändern" unterscheidbar bleibt.
+    """
+    quote = Quote.objects.filter(id=quote_id).first()
+    if quote is None:
+        raise ValueError("Angebot nicht gefunden.")
+    if quote.status not in QUOTE_EDITIERBAR:
+        raise ValueError(
+            f"Angebot im Status {quote.status} ist unveränderlich (versendet)."
+        )
+
+    kopf = {}
+    if title is not None:
+        if not title.strip():
+            raise ValueError("title darf nicht leer sein.")
+        kopf["title"] = title.strip()
+    if quote_date is not ...:
+        kopf["quote_date"] = quote_date
+    if valid_until_date is not ...:
+        kopf["valid_until_date"] = valid_until_date
+
+    prepared = rubriken_norm = None
+    if lines is not None:
+        prepared, net_total, tax_total, gross_total = _prepare_lines(lines)
+        rubriken_norm = _prepare_rubriken(rubriken, prepared)
+        kopf.update(
+            net_total=net_total, tax_total=tax_total, gross_total=gross_total
+        )
+
+    with as_business_error():
+        with business_transaction(actor_app_user_id):
+            if kopf:
+                for feld, wert in kopf.items():
+                    setattr(quote, feld, wert)
+                quote.save(update_fields=list(kopf) + ["updated_at"])
+            if prepared is not None:
+                # Reihenfolge: erst Positionen (sie verweisen auf Rubriken), dann
+                # die Rubriken selbst — sonst greift die Fremdschlüsselprüfung.
+                QuoteLine.objects.filter(quote_id=quote.id).delete()
+                BelegRubrik.objects.filter(quote_id=quote.id).delete()
+                rubrik_ids = [
+                    BelegRubrik.objects.create(
+                        id=uuid.uuid4(), quote_id=quote.id, **r
+                    ).id
+                    for r in rubriken_norm
+                ]
+                _write_lines(prepared, rubrik_ids, model=QuoteLine, quote_id=quote.id)
+    quote.refresh_from_db()
+    return quote
+
+
 def create_invoice(
     actor_app_user_id,
     *,
