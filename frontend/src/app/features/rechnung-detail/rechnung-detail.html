@@ -32,6 +32,24 @@
       @if (daten()!.status === 'VEROEFFENTLICHT') {
         <a mappe-kopf class="btn kopf-pdf" [href]="pdfUrl(daten()!.id)" target="_blank" rel="noopener" aria-label="PDF ansehen (öffnet in neuem Tab)">PDF ansehen ↗</a>
       }
+      @if (darfVersenden() && kannVersenden()) {
+        @if (mailKontoVorhanden()) {
+          <button mappe-kopf type="button" class="btn btn--primary" (click)="versandOeffnen()">
+            Per E-Mail senden
+          </button>
+        } @else if (mailKontoVorhanden() === false) {
+          <button
+            mappe-kopf
+            type="button"
+            class="btn"
+            disabled
+            title="Kein Absenderkonto hinterlegt. Unter Einstellungen › Mailversand einrichten."
+            aria-label="Per E-Mail senden — nicht möglich: kein Absenderkonto hinterlegt (Einstellungen › Mailversand)."
+          >
+            Per E-Mail senden
+          </button>
+        }
+      }
       @if (darfFreigeben() && kannVeroeffentlichen()) {
         <button mappe-kopf type="button" class="btn btn--primary" (click)="publishFragen()">
           Rechnung veröffentlichen
@@ -195,6 +213,32 @@
         <button type="button" class="btn" [disabled]="beteiligtLaedt()" (click)="beteiligtSchliessen()">Abbrechen</button>
         <button type="submit" form="beteiligt-form" class="btn btn--primary" [disabled]="beteiligtLaedt()" [attr.aria-busy]="beteiligtLaedt()">
           {{ beteiligtLaedt() ? 'Wird ergänzt …' : 'Beteiligten hinzufügen' }}
+        </button>
+      </div>
+    </app-dialog>
+
+    <!-- ---------------------------- Per E-Mail senden --------------------- -->
+    <app-dialog [offen]="versandOffen()" titel="Rechnung per E-Mail senden" (schliessen)="versandSchliessen()">
+      <form id="versand-form" class="dialog-form" (submit)="$event.preventDefault(); versandAbsenden()" novalidate>
+        @if (versandMeldung(); as fm) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+          </div>
+        }
+        <app-feld
+          [control]="versandForm.controls.to_address"
+          label="Empfänger-Adresse"
+          typ="email"
+          [pflicht]="true"
+          autocomplete="email"
+          hinweis="Vorbelegt aus dem Rechnungsempfänger, editierbar. Die Rechnung wird als PDF angehängt."
+        />
+      </form>
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="versandLaedt()" (click)="versandSchliessen()">Abbrechen</button>
+        <button type="submit" form="versand-form" class="btn btn--primary" [disabled]="versandLaedt()" [attr.aria-busy]="versandLaedt()">
+          {{ versandLaedt() ? 'Wird gesendet …' : 'Senden' }}
         </button>
       </div>
     </app-dialog>

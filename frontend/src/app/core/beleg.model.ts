@@ -193,9 +193,18 @@ export interface InvoiceDetail extends Invoice {
   published_at: string | null;
   has_snapshot: boolean;
   content_hash: string | null;
+  /** Vorbelegung für den E-Mail-Versand: primäre EMAIL der Empfängerpartei
+   *  (nur bei veröffentlichten Rechnungen aufgelöst, sonst null). */
+  recipient_email: string | null;
   parties: InvoiceParty[];
   rubriken: Rubrik[];
   lines: QuoteLine[];
+}
+
+/** Antwort des Rechnungsversands per E-Mail. */
+export interface InvoiceEmailResult {
+  sent: boolean;
+  to_address: string;
 }
 
 // --- Schreib-Verträge (POST-Payloads) --------------------------------------

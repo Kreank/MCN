@@ -15,9 +15,12 @@ from ninja.responses import Status
 from ninja.security import django_auth
 
 from api.permissions import require
+from db_core.mail_crypto import MailKeyError
 from db_core.models import Invoice, Quote
 from db_core.services import beleg as beleg_service
 from db_core.services import beleg_pdf as beleg_pdf_service
+from db_core.services import beleg_versand as beleg_versand_service
+from db_core.services.mail import MailSendError
 
 router = Router()
 
@@ -421,6 +424,10 @@ class InvoiceDetailOut(InvoiceOut):
     published_at: datetime | None = None
     has_snapshot: bool = False
     content_hash: str | None = None
+    # Vorbelegung für den E-Mail-Versand: primäre EMAIL der Empfängerpartei
+    # (INVOICE_RECIPIENT, sonst INVOICE_DEBTOR). Nur bei veröffentlichten Rechnungen
+    # aufgelöst; null, wenn kein Kommunikationsweg hinterlegt ist.
+    recipient_email: str | None = None
     parties: list[InvoicePartyOut] = []
     rubriken: list[RubrikOut] = []
     lines: list[QuoteLineOut]
@@ -548,6 +555,13 @@ def _invoice_detail(invoice_id):
         if invoice.project_id
         else None
     )
+    # Empfänger-E-Mail nur für den Versand relevant (nur veröffentlichte Belege
+    # lassen sich senden) — für Entwürfe die zusätzliche contact_point-Abfrage sparen.
+    recipient_email = (
+        beleg_versand_service.recipient_email(invoice)
+        if invoice.status == "VEROEFFENTLICHT"
+        else None
+    )
     return InvoiceDetailOut(
         id=invoice.id,
         invoice_number=invoice.invoice_number,
@@ -568,6 +582,7 @@ def _invoice_detail(invoice_id):
         published_at=invoice.published_at,
         has_snapshot=invoice.billing_snapshot is not None,
         content_hash=invoice.content_hash,
+        recipient_email=recipient_email,
         parties=parties,
         rubriken=_rubriken_out(invoice),
         lines=lines,
@@ -676,3 +691,41 @@ def invoice_pdf(request, invoice_id: UUID):
     response = HttpResponse(pdf, content_type="application/pdf")
     response["Content-Disposition"] = f'inline; filename="{safe or "beleg"}.pdf"'
     return response
+
+
+class InvoiceEmailIn(Schema):
+    # Optional: überschreibt die aus der Empfängerpartei ermittelte Adresse (der
+    # Nutzer darf sie im Dialog bestätigen/korrigieren). Weglassen = ermitteln.
+    to_address: str | None = None
+
+
+class InvoiceEmailOut(Schema):
+    sent: bool
+    to_address: str
+
+
+@router.post(
+    "/invoices/{invoice_id}/send-email", response=InvoiceEmailOut, auth=django_auth
+)
+def send_invoice_email(request, invoice_id: UUID, payload: InvoiceEmailIn):
+    """Versendet eine veröffentlichte Rechnung als PDF-Anhang per E-Mail.
+
+    Recht VERSENDEN: der Belegversand ist eine nach außen wirkende
+    Kundenkommunikation — dasselbe Recht wie Angebotsversand und Mahnung. Reine
+    Zustellung: kein Statuswechsel, keine GoBD-Berührung (der Beleg ist bereits
+    festgeschrieben). Der Versand protokolliert eine content.communication-Zeile.
+
+    Fehler → 422 (passwortfrei): Entwurf/unbekannt, kein Empfänger/keine E-Mail,
+    kein Mailkonto, Schlüssel- oder SMTP-Fehler.
+    """
+    actor, _ = require(request, "invoicing", "VERSENDEN")
+    try:
+        communication = beleg_versand_service.send_invoice_email(
+            actor, invoice_id=invoice_id, to_address=payload.to_address
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    except (MailKeyError, MailSendError) as exc:
+        # Passwortfreie, klare Meldung an das UI statt eines 500-Leaks.
+        raise HttpError(422, str(exc))
+    return InvoiceEmailOut(sent=True, to_address=communication.counterpart_raw)

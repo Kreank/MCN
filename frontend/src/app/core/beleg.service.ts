@@ -4,6 +4,7 @@ import { Observable } from 'rxjs';
 import {
   InvoiceCreate,
   InvoiceDetail,
+  InvoiceEmailResult,
   InvoicePage,
   InvoicePartyCreate,
   InvoiceQuery,
@@ -102,5 +103,17 @@ export class BelegService {
    *  friert ein und prüft die Freigabe-Tore (422 bei Verstoß). */
   publishInvoice(id: string): Observable<InvoiceDetail> {
     return this.http.post<InvoiceDetail>(`/api/invoicing/invoices/${id}/publish`, {});
+  }
+
+  /**
+   * Veröffentlichte Rechnung als PDF-Anhang per E-Mail versenden. `toAddress`
+   * überschreibt die serverseitig ermittelte Empfänger-Adresse. Reine Zustellung
+   * (kein Statuswechsel); Fehler (kein Empfänger/Konto, SMTP) kommen als 422.
+   */
+  sendInvoiceEmail(id: string, toAddress: string): Observable<InvoiceEmailResult> {
+    return this.http.post<InvoiceEmailResult>(
+      `/api/invoicing/invoices/${id}/send-email`,
+      { to_address: toAddress },
+    );
   }
 }

@@ -5,6 +5,7 @@ import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { map } from 'rxjs';
 import { Mappe, MappeTab } from '../../shared/mappe/mappe';
 import { BelegService } from '../../core/beleg.service';
+import { MailService } from '../../core/mail.service';
 import { PartyService } from '../../core/party.service';
 import { AuthService } from '../../core/auth.service';
 import {
@@ -45,6 +46,7 @@ type Meldung = { art: 'erfolg' | 'fehler'; text: string };
 export class RechnungDetail {
   private readonly route = inject(ActivatedRoute);
   private readonly svc = inject(BelegService);
+  private readonly mailSvc = inject(MailService);
   private readonly partySvc = inject(PartyService);
   private readonly auth = inject(AuthService);
   private readonly fb = inject(FormBuilder);
@@ -90,6 +92,23 @@ export class RechnungDetail {
       map((p) => p.items.map((o) => ({ id: o.id, label: o.display_name }))),
     );
 
+  // --- Per E-Mail senden (nur veröffentlicht) -----------------------------
+  protected readonly darfVersenden = computed(() => this.auth.darf('invoicing', 'VERSENDEN'));
+  /** Nur veröffentlichte Rechnungen lassen sich versenden (Server erzwingt es). */
+  protected readonly kannVersenden = computed(() => this.daten()?.status === 'VEROEFFENTLICHT');
+  /** Ob ein Absenderkonto hinterlegt ist (null = noch nicht geladen). Der Server
+   *  bleibt maßgeblich; das UI blendet die Aktion ohne Konto nur aus/deaktiviert. */
+  protected readonly mailKontoVorhanden = signal<boolean | null>(null);
+  protected readonly versandOffen = signal(false);
+  protected readonly versandLaedt = signal(false);
+  protected readonly versandMeldung = signal<string | null>(null);
+  protected readonly versandForm = this.fb.group({
+    to_address: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.required, Validators.email],
+    }),
+  });
+
   protected readonly tabs: MappeTab[] = [
     { id: 'positionen', label: 'Positionen' },
     { id: 'beteiligte', label: 'Beteiligte' },
@@ -117,6 +136,15 @@ export class RechnungDetail {
       }
       this.load(id);
     });
+
+    // Ob ein Absenderkonto konfiguriert ist, entscheidet über die Versand-Aktion.
+    // Nur laden, wenn die Rolle überhaupt versenden darf.
+    if (this.darfVersenden()) {
+      this.mailSvc.getAccount().subscribe({
+        next: (k) => this.mailKontoVorhanden.set(k.exists),
+        error: () => this.mailKontoVorhanden.set(false),
+      });
+    }
   }
 
   retry(): void {
@@ -207,6 +235,47 @@ export class RechnungDetail {
       error: (err) => {
         this.beteiligtLaedt.set(false);
         this.beteiligtMeldung.set(apiFehlerZuweisen(err, this.beteiligtForm).formular);
+      },
+    });
+  }
+
+  // ---- Per E-Mail senden --------------------------------------------------
+  versandOeffnen(): void {
+    const d = this.daten();
+    if (!d) return;
+    this.versandForm.reset({ to_address: d.recipient_email ?? '' });
+    serverFehlerZuruecksetzen(this.versandForm);
+    this.versandMeldung.set(null);
+    this.meldung.set(null);
+    this.versandOffen.set(true);
+  }
+
+  versandSchliessen(): void {
+    if (!this.versandLaedt()) this.versandOffen.set(false);
+  }
+
+  versandAbsenden(): void {
+    const d = this.daten();
+    if (!d || this.versandLaedt()) return;
+    serverFehlerZuruecksetzen(this.versandForm);
+    this.versandMeldung.set(null);
+    felderAlsBeruehrtMarkieren(this.versandForm);
+    if (this.versandForm.invalid) return;
+
+    const to = this.versandForm.controls.to_address.value.trim();
+    this.versandLaedt.set(true);
+    this.svc.sendInvoiceEmail(d.id, to).subscribe({
+      next: (res) => {
+        this.versandLaedt.set(false);
+        this.versandOffen.set(false);
+        this.meldung.set({
+          art: 'erfolg',
+          text: `Rechnung wurde als PDF an ${res.to_address} gesendet.`,
+        });
+      },
+      error: (err) => {
+        this.versandLaedt.set(false);
+        this.versandMeldung.set(apiFehlerZuweisen(err, this.versandForm).formular);
       },
     });
   }
