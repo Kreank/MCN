@@ -598,12 +598,35 @@
       </p>
     }
 
+    @if (zeigeStammHaken()) {
+      <div class="pos-stamm">
+        <app-feld
+          [control]="posForm.controls.stamm_uebernehmen"
+          label="Änderungen auch in den Artikelstamm übernehmen"
+          typ="checkbox"
+          hinweis="Standardmäßig ändert das Speichern nur diese Belegposition (Kopie). Mit Häkchen wird nach dem Speichern zusätzlich der Artikelstamm aktualisiert — für alle künftigen Belege. Der Einkaufspreis wird dabei nicht übernommen."
+        />
+      </div>
+    }
+
     <div dialog-aktionen class="dialog__aktionen">
       <button type="button" class="btn" (click)="posDialogSchliessen()">Abbrechen</button>
       <button type="submit" class="btn btn--primary">Übernehmen</button>
     </div>
   </form>
 </app-dialog>
+
+<!-- ============= Stammdaten in den Artikelstamm übernehmen ============= -->
+<app-bestaetigung
+  [offen]="stammOffen()"
+  titel="Werte in den Artikelstamm übernehmen?"
+  text="Bezeichnung, Einheit und Verkaufspreis dieser Position werden in den Artikelstamm geschrieben und gelten damit für alle KÜNFTIGEN Belege, die diesen Artikel verwenden. Bestehende Belege — auch dieses Angebot — bleiben unverändert. Der Einkaufspreis wird bewusst NICHT übernommen."
+  bestaetigenLabel="In Stamm übernehmen"
+  [gefahr]="true"
+  [laedt]="stammLaedt()"
+  (bestaetigen)="stammUebernehmenBestaetigen()"
+  (abbrechen)="stammUebernehmenAbbrechen()"
+/>
 
 <!-- ===================== Abschnitt-Dialog ===================== -->
 <app-dialog

@@ -16,6 +16,8 @@ import {
   workOrderStatusLabel,
 } from '../../core/auftrag.model';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { Dateien } from '../../shared/dateien/dateien';
+import { ZielFilter } from '../../core/datei.model';
 import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 import { Dialog } from '../../shared/dialog/dialog';
 import { Bestaetigung } from '../../shared/bestaetigung/bestaetigung';
@@ -55,6 +57,7 @@ const STATUS_KANDIDATEN: WorkOrderStatus[] = [
     Mappe,
     RouterLink,
     KeinZugriff,
+    Dateien,
     ReactiveFormsModule,
     Dialog,
     Bestaetigung,
@@ -82,12 +85,18 @@ export class AuftragDetail {
     { id: 'uebersicht', label: 'Übersicht' },
     { id: 'beteiligte', label: 'Beteiligte' },
     { id: 'verlauf', label: 'Verlauf' },
+    { id: 'dateien', label: 'Dateien' },
   ];
 
   protected readonly daten = computed(() => {
     const s = this.state();
     return s.kind === 'ready' ? s.data : null;
   });
+
+  /** Stabile Zielreferenz fuer den Dateien-Tab (nur bei Auftragswechsel neu). */
+  protected readonly dateienZiel = computed<ZielFilter>(() => ({
+    work_order_id: this.daten()?.id ?? '',
+  }));
 
   // --- Schreibaktionen -----------------------------------------------------
   protected readonly meldung = signal<Meldung | null>(null);

@@ -15,6 +15,7 @@ Browser. Zusammen mit der Typ-Whitelist im Service (kein HTML, kein SVG)
 verhindert das, dass hochgeladener Inhalt im Ursprung der Anwendung ausgeführt
 wird.
 """
+from urllib.parse import quote
 from uuid import UUID
 
 from django.http import HttpResponse
@@ -132,10 +133,27 @@ def datei_herunterladen(request, file_id: UUID):
     antwort = HttpResponse(inhalt, content_type=datei.mime_type)
     # attachment: der Inhalt wird nie im Ursprung der Anwendung gerendert.
     antwort["Content-Disposition"] = (
-        f'attachment; filename="{datei.original_filename}"'
+        f"attachment; {_dateiname_kopfteil(datei.original_filename)}"
     )
     antwort["X-Content-Type-Options"] = "nosniff"
     return antwort
+
+
+def _dateiname_kopfteil(dateiname: str) -> str:
+    """Baut den `filename`-Teil von Content-Disposition (RFC 6266/5987).
+
+    HTTP-Kopfzeilen sind latin-1: ein Dateiname mit Emoji, Euro-Zeichen oder
+    kyrillischer Schrift ließe `HttpResponse` beim Setzen der Kopfzeile werfen —
+    hochladen ginge, herunterladen quittierte mit 500. Anführungszeichen und
+    Backslashes müssen zudem escapt werden, sonst bricht der Name aus dem
+    Quoting aus. Gleiches Vorgehen wie `django.http.FileResponse.set_headers`.
+    """
+    try:
+        dateiname.encode("ascii")
+    except UnicodeEncodeError:
+        return "filename*=utf-8''{}".format(quote(dateiname))
+    escaped = dateiname.replace("\\", "\\\\").replace('"', '\\"')
+    return f'filename="{escaped}"'
 
 
 @router.delete("/links/{link_id}", response={204: None}, auth=django_auth)

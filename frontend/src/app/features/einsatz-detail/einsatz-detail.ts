@@ -4,6 +4,8 @@ import { ActivatedRoute, RouterLink } from '@angular/router';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Mappe, MappeTab } from '../../shared/mappe/mappe';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { Dateien } from '../../shared/dateien/dateien';
+import { ZielFilter } from '../../core/datei.model';
 import { VerbotenState, fehlerDetail, fehlerState, istVerboten } from '../../shared/http-fehler';
 import { AuthService } from '../../core/auth.service';
 import { EinsatzService } from '../../core/einsatz.service';
@@ -67,7 +69,7 @@ const JOB_STATUSES: ServiceJobStatus[] = [
 
 @Component({
   selector: 'app-einsatz-detail',
-  imports: [Mappe, RouterLink, KeinZugriff, ReactiveFormsModule, Dialog, Feld, ReferenzWahl],
+  imports: [Mappe, RouterLink, KeinZugriff, Dateien, ReactiveFormsModule, Dialog, Feld, ReferenzWahl],
   templateUrl: './einsatz-detail.html',
   styleUrl: './einsatz-detail.scss',
 })
@@ -99,6 +101,7 @@ export class EinsatzDetail {
     { id: 'zuweisungen', label: 'Zuweisungen' },
     { id: 'erfassung', label: 'Zeiten & Material' },
     { id: 'verlauf', label: 'Verlauf' },
+    { id: 'dateien', label: 'Dateien' },
   ];
 
   private readonly dateFmt = new Intl.DateTimeFormat('de-DE', {
@@ -113,6 +116,11 @@ export class EinsatzDetail {
     const s = this.state();
     return s.kind === 'ready' ? s.data : null;
   });
+
+  /** Stabile Zielreferenz fuer den Dateien-Tab (nur bei Einsatzwechsel neu). */
+  protected readonly dateienZiel = computed<ZielFilter>(() => ({
+    service_job_id: this.daten()?.id ?? '',
+  }));
 
   // --- Schreibaktionen -----------------------------------------------------
   protected readonly meldung = signal<Meldung | null>(null);

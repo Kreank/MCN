@@ -16,7 +16,13 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 > und Freigaben laufen aus dem UI durch Rechte, Statusautomaten und DB-Trigger.
 > Dazu **Vier-Augen-Freigaben**, **Belegerfassung** (Eingangsrechnungen) und die
 > **Rechtematrix-Pflege** als UI.
-> **1051 Backend-Tests grün**, db_core-Migrationen bis **0035**, accounts bis **0002**.
+> **1196 Backend-Tests grün**, db_core-Migrationen bis **0035**, accounts bis **0002**.
+> Zuletzt gebaut: **Datei-Ablage im UI** (neun Mappen) und **Artikeldialog +
+> Historie + Stamm-Übernahme per Häkchen**. Als Nächstes: **IDS Connect**
+> (Fundament steht: `pricing.supplier_connection` mit `source_system='IDS_CONNECT'`,
+> `shop_url`, `credential_reference`; vier Anbindungen vorhanden. Es fehlt der
+> Ablauf: Warenkorb im Händler-Shop öffnen, Rückgabe entgegennehmen, Positionen
+> ins Angebot übernehmen).
 
 ---
 
@@ -69,6 +75,32 @@ zu scheitern. E2E-Test überspringt sauber ohne laufenden Server.
   (`security/FREIGEBEN`) ausgeliefert** (`payload_verborgen`). `security/LESEN`
   hält auch NUR_LESEN — sonst läse jede Nur-Lese-Rolle die beantragte IBAN mit.
   Spätestens mit HR-Bankdaten wäre das ein DSGVO-Leck.
+
+### Belegposition ist eine Kopie, kein Verweis (Invariante, nicht „vereinfachen")
+
+Eine Position in Angebot/Rechnung trägt ihre Werte **eingefroren**. Ein neuer
+Listenpreis im Artikelstamm verfälscht kein bereits geschriebenes Angebot, sonst
+wäre dessen Marge im Nachhinein nicht mehr nachvollziehbar. Umgekehrt schreibt
+das Speichern einer Position **niemals** in `pricing.article`.
+
+Der einzige Weg vom Beleg in den Stamm ist das **Häkchen „Änderungen auch in den
+Artikelstamm übernehmen"** im Positionsdetail des Angebotseditors:
+- Es ist **transient** (lebt nur im Dialogformular, bei jedem Öffnen `false`,
+  nie im `EditorLine`-State/`QuoteUpdate`-Payload). Sonst schlüge es bei jedem
+  späteren Speichern erneut zu.
+- Es löst einen **eigenen, ausdrücklichen Vorgang** aus
+  (`POST /pricing/articles/{id}/stammdaten-uebernehmen`) hinter
+  `shared/bestaetigung`, und verlangt **`pricing/AENDERN`** — wer ein Angebot
+  schreiben darf, darf damit nicht den Stamm umschreiben, den alle anderen
+  Angebote mitbenutzen.
+- Der **Einkaufspreis wird bewusst NICHT übernommen** (Aussage des Händlers aus
+  DATANORM; ein abweichender EK ist eine Kalkulationsentscheidung für genau
+  dieses Angebot). Der Verkaufspreis wird als Standard-Festpreis hinterlegt.
+- Scheitert die Übernahme (403/422), bleibt die Positionsänderung erhalten und
+  der Fehler wird angezeigt — nie eine Erfolgsmeldung.
+
+Vier Tests sichern das ab (u. a. ein statischer, der einen Schreibpfad von
+`beleg.py` in den Artikelstamm verhindert).
 
 ### Ableitbare Reste (kein Entscheidungsbedarf, einfach bauen)
 
@@ -128,6 +160,15 @@ Für ALLE Backend-Befehle diese Env-Vars setzen (sonst schlägt die DB-Verbindun
 ```bash
 export MCN_DB_NAME=mitra_crm_test MCN_DB_PASSWORD=mcn_dev_local MCN_DEBUG=1
 ```
+
+**MinIO** (Container `mitra-crm-minio`, API-Port **9100**, Konsole 9101, Bucket
+`mcn-belege`). Der Settings-Default für das Secret ist FALSCH — ohne die beiden
+Variablen scheitert **jeder Datei-Upload** mit `AccessDenied`:
+```bash
+export MCN_MINIO_ACCESS_KEY=minioadmin MCN_MINIO_SECRET_KEY=minio-test-pilot
+```
+(Alle lokalen Passwörter sind Wegwerf-Werte und werden vor dem Live-Gang rotiert;
+das Auslesen der Dev-Container per `docker inspect` ist vom User freigegeben.)
 
 **`MCN_DEBUG=1` ist seit dem Auth-Slice Pflicht für die Entwicklung.** Der Default
 steht bewusst auf `0` (fail-safe: Produktion muss DEBUG nicht ausschalten, die
@@ -543,8 +584,21 @@ Empfohlene nächste Reihenfolge:
    erledigt; offen bleiben Steuer-/Bankdaten, Zeitwirtschaft und Niederlassung.
 9. **Auth/Login + alle Anlege-Formulare** — ganz zum Schluss (siehe Entscheidung).
 
-Kleinere offene Enden: Datei-/Bild-Upload (`content.file`/`file_link`) für den
-„Dateien"-Tab und Objekt-Bilder; ISO-Datums-Formatierung im UI (aktuell teils roh).
+- ✔ **Datei-Ablage im UI** (`shared/dateien`, `core/datei.service.ts`): Upload per
+  Klick und Drag&Drop (tastaturbedienbar), Fortschritt, Download über Blob
+  (nicht `window.open` — Auth-Cookie/CSRF), Verknüpfung lösen hinter Bestätigung
+  (die Datei selbst bleibt). Verdrahtet in **neun Mappen**: Projekt, Kontakt,
+  Liegenschaft, Angebot, Rechnung, Offener Posten, Vorgang, Auftrag, Einsatz.
+  **Offen:** `unit_id`/`asset_id` — beide haben (noch) keine eigene Detail-Mappe.
+- ✔ **Artikel bearbeiten / Historie / Stamm-Übernahme** im UI: Reiter
+  Informationen · Kalkulation · Historie (der alte `preis`-Tab war reine
+  Dopplung und ist in Kalkulation aufgegangen). Bearbeiten-Dialog, GTIN mit
+  Prüfziffer (Client spiegelt `artikel.py::_gtin_gueltig` — beide müssen
+  synchron bleiben), Statuswechsel (Deaktivieren hinter Bestätigung), und das
+  Häkchen im Angebotseditor (siehe Invariante oben).
+
+Kleinere offene Enden: Objekt-Bilder; ISO-Datums-Formatierung im UI (aktuell teils
+roh); `angebot-editor.scss` liegt über dem 8-kB-Budget (nur Warnung, vorbestehend).
 
 ## 9. Wo alles liegt
 

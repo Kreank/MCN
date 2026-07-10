@@ -19,6 +19,108 @@
   white-space: pre-line;
 }
 
+// ============================ Bearbeiten-Dialog =============================
+// Zwei-Spalten-Raster im Dialog (auf schmalen Viewports einspaltig).
+.pos-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+@media (max-width: 34rem) {
+  .pos-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+// ============================ Historie (Zeitleiste) =========================
+.hist {
+  list-style: none;
+  margin: var(--space-4) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.hist__eintrag {
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+}
+.hist__kopf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-3);
+}
+.hist__zeit {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  font-weight: 600;
+}
+.hist__akteur {
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+.hist__felder {
+  list-style: none;
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.hist__feld {
+  display: grid;
+  grid-template-columns: minmax(8rem, max-content) 1fr;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-4);
+}
+@media (max-width: 34rem) {
+  .hist__feld {
+    grid-template-columns: 1fr;
+    gap: 0.15rem;
+  }
+}
+.hist__fname {
+  font-size: var(--step--1);
+  font-weight: 600;
+  color: var(--ink-muted);
+}
+.hist__diff {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+.hist__vorher,
+.hist__nachher {
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+}
+.hist__vorher {
+  color: var(--ink-muted);
+  text-decoration: line-through;
+}
+.hist__nachher {
+  color: var(--ink);
+  font-weight: 600;
+}
+.hist__leer {
+  font-style: italic;
+  text-decoration: none;
+  color: var(--ink-faint);
+}
+.hist__pfeil {
+  color: var(--ink-faint);
+}
+.hist__hinweis {
+  margin-top: var(--space-3);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
 // ============================ VK-Kalkulation ================================
 .vk-liste {
   list-style: none;

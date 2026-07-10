@@ -8,12 +8,17 @@ import {
   ArticlePage,
   ArticleSalePrice,
   ArticleSalePriceIn,
+  ArticleStatusIn,
+  ArticleUpdateIn,
   AssemblyComponentsInput,
   AssemblyDetail,
   AssemblyIn,
   AssemblyPage,
+  HistorieEintrag,
   SalePriceGroup,
+  StammdatenUebernahmeIn,
   StammQuery,
+  StammStatus,
   WageGroup,
 } from './artikel.model';
 
@@ -66,6 +71,40 @@ export class ArtikelService {
   /** Leistung/Baugruppe anlegen. Erfordert Recht pricing.ANLEGEN. */
   createAssembly(payload: AssemblyIn): Observable<AssemblyDetail> {
     return this.http.post<AssemblyDetail>(`${this.base}/assemblies`, payload);
+  }
+
+  /** Artikelstammdaten ändern. Erfordert Recht pricing.AENDERN. Nur gesetzte
+   *  Felder wirken (Server: exclude_unset). */
+  updateArticle(id: string, payload: ArticleUpdateIn): Observable<ArticleDetail> {
+    return this.http.put<ArticleDetail>(`${this.base}/articles/${id}`, payload);
+  }
+
+  /** Artikel aktivieren/deaktivieren (kein Löschen). Recht pricing.AENDERN. */
+  setArticleStatus(id: string, status: StammStatus): Observable<ArticleDetail> {
+    const payload: ArticleStatusIn = { status };
+    return this.http.post<ArticleDetail>(`${this.base}/articles/${id}/status`, payload);
+  }
+
+  /** Änderungsverlauf eines Artikels (neueste zuerst). Recht pricing.LESEN. */
+  articleHistorie(id: string, limit = 50): Observable<HistorieEintrag[]> {
+    const params = new HttpParams().set('limit', limit);
+    return this.http.get<HistorieEintrag[]>(
+      `${this.base}/articles/${id}/historie`,
+      { params },
+    );
+  }
+
+  /** Positionswerte in den Artikelstamm übernehmen — eigener, ausdrücklicher
+   *  Vorgang (nicht Teil des Beleg-Speicherns). Recht pricing.AENDERN. Der
+   *  Einkaufspreis wird bewusst nicht übernommen. */
+  stammdatenUebernehmen(
+    id: string,
+    payload: StammdatenUebernahmeIn,
+  ): Observable<ArticleDetail> {
+    return this.http.post<ArticleDetail>(
+      `${this.base}/articles/${id}/stammdaten-uebernehmen`,
+      payload,
+    );
   }
 
   /** VK-Variante eines Artikels setzen. Erfordert Recht pricing.AENDERN. */

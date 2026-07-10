@@ -517,6 +517,14 @@
   margin: 0;
   font-size: var(--step--1);
 }
+.pos-stamm {
+  margin-top: var(--space-4);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+}
 
 // ============================== Drag & Drop =================================
 // Ziehen ist ADDITIV zu Knöpfen/Selects (WCAG 2.5.7): jede Ziehen-Aktion hat

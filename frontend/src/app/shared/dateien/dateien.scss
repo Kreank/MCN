@@ -1,0 +1,230 @@
+// Dateien-Bereich einer Detail-Mappe. Eigener Component-View -> Styles sind
+// gekapselt (kein Konflikt mit projiziertem Mappen-Inhalt). Tokens aus
+// styles/_tokens.scss; Light+Dark ergeben sich automatisch aus den Variablen.
+
+:host {
+  display: block;
+}
+
+.dateien__titel {
+  font-size: var(--step-1);
+  margin-bottom: var(--space-4);
+  color: var(--ink);
+}
+
+.dateien__melde {
+  margin-bottom: var(--space-4);
+}
+
+.dateien__fehlerliste {
+  margin: var(--space-1) 0 0;
+  padding-left: var(--space-4);
+}
+
+// --- Ablagezone (Datei-Auswahl + Drag&Drop) --------------------------------
+.ablage {
+  border: 1.5px dashed var(--line-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-sunken);
+  padding: var(--space-4) var(--space-5);
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+// Sichtbare Hervorhebung beim Ziehen — NICHT nur Farbe: die Kontur wird
+// zusaetzlich durchgezogen und kraeftiger.
+.ablage--aktiv {
+  border-style: solid;
+  border-color: var(--accent-ink);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-sunken));
+}
+
+.ablage__zeile {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.ablage__text {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--ink-muted);
+}
+
+.ablage__mark {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  flex: none;
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--accent-ink);
+  font-size: 1.1rem;
+}
+
+// „auswählen" als Link-artiger Knopf: der eigentliche <input type=file> ist
+// per .sr-only versteckt, aber im <label> -> voll tastaturbedienbar (Tab +
+// Enter/Space oeffnen den Dateidialog).
+.ablage__waehlen {
+  cursor: pointer;
+}
+.link-knopf {
+  color: var(--accent-ink);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+// Fokusring des versteckten Inputs sichtbar am Label-Text spiegeln.
+.ablage__waehlen:focus-within .link-knopf {
+  outline: 2.5px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.ablage__kategorie {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.ablage__kategorie-label {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.ablage__select {
+  min-width: 12rem;
+}
+
+.ablage__hinweis {
+  margin: var(--space-3) 0 0;
+  font-size: var(--step--1);
+  color: var(--ink-faint);
+}
+
+// --- Upload-Status ----------------------------------------------------------
+.upload-status {
+  margin-top: var(--space-3);
+}
+.upload-status__text {
+  margin: 0 0 var(--space-2);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+.upload-status__zaehler {
+  color: var(--ink-faint);
+}
+.upload-status__balken {
+  width: 100%;
+  height: 0.6rem;
+  appearance: none;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--surface-sunken);
+
+  &::-webkit-progress-bar {
+    background: var(--surface-sunken);
+  }
+  &::-webkit-progress-value {
+    background: var(--accent-ink);
+  }
+  &::-moz-progress-bar {
+    background: var(--accent-ink);
+  }
+}
+
+// --- Dateiliste -------------------------------------------------------------
+.datei-liste {
+  list-style: none;
+  margin: var(--space-4) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.datei {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--radius);
+}
+
+.datei__typ {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 2.6rem;
+  height: 2.6rem;
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--ink-muted);
+}
+
+.datei__haupt {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.datei__name {
+  font-weight: 600;
+  color: var(--ink);
+  word-break: break-word;
+}
+.datei__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+.datei__kat {
+  font-size: 0.6rem;
+}
+
+.datei__aktionen {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.datei__btn {
+  min-height: 40px;
+  padding: 0 var(--space-4);
+  gap: 0.4em;
+  font-size: var(--step--1);
+}
+.datei__btn--loesen {
+  color: var(--warn-ink);
+  border-color: color-mix(in srgb, var(--warn-ink) 45%, var(--line-strong));
+
+  &:hover:not(:disabled) {
+    border-color: var(--warn-ink);
+  }
+}
+
+@media (max-width: 40rem) {
+  .datei {
+    flex-wrap: wrap;
+  }
+  .datei__aktionen {
+    width: 100%;
+  }
+}

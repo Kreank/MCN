@@ -5,6 +5,8 @@ import { Mappe, MappeTab } from '../../shared/mappe/mappe';
 import { PartyService } from '../../core/party.service';
 import { PartyDetail, PartyStatus, PartyType } from '../../core/party.model';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { Dateien } from '../../shared/dateien/dateien';
+import { ZielFilter } from '../../core/datei.model';
 import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 
 type ViewState =
@@ -15,7 +17,7 @@ type ViewState =
 
 @Component({
   selector: 'app-kontakt-detail',
-  imports: [Mappe, RouterLink, KeinZugriff],
+  imports: [Mappe, RouterLink, KeinZugriff, Dateien],
   templateUrl: './kontakt-detail.html',
   styleUrl: './kontakt-detail.scss',
 })
@@ -32,6 +34,7 @@ export class KontaktDetail {
     { id: 'objektadressen', label: 'Objektadressen' },
     { id: 'ansprechpartner', label: 'Ansprechpartner' },
     { id: 'dokumente', label: 'Dokumente' },
+    { id: 'dateien', label: 'Dateien' },
     { id: 'logbuch', label: 'Logbuch' },
   ];
 
@@ -39,6 +42,11 @@ export class KontaktDetail {
     const s = this.state();
     return s.kind === 'ready' ? s.data : null;
   });
+
+  /** Stabile Zielreferenz fuer den Dateien-Tab (nur bei Kontaktwechsel neu). */
+  protected readonly dateienZiel = computed<ZielFilter>(() => ({
+    party_id: this.daten()?.id ?? '',
+  }));
 
   constructor() {
     this.route.paramMap.pipe(takeUntilDestroyed()).subscribe((pm) => {

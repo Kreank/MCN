@@ -9,6 +9,8 @@ import {
   ServiceCaseStatus,
 } from '../../core/projekt.model';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { Dateien } from '../../shared/dateien/dateien';
+import { ZielFilter } from '../../core/datei.model';
 import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 
 type ViewState =
@@ -19,7 +21,7 @@ type ViewState =
 
 @Component({
   selector: 'app-vorgang-detail',
-  imports: [Mappe, RouterLink, KeinZugriff],
+  imports: [Mappe, RouterLink, KeinZugriff, Dateien],
   templateUrl: './vorgang-detail.html',
   styleUrl: './vorgang-detail.scss',
 })
@@ -34,12 +36,18 @@ export class VorgangDetail {
   protected readonly tabs: MappeTab[] = [
     { id: 'uebersicht', label: 'Übersicht' },
     { id: 'verlauf', label: 'Verlauf' },
+    { id: 'dateien', label: 'Dateien' },
   ];
 
   protected readonly daten = computed(() => {
     const s = this.state();
     return s.kind === 'ready' ? s.data : null;
   });
+
+  /** Stabile Zielreferenz fuer den Dateien-Tab (nur bei Vorgangswechsel neu). */
+  protected readonly dateienZiel = computed<ZielFilter>(() => ({
+    service_case_id: this.daten()?.id ?? '',
+  }));
 
   constructor() {
     this.route.paramMap.pipe(takeUntilDestroyed()).subscribe((pm) => {

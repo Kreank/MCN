@@ -152,6 +152,9 @@
           <p>Objektbezogene Angebote, Rechnungen und Berichte erscheinen hier, sobald der Dokumentenbereich steht (Roadmap 05).</p>
         </div>
       }
+      @if (tab() === 'dateien') {
+        <app-dateien [ziel]="dateienZiel()" />
+      }
     </app-mappe>
 
     <!-- ---------------------------- Gebäude anlegen ----------------------- -->

@@ -12,6 +12,7 @@ import {
 import { Subject, debounceTime, distinctUntilChanged, map } from 'rxjs';
 import { BelegService } from '../../core/beleg.service';
 import { ArtikelService } from '../../core/artikel.service';
+import { StammdatenUebernahmeIn } from '../../core/artikel.model';
 import { AuthService } from '../../core/auth.service';
 import {
   Kalkulation,
@@ -212,6 +213,18 @@ export class AngebotEditor {
   // --- Positionsdetail-Dialog ---------------------------------------------
   protected readonly posOffen = signal(false);
   private posUid: string | null = null;
+  /** Quell-Artikel der gerade bearbeiteten Position (source_article_id) — nur
+   *  dann lässt sich der Stamm übernehmen. Kopie-Positionen ohne Quelle nicht. */
+  protected readonly posQuelleArtikelId = signal<string | null>(null);
+
+  // --- Stammdaten in den Artikelstamm übernehmen (eigener Vorgang) ---------
+  protected readonly darfPricingAendern = computed(() => this.auth.darf('pricing', 'AENDERN'));
+  protected readonly stammOffen = signal(false);
+  protected readonly stammLaedt = signal(false);
+  /** Beim Positions-Speichern erfasste Übernahme-Daten — die Bestätigung und
+   *  der Server-Call greifen darauf zu, nachdem die Position bereits (lokal)
+   *  gespeichert ist. */
+  private stammPending: { articleId: string; payload: StammdatenUebernahmeIn } | null = null;
   protected readonly posForm = this.fb.group({
     description: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
     line_type: this.fb.control<LineType>('MATERIAL', { nonNullable: true }),
@@ -222,6 +235,10 @@ export class AngebotEditor {
     unit_cost: this.fb.control('', { nonNullable: true, validators: [dezimalValidator] }),
     discount_percent: this.fb.control('', { nonNullable: true, validators: [dezimalValidator] }),
     tax_code: this.fb.control('DE_19', { nonNullable: true }),
+    // Transientes Häkchen: gehört NUR zum Dialog, wird bei jedem Öffnen auf
+    // false gesetzt und nie in den EditorLine-/Beleg-Zustand übernommen. Es löst
+    // eine einmalige, ausdrückliche Stamm-Übernahme aus — nicht bei jedem Speichern.
+    stamm_uebernehmen: this.fb.control(false, { nonNullable: true }),
   });
   protected readonly posFormMeldung = signal<string | null>(null);
 
@@ -630,6 +647,7 @@ export class AngebotEditor {
   // ======================= Positionsdetail ================================
   zeileOeffnen(line: EditorLine): void {
     this.posUid = line.uid;
+    this.posQuelleArtikelId.set(line.source_article_id);
     this.posFormMeldung.set(null);
     this.posForm.reset({
       description: line.description,
@@ -641,12 +659,64 @@ export class AngebotEditor {
       unit_cost: line.unit_cost != null ? apiZuDeDezimal(line.unit_cost, 2) : '',
       discount_percent: line.discount_percent != null ? apiZuDeDezimal(line.discount_percent) : '',
       tax_code: line.tax_code ?? 'DE_19',
+      // Häkchen bei jedem Öffnen zurücksetzen — es ist transient und persistiert nie.
+      stamm_uebernehmen: false,
     });
     this.posOffen.set(true);
   }
 
   posDialogSchliessen(): void {
     this.posOffen.set(false);
+  }
+
+  /**
+   * Ob im Positionsdialog das Häkchen „Änderungen auch in den Artikelstamm
+   * übernehmen" angeboten wird: nur bei einer Position mit Quell-Artikel (Kopie
+   * eines Stammartikels) UND dem Recht pricing/AENDERN — nicht für Textzeilen.
+   */
+  zeigeStammHaken(): boolean {
+    return (
+      !!this.posQuelleArtikelId() && this.darfPricingAendern() && !this.posIstText()
+    );
+  }
+
+  stammUebernehmenAbbrechen(): void {
+    if (this.stammLaedt()) return;
+    // Nur die Stamm-Übernahme wird verworfen — die Position ist bereits
+    // gespeichert und bleibt erhalten.
+    this.stammPending = null;
+    this.stammOffen.set(false);
+    this.ansage.set('Position übernommen. Der Artikelstamm wurde nicht geändert.');
+  }
+
+  stammUebernehmenBestaetigen(): void {
+    const pending = this.stammPending;
+    if (this.stammLaedt() || !pending) return;
+    this.stammLaedt.set(true);
+    this.artikelSvc.stammdatenUebernehmen(pending.articleId, pending.payload).subscribe({
+      next: () => {
+        this.stammLaedt.set(false);
+        this.stammOffen.set(false);
+        this.stammPending = null;
+        this.meldung.set({
+          art: 'erfolg',
+          text: 'Position übernommen; die Werte wurden in den Artikelstamm gespeichert. Bestehende Belege bleiben unverändert.',
+        });
+      },
+      error: (err) => {
+        this.stammLaedt.set(false);
+        this.stammOffen.set(false);
+        this.stammPending = null;
+        // Die Position ist bereits gespeichert und bleibt erhalten — nur die
+        // Stamm-Übernahme ist gescheitert. Ehrlicher Fehler, keine Erfolgsmeldung.
+        this.meldung.set({
+          art: 'fehler',
+          text:
+            this.fehlerText(err, 'Die Werte konnten nicht in den Artikelstamm übernommen werden.') +
+            ' Die Positionsänderung bleibt im Editor erhalten (mit „Speichern" sichern).',
+        });
+      },
+    });
   }
 
   posSpeichern(): void {
@@ -702,6 +772,28 @@ export class AngebotEditor {
       }),
     );
     this.markiereGeaendert();
+
+    // Die Position ist jetzt (lokal) gespeichert — reine Kopie-Semantik, es
+    // wurde NICHT in den Artikelstamm geschrieben. Nur wenn das transiente
+    // Häkchen gesetzt war, folgt als eigener, ausdrücklicher Vorgang die
+    // Stamm-Übernahme (hinter einer Bestätigung). Der EK wird bewusst nicht
+    // mitgegeben.
+    const artikelId = this.posQuelleArtikelId();
+    if (!text && v.stamm_uebernehmen && artikelId && this.darfPricingAendern()) {
+      this.stammPending = {
+        articleId: artikelId,
+        payload: {
+          description: v.description.trim() || null,
+          unit: v.unit.trim() || null,
+          verkaufspreis: deZuApiDezimal(v.unit_price) || null,
+        },
+      };
+      this.posOffen.set(false);
+      this.ansage.set('Position übernommen. Übernahme in den Artikelstamm bestätigen …');
+      this.stammOffen.set(true);
+      return;
+    }
+
     this.posOffen.set(false);
     this.ansage.set('Position übernommen.');
   }

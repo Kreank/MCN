@@ -167,3 +167,51 @@ export interface ComponentIn {
 export interface AssemblyComponentsInput {
   components: ComponentIn[];
 }
+
+// --- Artikel bearbeiten / Status / Historie / Stammdaten-Übernahme ----------
+
+/** Artikelstammdaten ändern (PUT /articles/{id}). Nur gesetzte Felder wirken
+ *  (der Server nutzt exclude_unset). Dezimalwerte als Punkt-String, list_price
+ *  mit bis zu vier Nachkommastellen. */
+export interface ArticleUpdateIn {
+  article_number?: string;
+  description?: string;
+  long_description?: string | null;
+  unit?: string;
+  line_type?: ArticleLineType;
+  list_price?: string | null;
+  gtin?: string | null;
+  manufacturer_name?: string | null;
+  manufacturer_number?: string | null;
+  product_group?: string | null;
+}
+
+/** Artikel aktivieren/deaktivieren (POST /articles/{id}/status). */
+export interface ArticleStatusIn {
+  status: StammStatus;
+}
+
+/** Eine einzelne Feldänderung eines Historie-Eintrags (vorher → nachher). */
+export interface HistorieFeld {
+  feld: string;
+  vorher: string | null;
+  nachher: string | null;
+}
+
+/** Ein Eintrag im Änderungsverlauf eines Artikels (aus der Audit-Spur). */
+export interface HistorieEintrag {
+  occurred_at: string;
+  action: string;
+  akteur: string | null;
+  felder: HistorieFeld[];
+}
+
+/** Werte aus einer Belegposition, die in den Artikelstamm übernommen werden
+ *  (POST /articles/{id}/stammdaten-uebernehmen). Der Einkaufspreis fehlt
+ *  bewusst — er ist die Aussage des Händlers, keine Meinung des Angebots. */
+export interface StammdatenUebernahmeIn {
+  description?: string | null;
+  long_description?: string | null;
+  unit?: string | null;
+  verkaufspreis?: string | null;
+}

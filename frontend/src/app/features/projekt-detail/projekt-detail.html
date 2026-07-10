@@ -233,10 +233,7 @@
         }
       }
       @if (tab() === 'dateien') {
-        <div class="tab-platzhalter">
-          <h2 class="tab-platzhalter__titel">Dateien</h2>
-          <p>Projektbezogene Bilder und Dokumente (<code>content.file_link</code>) erscheinen hier, sobald der Dateibereich steht (Roadmap 05).</p>
-        </div>
+        <app-dateien [ziel]="dateienZiel()" />
       }
     </app-mappe>
 

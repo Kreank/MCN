@@ -1,0 +1,180 @@
+<section class="dateien">
+  @if (titel()) {
+    <h2 class="dateien__titel">{{ titel() }}</h2>
+  }
+
+  <!-- ------------------------------ Upload ------------------------------- -->
+  @if (darfAnlegen()) {
+    <div
+      class="ablage"
+      [class.ablage--aktiv]="dragAktiv()"
+      (dragover)="onDragOver($event)"
+      (dragleave)="onDragLeave($event)"
+      (drop)="onDrop($event)"
+    >
+      <div class="ablage__zeile">
+        <div class="ablage__text">
+          <span class="ablage__mark" aria-hidden="true">⬆</span>
+          <span>
+            Datei hierher ziehen oder
+            <label class="ablage__waehlen">
+              <span class="link-knopf">auswählen</span>
+              <input
+                type="file"
+                class="sr-only"
+                multiple
+                [disabled]="uploadLaeuft()"
+                (change)="dateiFeldGeaendert($event)"
+                aria-label="Dateien auswählen"
+              />
+            </label>
+          </span>
+        </div>
+
+        <label class="ablage__kategorie">
+          <span class="ablage__kategorie-label">Kategorie</span>
+          <select
+            class="feld-gruppe__input feld-gruppe__select ablage__select"
+            [value]="kategorie()"
+            [disabled]="uploadLaeuft()"
+            (change)="kategorie.set($any($event.target).value)"
+          >
+            @for (k of kategorien; track k.wert) {
+              <option [value]="k.wert">{{ k.label }}</option>
+            }
+          </select>
+        </label>
+      </div>
+
+      <p class="ablage__hinweis">
+        Erlaubt sind u. a. PDF, Bilder, Office-Dateien und Videos (bis 50 MB). Kein HTML/SVG.
+      </p>
+    </div>
+
+    <!-- Fortschritt (aria-live, nicht nur Farbe: Text + Balken) -->
+    <div class="upload-status" role="status" aria-live="polite">
+      @if (uploadLaeuft()) {
+        <p class="upload-status__text">
+          Lade hoch: <strong>{{ uploadAktuell() }}</strong>
+          @if (uploadGesamt() > 1) {
+            <span class="upload-status__zaehler">(Datei {{ uploadIndex() }} von {{ uploadGesamt() }})</span>
+          }
+          @if (uploadProzent() !== null) {
+            <span> — {{ uploadProzent() }} %</span>
+          }
+        </p>
+        @if (uploadProzent() !== null) {
+          <progress class="upload-status__balken" [value]="uploadProzent()" max="100">
+            {{ uploadProzent() }} %
+          </progress>
+        } @else {
+          <progress class="upload-status__balken"></progress>
+        }
+      }
+    </div>
+
+    <!-- Upload-Fehler (aria-live assertive, z. B. Whitelist-Ablehnung 422) -->
+    @if (uploadFehler().length > 0) {
+      <div class="melde melde--fehler dateien__melde" role="alert" aria-live="assertive">
+        <span class="melde__mark" aria-hidden="true">!</span>
+        <span class="melde__text">
+          <strong>Nicht hochgeladen:</strong>
+          <ul class="dateien__fehlerliste">
+            @for (f of uploadFehler(); track f.name) {
+              <li><strong>{{ f.name }}</strong> — {{ f.text }}</li>
+            }
+          </ul>
+        </span>
+        <button type="button" class="melde__zu" (click)="uploadFehler.set([])" aria-label="Meldung schließen">
+          <span aria-hidden="true">✕</span>
+        </button>
+      </div>
+    }
+  }
+
+  <!-- Download-/Löschfehler -->
+  @if (downloadFehler(); as df) {
+    <div class="melde melde--fehler dateien__melde" role="alert" aria-live="assertive">
+      <span class="melde__mark" aria-hidden="true">!</span>
+      <span class="melde__text"><strong>Fehler:</strong> {{ df }}</span>
+      <button type="button" class="melde__zu" (click)="downloadFehler.set(null)" aria-label="Meldung schließen">
+        <span aria-hidden="true">✕</span>
+      </button>
+    </div>
+  }
+
+  <!-- ------------------------------ Liste -------------------------------- -->
+  @switch (zustand().kind) {
+    @case ('loading') {
+      <p class="lade-hinweis" role="status">Dateien werden geladen …</p>
+    }
+    @case ('forbidden') {
+      <div class="tab-platzhalter">
+        <p>{{ $any(zustand()).detail || 'Für die Dateien fehlt die Berechtigung (content/LESEN).' }}</p>
+      </div>
+    }
+    @case ('error') {
+      <div class="melde melde--fehler dateien__melde" role="alert">
+        <span class="melde__mark" aria-hidden="true">!</span>
+        <span class="melde__text"><strong>Fehler:</strong> Die Dateien konnten nicht geladen werden.</span>
+        <button type="button" class="melde__zu" (click)="neuLaden()" aria-label="Erneut versuchen">
+          <span aria-hidden="true">↻</span>
+        </button>
+      </div>
+    }
+    @case ('ready') {
+      @if (dateien().length === 0) {
+        <div class="tab-platzhalter">
+          <p>Für dieses Objekt sind noch keine Dateien abgelegt.</p>
+        </div>
+      } @else {
+        <ul class="datei-liste">
+          @for (d of dateien(); track d.link_id) {
+            <li class="datei">
+              <span class="datei__typ" aria-hidden="true">{{ typKuerzel(d.mime_type) }}</span>
+              <div class="datei__haupt">
+                <span class="datei__name">{{ d.original_filename }}</span>
+                <span class="datei__meta">
+                  @if (d.link_category) {
+                    <span class="stamp datei__kat">{{ kategorieLabel(d.link_category) }}</span>
+                  }
+                  <span class="datei__groesse">{{ groesse(d.size_bytes) }}</span>
+                  <span aria-hidden="true">·</span>
+                  <span class="datei__datum">{{ datum(d.uploaded_at) }}</span>
+                  @if (d.uploaded_by) {
+                    <span aria-hidden="true">·</span>
+                    <span class="datei__von">{{ d.uploaded_by }}</span>
+                  }
+                </span>
+              </div>
+              <div class="datei__aktionen">
+                <button type="button" class="btn datei__btn" (click)="herunterladen(d)">
+                  <span aria-hidden="true">↓</span>
+                  <span>Herunterladen</span>
+                  <span class="sr-only">: {{ d.original_filename }}</span>
+                </button>
+                @if (darfLoesen()) {
+                  <button type="button" class="btn datei__btn datei__btn--loesen" (click)="loesenFragen(d)">
+                    <span>Entfernen</span>
+                    <span class="sr-only">: Verknüpfung von {{ d.original_filename }} lösen</span>
+                  </button>
+                }
+              </div>
+            </li>
+          }
+        </ul>
+      }
+    }
+  }
+</section>
+
+<app-bestaetigung
+  [offen]="loesenZiel() !== null"
+  titel="Verknüpfung lösen?"
+  [text]="loesenText()"
+  bestaetigenLabel="Verknüpfung lösen"
+  [gefahr]="true"
+  [laedt]="loesenLaeuft()"
+  (bestaetigen)="loesenBestaetigen()"
+  (abbrechen)="loesenAbbrechen()"
+/>

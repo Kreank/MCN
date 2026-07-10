@@ -577,6 +577,34 @@ def test_artikel_bearbeiten_und_historie(admin_client, app_user):
 
 
 @pytest.mark.django_db
+def test_gtin_laesst_sich_wieder_leeren(admin_client, app_user):
+    """Eine versehentlich erfasste GTIN muss entfernbar sein — sonst klebt der
+    Tippfehler für immer am Artikel."""
+    from db_core.services import artikel as artikel_service
+
+    a = artikel_service.create_article(
+        app_user.id, article_number="GTIN-1", description="Mit GTIN", unit="Stk"
+    )
+    r = admin_client.put(
+        f"/api/pricing/articles/{a.id}",
+        data={"gtin": "4006381333931"},
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    assert r.json()["gtin"] == "4006381333931"
+
+    r = admin_client.put(
+        f"/api/pricing/articles/{a.id}",
+        data={"gtin": None},
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    assert r.json()["gtin"] is None
+    a.refresh_from_db()
+    assert a.gtin is None
+
+
+@pytest.mark.django_db
 def test_artikelnummer_duplikat_422(admin_client, app_user):
     from db_core.services import artikel as artikel_service
 

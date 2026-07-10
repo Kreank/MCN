@@ -29,6 +29,21 @@
     >
       <span mappe-kopf class="stamp stamp--type">{{ lineTypeLabel(daten()!.line_type) }}</span>
       <span mappe-kopf class="stamp {{ statusClass(daten()!.status) }}">{{ statusLabel(daten()!.status) }}</span>
+      @if (darfAendern()) {
+        <button mappe-kopf type="button" class="btn btn--primary" (click)="bearbeitenOeffnen()">
+          <span aria-hidden="true">✎</span> Bearbeiten
+        </button>
+      }
+      @if (darfAendern() && daten()!.status === 'AKTIV') {
+        <button mappe-kopf type="button" class="btn" [disabled]="statusLaedt()" (click)="deaktivierenFragen()">
+          Deaktivieren
+        </button>
+      }
+      @if (darfAendern() && daten()!.status !== 'AKTIV') {
+        <button mappe-kopf type="button" class="btn" [disabled]="statusLaedt()" (click)="aktivieren()">
+          Aktivieren
+        </button>
+      }
 
       @if (meldung(); as m) {
         <div
@@ -45,11 +60,12 @@
         </div>
       }
 
-      @if (tab() === 'stammdaten') {
+      @if (tab() === 'informationen') {
         <dl class="feld-raster">
           <div class="feld"><dt class="feld__label">Artikelnummer</dt><dd class="feld__wert">{{ daten()!.article_number }}</dd></div>
           <div class="feld"><dt class="feld__label">Einheit</dt><dd class="feld__wert">{{ daten()!.unit }}</dd></div>
           <div class="feld"><dt class="feld__label">Typ</dt><dd class="feld__wert">{{ lineTypeLabel(daten()!.line_type) }}</dd></div>
+          <div class="feld"><dt class="feld__label">Listenpreis</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.list_price">{{ euro(daten()!.list_price) }}</dd></div>
           <div class="feld"><dt class="feld__label">Warengruppe</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.product_group">{{ daten()!.product_group || '—' }}</dd></div>
           <div class="feld"><dt class="feld__label">Hersteller</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.manufacturer_name">{{ daten()!.manufacturer_name || '—' }}</dd></div>
           <div class="feld"><dt class="feld__label">Hersteller-Nr.</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.manufacturer_number">{{ daten()!.manufacturer_number || '—' }}</dd></div>
@@ -58,15 +74,6 @@
         @if (daten()!.long_description) {
           <p class="langtext">{{ daten()!.long_description }}</p>
         }
-      }
-
-      @if (tab() === 'preis') {
-        <dl class="feld-raster">
-          <div class="feld"><dt class="feld__label">Listenpreis</dt><dd class="feld__wert">{{ euro(daten()!.list_price) }}</dd></div>
-        </dl>
-        <div class="tab-platzhalter">
-          <p>Der Verkaufspreis ergibt sich aus einer Preisgruppen-Formel (Auf-/Abschlag auf EK oder Listenpreis) bzw. einem Festpreis — siehe Tab <strong>Kalkulation</strong>.</p>
-        </div>
       }
 
       @if (tab() === 'kalkulation') {
@@ -122,7 +129,112 @@
           }
         }
       }
+
+      @if (tab() === 'historie') {
+        @switch (historie().kind) {
+          @case ('loading') {
+            <p class="lade-hinweis" role="status">Historie wird geladen …</p>
+          }
+          @case ('forbidden') {
+            <app-kein-zugriff [detail]="$any(historie()).detail" />
+          }
+          @case ('error') {
+            <div class="note note--error" role="alert">
+              <h2 class="note__titel">Historie nicht verfügbar</h2>
+              <p class="note__text">Der Änderungsverlauf ließ sich nicht laden.</p>
+              <button type="button" class="btn btn--primary" (click)="retryHistorie()">Erneut versuchen</button>
+            </div>
+          }
+          @case ('ready') {
+            @if ($any(historie()).data.length === 0) {
+              <div class="tab-platzhalter">
+                <p>Für diesen Artikel ist noch keine Änderung verzeichnet.</p>
+              </div>
+            } @else {
+              <ol class="hist">
+                @for (e of $any(historie()).data; track $index) {
+                  <li class="hist__eintrag">
+                    <div class="hist__kopf">
+                      <span class="stamp stamp--type">{{ aktionLabel(e.action) }}</span>
+                      <time class="hist__zeit" [attr.datetime]="e.occurred_at">{{ historieZeit(e.occurred_at) }}</time>
+                      <span class="hist__akteur">{{ e.akteur || 'System' }}</span>
+                    </div>
+                    @if (e.felder.length) {
+                      <ul class="hist__felder">
+                        @for (f of e.felder; track $index) {
+                          <li class="hist__feld">
+                            <span class="hist__fname">{{ feldLabel(f.feld) }}</span>
+                            <span class="hist__diff">
+                              <span class="hist__vorher" [class.hist__leer]="f.vorher === null">{{ f.vorher ?? '—' }}</span>
+                              <span class="hist__pfeil" aria-hidden="true">→</span>
+                              <span class="hist__nachher" [class.hist__leer]="f.nachher === null">{{ f.nachher ?? '—' }}</span>
+                            </span>
+                          </li>
+                        }
+                      </ul>
+                    }
+                  </li>
+                }
+              </ol>
+              @if ($any(historie()).data.length >= 50) {
+                <p class="hist__hinweis" role="note">Es werden die letzten 50 Änderungen angezeigt.</p>
+              }
+            }
+          }
+          @default {
+            <p class="lade-hinweis" role="status">Historie wird vorbereitet …</p>
+          }
+        }
+      }
     </app-mappe>
+
+    <!-- ---------------------------- Artikel bearbeiten -------------------- -->
+    <app-dialog [offen]="bearbeitenOffen()" titel="Artikel bearbeiten" (schliessen)="bearbeitenSchliessen()">
+      <form id="artikel-form" class="dialog-form" (submit)="$event.preventDefault(); bearbeitenAbsenden()" novalidate>
+        @if (bearbeitenMeldung(); as fm) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+          </div>
+        }
+        <div class="pos-grid">
+          <app-feld [control]="bearbeitenForm.controls.article_number" label="Artikelnummer" [pflicht]="true" />
+          <app-feld [control]="bearbeitenForm.controls.unit" label="Einheit" [pflicht]="true" hinweis="z. B. Stk, m, h" />
+        </div>
+        <app-feld [control]="bearbeitenForm.controls.description" label="Bezeichnung" [pflicht]="true" />
+        <app-feld [control]="bearbeitenForm.controls.long_description" label="Langtext" typ="textarea" hinweis="Optional" />
+        <div class="pos-grid">
+          <app-feld [control]="bearbeitenForm.controls.line_type" label="Typ" typ="select" [optionen]="lineTypeOptionen" />
+          <app-feld [control]="bearbeitenForm.controls.list_price" label="Listenpreis (netto)" typ="zahl" hinweis="Optional, bis zu vier Nachkommastellen." />
+        </div>
+        <div class="pos-grid">
+          <app-feld [control]="bearbeitenForm.controls.manufacturer_name" label="Hersteller" />
+          <app-feld [control]="bearbeitenForm.controls.manufacturer_number" label="Hersteller-Nr." />
+        </div>
+        <div class="pos-grid">
+          <app-feld [control]="bearbeitenForm.controls.product_group" label="Warengruppe" />
+          <app-feld [control]="bearbeitenForm.controls.gtin" label="GTIN / EAN" hinweis="8, 12, 13 oder 14 Ziffern (mit Prüfziffer)." inputmode="numeric" />
+        </div>
+      </form>
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="bearbeitenLaedt()" (click)="bearbeitenSchliessen()">Abbrechen</button>
+        <button type="submit" form="artikel-form" class="btn btn--primary" [disabled]="bearbeitenLaedt()" [attr.aria-busy]="bearbeitenLaedt()">
+          {{ bearbeitenLaedt() ? 'Wird gespeichert …' : 'Speichern' }}
+        </button>
+      </div>
+    </app-dialog>
+
+    <!-- ---------------------------- Deaktivieren ------------------------- -->
+    <app-bestaetigung
+      [offen]="statusOffen()"
+      titel="Artikel deaktivieren?"
+      text="Der Artikel wird auf INAKTIV gesetzt und erscheint danach nicht mehr in der Artikelsuche oder in der Angebotspalette. Bestehende Belege behalten ihren Bezug. Der Artikel lässt sich jederzeit wieder aktivieren."
+      bestaetigenLabel="Deaktivieren"
+      [gefahr]="true"
+      [laedt]="statusLaedt()"
+      (bestaetigen)="deaktivierenBestaetigen()"
+      (abbrechen)="statusAbbrechen()"
+    />
 
     <!-- ---------------------------- Verkaufspreis setzen ------------------ -->
     <app-dialog [offen]="vkOffen()" titel="Verkaufspreis setzen" (schliessen)="vkSchliessen()">

@@ -106,6 +106,30 @@ def test_download_ist_attachment_mit_nosniff(admin_client, projekt, fake_storage
 
 
 @pytest.mark.django_db
+def test_download_dateiname_ausserhalb_latin1(admin_client, projekt, fake_storage):
+    """HTTP-Kopfzeilen sind latin-1. Ein Name mit Emoji oder Euro-Zeichen ließ die
+    Antwort früher werfen (500) — hochladen ging, herunterladen nicht."""
+    file_id = _upload(admin_client, projekt, name="Angebot €100 ✓.pdf").json()["file_id"]
+    r = admin_client.get(f"{BASE}/files/{file_id}/download")
+    assert r.status_code == 200
+    assert r.content == PDF
+    disposition = r["Content-Disposition"]
+    assert disposition.startswith("attachment;")
+    # RFC 5987: prozentkodiert, damit der Browser den Namen wiederherstellt.
+    assert "filename*=utf-8''" in disposition
+    assert "%E2%82%AC" in disposition  # €
+
+
+@pytest.mark.django_db
+def test_download_dateiname_mit_anfuehrungszeichen(admin_client, projekt, fake_storage):
+    """Ein Anführungszeichen darf nicht aus dem Quoting ausbrechen."""
+    file_id = _upload(admin_client, projekt, name='Anlage "A".pdf').json()["file_id"]
+    r = admin_client.get(f"{BASE}/files/{file_id}/download")
+    assert r.status_code == 200
+    assert r["Content-Disposition"] == 'attachment; filename="Anlage \\"A\\".pdf"'
+
+
+@pytest.mark.django_db
 def test_download_unbekannt_404(admin_client, fake_storage):
     r = admin_client.get(f"{BASE}/files/{uuid.uuid4()}/download")
     assert r.status_code == 404

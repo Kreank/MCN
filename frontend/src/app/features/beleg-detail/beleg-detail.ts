@@ -7,6 +7,8 @@ import { AuthService } from '../../core/auth.service';
 import { LineType, QuoteDetail, QuoteStatus } from '../../core/beleg.model';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { Bestaetigung } from '../../shared/bestaetigung/bestaetigung';
+import { Dateien } from '../../shared/dateien/dateien';
+import { ZielFilter } from '../../core/datei.model';
 import { VerbotenState, fehlerDetail, fehlerState, istVerboten } from '../../shared/http-fehler';
 
 type ViewState =
@@ -19,7 +21,7 @@ type Meldung = { art: 'erfolg' | 'fehler'; text: string };
 
 @Component({
   selector: 'app-beleg-detail',
-  imports: [Mappe, RouterLink, KeinZugriff, Bestaetigung],
+  imports: [Mappe, RouterLink, KeinZugriff, Bestaetigung, Dateien],
   templateUrl: './beleg-detail.html',
   styleUrl: './beleg-detail.scss',
 })
@@ -48,12 +50,22 @@ export class BelegDetail {
   protected readonly tabs: MappeTab[] = [
     { id: 'positionen', label: 'Positionen' },
     { id: 'uebersicht', label: 'Übersicht' },
+    { id: 'dateien', label: 'Dateien' },
   ];
 
   protected readonly daten = computed(() => {
     const s = this.state();
     return s.kind === 'ready' ? s.data : null;
   });
+
+  /**
+   * Zielreferenz fuer den Dateien-Tab. Diese Mappe zeigt ausschliesslich
+   * Angebote (invoicing.quote) — daher `quote_id`. Rechnungen haben eine eigene
+   * Mappe (rechnung-detail). Stabile Referenz (nur bei Belegwechsel neu).
+   */
+  protected readonly dateienZiel = computed<ZielFilter>(() => ({
+    quote_id: this.daten()?.id ?? '',
+  }));
 
   constructor() {
     this.route.paramMap.pipe(takeUntilDestroyed()).subscribe((pm) => {

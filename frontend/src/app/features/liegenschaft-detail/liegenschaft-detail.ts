@@ -17,6 +17,8 @@ import {
   UnitTypeCode,
 } from '../../core/property.model';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { Dateien } from '../../shared/dateien/dateien';
+import { ZielFilter } from '../../core/datei.model';
 import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 import { Dialog } from '../../shared/dialog/dialog';
 import { Feld, FeldOption } from '../../shared/formular/feld';
@@ -36,7 +38,7 @@ type Meldung = { art: 'erfolg' | 'fehler'; text: string };
 
 @Component({
   selector: 'app-liegenschaft-detail',
-  imports: [Mappe, RouterLink, ReactiveFormsModule, KeinZugriff, Dialog, Feld],
+  imports: [Mappe, RouterLink, ReactiveFormsModule, KeinZugriff, Dateien, Dialog, Feld],
   templateUrl: './liegenschaft-detail.html',
   styleUrl: './liegenschaft-detail.scss',
 })
@@ -58,6 +60,7 @@ export class LiegenschaftDetail {
     { id: 'eigentum', label: 'Eigentum' },
     { id: 'belegung', label: 'Belegung' },
     { id: 'dokumente', label: 'Dokumente' },
+    { id: 'dateien', label: 'Dateien' },
   ];
 
   protected readonly unitTypOptionen: FeldOption[] = [
@@ -82,6 +85,11 @@ export class LiegenschaftDetail {
     const s = this.state();
     return s.kind === 'ready' ? s.data : null;
   });
+
+  /** Stabile Zielreferenz fuer den Dateien-Tab (nur bei Objektwechsel neu). */
+  protected readonly dateienZiel = computed<ZielFilter>(() => ({
+    property_id: this.daten()?.id ?? '',
+  }));
 
   protected readonly einheitenGesamt = computed(() => {
     const d = this.daten();

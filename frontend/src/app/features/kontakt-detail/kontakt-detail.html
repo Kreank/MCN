@@ -70,6 +70,9 @@
           <p>Angebote und Rechnungen dieses Kontakts werden hier gebündelt, sobald der Dokumentenbereich steht (Roadmap 05).</p>
         </div>
       }
+      @if (tab() === 'dateien') {
+        <app-dateien [ziel]="dateienZiel()" />
+      }
       @if (tab() === 'logbuch') {
         <div class="tab-platzhalter">
           <h2 class="tab-platzhalter__titel">Logbuch</h2>

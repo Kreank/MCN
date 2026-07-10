@@ -30,6 +30,8 @@ import {
   ServiceCaseStatus,
 } from '../../core/projekt.model';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { Dateien } from '../../shared/dateien/dateien';
+import { ZielFilter } from '../../core/datei.model';
 import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 import { Dialog } from '../../shared/dialog/dialog';
 import { Feld, FeldOption } from '../../shared/formular/feld';
@@ -65,7 +67,7 @@ type LazyState<T> =
 
 @Component({
   selector: 'app-projekt-detail',
-  imports: [Mappe, RouterLink, KeinZugriff, ReactiveFormsModule, Dialog, Feld, ReferenzWahl],
+  imports: [Mappe, RouterLink, KeinZugriff, Dateien, ReactiveFormsModule, Dialog, Feld, ReferenzWahl],
   templateUrl: './projekt-detail.html',
   styleUrl: './projekt-detail.scss',
 })
@@ -104,6 +106,11 @@ export class ProjektDetail {
     const s = this.state();
     return s.kind === 'ready' ? s.data : null;
   });
+
+  /** Stabile Zielreferenz fuer den Dateien-Tab (nur bei Projektwechsel neu). */
+  protected readonly dateienZiel = computed<ZielFilter>(() => ({
+    project_id: this.daten()?.id ?? '',
+  }));
 
   // --- Schreibaktionen (Dialoge) ------------------------------------------
   protected readonly meldung = signal<Meldung | null>(null);

@@ -124,6 +124,11 @@
           }
         </div>
       }
+
+      <!-- ------------------------------ Dateien --------------------------- -->
+      @if (tab() === 'dateien') {
+        <app-dateien [ziel]="dateienZiel()" />
+      }
     </app-mappe>
 
     <app-bestaetigung

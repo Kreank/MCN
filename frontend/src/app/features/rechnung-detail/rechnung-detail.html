@@ -154,6 +154,10 @@
           }
         </div>
       }
+
+      @if (tab() === 'dateien') {
+        <app-dateien [ziel]="dateienZiel()" />
+      }
     </app-mappe>
 
     <!-- ---------------------------- Beteiligten hinzufügen ---------------- -->

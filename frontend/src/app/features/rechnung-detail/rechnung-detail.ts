@@ -16,6 +16,8 @@ import {
 } from '../../core/beleg.model';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { Bestaetigung } from '../../shared/bestaetigung/bestaetigung';
+import { Dateien } from '../../shared/dateien/dateien';
+import { ZielFilter } from '../../core/datei.model';
 import { Dialog } from '../../shared/dialog/dialog';
 import { Feld, FeldOption } from '../../shared/formular/feld';
 import { ReferenzWahl, RefSuche } from '../../shared/formular/referenz-wahl';
@@ -36,7 +38,7 @@ type Meldung = { art: 'erfolg' | 'fehler'; text: string };
 
 @Component({
   selector: 'app-rechnung-detail',
-  imports: [Mappe, RouterLink, KeinZugriff, Bestaetigung, ReactiveFormsModule, Dialog, Feld, ReferenzWahl],
+  imports: [Mappe, RouterLink, KeinZugriff, Bestaetigung, Dateien, ReactiveFormsModule, Dialog, Feld, ReferenzWahl],
   templateUrl: './rechnung-detail.html',
   styleUrl: './rechnung-detail.scss',
 })
@@ -92,12 +94,18 @@ export class RechnungDetail {
     { id: 'positionen', label: 'Positionen' },
     { id: 'beteiligte', label: 'Beteiligte' },
     { id: 'uebersicht', label: 'Übersicht' },
+    { id: 'dateien', label: 'Dateien' },
   ];
 
   protected readonly daten = computed(() => {
     const s = this.state();
     return s.kind === 'ready' ? s.data : null;
   });
+
+  /** Stabile Zielreferenz fuer den Dateien-Tab (nur bei Rechnungswechsel neu). */
+  protected readonly dateienZiel = computed<ZielFilter>(() => ({
+    invoice_id: this.daten()?.id ?? '',
+  }));
 
   constructor() {
     this.route.paramMap.pipe(takeUntilDestroyed()).subscribe((pm) => {

@@ -4,6 +4,8 @@ import { ActivatedRoute, RouterLink } from '@angular/router';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Mappe, MappeTab } from '../../shared/mappe/mappe';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { Dateien } from '../../shared/dateien/dateien';
+import { ZielFilter } from '../../core/datei.model';
 import { Dialog } from '../../shared/dialog/dialog';
 import { Bestaetigung } from '../../shared/bestaetigung/bestaetigung';
 import { Feld } from '../../shared/formular/feld';
@@ -44,6 +46,7 @@ type Meldung = { art: 'erfolg' | 'fehler'; text: string };
     Mappe,
     RouterLink,
     KeinZugriff,
+    Dateien,
     Dialog,
     Bestaetigung,
     Feld,
@@ -67,6 +70,7 @@ export class BuchhaltungDetail {
     { id: 'uebersicht', label: 'Übersicht' },
     { id: 'zahlungen', label: 'Zahlungen' },
     { id: 'mahnverlauf', label: 'Mahnverlauf' },
+    { id: 'dateien', label: 'Dateien' },
   ];
 
   protected readonly paymentTypes = PAYMENT_TYPES;
@@ -134,6 +138,11 @@ export class BuchhaltungDetail {
     const s = this.state();
     return s.kind === 'ready' ? s.data : null;
   });
+
+  /** Der offene Posten IST die Rechnung — `id` ist die invoice_id. */
+  protected readonly dateienZiel = computed<ZielFilter>(() => ({
+    invoice_id: this.daten()?.id ?? '',
+  }));
 
   constructor() {
     this.route.paramMap.pipe(takeUntilDestroyed()).subscribe((pm) => {

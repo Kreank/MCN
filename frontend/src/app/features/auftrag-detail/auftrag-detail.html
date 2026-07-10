@@ -145,6 +145,10 @@
           </ol>
         }
       }
+
+      @if (tab() === 'dateien') {
+        <app-dateien [ziel]="dateienZiel()" />
+      }
     </app-mappe>
 
     <!-- ---------------------------- Beteiligter-Dialog -------------------- -->
