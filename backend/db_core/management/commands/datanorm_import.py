@@ -19,11 +19,16 @@ wird zeilenweise gestreamt. Die Preisdatei wird vorab in ein Dictionary geladen
 (rund 1,4 Mio Einträge) — sie ist mit ~68 MB klein genug.
 """
 import io
+import uuid
 import zipfile
+from datetime import date
 from decimal import Decimal
 
 from django.core.management.base import BaseCommand, CommandError
+from django.db import connection as db_connection
 
+from db_core.db_context import business_transaction
+from db_core.models import AppUser, Article, ArticleSupplierReference, Party
 from db_core.services import datanorm
 
 
@@ -66,6 +71,75 @@ def _euro(wert):
     return f"{wert:>12,.4f}".replace(",", "_").replace(".", ",").replace("_", ".")
 
 
+def _artikel_bloecke(zip_pfad):
+    """Streamt (Artikel, Zusatz|None, Langtext) je Artikel.
+
+    Die Datei ist je Artikel gruppiert: erst der A-Satz, dann sein B-Satz, dann
+    seine D-Sätze. Deshalb genügt ein Puffer für genau einen Artikel — 2 Mio
+    Artikel mit 14,5 Mio Langtextzeilen passen sonst nicht in den Speicher.
+    """
+    a = b = None
+    texte = []
+
+    def fertig():
+        return a, b, "\n".join(t for _, t in sorted(texte)) or None
+
+    for zeile in _zeilen(zip_pfad):
+        art = zeile[:1]
+        if art == "A":
+            if a is not None:
+                yield fertig()
+            a, b, texte = datanorm.parse_artikel(zeile), None, []
+        elif art == "B" and a is not None:
+            z = datanorm.parse_zusatz(zeile)
+            if z.artikelnummer == a.artikelnummer:
+                b = z
+        elif art == "D" and a is not None:
+            nummer, zeilen = datanorm.parse_langtext(zeile)
+            if nummer == a.artikelnummer:
+                texte.extend(zeilen)
+    if a is not None:
+        yield fertig()
+
+
+def _lieferant_und_anbindung(actor_id, *, name, namespace):
+    """Legt Lieferant (identity.party) und Anbindung an, oder findet sie.
+
+    `connection_kind = GROSSHAENDLER` trennt den Bestellkatalog von den
+    Herstellerdaten des Gerätefinders (Migration 0040). Wer hier HERSTELLER
+    einträgt, mischt Ersatzteile in die Artikelsuche des Angebots.
+    """
+    party = Party.objects.filter(display_name=name, status="ACTIVE").first()
+    if party is None:
+        with business_transaction(actor_id):
+            party = Party.objects.create(
+                id=uuid.uuid4(), party_type="ORGANIZATION",
+                display_name=name, status="ACTIVE", version=1,
+            )
+    with db_connection.cursor() as cur:
+        cur.execute(
+            "SELECT id FROM pricing.supplier_connection "
+            "WHERE source_namespace = %s AND source_system = 'DATANORM'",
+            [namespace],
+        )
+        row = cur.fetchone()
+        if row is None:
+            with business_transaction(actor_id):
+                cur.execute(
+                    """
+                    -- status ist hier englisch (ACTIVE/INACTIVE), anders als bei
+                    -- den Fachtabellen mit deutschem Statusautomaten.
+                    INSERT INTO pricing.supplier_connection
+                        (id, supplier_party_id, source_system, source_namespace,
+                         label, status, connection_kind, version)
+                    VALUES (gen_random_uuid(), %s, 'DATANORM', %s, %s, 'ACTIVE',
+                            'GROSSHAENDLER', 1)
+                    """,
+                    [party.id, namespace, name],
+                )
+    return party
+
+
 class Command(BaseCommand):
     help = "Importiert einen DATANORM-4-Artikelstamm (Trockenlauf mit --dry-run)."
 
@@ -80,13 +154,18 @@ class Command(BaseCommand):
             "--nummer", action="append", default=[],
             help="Nur diese Artikelnummer(n) zeigen (mehrfach angebbar).",
         )
+        parser.add_argument(
+            "--batch", type=int, default=2000,
+            help="Artikel je Schreib-Transaktion (Standard 2000).",
+        )
+        parser.add_argument(
+            "--limit-import", type=int, default=0,
+            help="Nur die ersten N Artikel schreiben (0 = alle). Für Probeläufe.",
+        )
 
     def handle(self, *args, **opts):
         if not opts["dry_run"]:
-            raise CommandError(
-                "Der schreibende Import ist noch nicht freigegeben. Bitte zuerst "
-                "--dry-run gegenlesen."
-            )
+            return self._importieren(**opts)
         self.stdout.write(self.style.MIGRATE_HEADING("DATANORM-Trockenlauf"))
 
         # Vorlaufsatz
@@ -166,3 +245,113 @@ class Command(BaseCommand):
             )
         self.stdout.write("")
         self.stdout.write(self.style.WARNING("  Trockenlauf — es wurde nichts geschrieben."))
+
+    # ------------------------------------------------------------------
+    # Schreibender Import
+    # ------------------------------------------------------------------
+
+    def _importieren(self, **opts):
+        namespace = opts["namespace"]
+        name = opts["lieferant"] or namespace
+        if not opts.get("preise"):
+            raise CommandError("--preise ist für den Import erforderlich (EK-Quelle).")
+
+        actor = AppUser.objects.filter(status="ACTIVE").order_by("created_at").first()
+        if actor is None:
+            raise CommandError("Kein aktiver security.app_user als Akteur gefunden.")
+
+        self.stdout.write(self.style.MIGRATE_HEADING("DATANORM-Import"))
+        v = datanorm.parse_vorlauf(next(iter(_zeilen(opts["stamm"]))))
+        self.stdout.write(f"  Version {v.version}, Währung {v.waehrung}, Stand {v.datum}")
+
+        if Article.objects.filter(article_number__startswith=f"DN-{namespace}-").exists():
+            raise CommandError(
+                f"Es existieren bereits Artikel im Namensraum '{namespace}'. "
+                "Der Erstimport bricht ab, statt Dubletten anzulegen."
+            )
+
+        self.stdout.write("  Lese Preisdatei …")
+        preis_liste, preis_netto = _preisindex(opts["preise"], stdout=self.stdout.write)
+
+        party = _lieferant_und_anbindung(actor.id, name=name, namespace=namespace)
+        self.stdout.write(f"  Lieferant : {party.display_name} ({party.id})")
+        self.stdout.write(f"  Namensraum: {namespace}  (GROSSHAENDLER)")
+        self.stdout.write("")
+
+        heute = date.today()
+        batch = opts["batch"]
+        artikel_puffer, ref_puffer = [], []
+        n = ohne_preis = 0
+        limit = opts["limit_import"]
+
+        def flush():
+            if not artikel_puffer:
+                return
+            with business_transaction(actor.id):
+                Article.objects.bulk_create(artikel_puffer, batch_size=1000)
+                ArticleSupplierReference.objects.bulk_create(ref_puffer, batch_size=1000)
+            artikel_puffer.clear()
+            ref_puffer.clear()
+
+        for a, b, langtext in _artikel_bloecke(opts["stamm"]):
+            if a.vkz == datanorm.VKZ_LOESCHUNG:
+                continue
+            p = preis_netto.get(a.artikelnummer) or preis_liste.get(a.artikelnummer)
+            ek = lp = None
+            if p is not None:
+                ek, lp = datanorm.einkaufspreis(p, a.preiseinheit)
+            if lp is None:
+                lp = a.listenpreis          # Stammpreis als Rückfall
+            if ek is None:
+                ohne_preis += 1
+
+            artikel_id = uuid.uuid4()
+            artikel_puffer.append(
+                Article(
+                    id=artikel_id,
+                    article_number=f"DN-{namespace}-{a.artikelnummer}",
+                    description=(a.bezeichnung or a.artikelnummer)[:2000],
+                    long_description=langtext,
+                    unit=(a.mengeneinheit or "Stk"),
+                    line_type="MATERIAL",
+                    list_price=lp,
+                    gtin=(b.ean if b else None),
+                    manufacturer_name=(b.matchcode if b else None),
+                    manufacturer_number=(b.alt_artikelnummer if b else None),
+                    product_group=(b.warengruppe if b else None),
+                    status="AKTIV",
+                    version=1,
+                )
+            )
+            ref_puffer.append(
+                ArticleSupplierReference(
+                    id=uuid.uuid4(),
+                    article_id=artikel_id,
+                    supplier_party_id=party.id,
+                    source_system="DATANORM",
+                    source_namespace=namespace,
+                    supplier_article_number=a.artikelnummer,
+                    last_purchase_price=ek,
+                    list_price=lp,
+                    # DB-CHECK: kein Preis, keine Währung.
+                    currency="EUR" if ek is not None else None,
+                    discount_group=a.rabattgruppe,
+                    price_unit_code=a.preiseinheit,
+                    valid_from=heute,
+                )
+            )
+            n += 1
+            if len(artikel_puffer) >= batch:
+                flush()
+                self.stdout.write(f"    … {n} Artikel", ending="\r")
+                self.stdout.flush()
+            if limit and n >= limit:
+                break
+        flush()
+
+        self.stdout.write("")
+        self.stdout.write(self.style.SUCCESS(f"  {n} Artikel importiert."))
+        self.stdout.write(
+            f"  davon ohne bestimmbaren Einkaufspreis: {ohne_preis} "
+            "(unbekannt = NULL, nicht 0)"
+        )

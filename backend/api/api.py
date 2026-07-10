@@ -22,6 +22,7 @@ from api.auth import router as auth_router
 from api.auswertungen import router as auswertungen_router
 from api.beleg import router as beleg_router
 from api.belegerfassung import router as belegerfassung_router
+from api.dateien import router as dateien_router
 from api.buchhaltung import router as buchhaltung_router
 from api.firma import router as firma_router
 from api.identity import router as identity_router
@@ -58,3 +59,4 @@ api.add_router("/auswertungen", auswertungen_router, tags=["auswertungen"])
 api.add_router("/company", firma_router, tags=["company"])
 api.add_router("/security", security_router, tags=["security"])
 api.add_router("/accounting", belegerfassung_router, tags=["accounting"])
+api.add_router("/content", dateien_router, tags=["content"])

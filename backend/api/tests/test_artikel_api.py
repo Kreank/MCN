@@ -1,5 +1,6 @@
 """API-Tests der Artikel-/Leistungs-Endpoints (read-only)."""
 import uuid
+from decimal import Decimal
 
 import pytest
 
@@ -56,7 +57,7 @@ def test_artikel_detail(admin_client, seeded):
     assert r.status_code == 200
     body = r.json()
     assert body["article_number"] == "MAT-1"
-    assert body["list_price"] == "2.40"
+    assert Decimal(body["list_price"]) == Decimal("2.40")   # 4 NK seit Migration 0039
 
 
 @pytest.mark.django_db
@@ -104,7 +105,7 @@ def test_kalkulation_endpoint(admin_client, seeded):
     r = admin_client.get(f"/api/pricing/articles/{mat.id}/kalkulation")
     assert r.status_code == 200
     body = r.json()
-    assert body["list_price"] == "2.40"
+    assert Decimal(body["list_price"]) == Decimal("2.40")   # 4 NK seit Migration 0039
     assert body["variants"][0]["sale_price"] == "3.60"  # 2,40 + 50 %
 
 
@@ -130,7 +131,7 @@ def test_create_article_happy(admin_client, db):
     body = r.json()
     assert body["article_number"] == "NEU-1"
     # list_price wird auf 2 Nachkommastellen quantisiert (9,995 → 10,00).
-    assert body["list_price"] == "10.00"
+    assert Decimal(body["list_price"]) == Decimal("10.00")   # 4 NK seit Migration 0039
 
 
 @pytest.mark.django_db

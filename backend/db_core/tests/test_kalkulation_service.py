@@ -47,7 +47,7 @@ def test_listenpreis_aufschlag(app_user):
         app_user.id, article_id=art.id, sale_price_group_id=grp.id, is_standard=True
     )
     data = kalkulation_service.article_kalkulation(art.id)
-    assert data["list_price"] == "100.00"
+    assert Decimal(data["list_price"]) == Decimal("100.00")   # 4 NK seit Migration 0039
     assert data["ek"] is None
     v = data["variants"][0]
     assert v["kind"] == "FORMEL"

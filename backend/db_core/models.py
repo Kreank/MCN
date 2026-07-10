@@ -1228,8 +1228,11 @@ class Article(models.Model):
     line_type = models.TextField()
     product_group = models.TextField(null=True, blank=True)
     status = models.TextField()  # AKTIV | INAKTIV
+    # Listenpreis je EINER Mengeneinheit, vier Nachkommastellen (Migration 0039).
+    # Kann Basis einer Verkaufspreisgruppe sein (calc_basis = LISTENPREIS), daher
+    # dieselbe Genauigkeit wie der Einkaufspreis.
     list_price = models.DecimalField(
-        max_digits=12, decimal_places=2, null=True, blank=True
+        max_digits=15, decimal_places=4, null=True, blank=True
     )
     version = models.IntegerField()
     created_at = models.DateTimeField(db_default=Now())
@@ -2424,3 +2427,108 @@ class ReceiptLine(models.Model):
 
     def __str__(self):
         return f"{self.position_number}. {self.description}"
+
+
+# ---------------------------------------------------------------------------
+# content.* — Dateien und ihre Verknüpfungen (Migration 0021, 0035)
+# ---------------------------------------------------------------------------
+
+class File(models.Model):
+    """content.file — eine hochgeladene Datei (Migration 0021).
+
+    Physisch unveränderlich: `trg_file_immutable` verbietet UPDATE und DELETE.
+    Eine Korrektur ist eine neue Datei, kein Überschreiben. Der Inhalt liegt im
+    Objektspeicher unter `storage_key`; die Zeile hier ist nur der Nachweis.
+
+    `sha256` erlaubt es, denselben Inhalt wiederzuerkennen, ohne ihn erneut zu
+    übertragen.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    storage_key = models.TextField(unique=True)
+    original_filename = models.TextField()
+    mime_type = models.TextField()
+    size_bytes = models.BigIntegerField()
+    sha256 = models.CharField(max_length=64)
+    media_metadata = models.JSONField(default=dict)
+    uploaded_by = models.ForeignKey(
+        AppUser, models.DO_NOTHING, db_column="uploaded_by", related_name="files"
+    )
+    uploaded_at = models.DateTimeField(db_default=Now())
+    created_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'content"."file'
+
+    def __str__(self):
+        return self.original_filename
+
+
+class FileLink(models.Model):
+    """content.file_link — hängt eine Datei an GENAU EIN Zielobjekt.
+
+    Der DB-CHECK `num_nonnulls(...) = 1` erzwingt das: eine Datei kann an einem
+    Projekt ODER einer Liegenschaft ODER einem Kontakt hängen, nie an zweien.
+    Wer sie an mehreren Orten braucht, legt mehrere Verknüpfungen auf dieselbe
+    `file_id` an — der Inhalt existiert dann trotzdem nur einmal.
+
+    `asset_id` und `communication_id` haben in der DB einen Fremdschlüssel, aber
+    hier kein Model (technical_asset/communication sind nicht abgebildet). Sie
+    bleiben rohe UUID-Felder; die DB prüft trotzdem.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    file = models.ForeignKey(
+        File, models.DO_NOTHING, db_column="file_id", related_name="links"
+    )
+    project = models.ForeignKey(
+        Project, models.DO_NOTHING, db_column="project_id",
+        null=True, blank=True, related_name="file_links",
+    )
+    property = models.ForeignKey(
+        Property, models.DO_NOTHING, db_column="property_id",
+        null=True, blank=True, related_name="file_links",
+    )
+    unit = models.ForeignKey(
+        Unit, models.DO_NOTHING, db_column="unit_id",
+        null=True, blank=True, related_name="file_links",
+    )
+    party = models.ForeignKey(
+        "Party", models.DO_NOTHING, db_column="party_id",
+        null=True, blank=True, related_name="file_links",
+    )
+    service_case = models.ForeignKey(
+        ServiceCase, models.DO_NOTHING, db_column="service_case_id",
+        null=True, blank=True, related_name="file_links",
+    )
+    work_order = models.ForeignKey(
+        "WorkOrder", models.DO_NOTHING, db_column="work_order_id",
+        null=True, blank=True, related_name="file_links",
+    )
+    service_job = models.ForeignKey(
+        "ServiceJob", models.DO_NOTHING, db_column="service_job_id",
+        null=True, blank=True, related_name="file_links",
+    )
+    quote = models.ForeignKey(
+        "Quote", models.DO_NOTHING, db_column="quote_id",
+        null=True, blank=True, related_name="file_links",
+    )
+    invoice = models.ForeignKey(
+        "Invoice", models.DO_NOTHING, db_column="invoice_id",
+        null=True, blank=True, related_name="file_links",
+    )
+    asset_id = models.UUIDField(null=True, blank=True)
+    communication_id = models.UUIDField(null=True, blank=True)
+    link_category = models.TextField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        AppUser, models.DO_NOTHING, db_column="created_by", related_name="file_links"
+    )
+    created_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'content"."file_link'
+
+    def __str__(self):
+        return f"{self.file_id} -> {self.link_category or 'ohne Kategorie'}"
