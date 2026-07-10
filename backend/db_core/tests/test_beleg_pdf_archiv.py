@@ -21,6 +21,7 @@ import pytest
 
 from db_core import storage as storage_module
 from db_core.db_context import business_transaction
+from db_core.models import Quote
 from db_core.services import auftrag as auftrag_service
 from db_core.services import beleg as beleg_service
 from db_core.services import beleg_pdf
@@ -102,6 +103,31 @@ def _published_invoice(app_user):
     beleg_service.publish_invoice(app_user.id, invoice_id=inv.id)
     inv.refresh_from_db()
     return inv
+
+
+def _count_quote_links(quote_id):
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) FROM content.file_link "
+            "WHERE quote_id = %s AND link_category = 'BELEG_PDF'",
+            [str(quote_id)],
+        )
+        return cur.fetchone()[0]
+
+
+def _sent_quote(app_user):
+    obj = property_service.create_property(
+        app_user.id, name="Archiv-Angebot", property_type="WEG",
+        street="Weg 1", postal_code="10115", city="Berlin",
+    )
+    quote = beleg_service.create_quote(
+        app_user.id, property_id=obj.id, title="Bad sanieren",
+        lines=[{"line_type": "MATERIAL", "description": "Fliesen", "quantity": 20,
+                "unit": "m2", "unit_price": "34.50", "tax_code": "DE_19"}],
+    )
+    beleg_service.send_quote(app_user.id, quote_id=quote.id)
+    quote.refresh_from_db()
+    return quote
 
 
 @pytest.fixture
@@ -220,6 +246,65 @@ def test_degradiert_ohne_objektspeicher(app_user, monkeypatch):
     # Nichts archiviert (Speicher war weg) → die Archivierung wird beim nächsten
     # Abruf mit funktionierendem Speicher nachgeholt.
     assert _count_beleg_links(inv.id) == 0
+
+
+@pytest.mark.django_db
+def test_quote_erster_abruf_archiviert(app_user, fake_storage):
+    """Das Angebots-PDF wird beim Erstabruf über quote_id archiviert."""
+    quote = _sent_quote(app_user)
+    pdf = beleg_pdf.get_or_archive_quote_pdf(app_user.id, quote.id)
+    assert pdf is not None and pdf[:4] == b"%PDF"
+
+    key = beleg_pdf._archived_quote_storage_key(quote.id)
+    assert key is not None
+    assert fake_storage.objects[key] == pdf
+    assert _count_quote_links(quote.id) == 1
+    # storage_key liegt im Angebots-Präfix (nicht im Rechnungs-Präfix).
+    assert key.startswith("belege/angebot/")
+
+
+@pytest.mark.django_db
+def test_quote_zweiter_abruf_liefert_dieselbe_datei(app_user, fake_storage):
+    quote = _sent_quote(app_user)
+    first = beleg_pdf.get_or_archive_quote_pdf(app_user.id, quote.id)
+    key1 = beleg_pdf._archived_quote_storage_key(quote.id)
+    second = beleg_pdf.get_or_archive_quote_pdf(app_user.id, quote.id)
+    key2 = beleg_pdf._archived_quote_storage_key(quote.id)
+    assert key2 == key1
+    assert second == fake_storage.objects[key1] == first
+    assert _count_quote_links(quote.id) == 1
+    assert len(fake_storage.objects) == 1
+
+
+@pytest.mark.django_db
+def test_quote_entwurf_wird_nicht_archiviert(app_user, fake_storage):
+    """Ein Angebots-Entwurf bekommt kein PDF (None) und wird nicht archiviert."""
+    obj = property_service.create_property(
+        app_user.id, name="Entwurf-Angebot", property_type="WEG",
+        street="W", postal_code="1", city="Berlin",
+    )
+    quote = beleg_service.create_quote(
+        app_user.id, property_id=obj.id, title="Entwurf",
+        lines=[{"line_type": "MATERIAL", "description": "Z", "quantity": 1,
+                "unit": "Stk", "unit_price": "2.40", "tax_code": "DE_19"}],
+    )
+    assert beleg_pdf.get_or_archive_quote_pdf(app_user.id, quote.id) is None
+    assert _count_quote_links(quote.id) == 0
+    assert fake_storage.objects == {}
+
+
+@pytest.mark.django_db
+def test_quote_degradiert_ohne_objektspeicher(app_user, monkeypatch):
+    """Objektspeicher weg → Angebot bleibt zugänglich (on-the-fly), keine Archivierung."""
+    quote = _sent_quote(app_user)
+
+    def boom():
+        raise storage_module.StorageError("MinIO nicht erreichbar")
+
+    monkeypatch.setattr(storage_module, "get_storage", boom)
+    pdf = beleg_pdf.get_or_archive_quote_pdf(app_user.id, quote.id)
+    assert pdf is not None and pdf[:4] == b"%PDF"
+    assert _count_quote_links(quote.id) == 0
 
 
 @pytest.mark.django_db

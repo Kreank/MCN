@@ -1,14 +1,23 @@
 import { Component, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, RouterLink } from '@angular/router';
+import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Mappe, MappeTab } from '../../shared/mappe/mappe';
 import { BelegService } from '../../core/beleg.service';
+import { MailService } from '../../core/mail.service';
 import { AuthService } from '../../core/auth.service';
 import { LineType, QuoteDetail, QuoteStatus } from '../../core/beleg.model';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { Bestaetigung } from '../../shared/bestaetigung/bestaetigung';
 import { Dateien } from '../../shared/dateien/dateien';
 import { ZielFilter } from '../../core/datei.model';
+import { Dialog } from '../../shared/dialog/dialog';
+import { Feld } from '../../shared/formular/feld';
+import { apiFehlerZuweisen } from '../../shared/formular/api-fehler';
+import {
+  felderAlsBeruehrtMarkieren,
+  serverFehlerZuruecksetzen,
+} from '../../shared/formular/formular.util';
 import { VerbotenState, fehlerDetail, fehlerState, istVerboten } from '../../shared/http-fehler';
 
 type ViewState =
@@ -19,16 +28,28 @@ type ViewState =
 
 type Meldung = { art: 'erfolg' | 'fehler'; text: string };
 
+/** Angebotsstatus, ab denen das Angebot versendet (festgeschrieben) ist und ein
+ *  finales PDF erhält. Vorher (Entwurfsphase) gibt es kein „finales" PDF. */
+const VERSENDET_STATUS: readonly QuoteStatus[] = [
+  'VERSENDET',
+  'ANGENOMMEN',
+  'ABGELEHNT',
+  'ABGELAUFEN',
+  'ERSETZT',
+];
+
 @Component({
   selector: 'app-beleg-detail',
-  imports: [Mappe, RouterLink, KeinZugriff, Bestaetigung, Dateien],
+  imports: [Mappe, RouterLink, KeinZugriff, Bestaetigung, Dateien, ReactiveFormsModule, Dialog, Feld],
   templateUrl: './beleg-detail.html',
   styleUrl: './beleg-detail.scss',
 })
 export class BelegDetail {
   private readonly route = inject(ActivatedRoute);
   private readonly svc = inject(BelegService);
+  private readonly mailSvc = inject(MailService);
   private readonly auth = inject(AuthService);
+  private readonly fb = inject(FormBuilder);
 
   protected readonly tab = signal('positionen');
   protected readonly state = signal<ViewState>({ kind: 'loading' });
@@ -45,6 +66,27 @@ export class BelegDetail {
     const d = this.daten();
     if (!d) return false;
     return d.status === 'ENTWURF' || d.status === 'INTERN_GEPRUEFT' || d.status === 'FREIGEGEBEN';
+  });
+
+  // --- Per E-Mail senden (nur versendetes Angebot) ------------------------
+  /** Nur versendete Angebote lassen sich per Mail versenden (Server erzwingt es). */
+  protected readonly kannPerMailSenden = computed(() => this.daten()?.status === 'VERSENDET');
+  /** Ab welchem Status ein finales PDF existiert (für „PDF ansehen"). */
+  protected readonly kannPdf = computed(() => {
+    const s = this.daten()?.status;
+    return s !== undefined && VERSENDET_STATUS.includes(s);
+  });
+  /** Ob ein Absenderkonto hinterlegt ist (null = noch nicht geladen). Der Server
+   *  bleibt maßgeblich; das UI blendet die Aktion ohne Konto nur aus/deaktiviert. */
+  protected readonly mailKontoVorhanden = signal<boolean | null>(null);
+  protected readonly versandOffen = signal(false);
+  protected readonly versandLaedt = signal(false);
+  protected readonly versandMeldung = signal<string | null>(null);
+  protected readonly versandForm = this.fb.group({
+    to_address: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.required, Validators.email],
+    }),
   });
 
   protected readonly tabs: MappeTab[] = [
@@ -77,6 +119,15 @@ export class BelegDetail {
       }
       this.load(id);
     });
+
+    // Ob ein Absenderkonto konfiguriert ist, entscheidet über die Versand-Aktion.
+    // Nur laden, wenn die Rolle überhaupt versenden darf.
+    if (this.darfVersenden()) {
+      this.mailSvc.getAccount().subscribe({
+        next: (k) => this.mailKontoVorhanden.set(k.exists),
+        error: () => this.mailKontoVorhanden.set(false),
+      });
+    }
   }
 
   retry(): void {
@@ -131,6 +182,52 @@ export class BelegDetail {
 
   meldungSchliessen(): void {
     this.meldung.set(null);
+  }
+
+  // ---- Per E-Mail senden --------------------------------------------------
+  versandOeffnen(): void {
+    const d = this.daten();
+    if (!d) return;
+    this.versandForm.reset({ to_address: d.recipient_email ?? '' });
+    serverFehlerZuruecksetzen(this.versandForm);
+    this.versandMeldung.set(null);
+    this.meldung.set(null);
+    this.versandOffen.set(true);
+  }
+
+  versandSchliessen(): void {
+    if (!this.versandLaedt()) this.versandOffen.set(false);
+  }
+
+  versandAbsenden(): void {
+    const d = this.daten();
+    if (!d || this.versandLaedt()) return;
+    serverFehlerZuruecksetzen(this.versandForm);
+    this.versandMeldung.set(null);
+    felderAlsBeruehrtMarkieren(this.versandForm);
+    if (this.versandForm.invalid) return;
+
+    const to = this.versandForm.controls.to_address.value.trim();
+    this.versandLaedt.set(true);
+    this.svc.sendQuoteEmail(d.id, to).subscribe({
+      next: (res) => {
+        this.versandLaedt.set(false);
+        this.versandOffen.set(false);
+        this.meldung.set({
+          art: 'erfolg',
+          text: `Angebot wurde als PDF an ${res.to_address} gesendet.`,
+        });
+      },
+      error: (err) => {
+        this.versandLaedt.set(false);
+        this.versandMeldung.set(apiFehlerZuweisen(err, this.versandForm).formular);
+      },
+    });
+  }
+
+  /** URL der (archivierten oder on-the-fly gerenderten) PDF-Ausfertigung. */
+  pdfUrl(id: string): string {
+    return `/api/invoicing/quotes/${id}/pdf`;
   }
 
   private fehlerText(err: unknown): string {

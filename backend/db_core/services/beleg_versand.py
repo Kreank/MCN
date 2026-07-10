@@ -14,7 +14,7 @@ primärer INVOICE_RECIPIENT, ersatzweise INVOICE_DEBTOR. Fehler werden als
 ValueError gemeldet (→ 422); es werden keine personenbezogenen Werte in
 Fehlermeldungen aufgenommen.
 """
-from db_core.models import ContactPoint, Invoice
+from db_core.models import ContactPoint, Invoice, Quote
 from db_core.services import beleg_pdf as beleg_pdf_service
 from db_core.services import firma as firma_service
 from db_core.services.mail import send_mail
@@ -140,6 +140,112 @@ def send_invoice_email(actor, *, invoice_id, to_address=None):
     )
     body = _body(invoice.invoice_number, company_name)
     filename = beleg_pdf_service._safe_filename(invoice)
+
+    return send_mail(
+        actor,
+        to_address=address,
+        subject=subject,
+        body=body,
+        attachments=[(filename, pdf, "application/pdf")],
+        party_id=party.id if party is not None else None,
+        is_commercial=True,
+    )
+
+
+# --- Angebotsversand -------------------------------------------------------
+# Ein Angebot hat KEINE eigenen Beteiligten (kein quote_party). Der Empfänger
+# wird best-effort über den optionalen Auftrag abgeleitet (INVOICE_RECIPIENT,
+# ersatzweise PRINCIPAL) — dieselbe Auflösung wie im Angebots-PDF
+# (beleg_pdf.quote_recipient_party). Ist keiner ermittelbar, muss der Nutzer die
+# Adresse im Dialog eintragen (to_address).
+
+def quote_recipient_email(quote):
+    """Vorbelegte Empfänger-E-Mail eines Angebots (für die Dialog-Vorbelegung).
+
+    Erwartet ein Quote mit vorgeladenem ``work_order__parties__party``.
+    """
+    party = beleg_pdf_service.quote_recipient_party(quote)
+    return primary_email(party.id) if party is not None else None
+
+
+def _quote_body(quote_number, company_name):
+    """Knappe, sachliche Standardnachricht zum Angebot (Firmenname, falls gepflegt)."""
+    number = quote_number or "(ohne Nummer)"
+    lines = [
+        "Sehr geehrte Damen und Herren,",
+        "",
+        f"anbei erhalten Sie unser Angebot {number} als PDF-Dokument.",
+        "",
+        "Wir freuen uns auf Ihre Rückmeldung und stehen für Rückfragen gerne "
+        "zur Verfügung.",
+        "",
+        "Mit freundlichen Grüßen",
+    ]
+    if company_name:
+        lines.append(company_name)
+    return "\n".join(lines)
+
+
+def send_quote_email(actor, *, quote_id, to_address=None):
+    """Versendet ein versendetes Angebot als PDF-Anhang an den Empfänger.
+
+    Spiegelbildlich zu send_invoice_email: reine Zustellung — kein Statuswechsel,
+    keine GoBD-Berührung (das Angebot ist mit dem Versand bereits festgeschrieben,
+    B-30). Protokolliert über content.communication (channel EMAIL, direction
+    AUSGEHEND, is_commercial=True).
+
+    `to_address` überschreibt die ermittelte Adresse (der Nutzer bestätigt/
+    korrigiert sie im Dialog); ohne Angabe wird die primäre EMAIL der abgeleiteten
+    Empfängerpartei genommen.
+
+    Fehler:
+      - Angebot unbekannt / nicht VERSENDET → ValueError (422).
+      - keine Empfänger-Adresse ermittelbar → ValueError (422).
+      - kein Mailkonto / SMTP-/Schlüsselfehler → aus send_mail
+        (ValueError bzw. MailSendError/MailKeyError), von der API als 422
+        passwortfrei abgebildet.
+
+    Gibt die protokollierte content.communication zurück (aus send_mail).
+    """
+    quote = (
+        Quote.objects.filter(id=quote_id)
+        .select_related("work_order")
+        .prefetch_related("work_order__parties__party")
+        .first()
+    )
+    if quote is None:
+        raise ValueError("Angebot nicht gefunden.")
+    if quote.status != "VERSENDET":
+        raise ValueError(
+            "Nur versendete Angebote können per E-Mail versendet werden."
+        )
+
+    party = beleg_pdf_service.quote_recipient_party(quote)
+    address = (to_address or "").strip() or None
+    if address is None and party is not None:
+        address = primary_email(party.id)
+    if not address:
+        raise ValueError(
+            "Für den Angebotsempfänger ist keine E-Mail-Adresse hinterlegt. "
+            "Bitte eine Adresse angeben oder im zugehörigen Auftrag/Kontakt einen "
+            "E-Mail-Kommunikationsweg pflegen."
+        )
+
+    # PDF-Ausfertigung (holt die archivierte oder rendert/archiviert on-the-fly).
+    pdf = beleg_pdf_service.get_or_archive_quote_pdf(actor, quote_id)
+    if pdf is None:
+        # Bei VERSENDET nicht zu erwarten; defensiv statt 500.
+        raise ValueError("Die PDF-Ausfertigung konnte nicht erzeugt werden.")
+
+    profile = firma_service.get_company_profile()
+    company_name = (
+        profile.company_name if profile and profile.company_name else None
+    )
+    subject = (
+        f"Angebot {quote.quote_number}" if quote.quote_number else "Angebot"
+    )
+    body = _quote_body(quote.quote_number, company_name)
+    filename = beleg_pdf_service._safe_quote_filename(quote)
 
     return send_mail(
         actor,

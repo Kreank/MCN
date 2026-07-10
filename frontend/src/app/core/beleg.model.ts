@@ -133,8 +133,18 @@ export interface QuoteDetail extends Quote {
   sent_at: string | null;
   has_snapshot: boolean;
   content_hash: string | null;
+  /** Vorbelegung für den E-Mail-Versand: primäre EMAIL der best-effort über den
+   *  Auftrag abgeleiteten Empfängerpartei (nur bei versendeten Angeboten, sonst
+   *  null — dann trägt der Nutzer die Adresse im Dialog manuell ein). */
+  recipient_email: string | null;
   rubriken: Rubrik[];
   lines: QuoteLine[];
+}
+
+/** Antwort des Angebotsversands per E-Mail. */
+export interface QuoteEmailResult {
+  sent: boolean;
+  to_address: string;
 }
 
 // --- Rechnungen (invoicing.invoice) ----------------------------------------

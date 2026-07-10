@@ -95,6 +95,11 @@ class QuoteDetailOut(QuoteOut):
     sent_at: datetime | None = None
     has_snapshot: bool = False
     content_hash: str | None = None
+    # Vorbelegung für den E-Mail-Versand: primäre EMAIL der best-effort über den
+    # Auftrag abgeleiteten Empfängerpartei (INVOICE_RECIPIENT, sonst PRINCIPAL).
+    # Nur bei versendeten Angeboten aufgelöst; null, wenn kein Auftrag/kein
+    # Kommunikationsweg hinterlegt ist (dann trägt der Nutzer sie manuell ein).
+    recipient_email: str | None = None
     rubriken: list[RubrikOut] = []
     lines: list[QuoteLineOut]
 
@@ -233,8 +238,8 @@ def _rubriken_out(beleg):
 def _quote_detail(quote_id):
     quote = (
         Quote.objects.filter(id=quote_id)
-        .select_related("property__address", "project")
-        .prefetch_related("lines", "rubriken")
+        .select_related("property__address", "project", "work_order")
+        .prefetch_related("lines", "rubriken", "work_order__parties__party")
         .first()
     )
     if quote is None:
@@ -271,6 +276,13 @@ def _quote_detail(quote_id):
         if quote.project_id
         else None
     )
+    # Empfänger-E-Mail nur für den Versand relevant (nur versendete Angebote
+    # lassen sich senden) — für Entwürfe die zusätzliche Auflösung sparen.
+    recipient_email = (
+        beleg_versand_service.quote_recipient_email(quote)
+        if quote.status == "VERSENDET"
+        else None
+    )
     return QuoteDetailOut(
         id=quote.id,
         quote_number=quote.quote_number,
@@ -288,6 +300,7 @@ def _quote_detail(quote_id):
         sent_at=quote.sent_at,
         has_snapshot=quote.billing_snapshot is not None,
         content_hash=quote.content_hash,
+        recipient_email=recipient_email,
         rubriken=_rubriken_out(quote),
         lines=lines,
     )
@@ -377,6 +390,72 @@ def send_quote(request, quote_id: UUID):
     except ValueError as exc:
         raise HttpError(422, str(exc))
     return _quote_detail(quote_id)
+
+
+@router.get("/quotes/{quote_id}/pdf")
+def quote_pdf(request, quote_id: UUID):
+    """PDF-Ausfertigung eines versendeten Angebots.
+
+    Beim ersten Abruf wird die Ausfertigung archiviert (MinIO +
+    content.file/file_link, link_category='BELEG_PDF'); jeder weitere Abruf
+    liefert dieselbe archivierte Datei aus. Ist der Objektspeicher nicht
+    erreichbar, wird on-the-fly ausgeliefert (Degradation).
+
+    Nur versendete Angebote (ab VERSENDET) erhalten eine Ausfertigung; für
+    Entwürfe/unbekannte Angebote → 404. Das Archivieren ist ein automatischer
+    Nebeneffekt des Lesens (kein eigenes Recht) — die actor_id wird nur als
+    uploaded_by/created_by fürs Audit geführt."""
+    actor, _ = require(request, "invoicing", "LESEN")
+    pdf = beleg_pdf_service.get_or_archive_quote_pdf(actor, quote_id)
+    if pdf is None:
+        raise HttpError(404, "Versendetes Angebot nicht gefunden.")
+    quote = Quote.objects.filter(id=quote_id).only("quote_number", "id").first()
+    raw = quote.quote_number or str(quote_id)
+    # Dateinamen auf unbedenkliche Zeichen beschränken (Defense-in-Depth gegen
+    # Header-Injection; Belegnummern sind ohnehin AN-Format).
+    safe = "".join(ch for ch in raw if ch.isalnum() or ch in "-_")
+    response = HttpResponse(pdf, content_type="application/pdf")
+    response["Content-Disposition"] = f'inline; filename="{safe or "angebot"}.pdf"'
+    return response
+
+
+class QuoteEmailIn(Schema):
+    # Optional: überschreibt die abgeleitete Empfänger-Adresse (der Nutzer darf sie
+    # im Dialog bestätigen/korrigieren). Weglassen = ableiten.
+    to_address: str | None = None
+
+
+class QuoteEmailOut(Schema):
+    sent: bool
+    to_address: str
+
+
+@router.post(
+    "/quotes/{quote_id}/send-email", response=QuoteEmailOut, auth=django_auth
+)
+def send_quote_email(request, quote_id: UUID, payload: QuoteEmailIn):
+    """Versendet ein versendetes Angebot als PDF-Anhang per E-Mail.
+
+    Recht VERSENDEN: der Belegversand ist eine nach außen wirkende
+    Kundenkommunikation — dasselbe Recht wie Rechnungsversand und Mahnung. Reine
+    Zustellung: kein Statuswechsel, keine GoBD-Berührung (das Angebot ist mit dem
+    Versand bereits festgeschrieben). Der Versand protokolliert eine
+    content.communication-Zeile.
+
+    Fehler → 422 (passwortfrei): Entwurf/unbekannt, kein Empfänger/keine E-Mail,
+    kein Mailkonto, Schlüssel- oder SMTP-Fehler.
+    """
+    actor, _ = require(request, "invoicing", "VERSENDEN")
+    try:
+        communication = beleg_versand_service.send_quote_email(
+            actor, quote_id=quote_id, to_address=payload.to_address
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    except (MailKeyError, MailSendError) as exc:
+        # Passwortfreie, klare Meldung an das UI statt eines 500-Leaks.
+        raise HttpError(422, str(exc))
+    return QuoteEmailOut(sent=True, to_address=communication.counterpart_raw)
 
 
 @router.get("/quotes/{quote_id}", response=QuoteDetailOut)

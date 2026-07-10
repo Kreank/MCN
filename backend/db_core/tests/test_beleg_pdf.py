@@ -9,6 +9,8 @@ from decimal import Decimal
 
 import pytest
 
+from db_core.db_context import business_transaction
+from db_core.models import Quote
 from db_core.services import auftrag as auftrag_service
 from db_core.services import beleg as beleg_service
 from db_core.services import beleg_pdf
@@ -105,3 +107,110 @@ def test_pdf_nur_fuer_veroeffentlichte(app_user):
                 "unit": "Stk", "unit_price": "2.40", "tax_code": "DE_19"}],
     )
     assert beleg_pdf.render_invoice_pdf(inv.id) is None
+
+
+# --- Angebots-PDF (invoicing.quote) ----------------------------------------
+
+def _entwurf_quote(app_user, *, with_order=True, recipient_role="INVOICE_RECIPIENT",
+                   with_email=True):
+    """Angebots-Entwurf (ENTWURF) inkl. optionalem Auftrag mit Empfänger-Beteiligtem."""
+    obj = property_service.create_property(
+        app_user.id, name="Angebots-Objekt", property_type="WEG",
+        street="Weg 1", postal_code="10115", city="Berlin",
+    )
+    weg = identity_service.create_person(
+        app_user.id, first_name="Quintus", last_name="Quote"
+    )
+    if with_email:
+        identity_service.add_contact_point(
+            app_user.id, weg.id, contact_type="EMAIL",
+            value="angebot-kunde@example.test", is_primary=True,
+        )
+    order = None
+    if with_order:
+        order = auftrag_service.create_work_order(
+            app_user.id, property_id=obj.id, title="Auftrag zum Angebot"
+        )
+        if recipient_role is not None:
+            auftrag_service.add_work_order_party(
+                app_user.id, work_order_id=order.id, party_id=weg.id,
+                role=recipient_role, is_primary=True,
+            )
+    quote = beleg_service.create_quote(
+        app_user.id, property_id=obj.id, title="Bad sanieren",
+        lines=[{"line_type": "MATERIAL", "description": "Fliesen", "quantity": 20,
+                "unit": "m2", "unit_price": "34.50", "tax_code": "DE_19"}],
+    )
+    if order is not None:
+        with business_transaction(app_user.id):
+            Quote.objects.filter(id=quote.id).update(work_order_id=order.id)
+    quote.refresh_from_db()
+    return quote, weg
+
+
+def _sent_quote(app_user, **kw):
+    quote, weg = _entwurf_quote(app_user, **kw)
+    beleg_service.send_quote(app_user.id, quote_id=quote.id)
+    quote.refresh_from_db()
+    return quote, weg
+
+
+@pytest.mark.django_db
+def test_quote_pdf_ab_versendet(app_user):
+    """Ein versendetes Angebot rendert zu gültigen PDF-Bytes."""
+    quote, _ = _sent_quote(app_user)
+    assert quote.status == "VERSENDET"
+    data = beleg_pdf.render_quote_pdf(quote.id)
+    assert data is not None and data[:4] == b"%PDF"
+
+
+@pytest.mark.django_db
+def test_quote_pdf_entwurf_liefert_kein_finales_pdf(app_user):
+    """Ein Entwurf täuscht kein finales PDF vor (None → 404 in der API)."""
+    quote, _ = _entwurf_quote(app_user)
+    assert quote.status == "ENTWURF"
+    assert beleg_pdf.render_quote_pdf(quote.id) is None
+
+
+@pytest.mark.django_db
+def test_quote_pdf_unbekannt_none(app_user):
+    import uuid as _uuid
+    assert beleg_pdf.render_quote_pdf(_uuid.uuid4()) is None
+
+
+@pytest.mark.django_db
+def test_quote_empfaenger_ableitung_invoice_recipient(app_user):
+    """Empfänger wird über work_order_party INVOICE_RECIPIENT abgeleitet."""
+    quote, weg = _sent_quote(app_user, recipient_role="INVOICE_RECIPIENT")
+    q = (
+        Quote.objects.filter(id=quote.id)
+        .select_related("work_order")
+        .prefetch_related("work_order__parties__party")
+        .first()
+    )
+    party = beleg_pdf.quote_recipient_party(q)
+    assert party is not None and party.id == weg.id
+
+
+@pytest.mark.django_db
+def test_quote_empfaenger_fallback_principal(app_user):
+    """Ohne INVOICE_RECIPIENT greift PRINCIPAL als Ersatz."""
+    quote, weg = _sent_quote(app_user, recipient_role="PRINCIPAL")
+    q = (
+        Quote.objects.filter(id=quote.id)
+        .select_related("work_order")
+        .prefetch_related("work_order__parties__party")
+        .first()
+    )
+    party = beleg_pdf.quote_recipient_party(q)
+    assert party is not None and party.id == weg.id
+
+
+@pytest.mark.django_db
+def test_quote_pdf_ohne_auftrag_rendert_ohne_empfaenger(app_user):
+    """Ein Angebot OHNE Auftrag/Empfänger rendert trotzdem (kein formaler Adressat)."""
+    quote, _ = _sent_quote(app_user, with_order=False, with_email=False)
+    q = Quote.objects.filter(id=quote.id).select_related("work_order").first()
+    assert beleg_pdf.quote_recipient_party(q) is None
+    data = beleg_pdf.render_quote_pdf(quote.id)
+    assert data is not None and data[:4] == b"%PDF"

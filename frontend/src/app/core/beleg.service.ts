@@ -11,6 +11,7 @@ import {
   Kalkulation,
   QuoteCreate,
   QuoteDetail,
+  QuoteEmailResult,
   QuotePage,
   QuoteQuery,
   QuoteUpdate,
@@ -87,6 +88,19 @@ export class BelegService {
   /** Angebot versenden — unumkehrbar: DB vergibt die AN-Nummer und friert ein. */
   sendQuote(id: string): Observable<QuoteDetail> {
     return this.http.post<QuoteDetail>(`${this.base}/${id}/send`, {});
+  }
+
+  /**
+   * Versendetes Angebot als PDF-Anhang per E-Mail versenden. `toAddress`
+   * überschreibt die serverseitig best-effort abgeleitete Empfänger-Adresse.
+   * Reine Zustellung (kein Statuswechsel); Fehler (kein Empfänger/Konto, SMTP)
+   * kommen als 422.
+   */
+  sendQuoteEmail(id: string, toAddress: string): Observable<QuoteEmailResult> {
+    return this.http.post<QuoteEmailResult>(
+      `${this.base}/${id}/send-email`,
+      { to_address: toAddress },
+    );
   }
 
   /** Neue Rechnung/Gutschrift (Status ENTWURF) mit Positionen anlegen. */
