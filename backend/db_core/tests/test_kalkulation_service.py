@@ -67,7 +67,7 @@ def test_ek_abschlag_betrag(app_user):
         app_user.id, article_id=art.id, sale_price_group_id=grp.id, is_standard=True
     )
     data = kalkulation_service.article_kalkulation(art.id)
-    assert data["ek"] == "80.00"
+    assert Decimal(data["ek"]) == Decimal("80.00")   # 4 NK seit Migration 0038
     # EK 80 − 5 = 75.
     assert data["variants"][0]["sale_price"] == "75.00"
 
@@ -157,4 +157,4 @@ def test_ek_neueste_referenz_gewinnt(app_user):
     _supplier_ref(app_user, art, price="90.00", valid_from=date(2026, 6, 1))
     data = kalkulation_service.article_kalkulation(art.id)
     # Neuerer valid_from (Juni) gewinnt.
-    assert data["ek"] == "90.00"
+    assert Decimal(data["ek"]) == Decimal("90.00")   # 4 NK seit Migration 0038

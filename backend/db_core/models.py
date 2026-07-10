@@ -1804,14 +1804,24 @@ class ArticleSupplierReference(models.Model):
     source_system = models.TextField()
     source_namespace = models.TextField()
     supplier_article_number = models.TextField()
+    # Vier Nachkommastellen (Migration 0038): bei DATANORM-Preiseinheit 100/1000
+    # liegen echte Stückpreise unter einem Cent (Stahlhaften: 0,0774 €/Stück).
+    # NULL heißt „unbekannt", nie 0.
     last_purchase_price = models.DecimalField(
-        max_digits=15, decimal_places=2, null=True, blank=True
+        max_digits=15, decimal_places=4, null=True, blank=True
+    )
+    # Händler-Listenpreis je EINER Mengeneinheit (DATANORM-Preiskennzeichen 1).
+    list_price = models.DecimalField(
+        max_digits=15, decimal_places=4, null=True, blank=True
     )
     currency = models.CharField(max_length=3, null=True, blank=True)
     discount_group = models.TextField(null=True, blank=True)
     last_imported_at = models.DateTimeField(null=True, blank=True)
     valid_from = models.DateField()
     valid_until = models.DateField(null=True, blank=True)
+    # DATANORM-Preiseinheit: 0 = je 1, 1 = je 10, 2 = je 100, 3 = je 1000.
+    # Der gespeicherte Preis gilt IMMER je einer Mengeneinheit; dieses Feld hält
+    # nur fest, wie er aus der Quelldatei hergeleitet wurde.
     price_unit_code = models.SmallIntegerField(null=True, blank=True)
     created_at = models.DateTimeField(db_default=Now())
     updated_at = models.DateTimeField(db_default=Now())
