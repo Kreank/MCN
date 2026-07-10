@@ -5,7 +5,9 @@ import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { map } from 'rxjs';
 import { Mappe, MappeTab } from '../../shared/mappe/mappe';
 import { PartyService } from '../../core/party.service';
+import { AufgabeService } from '../../core/aufgabe.service';
 import { AuthService } from '../../core/auth.service';
+import { Task, TaskStatus } from '../../core/aufgabe.model';
 import {
   Address,
   AddressIn,
@@ -69,6 +71,7 @@ type LazyState<T> =
 export class KontaktDetail {
   private readonly route = inject(ActivatedRoute);
   private readonly svc = inject(PartyService);
+  private readonly aufgabeSvc = inject(AufgabeService);
   private readonly auth = inject(AuthService);
   private readonly fb = inject(FormBuilder);
 
@@ -80,7 +83,17 @@ export class KontaktDetail {
   protected readonly contactPointsState = signal<LazyState<ContactPoint>>({ kind: 'idle' });
   protected readonly addressesState = signal<LazyState<PartyAddress>>({ kind: 'idle' });
   protected readonly contactPersonsState = signal<LazyState<ContactPerson>>({ kind: 'idle' });
+  protected readonly tasksState = signal<LazyState<Task>>({ kind: 'idle' });
   private reqId = 0;
+  private aufgabenReqId = 0;
+
+  // Aufgaben-Tab: Segment-Filter wie die Hauptliste (Alle/Offen/Erledigt).
+  protected readonly aufgabenSegmente: { value: TaskStatus | null; label: string }[] = [
+    { value: null, label: 'Alle' },
+    { value: 'OFFEN', label: 'Offen' },
+    { value: 'ERLEDIGT', label: 'Erledigt' },
+  ];
+  protected readonly aufgabenStatus = signal<TaskStatus | null>(null);
 
   protected readonly daten = computed(() => {
     const s = this.state();
@@ -101,6 +114,7 @@ export class KontaktDetail {
       basis.push({ id: 'ansprechpartner', label: 'Ansprechpartner' });
     }
     basis.push(
+      { id: 'aufgaben', label: 'Aufgaben' },
       { id: 'dokumente', label: 'Dokumente' },
       { id: 'dateien', label: 'Dateien' },
       { id: 'logbuch', label: 'Logbuch' },
@@ -184,6 +198,8 @@ export class KontaktDetail {
       this.contactPointsState.set({ kind: 'idle' });
       this.addressesState.set({ kind: 'idle' });
       this.contactPersonsState.set({ kind: 'idle' });
+      this.tasksState.set({ kind: 'idle' });
+      this.aufgabenStatus.set(null);
       this.meldung.set(null);
       if (!id) {
         this.state.set({ kind: 'error' });
@@ -210,7 +226,37 @@ export class KontaktDetail {
       ) {
         this.loadContactPersons(d.id);
       }
+      if (t === 'aufgaben' && this.tasksState().kind === 'idle') {
+        this.loadTasks(d.id);
+      }
     });
+  }
+
+  /**
+   * Aufgaben dieses Kontakts laden (Filter party_id). Recht workflow/LESEN; ein
+   * Monteur (row_scope EIGENE) sieht nur die ihm zugewiesenen — fail-closed
+   * korrekt. reqId-Guard gegen Races bei schnellem Segmentwechsel.
+   */
+  private loadTasks(partyId: string): void {
+    const rid = ++this.aufgabenReqId;
+    this.tasksState.set({ kind: 'loading' });
+    this.aufgabeSvc
+      .list({ page: 1, page_size: 50, party_id: partyId, status: this.aufgabenStatus() })
+      .subscribe({
+        next: (d) => {
+          if (rid === this.aufgabenReqId) this.tasksState.set({ kind: 'ready', items: d.items });
+        },
+        error: (err) => {
+          if (rid === this.aufgabenReqId) this.tasksState.set(fehlerState(err));
+        },
+      });
+  }
+
+  aufgabenSegmentWaehlen(value: TaskStatus | null): void {
+    if (this.aufgabenStatus() === value) return;
+    this.aufgabenStatus.set(value);
+    const d = this.daten();
+    if (d) this.loadTasks(d.id);
   }
 
   private loadContactPoints(partyId: string): void {
@@ -509,5 +555,38 @@ export class KontaktDetail {
     const strasse = [a.street, a.house_number].filter(Boolean).join(' ');
     const ort = [a.postal_code, a.city].filter(Boolean).join(' ');
     return [strasse, a.address_addition, ort].filter(Boolean).join(', ');
+  }
+
+  // ---- Aufgaben-Darstellung ----------------------------------------------
+  taskStatusLabel(s: TaskStatus): string {
+    switch (s) {
+      case 'OFFEN':
+        return 'Offen';
+      case 'ERLEDIGT':
+        return 'Erledigt';
+      case 'VERWORFEN':
+        return 'Verworfen';
+    }
+  }
+
+  taskStatusClass(s: TaskStatus): string {
+    if (s === 'ERLEDIGT') return 'stamp--positive';
+    if (s === 'VERWORFEN') return 'stamp--warn';
+    return '';
+  }
+
+  private readonly datumFormat = new Intl.DateTimeFormat('de-DE', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+
+  /** ISO-Datum (YYYY-MM-DD) als de-DE. Lokale Konstruktion vermeidet TZ-Versatz. */
+  datumDe(iso: string | null): string {
+    if (!iso) return '';
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+    if (!m) return iso;
+    const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    return isNaN(d.getTime()) ? iso : this.datumFormat.format(d);
   }
 }

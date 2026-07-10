@@ -100,3 +100,40 @@ a.ref__name:focus-visible {
   font-size: var(--step--1);
   color: var(--ink-muted);
 }
+
+// ---- Aufgaben-Tab: Segment-Filter -----------------------------------------
+.segment {
+  display: inline-flex;
+  flex-wrap: wrap;
+  padding: 3px;
+  margin-bottom: var(--space-4);
+  background: var(--surface-sunken);
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius);
+}
+.segment__btn {
+  min-height: 38px;
+  padding: 0 var(--space-4);
+  border: none;
+  border-radius: calc(var(--radius) - 2px);
+  background: transparent;
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+
+  &:hover {
+    color: var(--ink);
+  }
+  &.is-active {
+    background: var(--command);
+    color: var(--on-command);
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}

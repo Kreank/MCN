@@ -185,6 +185,65 @@
         </section>
       }
 
+      <!-- ------------------------------ Aufgaben -------------------------- -->
+      @if (tab() === 'aufgaben') {
+        <section class="mappe-block" aria-labelledby="auf-titel">
+          <div class="mappe-block__kopf">
+            <h2 id="auf-titel" class="mappe-block__titel">Aufgaben</h2>
+          </div>
+
+          <div class="segment" role="group" aria-label="Aufgaben nach Status filtern">
+            @for (seg of aufgabenSegmente; track seg.label) {
+              <button
+                type="button"
+                class="segment__btn"
+                [class.is-active]="aufgabenStatus() === seg.value"
+                [attr.aria-pressed]="aufgabenStatus() === seg.value"
+                (click)="aufgabenSegmentWaehlen(seg.value)"
+              >
+                {{ seg.label }}
+              </button>
+            }
+          </div>
+
+          @switch (tasksState().kind) {
+            @case ('loading') { <p class="lade-hinweis" role="status">Aufgaben werden geladen …</p> }
+            @case ('forbidden') { <app-kein-zugriff [detail]="$any(tasksState()).detail" /> }
+            @case ('error') { <p class="mappe-block__leer">Die Aufgaben konnten nicht geladen werden.</p> }
+            @case ('ready') {
+              @if ($any(tasksState()).items.length === 0) {
+                <p class="mappe-block__leer">
+                  Zu diesem Kontakt gibt es {{ aufgabenStatus() ? 'in diesem Filter ' : '' }}keine Aufgaben.
+                </p>
+              } @else {
+                <p class="sr-only" role="status">
+                  {{ $any(tasksState()).items.length }} Aufgaben angezeigt.
+                </p>
+                <ul class="ref-liste">
+                  @for (t of $any(tasksState()).items; track t.id) {
+                    <li class="ref">
+                      <span class="ref__stamps">
+                        <span class="stamp {{ taskStatusClass(t.status) }}">{{ taskStatusLabel(t.status) }}</span>
+                      </span>
+                      <span class="ref__name">{{ t.title }}</span>
+                      @if (t.due_date) {
+                        <span class="ref__meta">fällig {{ datumDe(t.due_date) }}</span>
+                      }
+                      @if (t.assigned_to) {
+                        <span class="ref__meta">zugewiesen: {{ t.assigned_to.display_name }}</span>
+                      }
+                      @if (t.project) {
+                        <span class="ref__meta">Projekt: {{ t.project.name }}</span>
+                      }
+                    </li>
+                  }
+                </ul>
+              }
+            }
+          }
+        </section>
+      }
+
       <!-- ------------------------------ Dokumente ------------------------- -->
       @if (tab() === 'dokumente') {
         <div class="tab-platzhalter">
