@@ -3,6 +3,7 @@ import { RouterLink } from '@angular/router';
 import { AuswertungService } from '../../core/auswertungen.service';
 import { UmsatzProjekt } from '../../core/auswertungen.model';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { MargeBlock } from '../../shared/marge-block/marge-block';
 import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 
 type ViewState =
@@ -20,7 +21,7 @@ interface Bar {
 
 @Component({
   selector: 'app-auswertungen-umsatz',
-  imports: [RouterLink, KeinZugriff],
+  imports: [RouterLink, KeinZugriff, MargeBlock],
   templateUrl: './auswertungen-umsatz.html',
   styleUrl: './auswertungen-umsatz.scss',
 })
@@ -93,5 +94,16 @@ export class AuswertungenUmsatz {
       month: 'short',
       year: 'numeric',
     });
+  }
+
+  /** Marge% (de-DE) oder das Wort „unbekannt" — nie eine erfundene 0. */
+  prozent(p: string | null): string {
+    if (p === null) return 'unbekannt';
+    return (
+      new Intl.NumberFormat('de-DE', {
+        minimumFractionDigits: 1,
+        maximumFractionDigits: 2,
+      }).format(Number(p)) + ' %'
+    );
   }
 }

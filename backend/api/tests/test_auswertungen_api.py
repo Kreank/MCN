@@ -172,6 +172,47 @@ def test_artikel_dashboard_403_ohne_invoicing(client_with_role):
     assert c.get("/api/auswertungen/artikel").status_code == 403
 
 
+# --- Marge / Deckungsbeitrag (Recht pricing/LESEN) --------------------------
+
+@pytest.mark.django_db
+def test_umsatz_marge_sichtbar_mit_pricing(admin_client, app_user):
+    """ADMINISTRATION hat pricing/LESEN -> Marge-Block wird ausgeliefert."""
+    obj = property_service.create_property(
+        app_user.id, name="O", property_type="WEG", street="W",
+        postal_code="1", city="Berlin",
+    )
+    weg = identity_service.create_person(app_user.id, first_name="W", last_name="EG")
+    order = auftrag_service.create_work_order(app_user.id, property_id=obj.id, title="A")
+    auftrag_service.set_order_evidence(app_user.id, work_order_id=order.id, reference="N")
+    auftrag_service.confirm_responsibility(
+        app_user.id, work_order_id=order.id, scope="COMMON_PROPERTY"
+    )
+    for role in ("PRINCIPAL", "INVOICE_DEBTOR"):
+        auftrag_service.add_work_order_party(
+            app_user.id, work_order_id=order.id, party_id=weg.id,
+            role=role, is_primary=True,
+        )
+    for to in ("FREIGEGEBEN", "IN_PLANUNG", "IN_AUSFUEHRUNG",
+               "TECHNISCH_ABGESCHLOSSEN", "KAUFMAENNISCH_GEPRUEFT"):
+        auftrag_service.advance_status(app_user.id, work_order_id=order.id, to_status=to)
+    inv = beleg_service.create_invoice(
+        app_user.id, property_id=obj.id, work_order_id=order.id,
+        lines=[{"line_type": "MATERIAL", "description": "Rohr", "quantity": 2,
+                "unit_price": "100.00", "unit_cost": "60.00", "tax_code": "DE_19"}],
+    )
+    for role in ("INVOICE_DEBTOR", "INVOICE_RECIPIENT"):
+        beleg_service.add_invoice_party(
+            app_user.id, invoice_id=inv.id, party_id=weg.id, role=role, is_primary=True
+        )
+    beleg_service.publish_invoice(app_user.id, invoice_id=inv.id)
+
+    body = admin_client.get("/api/auswertungen/umsatz-projektuebersicht").json()
+    assert body["marge_sichtbar"] is True
+    assert body["marge"]["deckungsbeitrag"] == "80.00"
+    assert body["marge"]["marge_prozent"] == "40.00"
+    assert body["marge"]["ek_vollstaendig"] is True
+
+
 # --- Mitarbeitenden-Dashboard (hr) ------------------------------------------
 
 VOLLZEIT = {

@@ -52,6 +52,51 @@
         </div>
       </div>
 
+      <!-- Deckungsbeitrag & Marge (nur mit Recht pricing/LESEN) -->
+      <section class="panel" aria-labelledby="marge-titel">
+        <h2 id="marge-titel" class="panel__titel">Deckungsbeitrag &amp; Marge</h2>
+        @if (daten()!.marge_sichtbar && daten()!.marge; as m) {
+          <app-marge-block [marge]="m" label="Gesamt (netto, veröffentlichte Rechnungen)" />
+
+          @if (daten()!.marge_by_gewerk.length > 0) {
+            <div class="tabelle-wrap" style="margin-top: var(--space-5)">
+              <table class="tabelle">
+                <caption class="tabelle__caption">Marge nach Gewerk (Projektkategorie)</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Gewerk</th>
+                    <th scope="col" class="num">Umsatz netto</th>
+                    <th scope="col" class="num">Deckungsbeitrag</th>
+                    <th scope="col" class="num">Marge</th>
+                    <th scope="col" class="num">ohne EK</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (g of daten()!.marge_by_gewerk; track g.name) {
+                    <tr>
+                      <td>{{ g.name }}</td>
+                      <td class="num betrag">{{ euro(g.net_total) }}</td>
+                      <td class="num betrag" [class.unbekannt]="g.deckungsbeitrag === null">
+                        {{ g.deckungsbeitrag === null ? 'unbekannt' : euro(g.deckungsbeitrag) }}
+                      </td>
+                      <td class="num" [class.unbekannt]="g.marge_prozent === null">{{ prozent(g.marge_prozent) }}</td>
+                      <td class="num">{{ g.positionen_ohne_ek }}</td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          }
+        } @else {
+          <p class="marge-gesperrt" role="note">
+            <span aria-hidden="true">○</span>
+            Deckungsbeitrag und Marge stützen sich auf die Einkaufspreise und sind
+            nur mit der Berechtigung „Einkaufspreise lesen" (pricing) sichtbar. Der
+            Umsatz oben bleibt davon unberührt.
+          </p>
+        }
+      </section>
+
       <!-- Umsatzverlauf -->
       <section class="panel" aria-labelledby="verlauf-titel">
         <h2 id="verlauf-titel" class="panel__titel">Umsatzverlauf (netto je Monat)</h2>

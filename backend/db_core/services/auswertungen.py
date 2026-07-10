@@ -14,7 +14,7 @@ business_transaction nötig. Die Berechnungsdefinitionen folgen der Roadmap
 Beträge werden als String (Decimal, verlustfrei) zurückgegeben.
 """
 from datetime import date
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from django.db.models import (
     Avg,
@@ -37,6 +37,7 @@ from db_core.models import (
     InvoiceLine,
     InvoiceParty,
     Project,
+    QuoteLine,
     TimeEntry,
     VacationBudget,
 )
@@ -93,6 +94,125 @@ HR_DASHBOARD = {
 _DEC = DecimalField(max_digits=15, decimal_places=2)
 _ZERO = Value(Decimal("0.00"), output_field=_DEC)
 
+_CENT = Decimal("0.01")
+
+
+def _round2(value):
+    return value.quantize(_CENT, rounding=ROUND_HALF_UP)
+
+
+# ===========================================================================
+# Deckungsbeitrag / Marge — eingefrorene EK-Basis (unit_cost) der Belegzeilen
+# ===========================================================================
+# Rechtewahl: Der Einkaufspreis (`unit_cost`) und die daraus abgeleitete Marge
+# sind Kalkulationsdaten des Moduls `pricing` (Einkaufspreise, VK-Kalkulation),
+# NICHT der reine Umsatz (`invoicing`). Die Marge wird deshalb nur berechnet und
+# ausgeliefert, wenn das Konto ZUSÄTZLICH `pricing/LESEN` hat (`ek_allowed`).
+# Fehlt das Recht, bleibt der Umsatz sichtbar, der Marge-Block ist None
+# (`marge_sichtbar=False`) — Need-to-know statt 403 auf die ganze Auswertung.
+#
+# EHRLICHKEIT BEI FEHLENDEM EK (wie der Angebotseditor / beleg._kalkulation):
+# Eine Zeile ohne `unit_cost` hat KEINE Marge von 0 und KEINE von 100 % — sie ist
+# UNBEKANNT. Der fehlende EK wird NIE als 0 in die Kostenbasis gerechnet.
+# Deckungsbeitrag und Marge beziehen sich ausschließlich auf den Netto-Anteil MIT
+# hinterlegtem EK (`net_mit_ek`); der Anteil OHNE EK (`net_ohne_ek`) und die Zahl
+# der Positionen ohne EK (`positionen_ohne_ek`) werden getrennt ausgewiesen, damit
+# das Dashboard die Lücke zeigt statt eine erfundene Zahl.
+#
+# Nur `line_kind='NORMAL'` ist summenwirksam (ALTERNATIV/BEDARF zählen nicht, wie
+# in den Kopfsummen); TEXT/ZWISCHENSUMME tragen keinen Betrag. Korrekturbelege
+# (GUTSCHRIFT/STORNO) sind ausgeschlossen: ihre Zeilen tragen keinen EK-Snapshot
+# (nur der Umsatz würde negiert, die Kosten nicht) — sie würden die Marge
+# verfälschen. Die Marge misst also die Kalkulationsqualität der ausgestellten
+# (nicht-stornierenden) Rechnungen.
+
+_SUMMENWIRKSAM = "NORMAL"
+
+
+def _leerer_marge_block():
+    return {
+        "net_total": Decimal("0.00"),
+        "net_mit_ek": Decimal("0.00"),
+        "ek_total": Decimal("0.00"),
+        "positionen": 0,
+        "positionen_ohne_ek": 0,
+    }
+
+
+def _marge_add(block, row):
+    """Verbucht eine Belegzeile (values-dict) in einen Marge-Block."""
+    if row["line_type"] in NON_AMOUNT_LINE_TYPES:
+        return
+    if (row["line_kind"] or _SUMMENWIRKSAM) != _SUMMENWIRKSAM:
+        return
+    netto = row["net_amount"] or Decimal("0.00")
+    block["net_total"] += netto
+    block["positionen"] += 1
+    if row["unit_cost"] is None:
+        block["positionen_ohne_ek"] += 1
+    else:
+        block["net_mit_ek"] += netto
+        block["ek_total"] += _round2(row["unit_cost"] * (row["quantity"] or Decimal(0)))
+
+
+def _marge_finalize(block):
+    """Leitet Deckungsbeitrag und Marge% ab — nur auf dem Anteil MIT bekanntem EK.
+
+    `deckungsbeitrag` = net_mit_ek − ek_total (nur, wenn mindestens eine Position
+    einen EK trägt). `marge_prozent` = DB / net_mit_ek × 100 (nur bei positivem
+    net_mit_ek). Fehlt jeder EK, bleiben beide None = „unbekannt", nie 0.
+    """
+    net_total = block["net_total"]
+    net_mit_ek = block["net_mit_ek"]
+    ek = block["ek_total"]
+    positionen = block["positionen"]
+    ohne = block["positionen_ohne_ek"]
+    mit_ek = positionen - ohne
+
+    deckungsbeitrag = net_mit_ek - ek if mit_ek > 0 else None
+    marge = None
+    if deckungsbeitrag is not None and net_mit_ek > 0:
+        marge = _round2(deckungsbeitrag / net_mit_ek * Decimal(100))
+
+    return {
+        "net_total": str(net_total),
+        "net_mit_ek": str(net_mit_ek),
+        "net_ohne_ek": str(net_total - net_mit_ek),
+        "ek_total": str(ek),
+        "deckungsbeitrag": None if deckungsbeitrag is None else str(deckungsbeitrag),
+        "marge_prozent": None if marge is None else str(marge),
+        "positionen": positionen,
+        "positionen_ohne_ek": ohne,
+        # ek_vollstaendig=True ⇒ jede summenwirksame Position hat einen EK; dann
+        # ist die Marge belastbar. False ⇒ es fehlen EKs, die Marge bezieht sich
+        # nur auf net_mit_ek (Rest = Marge unbekannt).
+        "ek_vollstaendig": positionen > 0 and ohne == 0,
+    }
+
+
+# Spalten, die eine Belegzeile für die Marge-Aggregation braucht.
+_MARGE_COLS = ("line_type", "line_kind", "net_amount", "unit_cost", "quantity")
+
+
+def _non_credit_published_lines(date_from, date_to):
+    """Zeilen veröffentlichter, NICHT-korrigierender Rechnungen (mit Datumsfilter)."""
+    qs = InvoiceLine.objects.filter(invoice__status="VEROEFFENTLICHT").exclude(
+        invoice__invoice_type__in=CREDIT_TYPES
+    )
+    if date_from:
+        qs = qs.filter(invoice__invoice_date__gte=date_from)
+    if date_to:
+        qs = qs.filter(invoice__invoice_date__lte=date_to)
+    return qs
+
+
+def _marge_gesamt(date_from, date_to):
+    """Ein Marge-Block über ALLE nicht-korrigierenden veröffentlichten Zeilen."""
+    block = _leerer_marge_block()
+    for row in _non_credit_published_lines(date_from, date_to).values(*_MARGE_COLS):
+        _marge_add(block, row)
+    return _marge_finalize(block)
+
 
 def list_dashboards(*, hr_allowed=False):
     """Liste der verfügbaren Auswertungs-Dashboards (Landing).
@@ -115,11 +235,37 @@ def _apply_invoice_dates(qs, date_from, date_to):
     return qs
 
 
-def umsatz_projektuebersicht_summary(*, date_from=None, date_to=None):
+def _marge_by_gewerk(date_from, date_to):
+    """Marge je Gewerk (angenähert über die Projektkategorie der Rechnung).
+
+    Rechnungen ohne Projekt/Kategorie fallen in „Ohne Gewerk". Sortiert nach
+    Nettoumsatz absteigend; nur Gewerke mit summenwirksamen Positionen.
+    """
+    buckets = {}
+    rows = _non_credit_published_lines(date_from, date_to).values(
+        "invoice__project__category__name", *_MARGE_COLS
+    )
+    for row in rows:
+        name = row["invoice__project__category__name"] or "Ohne Gewerk"
+        _marge_add(buckets.setdefault(name, _leerer_marge_block()), row)
+    result = []
+    for name, block in buckets.items():
+        if block["positionen"] == 0:
+            continue
+        result.append({"name": name, **_marge_finalize(block)})
+    result.sort(key=lambda g: Decimal(g["net_total"]), reverse=True)
+    return result
+
+
+def umsatz_projektuebersicht_summary(*, date_from=None, date_to=None, ek_allowed=False):
     """Kennzahlen für das Umsatz-/Projektübersicht-Dashboard.
 
     date_from/date_to (date, optional) filtern Rechnungen über das Belegdatum
     und Projekte über das Erstellungsdatum.
+
+    ek_allowed (pricing/LESEN): nur dann werden Deckungsbeitrag und Marge (Gesamt
+    und je Gewerk) berechnet; sonst bleibt `marge`/`marge_by_gewerk` leer und
+    `marge_sichtbar=False`.
     """
     published = _apply_invoice_dates(
         Invoice.objects.filter(status="VEROEFFENTLICHT"), date_from, date_to
@@ -186,6 +332,9 @@ def umsatz_projektuebersicht_summary(*, date_from=None, date_to=None):
             "by_gewerk": by_gewerk,
         },
         "timeline": timeline,
+        "marge_sichtbar": ek_allowed,
+        "marge": _marge_gesamt(date_from, date_to) if ek_allowed else None,
+        "marge_by_gewerk": _marge_by_gewerk(date_from, date_to) if ek_allowed else [],
     }
 
 
@@ -265,7 +414,49 @@ def _filter_kv(date_from, date_to):
 # Disposition (nur `workflow`) sieht Umsatzzahlen bewusst nicht.
 
 
-def projekte_summary(*, date_from=None, date_to=None, limit=10):
+# Angebotsstatus, die eine noch gültige Planung tragen (geplante Marge). ENTWURF
+# ist noch nicht verbindlich; ABGELEHNT/ABGELAUFEN/ERSETZT sind erledigt. Ersetzte
+# Angebote (replaced_by_quote_id gesetzt) werden zusätzlich ausgeschlossen, damit
+# Angebotsversionen nicht doppelt zählen.
+_AKTIVE_ANGEBOT_STATUS = ("INTERN_GEPRUEFT", "FREIGEGEBEN", "VERSENDET", "ANGENOMMEN")
+
+
+def _marge_by_project(date_from, date_to):
+    """Realisierte Marge je Projekt (aus Rechnungszeilen), keyed nach project_id."""
+    buckets = {}
+    rows = _non_credit_published_lines(date_from, date_to).values(
+        "invoice__project_id", *_MARGE_COLS
+    )
+    for row in rows:
+        pid = row["invoice__project_id"]
+        if pid is None:
+            continue
+        _marge_add(buckets.setdefault(pid, _leerer_marge_block()), row)
+    return {pid: _marge_finalize(block) for pid, block in buckets.items()}
+
+
+def _geplante_marge(date_from, date_to):
+    """Geplante Marge aus den Angebotszeilen der noch aktiven, nicht ersetzten
+    Angebote (Angebots-Snapshot: quote_line trägt dieselbe eingefrorene EK-Basis).
+
+    Datumsfilter über das Angebotsdatum (quote_date). Ableitbar, weil quote_line
+    `unit_cost` beim Einfügen einfriert — dieselbe Logik wie bei den Rechnungen.
+    """
+    qs = QuoteLine.objects.filter(
+        quote__status__in=_AKTIVE_ANGEBOT_STATUS,
+        quote__replaced_by_quote_id__isnull=True,
+    )
+    if date_from:
+        qs = qs.filter(quote__quote_date__gte=date_from)
+    if date_to:
+        qs = qs.filter(quote__quote_date__lte=date_to)
+    block = _leerer_marge_block()
+    for row in qs.values(*_MARGE_COLS):
+        _marge_add(block, row)
+    return _marge_finalize(block)
+
+
+def projekte_summary(*, date_from=None, date_to=None, limit=10, ek_allowed=False):
     """Kennzahlen für das Projekte-Dashboard.
 
     - Anzahl offen/abgeschlossen (Project.status OPEN/CLOSED — das Schema kennt
@@ -335,12 +526,33 @@ def projekte_summary(*, date_from=None, date_to=None, limit=10):
         .annotate(net=Coalesce(Sum("net_total"), _ZERO))
         .order_by("-net")[:limit]
     )
+    marge_je_projekt = _marge_by_project(date_from, date_to) if ek_allowed else {}
+
+    def _projekt_marge(project_id):
+        m = marge_je_projekt.get(project_id)
+        if m is None:
+            return {
+                "ek_total": None,
+                "deckungsbeitrag": None,
+                "marge_prozent": None,
+                "positionen_ohne_ek": None,
+                "ek_vollstaendig": None,
+            }
+        return {
+            "ek_total": m["ek_total"],
+            "deckungsbeitrag": m["deckungsbeitrag"],
+            "marge_prozent": m["marge_prozent"],
+            "positionen_ohne_ek": m["positionen_ohne_ek"],
+            "ek_vollstaendig": m["ek_vollstaendig"],
+        }
+
     top_projects = [
         {
             "project_id": str(r["project_id"]),
             "project_number": r["project__project_number"],
             "name": r["project__name"],
             "net_total": str(r["net"]),
+            **_projekt_marge(r["project_id"]),
         }
         for r in top_rows
     ]
@@ -356,6 +568,11 @@ def projekte_summary(*, date_from=None, date_to=None, limit=10):
             "avg_closed_duration_days": _days(closed_dur),
         },
         "top_projects": top_projects,
+        "marge_sichtbar": ek_allowed,
+        # Realisierte Marge (aus veröffentlichten Rechnungen) und geplante Marge
+        # (aus aktiven Angeboten) nebeneinander — Plan/Ist der Kalkulation.
+        "marge": _marge_gesamt(date_from, date_to) if ek_allowed else None,
+        "geplante_marge": _geplante_marge(date_from, date_to) if ek_allowed else None,
     }
 
 
@@ -374,13 +591,29 @@ def projekte_summary(*, date_from=None, date_to=None, limit=10):
 # erhöhen). Die maßgebliche Umsatzzahl bleibt das Umsatz-Dashboard.
 
 
-def artikel_summary(*, date_from=None, date_to=None, limit=15):
+def _marge_by_description(date_from, date_to):
+    """Marge-Block je Positionstext (description) — Datenquelle wie artikel_summary."""
+    buckets = {}
+    rows = _non_credit_published_lines(date_from, date_to).values(
+        "description", *_MARGE_COLS
+    )
+    for row in rows:
+        _marge_add(buckets.setdefault(row["description"], _leerer_marge_block()), row)
+    return {desc: _marge_finalize(block) for desc, block in buckets.items()}
+
+
+def artikel_summary(*, date_from=None, date_to=None, limit=15, ek_allowed=False):
     """Meistverwendete Positionen und Umsatz je Artikel/Leistung.
 
     Aggregiert die Zeilen veröffentlichter, NICHT-korrigierender Rechnungen
     (Positionsarten mit Betrag, also ohne TEXT/ZWISCHENSUMME):
     - je Positionstext: Anzahl Vorkommen, Gesamtmenge, Netto-Summe (Top-N).
     - je Positionsart (line_type): Anzahl und Netto-Summe (Materialaufteilung).
+
+    ek_allowed (pricing/LESEN): dann trägt jede Positionszeile zusätzlich EK,
+    Deckungsbeitrag, Marge% und die Zahl der Vorkommen ohne EK; sonst bleiben die
+    Marge-Felder None und `marge_sichtbar=False`. Der Marge-Anteil bezieht sich
+    auf die summenwirksamen (NORMAL-)Vorkommen mit hinterlegtem EK.
 
     date_from/date_to filtern über das Belegdatum.
     """
@@ -395,6 +628,26 @@ def artikel_summary(*, date_from=None, date_to=None, limit=15):
         lines = lines.filter(invoice__invoice_date__gte=date_from)
     if date_to:
         lines = lines.filter(invoice__invoice_date__lte=date_to)
+
+    marge_je_desc = _marge_by_description(date_from, date_to) if ek_allowed else {}
+
+    def _marge_felder(description):
+        m = marge_je_desc.get(description)
+        if m is None:
+            return {
+                "ek_total": None,
+                "deckungsbeitrag": None,
+                "marge_prozent": None,
+                "positionen_ohne_ek": None,
+                "ek_vollstaendig": None,
+            }
+        return {
+            "ek_total": m["ek_total"],
+            "deckungsbeitrag": m["deckungsbeitrag"],
+            "marge_prozent": m["marge_prozent"],
+            "positionen_ohne_ek": m["positionen_ohne_ek"],
+            "ek_vollstaendig": m["ek_vollstaendig"],
+        }
 
     _QTY = DecimalField(max_digits=15, decimal_places=3)
     art_rows = (
@@ -414,6 +667,7 @@ def artikel_summary(*, date_from=None, date_to=None, limit=15):
             "count": r["count"],
             "quantity_total": str(r["quantity_total"]),
             "net_total": str(r["net_total"]),
+            **_marge_felder(r["description"]),
         }
         for r in art_rows[:limit]
     ]
@@ -441,6 +695,8 @@ def artikel_summary(*, date_from=None, date_to=None, limit=15):
         "net_total": str(totals["net_total"]),
         "by_type": by_type,
         "articles": articles,
+        "marge_sichtbar": ek_allowed,
+        "marge": _marge_gesamt(date_from, date_to) if ek_allowed else None,
     }
 
 

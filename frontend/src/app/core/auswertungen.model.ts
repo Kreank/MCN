@@ -20,6 +20,29 @@ export interface GewerkCount {
   count: number;
 }
 
+/**
+ * Deckungsbeitrag/Marge. Beträge als String (Decimal). `deckungsbeitrag` und
+ * `marge_prozent` sind null, wenn keine Position einen EK trägt (= UNBEKANNT,
+ * nicht 0). Sie beziehen sich stets nur auf `net_mit_ek`; `net_ohne_ek` /
+ * `positionen_ohne_ek` weisen die Lücke aus. `ek_vollstaendig` = true bedeutet:
+ * jede summenwirksame Position hat einen EK, die Marge ist belastbar.
+ */
+export interface Marge {
+  net_total: string;
+  net_mit_ek: string;
+  net_ohne_ek: string;
+  ek_total: string;
+  deckungsbeitrag: string | null;
+  marge_prozent: string | null;
+  positionen: number;
+  positionen_ohne_ek: number;
+  ek_vollstaendig: boolean;
+}
+
+export interface MargeGewerk extends Marge {
+  name: string;
+}
+
 export interface ProjectsSummary {
   total: number;
   open: number;
@@ -38,6 +61,9 @@ export interface UmsatzProjekt {
   revenue: Revenue;
   projects: ProjectsSummary;
   timeline: TimelinePoint[];
+  marge_sichtbar: boolean;
+  marge: Marge | null;
+  marge_by_gewerk: MargeGewerk[];
 }
 
 export interface CustomerRevenue {
@@ -78,6 +104,12 @@ export interface TopProjekt {
   project_number: string;
   name: string;
   net_total: string;
+  // Realisierte Marge (nur mit pricing/LESEN; sonst null).
+  ek_total: string | null;
+  deckungsbeitrag: string | null;
+  marge_prozent: string | null;
+  positionen_ohne_ek: number | null;
+  ek_vollstaendig: boolean | null;
 }
 
 export interface ProjekteDashboard {
@@ -88,6 +120,9 @@ export interface ProjekteDashboard {
   by_status: ProjektStatusRow[];
   throughput: Throughput;
   top_projects: TopProjekt[];
+  marge_sichtbar: boolean;
+  marge: Marge | null;
+  geplante_marge: Marge | null;
 }
 
 // --- Artikel-Dashboard -----------------------------------------------------
@@ -96,6 +131,12 @@ export interface ArtikelPosition {
   count: number;
   quantity_total: string;
   net_total: string;
+  // Marge je Position (nur mit pricing/LESEN; sonst null).
+  ek_total: string | null;
+  deckungsbeitrag: string | null;
+  marge_prozent: string | null;
+  positionen_ohne_ek: number | null;
+  ek_vollstaendig: boolean | null;
 }
 
 export interface ArtikelTyp {
@@ -110,6 +151,8 @@ export interface ArtikelDashboard {
   net_total: string;
   by_type: ArtikelTyp[];
   articles: ArtikelPosition[];
+  marge_sichtbar: boolean;
+  marge: Marge | null;
 }
 
 // --- Mitarbeitenden-Dashboard (hr) -----------------------------------------

@@ -1,0 +1,88 @@
+:host {
+  display: block;
+}
+
+.marge__label {
+  margin: 0 0 var(--space-3);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.marge__kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: var(--space-4);
+}
+
+.mkpi {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--radius);
+}
+.mkpi--stark {
+  border-left-color: var(--positive);
+}
+.mkpi__label {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.mkpi__wert {
+  font-family: var(--font-display);
+  font-size: var(--step-2);
+  font-weight: 600;
+  color: var(--ink);
+}
+.mkpi--stark .mkpi__wert {
+  color: var(--positive-ink);
+}
+.mkpi__wert--klein {
+  font-size: var(--step-1);
+  color: var(--ink-muted);
+}
+// „unbekannt" bewusst gedämpft und kursiv — es ist eine Lücke, keine Zahl.
+.mkpi__wert--unbekannt {
+  font-style: italic;
+  font-weight: 500;
+  color: var(--ink-muted);
+}
+
+.marge__hinweis {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: var(--space-4) 0 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius);
+  font-size: var(--step--1);
+  line-height: 1.4;
+}
+.marge__glyph {
+  flex: none;
+  font-size: 0.9em;
+}
+.marge__hinweis--warn {
+  background: var(--warn-tint);
+  color: var(--warn-ink);
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
+}
+.marge__hinweis--ok {
+  background: var(--positive-tint);
+  color: var(--positive-ink);
+  border: 1px solid color-mix(in srgb, var(--positive) 40%, transparent);
+}
+.marge__hinweis--neutral {
+  background: var(--neutral-tint);
+  color: var(--ink-muted);
+  border: 1px solid var(--line);
+}

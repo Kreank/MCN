@@ -47,6 +47,28 @@
         </div>
       </div>
 
+      <!-- Deckungsbeitrag & Marge: Plan (Angebot) vs. Ist (Rechnung) -->
+      <section class="panel" aria-labelledby="marge-titel">
+        <h2 id="marge-titel" class="panel__titel">Deckungsbeitrag &amp; Marge — Plan vs. Ist</h2>
+        @if (daten()!.marge_sichtbar) {
+          <div class="marge-paar">
+            @if (daten()!.marge; as m) {
+              <app-marge-block [marge]="m" label="Realisiert (veröffentlichte Rechnungen)" />
+            }
+            @if (daten()!.geplante_marge; as gm) {
+              <app-marge-block [marge]="gm" label="Geplant (aktive Angebote)" />
+            }
+          </div>
+        } @else {
+          <p class="marge-gesperrt" role="note">
+            <span aria-hidden="true">○</span>
+            Deckungsbeitrag und Marge stützen sich auf die Einkaufspreise und sind
+            nur mit der Berechtigung „Einkaufspreise lesen" (pricing) sichtbar. Die
+            Umsatzzahlen bleiben davon unberührt.
+          </p>
+        }
+      </section>
+
       <!-- Volumen nach Status -->
       <section class="panel" aria-labelledby="status-titel">
         <h2 id="status-titel" class="panel__titel">Anzahl und Umsatz nach Status</h2>
@@ -97,6 +119,11 @@
                   <th scope="col">Projekt</th>
                   <th scope="col">Nummer</th>
                   <th scope="col" class="num">Umsatz netto</th>
+                  @if (daten()!.marge_sichtbar) {
+                    <th scope="col" class="num">Deckungsbeitrag</th>
+                    <th scope="col" class="num">Marge</th>
+                    <th scope="col" class="num">ohne EK</th>
+                  }
                 </tr>
               </thead>
               <tbody>
@@ -105,6 +132,13 @@
                     <td><a class="zelle-link" [routerLink]="['/projekte', p.project_id]">{{ p.name }}</a></td>
                     <td>{{ p.project_number }}</td>
                     <td class="num betrag">{{ euro(p.net_total) }}</td>
+                    @if (daten()!.marge_sichtbar) {
+                      <td class="num betrag" [class.unbekannt]="p.deckungsbeitrag === null">
+                        {{ p.deckungsbeitrag === null ? 'unbekannt' : euro(p.deckungsbeitrag) }}
+                      </td>
+                      <td class="num" [class.unbekannt]="p.marge_prozent === null">{{ prozent(p.marge_prozent) }}</td>
+                      <td class="num">{{ p.positionen_ohne_ek }}</td>
+                    }
                   </tr>
                 }
               </tbody>

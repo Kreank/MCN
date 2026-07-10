@@ -21,6 +21,30 @@ class DashboardOut(Schema):
     available: bool
 
 
+class MargeOut(Schema):
+    """Deckungsbeitrag/Marge-Block. Alle Beträge Strings (Decimal).
+
+    `deckungsbeitrag`/`marge_prozent` sind None, wenn keine Position einen EK
+    trägt (= unbekannt, NICHT 0). Sie beziehen sich stets nur auf `net_mit_ek`;
+    `net_ohne_ek`/`positionen_ohne_ek` weisen die Lücke aus. `ek_vollstaendig`
+    sagt, ob jede summenwirksame Position einen EK hat (dann ist die Marge
+    belastbar)."""
+
+    net_total: str
+    net_mit_ek: str
+    net_ohne_ek: str
+    ek_total: str
+    deckungsbeitrag: str | None = None
+    marge_prozent: str | None = None
+    positionen: int
+    positionen_ohne_ek: int
+    ek_vollstaendig: bool
+
+
+class MargeGewerkOut(MargeOut):
+    name: str
+
+
 class FiltersOut(Schema):
     date_from: date | None = None
     date_to: date | None = None
@@ -56,6 +80,9 @@ class UmsatzProjektOut(Schema):
     revenue: RevenueOut
     projects: ProjectsOut
     timeline: list[TimelinePointOut]
+    marge_sichtbar: bool
+    marge: MargeOut | None = None
+    marge_by_gewerk: list[MargeGewerkOut] = []
 
 
 class CustomerRevenueOut(Schema):
@@ -90,6 +117,12 @@ class TopProjektOut(Schema):
     project_number: str
     name: str
     net_total: str
+    # Realisierte Marge (nur mit pricing/LESEN; sonst None).
+    ek_total: str | None = None
+    deckungsbeitrag: str | None = None
+    marge_prozent: str | None = None
+    positionen_ohne_ek: int | None = None
+    ek_vollstaendig: bool | None = None
 
 
 class ProjekteOut(Schema):
@@ -100,6 +133,9 @@ class ProjekteOut(Schema):
     by_status: list[ProjektStatusOut]
     throughput: ThroughputOut
     top_projects: list[TopProjektOut]
+    marge_sichtbar: bool
+    marge: MargeOut | None = None
+    geplante_marge: MargeOut | None = None
 
 
 class ArtikelPositionOut(Schema):
@@ -107,6 +143,12 @@ class ArtikelPositionOut(Schema):
     count: int
     quantity_total: str
     net_total: str
+    # Marge je Position (nur mit pricing/LESEN; sonst None).
+    ek_total: str | None = None
+    deckungsbeitrag: str | None = None
+    marge_prozent: str | None = None
+    positionen_ohne_ek: int | None = None
+    ek_vollstaendig: bool | None = None
 
 
 class ArtikelTypOut(Schema):
@@ -121,6 +163,8 @@ class ArtikelOut(Schema):
     net_total: str
     by_type: list[ArtikelTypOut]
     articles: list[ArtikelPositionOut]
+    marge_sichtbar: bool
+    marge: MargeOut | None = None
 
 
 class MitarbeiterZeileOut(Schema):
@@ -173,11 +217,14 @@ def list_dashboards(request):
 def umsatz_projektuebersicht(request, filters: DashboardFilter = Query(...)):
     """Umsatzkennzahlen + Umsatzverlauf + Projektzahlen nach Gewerk.
 
+    Deckungsbeitrag und Marge (Gesamt und je Gewerk) nur mit `pricing/LESEN`
+    (EK-Daten); sonst bleibt der Umsatz sichtbar und `marge_sichtbar=False`.
     Optionale Filter date_from/date_to (Belegdatum für Umsatz,
     Erstellungsdatum für Projekte)."""
     require(request, "invoicing", "LESEN")
+    ek_allowed = check(request, "pricing", "LESEN") is not None
     return auswertungen_service.umsatz_projektuebersicht_summary(
-        date_from=filters.date_from, date_to=filters.date_to
+        date_from=filters.date_from, date_to=filters.date_to, ek_allowed=ek_allowed
     )
 
 
@@ -200,8 +247,9 @@ def projekte(request, filters: DashboardFilter = Query(...)):
     Umsatz je Projekt (invoicing-sensibel). Optionale Filter date_from/date_to
     (Belegdatum) wirken auf die Umsatzzahlen."""
     require(request, "invoicing", "LESEN")
+    ek_allowed = check(request, "pricing", "LESEN") is not None
     return auswertungen_service.projekte_summary(
-        date_from=filters.date_from, date_to=filters.date_to
+        date_from=filters.date_from, date_to=filters.date_to, ek_allowed=ek_allowed
     )
 
 
@@ -214,8 +262,9 @@ def artikel(request, filters: DashboardFilter = Query(...)):
     (nicht positionsweise zurechenbar). Optionale Filter date_from/date_to
     (Belegdatum)."""
     require(request, "invoicing", "LESEN")
+    ek_allowed = check(request, "pricing", "LESEN") is not None
     return auswertungen_service.artikel_summary(
-        date_from=filters.date_from, date_to=filters.date_to
+        date_from=filters.date_from, date_to=filters.date_to, ek_allowed=ek_allowed
     )
 
 

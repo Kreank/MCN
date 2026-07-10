@@ -3,6 +3,7 @@ import { RouterLink } from '@angular/router';
 import { AuswertungService } from '../../core/auswertungen.service';
 import { ProjekteDashboard } from '../../core/auswertungen.model';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { MargeBlock } from '../../shared/marge-block/marge-block';
 import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 
 type ViewState =
@@ -24,7 +25,7 @@ const STATUS_LABEL: Record<string, string> = {
 
 @Component({
   selector: 'app-auswertungen-projekte',
-  imports: [RouterLink, KeinZugriff],
+  imports: [RouterLink, KeinZugriff, MargeBlock],
   templateUrl: './auswertungen-projekte.html',
   styleUrl: './auswertungen-projekte.scss',
 })
@@ -84,5 +85,16 @@ export class AuswertungenProjekte {
       style: 'currency',
       currency: 'EUR',
     }).format(Number(amount));
+  }
+
+  /** Marge% (de-DE) oder das Wort „unbekannt" — nie eine erfundene 0. */
+  prozent(p: string | null): string {
+    if (p === null) return 'unbekannt';
+    return (
+      new Intl.NumberFormat('de-DE', {
+        minimumFractionDigits: 1,
+        maximumFractionDigits: 2,
+      }).format(Number(p)) + ' %'
+    );
   }
 }

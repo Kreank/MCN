@@ -1,0 +1,43 @@
+<div class="marge">
+  <p class="marge__label">{{ label() }}</p>
+
+  <div class="marge__kpis" role="group" [attr.aria-label]="label()">
+    <div class="mkpi">
+      <span class="mkpi__label">Deckungsbeitrag</span>
+      <span class="mkpi__wert" [class.mkpi__wert--unbekannt]="marge().deckungsbeitrag === null">
+        {{ dbText() }}
+      </span>
+    </div>
+    <div class="mkpi mkpi--stark">
+      <span class="mkpi__label">Marge</span>
+      <span class="mkpi__wert" [class.mkpi__wert--unbekannt]="marge().marge_prozent === null">
+        {{ margeText() }}
+      </span>
+    </div>
+    <div class="mkpi">
+      <span class="mkpi__label">Basis mit Einkaufspreis</span>
+      <span class="mkpi__wert mkpi__wert--klein">{{ euro(marge().net_mit_ek) }}</span>
+    </div>
+  </div>
+
+  <!-- Ehrlicher Deckungshinweis (Text + Glyph, nicht nur Farbe = WCAG). -->
+  @if (hatLuecke()) {
+    <p class="marge__hinweis marge__hinweis--warn">
+      <span class="marge__glyph" aria-hidden="true">◆</span>
+      {{ marge().positionen_ohne_ek }} von {{ marge().positionen }} Position(en) ohne
+      Einkaufspreis — {{ euro(marge().net_ohne_ek) }} ohne Marge (unbekannt). Die
+      angezeigte Marge bezieht sich nur auf den Anteil mit hinterlegtem
+      Einkaufspreis.
+    </p>
+  } @else if (belastbar()) {
+    <p class="marge__hinweis marge__hinweis--ok">
+      <span class="marge__glyph" aria-hidden="true">●</span>
+      Einkaufspreis für alle Positionen hinterlegt — Marge belastbar.
+    </p>
+  } @else {
+    <p class="marge__hinweis marge__hinweis--neutral">
+      <span class="marge__glyph" aria-hidden="true">○</span>
+      Für diesen Bereich ist kein Einkaufspreis hinterlegt — Marge unbekannt.
+    </p>
+  }
+</div>

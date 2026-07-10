@@ -42,6 +42,21 @@
         </div>
       </div>
 
+      <!-- Deckungsbeitrag & Marge (nur mit Recht pricing/LESEN) -->
+      <section class="panel" aria-labelledby="marge-titel">
+        <h2 id="marge-titel" class="panel__titel">Deckungsbeitrag &amp; Marge</h2>
+        @if (daten()!.marge_sichtbar && daten()!.marge; as m) {
+          <app-marge-block [marge]="m" label="Über alle berechneten Positionen (netto)" />
+        } @else {
+          <p class="marge-gesperrt" role="note">
+            <span aria-hidden="true">○</span>
+            Deckungsbeitrag und Marge je Artikel/Leistung stützen sich auf die
+            Einkaufspreise und sind nur mit der Berechtigung „Einkaufspreise lesen"
+            (pricing) sichtbar.
+          </p>
+        }
+      </section>
+
       <!-- Top-Positionen nach Umsatz -->
       <section class="panel" aria-labelledby="top-titel">
         <h2 id="top-titel" class="panel__titel">Top-Positionen nach Nettoumsatz</h2>
@@ -68,6 +83,11 @@
                   <th scope="col" class="num">Vorkommen</th>
                   <th scope="col" class="num">Menge</th>
                   <th scope="col" class="num">Umsatz netto</th>
+                  @if (daten()!.marge_sichtbar) {
+                    <th scope="col" class="num">Deckungsbeitrag</th>
+                    <th scope="col" class="num">Marge</th>
+                    <th scope="col" class="num">ohne EK</th>
+                  }
                 </tr>
               </thead>
               <tbody>
@@ -77,6 +97,13 @@
                     <td class="num">{{ a.count }}</td>
                     <td class="num">{{ menge(a.quantity_total) }}</td>
                     <td class="num betrag">{{ euro(a.net_total) }}</td>
+                    @if (daten()!.marge_sichtbar) {
+                      <td class="num betrag" [class.unbekannt]="a.deckungsbeitrag === null">
+                        {{ a.deckungsbeitrag === null ? 'unbekannt' : euro(a.deckungsbeitrag) }}
+                      </td>
+                      <td class="num" [class.unbekannt]="a.marge_prozent === null">{{ prozent(a.marge_prozent) }}</td>
+                      <td class="num">{{ a.positionen_ohne_ek }}</td>
+                    }
                   </tr>
                 }
               </tbody>

@@ -153,3 +153,72 @@
     transition: height 0.3s ease, width 0.3s ease;
   }
 }
+
+// ============================ Tabelle (Marge nach Gewerk) ===================
+.tabelle-wrap {
+  overflow-x: auto;
+}
+.tabelle {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--step--1);
+  min-width: 34rem;
+
+  th,
+  td {
+    padding: var(--space-3) var(--space-4);
+    text-align: left;
+    border-bottom: 1px solid var(--line);
+  }
+  th {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+    white-space: nowrap;
+  }
+  tbody tr:last-child td {
+    border-bottom: none;
+  }
+  .num {
+    text-align: right;
+    white-space: nowrap;
+    font-family: var(--font-mono);
+  }
+  .betrag {
+    font-weight: 600;
+    color: var(--ink);
+  }
+  // „unbekannt" gedämpft/kursiv statt einer vorgetäuschten Zahl.
+  .unbekannt {
+    font-style: italic;
+    font-weight: 500;
+    color: var(--ink-muted);
+  }
+}
+.tabelle__caption {
+  caption-side: top;
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin-bottom: var(--space-2);
+}
+
+// ============================ Marge gesperrt (kein pricing/LESEN) ===========
+.marge-gesperrt {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-4);
+  background: var(--neutral-tint);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+  line-height: 1.5;
+}
