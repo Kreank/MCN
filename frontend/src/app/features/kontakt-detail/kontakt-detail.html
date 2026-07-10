@@ -19,17 +19,33 @@
   }
 
   @case ('ready') {
+    @if (meldung(); as m) {
+      <div
+        class="melde melde--{{ m.art === 'erfolg' ? 'erfolg' : 'fehler' }} kontakt-detail__melde"
+        [attr.role]="m.art === 'fehler' ? 'alert' : 'status'"
+      >
+        <span class="melde__mark" aria-hidden="true">{{ m.art === 'fehler' ? '!' : '✓' }}</span>
+        <span class="melde__text">
+          <strong>{{ m.art === 'fehler' ? 'Fehler:' : 'Erledigt:' }}</strong> {{ m.text }}
+        </span>
+        <button type="button" class="melde__zu" (click)="meldungSchliessen()" aria-label="Meldung schließen">
+          <span aria-hidden="true">✕</span>
+        </button>
+      </div>
+    }
+
     <app-mappe
       kicker="Kontakt"
       [titel]="daten()!.display_name"
       backLink="/kontakte"
       backLabel="Kontakte"
-      [tabs]="tabs"
+      [tabs]="tabs()"
       [(aktiv)]="tab"
     >
       <span mappe-kopf class="stamp stamp--type">{{ typeLabel(daten()!.party_type) }}</span>
       <span mappe-kopf class="stamp {{ statusClass(daten()!.status) }}">{{ statusLabel(daten()!.status) }}</span>
 
+      <!-- ------------------------------ Stammdaten ------------------------ -->
       @if (tab() === 'stammdaten') {
         @if (daten()!.person; as p) {
           <dl class="feld-raster">
@@ -50,29 +66,137 @@
             <div class="feld"><dt class="feld__label">USt-IdNr.</dt><dd class="feld__wert" [class.feld__wert--leer]="!o.vat_id">{{ o.vat_id || '—' }}</dd></div>
           </dl>
         }
+
+        <!-- Kommunikationswege -->
+        <section class="mappe-block" aria-labelledby="kw-titel">
+          <div class="mappe-block__kopf">
+            <h2 id="kw-titel" class="mappe-block__titel">Kommunikationswege</h2>
+            @if (darfAnlegen()) {
+              <button type="button" class="btn btn--primary btn--klein" (click)="dialogOeffnen('kontaktweg')">
+                <span aria-hidden="true">＋</span> Kontaktweg
+              </button>
+            }
+          </div>
+          @switch (contactPointsState().kind) {
+            @case ('loading') { <p class="lade-hinweis" role="status">Kommunikationswege werden geladen …</p> }
+            @case ('forbidden') { <app-kein-zugriff [detail]="$any(contactPointsState()).detail" /> }
+            @case ('error') { <p class="mappe-block__leer">Die Kommunikationswege konnten nicht geladen werden.</p> }
+            @case ('ready') {
+              @if ($any(contactPointsState()).items.length === 0) {
+                <p class="mappe-block__leer">Noch keine Kommunikationswege hinterlegt.</p>
+              } @else {
+                <ul class="ref-liste">
+                  @for (cp of $any(contactPointsState()).items; track cp.id) {
+                    <li class="ref">
+                      <span class="ref__stamps">
+                        <span class="stamp stamp--type">{{ contactTypeLabel(cp.contact_type) }}</span>
+                        @if (cp.is_primary) { <span class="stamp stamp--positive">Primär</span> }
+                      </span>
+                      <span class="ref__name">{{ cp.value }}</span>
+                      @if (cp.label) { <span class="ref__meta">{{ cp.label }}</span> }
+                      @if (darfAendern()) {
+                        <button type="button" class="btn btn--klein" (click)="kontaktwegDeaktivierenFragen(cp)">
+                          Beenden
+                        </button>
+                      }
+                    </li>
+                  }
+                </ul>
+              }
+            }
+          }
+        </section>
       }
 
+      <!-- ------------------------------ Objektadressen -------------------- -->
       @if (tab() === 'objektadressen') {
-        <div class="tab-platzhalter">
-          <h2 class="tab-platzhalter__titel">Objektadressen</h2>
-          <p>Verknüpfte Liegenschaften und Objektadressen dieses Kontakts erscheinen hier, sobald der Adress-/Rollen-Bezug angebunden ist (siehe Roadmap 02/03).</p>
-        </div>
+        <section class="mappe-block" aria-labelledby="adr-titel">
+          <div class="mappe-block__kopf">
+            <h2 id="adr-titel" class="mappe-block__titel">Adressen</h2>
+            @if (darfAnlegen()) {
+              <button type="button" class="btn btn--primary btn--klein" (click)="dialogOeffnen('adresse')">
+                <span aria-hidden="true">＋</span> Adresse
+              </button>
+            }
+          </div>
+          @switch (addressesState().kind) {
+            @case ('loading') { <p class="lade-hinweis" role="status">Adressen werden geladen …</p> }
+            @case ('forbidden') { <app-kein-zugriff [detail]="$any(addressesState()).detail" /> }
+            @case ('error') { <p class="mappe-block__leer">Die Adressen konnten nicht geladen werden.</p> }
+            @case ('ready') {
+              @if ($any(addressesState()).items.length === 0) {
+                <p class="mappe-block__leer">Noch keine Adressen hinterlegt.</p>
+              } @else {
+                <ul class="ref-liste">
+                  @for (pa of $any(addressesState()).items; track pa.id) {
+                    <li class="ref">
+                      <span class="ref__stamps">
+                        <span class="stamp stamp--type">{{ addressTypeLabel(pa.address_type) }}</span>
+                        @if (pa.is_primary) { <span class="stamp stamp--positive">Primär</span> }
+                      </span>
+                      <span class="ref__name">{{ adresseZeile(pa.address) }}</span>
+                    </li>
+                  }
+                </ul>
+              }
+            }
+          }
+          <p class="mappe-block__hinweis">
+            Verknüpfte Liegenschaften erscheinen unter <a routerLink="/liegenschaften">Liegenschaften</a> (Roadmap 03).
+          </p>
+        </section>
       }
+
+      <!-- ------------------------------ Ansprechpartner ------------------- -->
       @if (tab() === 'ansprechpartner') {
-        <div class="tab-platzhalter">
-          <h2 class="tab-platzhalter__titel">Ansprechpartner</h2>
-          <p>Personen und Kontaktwege zu dieser Organisation folgen mit der Kontaktweg-Anbindung.</p>
-        </div>
+        <section class="mappe-block" aria-labelledby="ap-titel">
+          <div class="mappe-block__kopf">
+            <h2 id="ap-titel" class="mappe-block__titel">Ansprechpartner</h2>
+            @if (darfAnlegen()) {
+              <button type="button" class="btn btn--primary btn--klein" (click)="dialogOeffnen('ansprechpartner')">
+                <span aria-hidden="true">＋</span> Ansprechpartner
+              </button>
+            }
+          </div>
+          @switch (contactPersonsState().kind) {
+            @case ('loading') { <p class="lade-hinweis" role="status">Ansprechpartner werden geladen …</p> }
+            @case ('forbidden') { <app-kein-zugriff [detail]="$any(contactPersonsState()).detail" /> }
+            @case ('error') { <p class="mappe-block__leer">Die Ansprechpartner konnten nicht geladen werden.</p> }
+            @case ('ready') {
+              @if ($any(contactPersonsState()).items.length === 0) {
+                <p class="mappe-block__leer">Dieser Organisation ist noch keine Ansprechperson zugeordnet.</p>
+              } @else {
+                <ul class="ref-liste">
+                  @for (ap of $any(contactPersonsState()).items; track ap.relationship_id) {
+                    <li class="ref">
+                      <a class="ref__name" [routerLink]="['/kontakte', ap.person_party_id]">{{ ap.display_name }}</a>
+                      <span class="ref__meta">seit {{ ap.valid_from }}</span>
+                      @if (darfAendern()) {
+                        <button type="button" class="btn btn--klein" (click)="ansprechEntfernenFragen(ap)">
+                          Entfernen
+                        </button>
+                      }
+                    </li>
+                  }
+                </ul>
+              }
+            }
+          }
+        </section>
       }
+
+      <!-- ------------------------------ Dokumente ------------------------- -->
       @if (tab() === 'dokumente') {
         <div class="tab-platzhalter">
           <h2 class="tab-platzhalter__titel">Dokumente</h2>
           <p>Angebote und Rechnungen dieses Kontakts werden hier gebündelt, sobald der Dokumentenbereich steht (Roadmap 05).</p>
         </div>
       }
+
       @if (tab() === 'dateien') {
         <app-dateien [ziel]="dateienZiel()" />
       }
+
       @if (tab() === 'logbuch') {
         <div class="tab-platzhalter">
           <h2 class="tab-platzhalter__titel">Logbuch</h2>
@@ -80,5 +204,109 @@
         </div>
       }
     </app-mappe>
+
+    <!-- ------------------------------ Kontaktweg-Dialog ------------------- -->
+    <app-dialog
+      [offen]="dialogOffen() === 'kontaktweg'"
+      titel="Kommunikationsweg hinzufügen"
+      (schliessen)="dialogSchliessen()"
+    >
+      <form id="kontaktweg-form" class="dialog-form" (submit)="$event.preventDefault(); kontaktwegAbsenden()" novalidate>
+        @if (formularMeldung(); as fm) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+          </div>
+        }
+        <app-feld [control]="kontaktwegForm.controls.contact_type" label="Art" typ="select" [pflicht]="true" [optionen]="kontaktTypen" />
+        <app-feld [control]="kontaktwegForm.controls.value" label="Wert" [pflicht]="true" platzhalter="z. B. info@firma.de oder +49 …" />
+        <app-feld [control]="kontaktwegForm.controls.label" label="Bezeichnung" hinweis="Optional, z. B. „Zentrale“ oder „Buchhaltung“." />
+        <app-feld [control]="kontaktwegForm.controls.is_primary" label="Als primären Weg dieses Typs kennzeichnen" typ="checkbox" />
+      </form>
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="dialogLaedt()" (click)="dialogSchliessen()">Abbrechen</button>
+        <button type="submit" form="kontaktweg-form" class="btn btn--primary" [disabled]="dialogLaedt()" [attr.aria-busy]="dialogLaedt()">
+          {{ dialogLaedt() ? 'Wird gespeichert …' : 'Hinzufügen' }}
+        </button>
+      </div>
+    </app-dialog>
+
+    <!-- ------------------------------ Adresse-Dialog --------------------- -->
+    <app-dialog
+      [offen]="dialogOffen() === 'adresse'"
+      titel="Adresse hinzufügen"
+      (schliessen)="dialogSchliessen()"
+    >
+      <form id="adresse-form" class="dialog-form" (submit)="$event.preventDefault(); adresseAbsenden()" novalidate>
+        @if (formularMeldung(); as fm) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+          </div>
+        }
+        <app-feld [control]="adresseForm.controls.address_type" label="Typ" typ="select" [pflicht]="true" [optionen]="adressTypen" />
+        <app-feld [control]="adresseForm.controls.street" label="Straße" [pflicht]="true" />
+        <app-feld [control]="adresseForm.controls.house_number" label="Hausnummer" />
+        <app-feld [control]="adresseForm.controls.postal_code" label="PLZ" [pflicht]="true" />
+        <app-feld [control]="adresseForm.controls.city" label="Ort" [pflicht]="true" />
+        <app-feld [control]="adresseForm.controls.address_addition" label="Adresszusatz" hinweis="Optional, z. B. „Hinterhaus“ oder „c/o“." />
+        <app-feld [control]="adresseForm.controls.is_primary" label="Als primäre Adresse dieses Typs kennzeichnen" typ="checkbox" />
+      </form>
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="dialogLaedt()" (click)="dialogSchliessen()">Abbrechen</button>
+        <button type="submit" form="adresse-form" class="btn btn--primary" [disabled]="dialogLaedt()" [attr.aria-busy]="dialogLaedt()">
+          {{ dialogLaedt() ? 'Wird gespeichert …' : 'Hinzufügen' }}
+        </button>
+      </div>
+    </app-dialog>
+
+    <!-- ------------------------------ Ansprechpartner-Dialog ------------- -->
+    <app-dialog
+      [offen]="dialogOffen() === 'ansprechpartner'"
+      titel="Ansprechpartner zuordnen"
+      (schliessen)="dialogSchliessen()"
+    >
+      <form id="ansprech-form" class="dialog-form" (submit)="$event.preventDefault(); ansprechAbsenden()" novalidate>
+        @if (formularMeldung(); as fm) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+          </div>
+        }
+        <app-feld [control]="ansprechForm.controls.quelle" label="Quelle" typ="select" [pflicht]="true" [optionen]="quellen" />
+        @if (ansprechNeu()) {
+          <app-feld [control]="ansprechForm.controls.salutation" label="Anrede" />
+          <app-feld [control]="ansprechForm.controls.title" label="Titel" />
+          <app-feld [control]="ansprechForm.controls.first_name" label="Vorname" [pflicht]="true" />
+          <app-feld [control]="ansprechForm.controls.last_name" label="Nachname" [pflicht]="true" />
+        } @else {
+          <app-referenz-wahl
+            [control]="ansprechForm.controls.person_party_id"
+            label="Person"
+            [pflicht]="true"
+            [suche]="personSuche"
+            hinweis="Bestehende Person suchen und auswählen."
+          />
+        }
+      </form>
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="dialogLaedt()" (click)="dialogSchliessen()">Abbrechen</button>
+        <button type="submit" form="ansprech-form" class="btn btn--primary" [disabled]="dialogLaedt()" [attr.aria-busy]="dialogLaedt()">
+          {{ dialogLaedt() ? 'Wird gespeichert …' : 'Zuordnen' }}
+        </button>
+      </div>
+    </app-dialog>
+
+    <!-- ------------------------------ Bestätigung (Beenden) -------------- -->
+    <app-bestaetigung
+      [offen]="bestaetigung() !== null"
+      [titel]="bestaetigung()?.art === 'kontaktweg' ? 'Kommunikationsweg beenden?' : 'Ansprechpartner entfernen?'"
+      [text]="bestaetigung()?.text ?? ''"
+      bestaetigenLabel="Beenden"
+      [gefahr]="true"
+      [laedt]="bestaetigungLaedt()"
+      (bestaetigen)="bestaetigungAusfuehren()"
+      (abbrechen)="bestaetigungAbbrechen()"
+    />
   }
 }

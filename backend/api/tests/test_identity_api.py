@@ -191,6 +191,137 @@ def test_create_organisation_ungueltiger_typ(client, db):
 
 
 @pytest.mark.django_db
+def test_contact_point_anlegen_und_lesen(admin_client, seeded):
+    party = seeded["persons"][0]
+    r = admin_client.post(
+        f"/api/identity/parties/{party.id}/contact-points",
+        data={"contact_type": "EMAIL", "value": "anna@example.test"},
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    assert r.json()["value"] == "anna@example.test"
+    r2 = admin_client.get(f"/api/identity/parties/{party.id}/contact-points")
+    assert r2.status_code == 200
+    assert any(c["value"] == "anna@example.test" for c in r2.json())
+
+
+@pytest.mark.django_db
+def test_contact_point_ungueltiger_typ_422(admin_client, seeded):
+    party = seeded["persons"][0]
+    r = admin_client.post(
+        f"/api/identity/parties/{party.id}/contact-points",
+        data={"contact_type": "RAUCHZEICHEN", "value": "x"},
+        content_type="application/json",
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.django_db
+def test_contact_point_deaktivieren(admin_client, seeded):
+    party = seeded["persons"][0]
+    r = admin_client.post(
+        f"/api/identity/parties/{party.id}/contact-points",
+        data={"contact_type": "PHONE", "value": "+49 89 999",
+              "valid_from": "2020-01-01"},
+        content_type="application/json",
+    )
+    cp_id = r.json()["id"]
+    r2 = admin_client.post(
+        f"/api/identity/parties/{party.id}/contact-points/{cp_id}/deactivate",
+        content_type="application/json",
+    )
+    assert r2.status_code == 200
+    assert r2.json()["valid_until"] is not None
+
+
+@pytest.mark.django_db
+def test_adresse_anlegen_und_exklusivitaet_422(admin_client, seeded):
+    party = seeded["persons"][1]
+    r = admin_client.post(
+        f"/api/identity/parties/{party.id}/addresses",
+        data={"address_type": "BILLING", "street": "Weg", "postal_code": "12345",
+              "city": "Ort", "is_primary": True, "valid_from": "2020-01-01"},
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    assert r.json()["address"]["city"] == "Ort"
+    # zweite primäre BILLING im überlappenden Zeitraum → 422
+    r2 = admin_client.post(
+        f"/api/identity/parties/{party.id}/addresses",
+        data={"address_type": "BILLING", "street": "Anders", "postal_code": "54321",
+              "city": "Zweitort", "is_primary": True, "valid_from": "2020-06-01"},
+        content_type="application/json",
+    )
+    assert r2.status_code == 422
+
+
+@pytest.mark.django_db
+def test_ansprechpartner_zuordnen_bestehend(admin_client, seeded):
+    org = seeded["orgs"][0]
+    person = seeded["persons"][2]
+    r = admin_client.post(
+        f"/api/identity/parties/{org.id}/contact-persons",
+        data={"person_party_id": str(person.id)},
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    body = r.json()
+    assert body["person_party_id"] == str(person.id)
+    r2 = admin_client.get(f"/api/identity/parties/{org.id}/contact-persons")
+    assert any(c["person_party_id"] == str(person.id) for c in r2.json())
+
+
+@pytest.mark.django_db
+def test_ansprechpartner_neu_anlegen(admin_client, seeded):
+    org = seeded["orgs"][0]
+    r = admin_client.post(
+        f"/api/identity/parties/{org.id}/contact-persons",
+        data={"first_name": "Frisch", "last_name": "Kontakt"},
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    assert r.json()["display_name"] == "Frisch Kontakt"
+
+
+@pytest.mark.django_db
+def test_ansprechpartner_unbekannte_person_422(admin_client, seeded):
+    org = seeded["orgs"][0]
+    r = admin_client.post(
+        f"/api/identity/parties/{org.id}/contact-persons",
+        data={"person_party_id": str(uuid.uuid4())},
+        content_type="application/json",
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.django_db
+def test_kontaktweg_lesen_ohne_recht_403(client_with_role, seeded):
+    """Eine Rolle ohne identity/LESEN wird bei den Kontaktweg-Listen abgewiesen."""
+    party = seeded["persons"][0]
+    c = client_with_role("MONTEUR")  # MONTEUR hat kein identity-Recht
+    r = c.get(f"/api/identity/parties/{party.id}/contact-points")
+    assert r.status_code == 403
+
+
+@pytest.mark.django_db
+def test_kontaktweg_schreiben_ohne_recht_403(client_with_role, seeded):
+    party = seeded["persons"][0]
+    c = client_with_role("NUR_LESEN")  # darf lesen, nicht anlegen
+    r = c.post(
+        f"/api/identity/parties/{party.id}/contact-points",
+        data={"contact_type": "EMAIL", "value": "x@example.test"},
+        content_type="application/json",
+    )
+    assert r.status_code == 403
+
+
+@pytest.mark.django_db
+def test_kontaktweg_unbekannter_kontakt_404(admin_client, db):
+    r = admin_client.get(f"/api/identity/parties/{uuid.uuid4()}/contact-points")
+    assert r.status_code == 404
+
+
+@pytest.mark.django_db
 def test_create_ohne_csrf_token_abgelehnt(db):
     """SessionAuth erzwingt CSRF: POST ohne Token wird abgelehnt.
 

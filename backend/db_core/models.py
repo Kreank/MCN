@@ -228,6 +228,84 @@ class Address(models.Model):
         return f"{self.street}, {self.postal_code} {self.city}"
 
 
+class PartyAddress(models.Model):
+    """identity.party_address — zeitabhängige Zuordnung Adresse↔Party mit Typ.
+
+    Eine Exclusion (excl_party_address_primary) verbietet je Party und Typ zwei
+    zeitgleich primäre Adressen (Constraint über den Gültigkeitszeitraum); der
+    Service fängt die Verletzung als 422 ab.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    party = models.ForeignKey(
+        Party, models.DO_NOTHING, db_column="party_id", related_name="addresses"
+    )
+    address = models.ForeignKey(
+        Address, models.DO_NOTHING, db_column="address_id", related_name="party_links"
+    )
+    address_type = models.TextField()  # BUSINESS | POSTAL | BILLING | PRIVATE
+    is_primary = models.BooleanField()
+    valid_from = models.DateField()
+    valid_until = models.DateField(null=True, blank=True)
+    created_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'identity"."party_address'
+
+
+class ContactPoint(models.Model):
+    """identity.contact_point — zeitabhängiger Kommunikationsweg einer Party.
+
+    contact_type ∈ EMAIL|PHONE|MOBILE|FAX|PORTAL. Eine Exclusion
+    (excl_contact_point_primary) verbietet je Party und Typ zwei zeitgleich
+    primäre Wege; der Service fängt die Verletzung als 422 ab.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    party = models.ForeignKey(
+        Party, models.DO_NOTHING, db_column="party_id", related_name="contact_points"
+    )
+    contact_type = models.TextField()  # EMAIL | PHONE | MOBILE | FAX | PORTAL
+    value = models.TextField()
+    label = models.TextField(null=True, blank=True)
+    is_primary = models.BooleanField()
+    valid_from = models.DateField()
+    valid_until = models.DateField(null=True, blank=True)
+    created_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'identity"."contact_point'
+
+
+class PartyRelationship(models.Model):
+    """identity.party_relationship — gerichtete Beziehung zweier Parties.
+
+    relationship_type ∈ CONTACT_PERSON_FOR|EMPLOYEE_OF|… . Die Zeile wird nie
+    gelöscht (trg_party_relationship_no_delete); beendet wird per valid_until
+    (UPDATE, auditiert). Merged Parties sind als Referenz unzulässig (P0001).
+    """
+
+    id = models.UUIDField(primary_key=True)
+    from_party = models.ForeignKey(
+        Party, models.DO_NOTHING, db_column="from_party_id",
+        related_name="relationships_from",
+    )
+    to_party = models.ForeignKey(
+        Party, models.DO_NOTHING, db_column="to_party_id",
+        related_name="relationships_to",
+    )
+    relationship_type = models.TextField()
+    valid_from = models.DateField()
+    valid_until = models.DateField(null=True, blank=True)
+    created_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'identity"."party_relationship'
+
+
 class Property(models.Model):
     """property.property — Liegenschaft (Haupt-Entität der Objektwelt)."""
 

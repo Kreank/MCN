@@ -351,6 +351,41 @@ class Command(BaseCommand):
             angelegt += 1
             self.stdout.write(f"Organisation angelegt: {party.display_name} ({party.id})")
 
+        # Kontaktmappe-Demodaten: ein Ansprechpartner, eine Adresse und zwei
+        # Kommunikationswege an einem Demokontakt, damit die Mappe echte Daten
+        # zeigt. Idempotent über die aktiven Listen (heilt Teilerfolge nach).
+        meyer = Party.objects.filter(
+            display_name="Hausverwaltung Meyer & Partner GmbH"
+        ).first()
+        sabine = Party.objects.filter(display_name="Sabine Krüger").first()
+        if meyer is not None:
+            if sabine is not None and not identity_service.list_contact_persons(meyer.id):
+                identity_service.add_contact_person(
+                    actor.id, meyer.id, person_party_id=sabine.id,
+                    valid_from=date(2021, 3, 1),
+                )
+                self.stdout.write("Ansprechpartner verknuepft: Sabine Krueger an Meyer")
+            if not identity_service.list_addresses(meyer.id):
+                identity_service.add_address(
+                    actor.id, meyer.id, address_type="BUSINESS",
+                    street="Verwaltungsweg", house_number="7",
+                    postal_code="40213", city="Musterstadt",
+                    valid_from=date(2021, 3, 1),
+                )
+                self.stdout.write("Adresse angelegt: Meyer (BUSINESS)")
+            if not identity_service.list_contact_points(meyer.id):
+                identity_service.add_contact_point(
+                    actor.id, meyer.id, contact_type="EMAIL",
+                    value="info@hv-meyer.example", is_primary=True,
+                    valid_from=date(2021, 3, 1),
+                )
+                identity_service.add_contact_point(
+                    actor.id, meyer.id, contact_type="PHONE",
+                    value="+49 211 5551234", is_primary=True,
+                    valid_from=date(2021, 3, 1),
+                )
+                self.stdout.write("Kommunikationswege angelegt: Meyer")
+
         # Liegenschaften: idempotent auf Property-Ebene (existiert der Name,
         # wird die ganze Liegenschaft übersprungen). Ein nach Teilerfolg
         # abgebrochener Lauf heilt Gebäude/Einheiten/Rollen NICHT nach — für

@@ -72,3 +72,73 @@ export interface OrganizationIn {
   tax_number?: string | null;
   vat_id?: string | null;
 }
+
+// --- Kontaktmappe: Adressen / Kontaktwege / Ansprechpartner ----------------
+
+export type AddressTypeCode = 'BUSINESS' | 'POSTAL' | 'BILLING' | 'PRIVATE';
+export type ContactTypeCode = 'EMAIL' | 'PHONE' | 'MOBILE' | 'FAX' | 'PORTAL';
+
+export interface Address {
+  street: string;
+  house_number: string | null;
+  address_addition: string | null;
+  postal_code: string;
+  city: string;
+  country_code: string;
+}
+
+export interface PartyAddress {
+  id: string;
+  address_type: AddressTypeCode;
+  is_primary: boolean;
+  valid_from: string;
+  valid_until: string | null;
+  address: Address;
+}
+
+export interface AddressIn {
+  address_type: AddressTypeCode;
+  street: string;
+  postal_code: string;
+  city: string;
+  house_number?: string | null;
+  address_addition?: string | null;
+  country_code?: string;
+  is_primary?: boolean;
+  valid_from?: string | null;
+}
+
+export interface ContactPoint {
+  id: string;
+  contact_type: ContactTypeCode;
+  value: string;
+  label: string | null;
+  is_primary: boolean;
+  valid_from: string;
+  valid_until: string | null;
+}
+
+export interface ContactPointIn {
+  contact_type: ContactTypeCode;
+  value: string;
+  label?: string | null;
+  is_primary?: boolean;
+  valid_from?: string | null;
+}
+
+export interface ContactPerson {
+  relationship_id: string;
+  person_party_id: string;
+  display_name: string;
+  valid_from: string;
+  valid_until: string | null;
+}
+
+export interface ContactPersonIn {
+  person_party_id?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  salutation?: string | null;
+  title?: string | null;
+  valid_from?: string | null;
+}

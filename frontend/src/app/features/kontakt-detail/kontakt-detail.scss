@@ -1,6 +1,102 @@
-// Alle Bausteine dieser Seite (Mappe, .feld-raster, .note, .btn) sind
-// wiederverwendbar und liegen in der Mappe-Komponente bzw. global in
-// styles.scss. Diese Datei bleibt daher bewusst leer.
+// Die Basisbausteine (Mappe, .feld-raster, .note, .btn, .melde, .dialog-form,
+// .tab-platzhalter, .lade-hinweis) liegen global in styles.scss bzw. der
+// Mappe-Komponente. Hier nur die kontaktspezifischen Blöcke der Tabs. Diese
+// Klassen greifen auch im projizierten Mappe-Inhalt, da der projizierte DOM die
+// Encapsulation-Marke DIESER Komponente trägt.
 :host {
   display: block;
+}
+
+.kontakt-detail__melde {
+  max-width: 64rem;
+  margin: 0 auto var(--space-4);
+}
+
+.btn--klein {
+  min-height: 34px;
+  padding: 0 var(--space-3);
+  font-size: var(--step--1);
+}
+
+// ---- Block innerhalb eines Tabs (Überschrift + Aktion + Liste) ------------
+.mappe-block {
+  margin-top: var(--space-5);
+
+  &:first-child {
+    margin-top: 0;
+  }
+}
+
+.mappe-block__kopf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.mappe-block__titel {
+  font-size: var(--step-1);
+  color: var(--ink);
+}
+
+.mappe-block__leer {
+  color: var(--ink-muted);
+  padding: var(--space-3) 0;
+}
+
+.mappe-block__hinweis {
+  margin-top: var(--space-3);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+// ---- Zeilenliste (Kontaktwege / Adressen / Ansprechpartner) ---------------
+.ref-liste {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.ref {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--radius);
+  color: inherit;
+}
+
+.ref__stamps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.ref__name {
+  flex: 1;
+  min-width: 12rem;
+  font-weight: 600;
+  color: var(--ink);
+  text-decoration: none;
+}
+a.ref__name:hover {
+  text-decoration: underline;
+}
+a.ref__name:focus-visible {
+  outline: 2.5px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.ref__meta {
+  font-size: var(--step--1);
+  color: var(--ink-muted);
 }
