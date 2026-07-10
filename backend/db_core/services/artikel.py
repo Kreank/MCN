@@ -5,6 +5,7 @@ Seed und späteren Schreib-Pfaden. Alle Writes laufen über business_transaction
 Nummern (article_number/assembly_number) haben keine DB-Automatik und müssen
 gesetzt werden. Kein Löschen — nur status AKTIV/INAKTIV.
 """
+import json
 import uuid
 from decimal import Decimal
 
@@ -89,6 +90,105 @@ def create_article(
 
 
 ARTICLE_STATUS = ("AKTIV", "INAKTIV")
+
+# Felder, die der Artikeldialog ändern darf. `status` läuft über
+# set_article_status, die Preise der Lieferanten über den Import — sie sind nach
+# der Anlage unveränderlich (trg_supplier_ref_protect).
+ARTICLE_UPDATE_FIELDS = (
+    "article_number",
+    "description",
+    "long_description",
+    "unit",
+    "line_type",
+    "list_price",
+    "gtin",
+    "manufacturer_name",
+    "manufacturer_number",
+    "product_group",
+)
+
+
+def update_article(actor_app_user_id, *, article_id, **felder):
+    """Ändert einen Artikel. Nur Felder aus der Whitelist.
+
+    Jede Änderung landet über `trg_article_audit` in `audit.audit_entry` mit
+    vollständigem Vorher/Nachher-Zustand — daraus speist sich der Historie-Reiter.
+
+    Die Artikelnummer ist änderbar (wie im Hero-Vorbild), aber eindeutig: ein
+    Duplikat ergibt einen klaren 422 statt eines IntegrityError.
+    """
+    unbekannt = set(felder) - set(ARTICLE_UPDATE_FIELDS)
+    if unbekannt:
+        raise ValueError(f"Unbekannte Felder: {', '.join(sorted(unbekannt))}")
+
+    article = Article.objects.filter(id=article_id).first()
+    if article is None:
+        raise ValueError("Artikel nicht gefunden.")
+
+    werte = {}
+    for feld, wert in felder.items():
+        if feld in ("article_number", "description", "unit"):
+            # NOT NULL + CHECK btrim(...) <> '' — leer wäre ein 500.
+            if wert is None or not str(wert).strip():
+                raise ValueError(f"{feld} darf nicht leer sein.")
+            werte[feld] = str(wert).strip()
+        elif feld == "line_type":
+            if wert not in ARTICLE_LINE_TYPES:
+                raise ValueError(
+                    f"Ungültiger line_type '{wert}'. "
+                    f"Erlaubt: {', '.join(ARTICLE_LINE_TYPES)}."
+                )
+            werte[feld] = wert
+        elif feld == "gtin":
+            wert = (wert or "").strip() or None
+            if wert is not None and not _gtin_gueltig(wert):
+                raise ValueError(
+                    "Ungültige GTIN/EAN: erwartet 8, 12, 13 oder 14 Ziffern mit "
+                    "korrekter Prüfziffer."
+                )
+            werte[feld] = wert
+        elif feld == "list_price":
+            if wert is not None and Decimal(str(wert)) < 0:
+                raise ValueError("list_price darf nicht negativ sein.")
+            werte[feld] = wert
+        else:
+            werte[feld] = (str(wert).strip() or None) if wert is not None else None
+
+    if "article_number" in werte:
+        vergeben = (
+            Article.objects.filter(article_number=werte["article_number"])
+            .exclude(id=article.id)
+            .exists()
+        )
+        if vergeben:
+            raise ValueError(
+                f"Artikelnummer '{werte['article_number']}' ist bereits vergeben."
+            )
+
+    if not werte:
+        return article
+    for feld, wert in werte.items():
+        setattr(article, feld, wert)
+    with business_transaction(actor_app_user_id):
+        article.save(update_fields=list(werte) + ["updated_at"])
+    article.refresh_from_db()
+    return article
+
+
+def _gtin_gueltig(gtin):
+    """GTIN-8/12/13/14 mit Prüfziffer (Modulo-10, Gewichte 3 und 1).
+
+    Der DB-CHECK prüft nur die Länge und dass es Ziffern sind. Eine falsche
+    Prüfziffer ist aber ein Tippfehler, kein gültiger Code — und im echten
+    DATANORM-Bestand hatten 13.464 von 13.465 GTINs eine korrekte Prüfziffer.
+    """
+    if not gtin.isdigit() or len(gtin) not in (8, 12, 13, 14):
+        return False
+    ziffern = [int(z) for z in gtin]
+    pruef = ziffern[-1]
+    rest = ziffern[:-1][::-1]
+    summe = sum(z * (3 if i % 2 == 0 else 1) for i, z in enumerate(rest))
+    return (10 - summe % 10) % 10 == pruef
 
 
 def set_article_status(actor_app_user_id, *, article_id, status):
@@ -294,3 +394,137 @@ def set_article_sale_price(
             is_standard=is_standard,
         )
     return asp
+
+
+# ---------------------------------------------------------------------------
+# Historie eines Artikels (Reiter „Historie" im Artikeldialog)
+# ---------------------------------------------------------------------------
+# Quelle ist `audit.audit_entry`, gefüllt vom Trigger `trg_article_audit`. Der
+# Eintrag trägt den vollständigen Vorher- und Nachher-Zustand als JSON; wir
+# bilden daraus den Feld-Diff. Technische Felder (Zeitstempel, Version) werden
+# ausgeblendet — sie ändern sich bei jedem Speichern und sagen nichts aus.
+
+_HISTORIE_IGNORIEREN = {"updated_at", "created_at", "version", "id"}
+
+
+def article_historie(article_id, *, limit=50):
+    """Änderungen an einem Artikel, neueste zuerst.
+
+    Gibt je Eintrag den Zeitpunkt, den Akteur und die geänderten Felder mit
+    Vorher-/Nachher-Wert zurück. Einträge ohne fachliche Änderung (nur
+    Zeitstempel) werden weggelassen — sonst rauscht die Historie zu.
+    """
+    from django.db import connection
+
+    with connection.cursor() as cur:
+        cur.execute(
+            """
+            SELECT a.occurred_at, a.action, u.display_name,
+                   a.before_excerpt, a.after_excerpt
+            FROM audit.audit_entry a
+            LEFT JOIN security.app_user u ON u.id = a.actor_user_id
+            WHERE a.target_type = 'pricing.article' AND a.target_id = %s
+            ORDER BY a.occurred_at DESC
+            LIMIT %s
+            """,
+            [str(article_id), limit],
+        )
+        zeilen = cur.fetchall()
+
+    def _als_dict(wert):
+        """Ueber einen rohen Cursor liefert psycopg `jsonb` als Zeichenkette --
+        den JSON-Loader registriert Django nur fuer das ORM."""
+        if wert is None:
+            return {}
+        if isinstance(wert, str):
+            return json.loads(wert)
+        return wert
+
+    eintraege = []
+    for occurred_at, action, akteur, vorher, nachher in zeilen:
+        vorher = _als_dict(vorher)
+        nachher = _als_dict(nachher)
+        felder = []
+        for feld in sorted(set(vorher) | set(nachher)):
+            if feld in _HISTORIE_IGNORIEREN:
+                continue
+            alt, neu = vorher.get(feld), nachher.get(feld)
+            if alt != neu:
+                felder.append({"feld": feld, "vorher": alt, "nachher": neu})
+        if not felder:
+            continue
+        eintraege.append(
+            {
+                "occurred_at": occurred_at,
+                "action": action,
+                "akteur": akteur,
+                "felder": felder,
+            }
+        )
+    return eintraege
+
+
+# ---------------------------------------------------------------------------
+# Stammdaten aus einer Belegposition übernehmen (das „Häkchen")
+# ---------------------------------------------------------------------------
+# Standardfall: Wer im Angebot, in der Rechnung oder im Baustellenbericht eine
+# Position ändert, ändert NUR diese Position. Der Artikelstamm ist davon
+# unberührt (siehe test_beleg_artikel_entkopplung.py).
+#
+# Nur wenn ausdrücklich „Änderungen an Stammdaten übernehmen" gewählt wird, läuft
+# dieser Vorgang — und er verlangt ein eigenes Recht (`pricing/AENDERN`). Wer ein
+# Angebot schreiben darf, darf damit nicht automatisch den Stamm umschreiben, den
+# alle anderen Angebote mitbenutzen.
+#
+# Der EINKAUFSPREIS wird bewusst NICHT übernommen. Er steht auf der
+# Lieferantenreferenz und ist die Aussage des Händlers (DATANORM-Import), keine
+# Meinung des Angebotsschreibers. Ein abweichender EK in einer Position ist eine
+# Kalkulationsentscheidung für genau dieses Angebot.
+
+STAMMDATEN_UEBERNAHME_FELDER = ("description", "long_description", "unit")
+
+
+def positionswerte_in_stammdaten(
+    actor_app_user_id, *, article_id, verkaufspreis=None, **felder
+):
+    """Überträgt Werte einer Belegposition in den Artikelstamm.
+
+    `felder` sind Bezeichnung, Langtext und Einheit. `verkaufspreis` wird als
+    Standard-Festpreis hinterlegt: er ersetzt die bisherige Standard-Variante,
+    ohne die Formel-Gruppen des Artikels anzutasten.
+
+    Gibt den aktualisierten Artikel zurück.
+    """
+    unbekannt = set(felder) - set(STAMMDATEN_UEBERNAHME_FELDER)
+    if unbekannt:
+        raise ValueError(
+            f"Diese Felder lassen sich nicht in den Stamm übernehmen: "
+            f"{', '.join(sorted(unbekannt))}. "
+            f"Erlaubt: {', '.join(STAMMDATEN_UEBERNAHME_FELDER)} und verkaufspreis."
+        )
+    gesetzt = {k: v for k, v in felder.items() if v is not None}
+    if not gesetzt and verkaufspreis is None:
+        raise ValueError("Es wurde nichts zum Übernehmen angegeben.")
+
+    article = update_article(actor_app_user_id, article_id=article_id, **gesetzt)
+
+    if verkaufspreis is not None:
+        preis = Decimal(str(verkaufspreis))
+        if preis < 0:
+            raise ValueError("Der Verkaufspreis darf nicht negativ sein.")
+        with business_transaction(actor_app_user_id):
+            # Höchstens eine Standard-Variante je Artikel (partieller Unique-Index):
+            # die bisherige verliert ihren Standard-Status, statt zu verschwinden —
+            # sie kann eine Formel-Gruppe sein, die weiter gebraucht wird.
+            ArticleSalePrice.objects.filter(
+                article_id=article.id, is_standard=True
+            ).update(is_standard=False)
+            ArticleSalePrice.objects.create(
+                id=uuid.uuid4(),
+                article_id=article.id,
+                label="Aus Beleg übernommen",
+                fixed_price=preis,
+                is_standard=True,
+            )
+    article.refresh_from_db()
+    return article

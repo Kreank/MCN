@@ -3,6 +3,7 @@ import uuid
 from decimal import Decimal
 
 import pytest
+from .conftest import logged_in_client
 
 from db_core.services import artikel as artikel_service
 
@@ -130,8 +131,11 @@ def test_create_article_happy(admin_client, db):
     assert r.status_code == 201, r.content
     body = r.json()
     assert body["article_number"] == "NEU-1"
-    # list_price wird auf 2 Nachkommastellen quantisiert (9,995 → 10,00).
-    assert Decimal(body["list_price"]) == Decimal("10.00")   # 4 NK seit Migration 0039
+    # Der Listenpreis wird auf VIER Nachkommastellen quantisiert (Migration 0039).
+    # Frueher rundete die API auf zwei und machte aus 9,995 ein 10,00 — bei einem
+    # Artikel mit Preiseinheit 100 waere das ein Fehler von einem halben Prozent,
+    # der sich in jeden daraus abgeleiteten Verkaufspreis fortpflanzt.
+    assert Decimal(body["list_price"]) == Decimal("9.9950")
 
 
 @pytest.mark.django_db
@@ -542,3 +546,127 @@ def test_inaktive_anbindung_zaehlt_nicht(admin_client, app_user):
 
     r = admin_client.get("/api/pricing/articles?q=BQAlt&bezugsquelle=GROSSHAENDLER")
     assert {i["article_number"] for i in r.json()["items"]} == set()
+
+
+# --- Bearbeiten, Historie, Stammdaten-Übernahme -----------------------------
+
+@pytest.mark.django_db
+def test_artikel_bearbeiten_und_historie(admin_client, app_user):
+    from db_core.services import artikel as artikel_service
+
+    a = artikel_service.create_article(
+        app_user.id, article_number="UPD-1", description="Alt", unit="Stk"
+    )
+    r = admin_client.put(
+        f"/api/pricing/articles/{a.id}",
+        data={"description": "Neu", "manufacturer_name": "ACME", "list_price": "0.1290"},
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    body = r.json()
+    assert body["description"] == "Neu"
+    assert Decimal(body["list_price"]) == Decimal("0.1290")   # 4 NK erhalten
+
+    hist = admin_client.get(f"/api/pricing/articles/{a.id}/historie").json()
+    assert hist, "Die Aenderung muss in der Audit-Spur stehen."
+    felder = {f["feld"] for e in hist for f in e["felder"]}
+    assert "description" in felder
+    eintrag = hist[0]["felder"]
+    diff = {f["feld"]: (f["vorher"], f["nachher"]) for f in eintrag}
+    assert diff["description"] == ("Alt", "Neu")
+
+
+@pytest.mark.django_db
+def test_artikelnummer_duplikat_422(admin_client, app_user):
+    from db_core.services import artikel as artikel_service
+
+    artikel_service.create_article(
+        app_user.id, article_number="DUP-A", description="A", unit="Stk"
+    )
+    b = artikel_service.create_article(
+        app_user.id, article_number="DUP-B", description="B", unit="Stk"
+    )
+    r = admin_client.put(
+        f"/api/pricing/articles/{b.id}",
+        data={"article_number": "DUP-A"}, content_type="application/json",
+    )
+    assert r.status_code == 422
+    assert "bereits vergeben" in r.json()["detail"]
+
+
+@pytest.mark.django_db
+def test_ungueltige_gtin_422(admin_client, app_user):
+    from db_core.services import artikel as artikel_service
+
+    a = artikel_service.create_article(
+        app_user.id, article_number="GTIN-1", description="X", unit="Stk"
+    )
+    # 4024074403976 ist gueltig, 4024074403977 nicht (falsche Pruefziffer).
+    ok = admin_client.put(
+        f"/api/pricing/articles/{a.id}",
+        data={"gtin": "4024074403976"}, content_type="application/json",
+    )
+    assert ok.status_code == 200, ok.content
+
+    schlecht = admin_client.put(
+        f"/api/pricing/articles/{a.id}",
+        data={"gtin": "4024074403977"}, content_type="application/json",
+    )
+    assert schlecht.status_code == 422
+    assert "Prüfziffer" in schlecht.json()["detail"]
+
+
+@pytest.mark.django_db
+def test_stammdaten_uebernahme_braucht_pricing_aendern(admin_client, app_user):
+    """Wer ein Angebot schreiben darf, darf nicht den Artikelstamm umschreiben.
+
+    In der Startmatrix haelt jede Rolle mit `invoicing/AENDERN` auch
+    `pricing/AENDERN` (BUCHHALTUNG, TECHNISCHE_LEITUNG). Damit der Test etwas
+    beweist, wird BUCHHALTUNG das pricing-Recht gezielt entzogen: das Angebot
+    darf sie weiter schreiben, den Stamm nicht mehr anfassen.
+    """
+    from db_core.db_context import business_transaction
+    from db_core.models import RolePermission
+    from db_core.services import artikel as artikel_service
+
+    a = artikel_service.create_article(
+        app_user.id, article_number="UEB-1", description="Original", unit="Stk"
+    )
+    with business_transaction(app_user.id):
+        RolePermission.objects.filter(
+            role_id="BUCHHALTUNG", module="pricing", action="AENDERN"
+        ).update(allowed=False)
+
+    buchhaltung = logged_in_client("BUCHHALTUNG")
+    r = buchhaltung.post(
+        f"/api/pricing/articles/{a.id}/stammdaten-uebernehmen",
+        data={"description": "Umgeschrieben"}, content_type="application/json",
+    )
+    assert r.status_code == 403
+    a.refresh_from_db()
+    assert a.description == "Original"
+
+    # Mit dem passenden Recht geht es.
+    ok = admin_client.post(
+        f"/api/pricing/articles/{a.id}/stammdaten-uebernehmen",
+        data={"description": "Umgeschrieben", "verkaufspreis": "21.50"},
+        content_type="application/json",
+    )
+    assert ok.status_code == 200, ok.content
+    a.refresh_from_db()
+    assert a.description == "Umgeschrieben"
+
+
+@pytest.mark.django_db
+def test_stammdaten_uebernahme_kennt_keinen_einkaufspreis(admin_client, app_user):
+    from db_core.services import artikel as artikel_service
+
+    a = artikel_service.create_article(
+        app_user.id, article_number="UEB-2", description="X", unit="Stk"
+    )
+    r = admin_client.post(
+        f"/api/pricing/articles/{a.id}/stammdaten-uebernehmen",
+        data={"unit_cost": "4.00"}, content_type="application/json",
+    )
+    # `unit_cost` ist im Schema nicht vorgesehen -> es kommt nichts an -> 422.
+    assert r.status_code == 422

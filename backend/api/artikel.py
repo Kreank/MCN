@@ -417,7 +417,7 @@ def create_article(request, payload: ArticleIn):
             description=payload.description,
             unit=payload.unit,
             line_type=payload.line_type,
-            list_price=_quantize(payload.list_price, 2),
+            list_price=_quantize(payload.list_price, 4),   # numeric(15,4) seit Migration 0039
             long_description=payload.long_description,
             manufacturer_name=payload.manufacturer_name,
             product_group=payload.product_group,
@@ -580,3 +580,127 @@ def add_assembly_components(request, assembly_id: UUID, payload: AssemblyCompone
     except ValueError as exc:
         raise HttpError(422, str(exc))
     return _assembly_detail(assembly_id)
+
+
+# --- Artikel bearbeiten, Historie, Stammdaten-Übernahme ---------------------
+
+class ArticleUpdateIn(Schema):
+    """Nur gesetzte Felder werden geändert (exclude_unset)."""
+    article_number: str | None = None
+    description: str | None = None
+    long_description: str | None = None
+    unit: str | None = None
+    line_type: str | None = None
+    list_price: Decimal | None = None
+    gtin: str | None = None
+    manufacturer_name: str | None = None
+    manufacturer_number: str | None = None
+    product_group: str | None = None
+
+
+@router.put("/articles/{article_id}", response=ArticleDetailOut, auth=django_auth)
+def update_article(request, article_id: UUID, payload: ArticleUpdateIn):
+    """Artikelstammdaten ändern. Jede Änderung wird auditiert (Historie-Reiter)."""
+    actor, _ = require(request, "pricing", "AENDERN")
+    felder = payload.model_dump(exclude_unset=True)
+    if "list_price" in felder:
+        felder["list_price"] = _quantize(felder["list_price"], 4)
+    try:
+        artikel_service.update_article(actor, article_id=article_id, **felder)
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return Article.objects.get(id=article_id)
+
+
+class ArticleStatusIn(Schema):
+    status: str
+
+
+@router.post("/articles/{article_id}/status", response=ArticleDetailOut, auth=django_auth)
+def set_article_status(request, article_id: UUID, payload: ArticleStatusIn):
+    """Artikel aktivieren/deaktivieren. Es gibt kein Löschen (append-only)."""
+    actor, _ = require(request, "pricing", "AENDERN")
+    try:
+        artikel_service.set_article_status(
+            actor, article_id=article_id, status=payload.status
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return Article.objects.get(id=article_id)
+
+
+class HistorieFeldOut(Schema):
+    feld: str
+    vorher: str | None = None
+    nachher: str | None = None
+
+
+class HistorieEintragOut(Schema):
+    occurred_at: datetime
+    action: str
+    akteur: str | None = None
+    felder: list[HistorieFeldOut]
+
+
+@router.get("/articles/{article_id}/historie", response=list[HistorieEintragOut])
+def article_historie(request, article_id: UUID, limit: int = Query(50, ge=1, le=200)):
+    """Änderungsverlauf eines Artikels aus der Audit-Spur (Reiter „Historie")."""
+    require(request, "pricing", "LESEN")
+    eintraege = artikel_service.article_historie(article_id, limit=limit)
+    return [
+        HistorieEintragOut(
+            occurred_at=e["occurred_at"],
+            action=e["action"],
+            akteur=e["akteur"],
+            felder=[
+                HistorieFeldOut(
+                    feld=f["feld"],
+                    vorher=None if f["vorher"] is None else str(f["vorher"]),
+                    nachher=None if f["nachher"] is None else str(f["nachher"]),
+                )
+                for f in e["felder"]
+            ],
+        )
+        for e in eintraege
+    ]
+
+
+class StammdatenUebernahmeIn(Schema):
+    """Werte aus einer Belegposition, die in den Artikelstamm sollen.
+
+    Der Einkaufspreis fehlt hier absichtlich: er ist die Aussage des Händlers
+    (DATANORM-Import), keine Meinung des Angebotsschreibers.
+    """
+    description: str | None = None
+    long_description: str | None = None
+    unit: str | None = None
+    verkaufspreis: Decimal | None = None
+
+
+@router.post(
+    "/articles/{article_id}/stammdaten-uebernehmen",
+    response=ArticleDetailOut,
+    auth=django_auth,
+)
+def stammdaten_uebernehmen(request, article_id: UUID, payload: StammdatenUebernahmeIn):
+    """Überträgt Werte aus einer Belegposition in den Artikelstamm.
+
+    Das ist der Vorgang hinter dem Häkchen „Änderungen an Stammdaten übernehmen"
+    im Beleg-Editor. Er läuft NIE automatisch beim Speichern eines Belegs, sondern
+    nur auf ausdrückliche Anforderung — und er verlangt `pricing/AENDERN`. Wer ein
+    Angebot schreiben darf (`invoicing/AENDERN`), darf damit nicht den
+    Artikelstamm umschreiben, den alle anderen Angebote mitbenutzen.
+    """
+    actor, _ = require(request, "pricing", "AENDERN")
+    daten = payload.model_dump(exclude_unset=True)
+    verkaufspreis = daten.pop("verkaufspreis", None)
+    try:
+        artikel_service.positionswerte_in_stammdaten(
+            actor,
+            article_id=article_id,
+            verkaufspreis=_quantize(verkaufspreis, 2),
+            **daten,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return Article.objects.get(id=article_id)
