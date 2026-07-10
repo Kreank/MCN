@@ -1,0 +1,120 @@
+<section class="mail-einstellungen" aria-labelledby="mail-titel">
+<header class="page-head">
+  <div>
+    <p class="page-head__kicker">
+      <span class="page-head__scale" aria-hidden="true"></span>
+      Einstellungen
+    </p>
+    <h1 id="mail-titel" class="page-head__titel">Mailversand</h1>
+  </div>
+</header>
+
+<app-einstellungen-nav />
+
+@switch (state().kind) {
+  @case ('loading') {
+    <p class="lade-hinweis" role="status">Absenderkonto wird geladen.</p>
+  }
+  @case ('forbidden') {
+    <app-kein-zugriff [detail]="$any(state()).detail" />
+  }
+  @case ('error') {
+    <p class="note note--error" role="alert">
+      Das Absenderkonto konnte nicht geladen werden. Bitte erneut versuchen.
+    </p>
+  }
+  @case ('ready') {
+    @if (!darfAendern()) {
+      <p class="note" role="note">
+        Sie sehen die Mailversand-Einstellungen schreibgeschützt. Zum Bearbeiten
+        fehlt Ihnen das Recht „Firmeneinstellungen ändern".
+      </p>
+    }
+    @if (!$any(state()).data.exists && darfAendern()) {
+      <p class="note" role="note">
+        Es ist noch kein Absenderkonto hinterlegt. Bitte SMTP-Zugangsdaten und
+        Absender eintragen, damit MCN E-Mails versenden kann.
+      </p>
+    }
+
+    <form class="mail-form" [formGroup]="form" (ngSubmit)="absenden()" novalidate>
+      @if (erfolg(); as m) {
+        <p class="note note--erfolg" role="status">{{ m }}</p>
+      }
+      @if (formularMeldung(); as m) {
+        <p class="note note--error" role="alert">{{ m }}</p>
+      }
+
+      <fieldset class="mail-abschnitt">
+        <legend>SMTP-Server</legend>
+        <div class="mail-grid">
+          <app-feld [control]="form.controls.label" label="Bezeichnung" [pflicht]="true"
+                    hinweis="Interner Name, z. B. Postausgang Kanzlei" />
+          <app-feld [control]="form.controls.host" label="SMTP-Host" [pflicht]="true"
+                    hinweis="z. B. smtp.example.de" />
+          <app-feld [control]="form.controls.port" label="Port" typ="zahl" [pflicht]="true"
+                    inputmode="numeric" hinweis="z. B. 587 (STARTTLS) oder 465 (SSL)" />
+          <app-feld [control]="form.controls.security" label="Sicherheit" typ="select"
+                    [pflicht]="true" [optionen]="sicherheitOptionen" />
+        </div>
+      </fieldset>
+
+      <fieldset class="mail-abschnitt">
+        <legend>Zugangsdaten</legend>
+        <div class="mail-grid">
+          <app-feld [control]="form.controls.username" label="Benutzer"
+                    autocomplete="username" hinweis="Oft die volle E-Mail-Adresse" />
+          <app-feld [control]="form.controls.password" label="Passwort" typ="password"
+                    autocomplete="new-password"
+                    [platzhalter]="passwortPlatzhalter()"
+                    hinweis="Wird verschlüsselt gespeichert und nie angezeigt. Leer lassen, um es unverändert zu lassen." />
+        </div>
+      </fieldset>
+
+      <fieldset class="mail-abschnitt">
+        <legend>Absender</legend>
+        <div class="mail-grid">
+          <app-feld [control]="form.controls.from_address" label="Absender-Adresse"
+                    typ="email" [pflicht]="true" hinweis="Erscheint als Absender der E-Mail" />
+          <app-feld [control]="form.controls.from_name" label="Absender-Name"
+                    hinweis="Angezeigter Name, z. B. Mitra Sanitär GmbH" />
+        </div>
+      </fieldset>
+
+      @if (darfAendern()) {
+        <div class="mail-aktionen">
+          <button type="submit" class="btn btn--primary" [disabled]="laedt()">
+            {{ laedt() ? 'Speichern …' : 'Absenderkonto speichern' }}
+          </button>
+        </div>
+      }
+    </form>
+
+    @if (darfAendern()) {
+      <section class="mail-test" aria-labelledby="mail-test-titel">
+        <h2 id="mail-test-titel" class="mail-test__titel">Testmail senden</h2>
+        <p class="mail-test__hinweis">
+          Verschickt eine kurze Testmail über das oben gespeicherte Konto. Bitte
+          zuerst speichern, damit die aktuellen Zugangsdaten verwendet werden.
+        </p>
+        <div class="mail-test__zeile">
+          <app-feld [control]="testAdresse" label="Ziel-Adresse" typ="email"
+                    hinweis="z. B. Ihre eigene Adresse zum Prüfen" />
+          <button type="button" class="btn btn--secondary" (click)="testSenden()"
+                  [disabled]="testLaedt()">
+            {{ testLaedt() ? 'Senden …' : 'Testmail senden' }}
+          </button>
+        </div>
+        <div class="mail-test__meldung" aria-live="polite">
+          @if (testErfolg(); as m) {
+            <p class="note note--erfolg" role="status">{{ m }}</p>
+          }
+          @if (testFehler(); as m) {
+            <p class="note note--error" role="alert">{{ m }}</p>
+          }
+        </div>
+      </section>
+    }
+  }
+}
+</section>

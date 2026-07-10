@@ -2431,6 +2431,72 @@ class Trade(models.Model):
         return f"{self.code} — {self.label}"
 
 
+class MailAccount(models.Model):
+    """company.mail_account — firmenweites SMTP-Absenderkonto (0046 db_core).
+
+    Trägt die Zugangsdaten für den Mailversand. Das Passwort liegt ausschließlich
+    als Fernet-Chiffre in `password_encrypted` (bytea); der Klartext wird NIE
+    gespeichert, NIE über die API zurückgegeben und NIE geloggt (siehe
+    services/mail.py, mail_crypto.py). Höchstens ein aktives Konto (partieller
+    Unique-Index `(active) WHERE active`). Deaktivieren statt Löschen; Änderung
+    auditiert.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    label = models.TextField()
+    host = models.TextField()
+    port = models.IntegerField()
+    security = models.TextField()
+    username = models.TextField(null=True, blank=True)
+    password_encrypted = models.BinaryField(null=True, blank=True)
+    from_address = models.TextField()
+    from_name = models.TextField(null=True, blank=True)
+    active = models.BooleanField(db_default=True)
+    version = models.IntegerField(db_default=models.Value(1))
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'company"."mail_account'
+
+    def __str__(self):
+        return f"{self.label} ({self.from_address})"
+
+
+class Communication(models.Model):
+    """content.communication — protokollierte Kommunikation (Migration 0023 db/).
+
+    Audit-Senke u. a. für gesendete Mails: `channel='EMAIL'`,
+    `direction='AUSGEHEND'` (die DB-CHECK-Werte sind deutsch — EINGEHEND/
+    AUSGEHEND/INTERN, NICHT OUTBOUND/INBOUND). Gesendete Mails landen zunächst im
+    Klärungskorb (`assignment_status='KLAERUNGSKORB'`, default) ohne Verknüpfung —
+    das ist der einzige Zustand, den der DB-Trigger ohne communication_link
+    zulässt. Die Beleg-/Vorgangs-Zuordnung ist ein späterer Slice.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    channel = models.TextField()
+    direction = models.TextField()
+    subject = models.TextField(null=True, blank=True)
+    body = models.TextField(null=True, blank=True)
+    counterpart_party_id = models.UUIDField(null=True, blank=True)
+    counterpart_raw = models.TextField(null=True, blank=True)
+    occurred_at = models.DateTimeField(db_default=Now())
+    recorded_by = models.UUIDField()
+    is_internal = models.BooleanField(db_default=False)
+    is_commercial = models.BooleanField(db_default=False)
+    assignment_status = models.TextField(db_default=models.Value("KLAERUNGSKORB"))
+    assignment_source = models.TextField(null=True, blank=True)
+    assignment_confirmed_by = models.UUIDField(null=True, blank=True)
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'content"."communication'
+
+
 # ---------------------------------------------------------------------------
 # accounting.* — Buchungskonten, Kostenstellen und Eingangsbelege (0030/0031)
 # ---------------------------------------------------------------------------

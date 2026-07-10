@@ -170,6 +170,16 @@ export MCN_MINIO_ACCESS_KEY=minioadmin MCN_MINIO_SECRET_KEY=minio-test-pilot
 (Alle lokalen Passwörter sind Wegwerf-Werte und werden vor dem Live-Gang rotiert;
 das Auslesen der Dev-Container per `docker inspect` ist vom User freigegeben.)
 
+**Mailversand** (Slice „SMTP-Fundament"): Das SMTP-Passwort liegt Fernet-
+verschlüsselt in `company.mail_account` (Migration 0046). Der Schlüssel kommt aus
+`MCN_MAIL_KEY` (base64 Fernet-Key) — **fail-closed**: ohne Schlüssel ist weder
+Speichern noch Versenden möglich. Der Wert wird NICHT eingecheckt; den Dev-Key aus
+dem Slice-Report übernehmen bzw. neu erzeugen:
+```bash
+export MCN_MAIL_KEY="<base64-fernet-key>"   # NICHT ins Repo; Dev-Wert im Slice-Report
+# neuen erzeugen: uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
 **`MCN_DEBUG=1` ist seit dem Auth-Slice Pflicht für die Entwicklung.** Der Default
 steht bewusst auf `0` (fail-safe: Produktion muss DEBUG nicht ausschalten, die
 Entwicklung muss es einschalten). An `DEBUG` hängen die `Secure`-Flags von

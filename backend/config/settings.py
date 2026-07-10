@@ -158,3 +158,12 @@ MCN_MINIO_BUCKET = os.environ.get("MCN_MINIO_BUCKET", "mcn-belege")
 # Region ist für MinIO bedeutungslos, aber der S3-Signaturalgorithmus braucht
 # einen Wert; us-east-1 ist der MinIO-Default.
 MCN_MINIO_REGION = os.environ.get("MCN_MINIO_REGION", "us-east-1")
+
+# --- Mailversand (SMTP-Absenderkonto, verschlüsselt at rest) ---------------
+# Fernet-Schlüssel für die Verschlüsselung des SMTP-Passworts (company.mail_account,
+# Migration 0046). base64-kodierter 32-Byte-Schlüssel aus der Umgebung — NIE ins
+# Repo. Fehlt der Schlüssel, ist Speichern/Versenden fail-closed nicht möglich
+# (db_core/mail_crypto.py). Erzeugen: `python -c "from cryptography.fernet import
+# Fernet; print(Fernet.generate_key().decode())"`. Kein Default: ein leerer Wert
+# erzwingt die bewusste Bereitstellung (wie MCN_DB_PASSWORD).
+MCN_MAIL_KEY = os.environ.get("MCN_MAIL_KEY", "")

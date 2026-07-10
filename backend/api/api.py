@@ -26,6 +26,7 @@ from api.dateien import router as dateien_router
 from api.buchhaltung import router as buchhaltung_router
 from api.firma import router as firma_router
 from api.identity import router as identity_router
+from api.mail import router as mail_router
 from api.maintenance import router as maintenance_router
 from api.mitarbeiter import router as mitarbeiter_router
 from api.planung import router as planung_router
@@ -57,6 +58,7 @@ api.add_router("/hr", mitarbeiter_router, tags=["hr"])
 api.add_router("/pricing", artikel_router, tags=["pricing"])
 api.add_router("/auswertungen", auswertungen_router, tags=["auswertungen"])
 api.add_router("/company", firma_router, tags=["company"])
+api.add_router("/company", mail_router, tags=["company"])
 api.add_router("/security", security_router, tags=["security"])
 api.add_router("/accounting", belegerfassung_router, tags=["accounting"])
 api.add_router("/content", dateien_router, tags=["content"])

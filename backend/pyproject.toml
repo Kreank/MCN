@@ -10,6 +10,7 @@ dependencies = [
     "django-cors-headers>=4.4",
     "fpdf2>=2.8.7",
     "minio>=7.2",
+    "cryptography>=49.0.0",
 ]
 
 [dependency-groups]

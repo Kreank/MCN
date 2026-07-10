@@ -350,6 +350,15 @@ export const routes: Routes = [
         loadComponent: () => import('./features/mahnstufen/mahnstufen').then((m) => m.Mahnstufen),
       },
       {
+        path: 'einstellungen/mailversand',
+        title: 'Mailversand — MCN Leitstand',
+        canActivate: [darfGuard('company', 'LESEN')],
+        loadComponent: () =>
+          import('./features/mail-einstellungen/mail-einstellungen').then(
+            (m) => m.MailEinstellungen,
+          ),
+      },
+      {
         path: 'einstellungen/gewerke',
         title: 'Gewerke — MCN Leitstand',
         canActivate: [darfGuard('company', 'LESEN')],

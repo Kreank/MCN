@@ -11,6 +11,7 @@ export type FeldTyp =
   | 'text'
   | 'email'
   | 'tel'
+  | 'password'
   | 'textarea'
   | 'zahl'
   | 'datum'
@@ -65,7 +66,7 @@ export class Feld {
     const t = this.typ();
     if (t === 'datum') return 'date';
     if (t === 'zahl') return 'text'; // text statt number: Komma-Eingabe, String-Wert
-    return t; // text | email | tel
+    return t; // text | email | tel | password
   });
 
   protected readonly inputmodeAttr = computed(() => {

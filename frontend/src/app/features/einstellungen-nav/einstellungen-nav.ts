@@ -2,8 +2,8 @@ import { Component, computed, inject } from '@angular/core';
 import { RouterLink, RouterLinkActive } from '@angular/router';
 import { AuthService } from '../../core/auth.service';
 
-/** Unternavigation der Einstellungen (Firmenprofil · Mahnstufen · Gewerke ·
- * Niederlassungen · Rechte & Rollen).
+/** Unternavigation der Einstellungen (Firmenprofil · Mahnstufen · Mailversand ·
+ * Gewerke · Niederlassungen · Rechte & Rollen).
  *
  * „Rechte & Rollen" wird nur gezeigt, wenn `security/LESEN` vorliegt: die Rolle
  * BUCHHALTUNG sieht das Einstellungen-Nav (über `invoicing/AENDERN`), hat dieses
@@ -20,6 +20,7 @@ import { AuthService } from '../../core/auth.service';
         >Firmenprofil</a
       >
       <a routerLink="/einstellungen/mahnstufen" routerLinkActive="is-active">Mahnstufen</a>
+      <a routerLink="/einstellungen/mailversand" routerLinkActive="is-active">Mailversand</a>
       <a routerLink="/einstellungen/gewerke" routerLinkActive="is-active">Gewerke</a>
       <a routerLink="/einstellungen/niederlassungen" routerLinkActive="is-active"
         >Niederlassungen</a
