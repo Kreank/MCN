@@ -2532,3 +2532,41 @@ class FileLink(models.Model):
 
     def __str__(self):
         return f"{self.file_id} -> {self.link_category or 'ohne Kategorie'}"
+
+
+class SupplierConnection(models.Model):
+    """pricing.supplier_connection — Anbindung eines Lieferanten (DATANORM, IDS).
+
+    `connection_kind` trennt den Bestellkatalog des Großhändlers von den
+    Herstellerkatalogen (Migration 0040 der Baseline): Das Gerätewissen durchsucht
+    nur HERSTELLER-Daten (Ersatzteile zu einer Typenbezeichnung), die
+    Artikelsuche im Angebot nur GROSSHAENDLER — ein Vaillant-Mikroschalter ist
+    beim Großhändler nicht bestellbar.
+
+    `status` ist hier englisch (ACTIVE/INACTIVE), anders als bei den Fachtabellen
+    mit deutschem Statusautomaten.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    supplier_party = models.ForeignKey(
+        "Party", models.DO_NOTHING, db_column="supplier_party_id",
+        related_name="supplier_connections",
+    )
+    source_system = models.TextField()          # DATANORM | IDS_CONNECT
+    source_namespace = models.TextField()
+    label = models.TextField()                  # NOT NULL in der DB
+    shop_url = models.TextField(null=True, blank=True)
+    credential_reference = models.TextField(null=True, blank=True)
+    status = models.TextField()                 # ACTIVE | INACTIVE
+    connection_kind = models.TextField()        # GROSSHAENDLER | HERSTELLER
+    last_import_at = models.DateTimeField(null=True, blank=True)
+    version = models.IntegerField(db_default=1)
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'pricing"."supplier_connection'
+
+    def __str__(self):
+        return f"{self.source_namespace} ({self.connection_kind})"

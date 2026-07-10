@@ -428,3 +428,117 @@ def test_suche_blendet_inaktive_artikel_aus(admin_client, app_user):
     assert nummern(r2) == {"SUCH-INAKTIV"}
     r3 = admin_client.get("/api/pricing/articles?q=SUCH-&status=ALLE")
     assert nummern(r3) == {"SUCH-AKTIV", "SUCH-INAKTIV"}
+
+
+# --- Bezugsquelle: Bestellkatalog vs. Ersatzteile ---------------------------
+
+def _anbindung(app_user, namespace, kind):
+    """Legt Lieferant + Anbindung an und gibt die Party zurück."""
+    import uuid as _uuid
+
+    from db_core.db_context import business_transaction
+    from db_core.models import Party, SupplierConnection
+
+    with business_transaction(app_user.id):
+        party = Party.objects.create(
+            id=_uuid.uuid4(), party_type="ORGANIZATION",
+            display_name=f"Lieferant {namespace}", status="ACTIVE", version=1,
+        )
+        SupplierConnection.objects.create(
+            id=_uuid.uuid4(), supplier_party_id=party.id, source_system="DATANORM",
+            source_namespace=namespace, label=f"Lieferant {namespace}",
+            status="ACTIVE", connection_kind=kind,
+            version=1,
+        )
+    return party
+
+
+def _referenz(app_user, article, party, namespace):
+    import uuid as _uuid
+    from datetime import date
+
+    from db_core.db_context import business_transaction
+    from db_core.models import ArticleSupplierReference
+
+    with business_transaction(app_user.id):
+        ArticleSupplierReference.objects.create(
+            id=_uuid.uuid4(), article_id=article.id, supplier_party_id=party.id,
+            source_system="DATANORM", source_namespace=namespace,
+            supplier_article_number=article.article_number,
+            last_purchase_price="1.0000", currency="EUR", valid_from=date.today(),
+        )
+
+
+@pytest.mark.django_db
+def test_bezugsquelle_trennt_katalog_von_ersatzteilen(admin_client, app_user):
+    """Ein Herstellerersatzteil darf nicht in der Angebotssuche auftauchen.
+
+    Der Angebotseditor fragt `bezugsquelle=GROSSHAENDLER` an — was nur beim
+    Hersteller direkt zu bekommen ist, gehört dort nicht hin.
+    """
+    from db_core.services import artikel as artikel_service
+
+    gh = _anbindung(app_user, "test-gh", "GROSSHAENDLER")
+    he = _anbindung(app_user, "test-he", "HERSTELLER")
+
+    katalog = artikel_service.create_article(
+        app_user.id, article_number="BQ-KATALOG", description="BQTest Rohrstueck",
+        unit="Stk",
+    )
+    ersatzteil = artikel_service.create_article(
+        app_user.id, article_number="BQ-ERSATZ", description="BQTest Mikroschalter",
+        unit="Stk",
+    )
+    eigen = artikel_service.create_article(
+        app_user.id, article_number="BQ-EIGEN", description="BQTest Pauschale",
+        unit="psch",
+    )
+    _referenz(app_user, katalog, gh, "test-gh")
+    _referenz(app_user, ersatzteil, he, "test-he")
+    # `eigen` bekommt bewusst keine Lieferantenreferenz.
+
+    def nummern(url):
+        r = admin_client.get(url)
+        assert r.status_code == 200, r.content
+        return {i["article_number"] for i in r.json()["items"]}
+
+    alle = nummern("/api/pricing/articles?q=BQTest")
+    assert alle == {"BQ-KATALOG", "BQ-ERSATZ", "BQ-EIGEN"}
+
+    gross = nummern("/api/pricing/articles?q=BQTest&bezugsquelle=GROSSHAENDLER")
+    assert "BQ-ERSATZ" not in gross, "Ersatzteil darf nicht im Angebot erscheinen."
+    # Eigene Artikel ohne Lieferant bleiben beschaffbar.
+    assert gross == {"BQ-KATALOG", "BQ-EIGEN"}
+
+    hersteller = nummern("/api/pricing/articles?q=BQTest&bezugsquelle=HERSTELLER")
+    assert "BQ-KATALOG" not in hersteller
+    assert "BQ-ERSATZ" in hersteller
+
+
+@pytest.mark.django_db
+def test_unbekannte_bezugsquelle_422(admin_client, db):
+    r = admin_client.get("/api/pricing/articles?bezugsquelle=QUATSCH")
+    assert r.status_code == 422
+    assert "Bezugsquelle" in r.json()["detail"]
+
+
+@pytest.mark.django_db
+def test_inaktive_anbindung_zaehlt_nicht(admin_client, app_user):
+    """Eine deaktivierte Anbindung (z. B. ein Probeimport) darf ihre Artikel nicht
+    weiter als beschaffbar ausweisen."""
+    from db_core.db_context import business_transaction
+    from db_core.models import SupplierConnection
+    from db_core.services import artikel as artikel_service
+
+    gh = _anbindung(app_user, "test-alt", "GROSSHAENDLER")
+    a = artikel_service.create_article(
+        app_user.id, article_number="BQ-ALT", description="BQAlt Ware", unit="Stk"
+    )
+    _referenz(app_user, a, gh, "test-alt")
+    with business_transaction(app_user.id):
+        SupplierConnection.objects.filter(source_namespace="test-alt").update(
+            status="INACTIVE"
+        )
+
+    r = admin_client.get("/api/pricing/articles?q=BQAlt&bezugsquelle=GROSSHAENDLER")
+    assert {i["article_number"] for i in r.json()["items"]} == set()

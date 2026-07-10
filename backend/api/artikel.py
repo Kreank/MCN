@@ -19,6 +19,7 @@ from db_core.models import (
     ArticleSalePrice,
     Assembly,
     SalePriceGroup,
+    SupplierConnection,
     WageGroup,
 )
 from db_core.services import artikel as artikel_service
@@ -76,6 +77,18 @@ class ArticleFilter(Schema):
     q: str | None = None
     line_type: str | None = None
     status: str | None = None
+    # Bezugsquelle: GROSSHAENDLER | HERSTELLER | ALLE (Standard: ALLE).
+    #
+    # Der Artikelstamm führt beides gemeinsam: den Bestellkatalog des
+    # Großhändlers UND die Herstellerkataloge, aus denen der Gerätefinder
+    # Ersatzteile zu einer Thermen-Typenbezeichnung sucht. Im Angebot darf
+    # letzteres nicht auftauchen — ein Vaillant-Mikroschalter ist beim
+    # Großhändler nicht bestellbar. Der Angebotseditor fragt deshalb
+    # `bezugsquelle=GROSSHAENDLER` an.
+    #
+    # Eigene Artikel (ohne Lieferantenreferenz) gelten immer als beschaffbar und
+    # bleiben in beiden Sichten enthalten.
+    bezugsquelle: str | None = None
 
 
 # --- Leistungs-Schemas -----------------------------------------------------
@@ -116,6 +129,37 @@ class AssemblyFilter(Schema):
     status: str | None = None
 
 
+BEZUGSQUELLEN = ("GROSSHAENDLER", "HERSTELLER", "ALLE")
+
+
+def _nach_bezugsquelle(qs, bezugsquelle):
+    """Filtert Artikel nach der Art ihrer Bezugsquelle.
+
+    Die Zuordnung steht auf `pricing.supplier_connection.connection_kind`, nicht
+    am Artikel: derselbe Namensraum kann viele Artikel tragen, und die Einordnung
+    (Großhändler vs. Hersteller) gehört zur Anbindung.
+
+    Artikel OHNE Lieferantenreferenz sind eigene Artikel (Pauschalen, Fahrtkosten,
+    selbst angelegtes Material). Sie bleiben in jeder Sicht enthalten — sie
+    verschwänden sonst aus dem Angebot, obwohl sie dort hingehören.
+    """
+    if not bezugsquelle or bezugsquelle == "ALLE":
+        return qs
+    if bezugsquelle not in BEZUGSQUELLEN:
+        raise HttpError(
+            422,
+            f"Unbekannte Bezugsquelle '{bezugsquelle}'. "
+            f"Erlaubt: {', '.join(BEZUGSQUELLEN)}.",
+        )
+    passende_namespaces = SupplierConnection.objects.filter(
+        connection_kind=bezugsquelle, status="ACTIVE"
+    ).values_list("source_namespace", flat=True)
+    return qs.filter(
+        Q(supplier_references__source_namespace__in=list(passende_namespaces))
+        | Q(supplier_references__isnull=True)
+    ).distinct()
+
+
 # --- Artikel-Endpoints -----------------------------------------------------
 
 @router.get("/articles", response=ArticleListOut)
@@ -148,6 +192,7 @@ def list_articles(
         qs = qs.filter(status=filters.status)
     else:
         qs = qs.filter(status="AKTIV")
+    qs = _nach_bezugsquelle(qs, filters.bezugsquelle)
     qs = qs.order_by("article_number", "id")
 
     total = qs.count()
