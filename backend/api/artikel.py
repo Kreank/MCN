@@ -53,6 +53,16 @@ class ArticleOut(Schema):
     line_type: str
     status: str
     list_price: Decimal | None = None
+    # Listenfelder für die Spaltenwahl im Frontend (Hero-Spalten). Der
+    # Lieferantenname stammt aus dem primären Lieferantenbezug und wird für die
+    # ganze Seite gebündelt geladen (kein N+1, siehe list_articles).
+    matchcode: str | None = None
+    product_group: str | None = None
+    gtin: str | None = None
+    manufacturer_name: str | None = None
+    tax_code: str | None = None
+    price_unit: int = 1
+    supplier_name: str | None = None
 
 
 class ArticleListOut(Schema):
@@ -121,6 +131,28 @@ def _article_detail_out(article) -> "ArticleDetailOut":
         version=article.version,
         created_at=article.created_at,
         updated_at=article.updated_at,
+    )
+
+
+def _article_list_out(article, supplier_name) -> "ArticleOut":
+    """Listen-Item eines Artikels. Baut die Felder explizit (kein from_orm), damit
+    weder `tax_code` (FK) noch der Lieferantenname je Zeile eine Query auslösen —
+    der Lieferantenname wird gebündelt übergeben."""
+    return ArticleOut(
+        id=article.id,
+        article_number=article.article_number,
+        description=article.description,
+        unit=article.unit,
+        line_type=article.line_type,
+        status=article.status,
+        list_price=article.list_price,
+        matchcode=article.matchcode,
+        product_group=article.product_group,
+        gtin=article.gtin,
+        manufacturer_name=article.manufacturer_name,
+        tax_code=article.tax_code_id,
+        price_unit=article.price_unit,
+        supplier_name=supplier_name,
     )
 
 
@@ -231,10 +263,11 @@ def list_articles(
     require(request, "pricing", "LESEN")
     qs = Article.objects.all()
     if filters.q:
-        needle = filters.q.strip()
-        qs = qs.filter(
-            Q(article_number__icontains=needle) | Q(description__icontains=needle)
-        )
+        # Hero-Suchoperatoren (+ UND, | ODER, * Platzhalter) über Nummer/
+        # Bezeichnung/Matchcode. Sichere Regex-Übersetzung im Service.
+        such_q = artikel_service.build_article_search_q(filters.q)
+        if such_q is not None:
+            qs = qs.filter(such_q)
     if filters.line_type:
         qs = qs.filter(line_type=filters.line_type)
     if filters.status == "ALLE":
@@ -248,7 +281,12 @@ def list_articles(
 
     total = qs.count()
     start = (page - 1) * page_size
-    items = list(qs[start:start + page_size])
+    articles = list(qs[start:start + page_size])
+    # Primäre Lieferantennamen der Seite in EINER Query (kein N+1).
+    supplier_names = kalkulation_service.primary_supplier_names(
+        [a.id for a in articles]
+    )
+    items = [_article_list_out(a, supplier_names.get(a.id)) for a in articles]
     return ArticleListOut(items=items, total=total, page=page, page_size=page_size)
 
 
@@ -498,6 +536,39 @@ def create_article(request, payload: ArticleIn):
     except ValueError as exc:
         raise HttpError(422, str(exc))
     return Status(201, _article_detail_out(Article.objects.get(id=article.id)))
+
+
+class ArticleCopyIn(Schema):
+    article_number: str
+
+
+@router.post(
+    "/articles/{article_id}/copy", response={201: ArticleDetailOut}, auth=django_auth
+)
+def copy_article(request, article_id: UUID, payload: ArticleCopyIn):
+    """Dupliziert einen Artikel unter neuer Nummer (Hero „Kopieren").
+
+    Kopiert Stammfelder (ohne GTIN — eindeutiger Produktcode), alle VK-Varianten
+    inkl. Standard und den primären Lieferantenbezug (als MANUELL). Recht
+    `pricing/ANLEGEN`. Leere/vergebene Nummer → 422, unbekannte Quelle → 404.
+    """
+    actor = require_create(request, "pricing", "ANLEGEN")
+    if not Article.objects.filter(id=article_id).exists():
+        raise HttpError(404, "Artikel nicht gefunden.")
+    try:
+        neu = artikel_service.copy_article(
+            actor,
+            source_article_id=article_id,
+            article_number=payload.article_number,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return Status(
+        201,
+        _article_detail_out(
+            Article.objects.select_related("cost_center", "tax_code").get(id=neu.id)
+        ),
+    )
 
 
 @router.post("/assemblies", response={201: AssemblyDetailOut}, auth=django_auth)

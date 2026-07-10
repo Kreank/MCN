@@ -6,11 +6,12 @@ Nummern (article_number/assembly_number) haben keine DB-Automatik und müssen
 gesetzt werden. Kein Löschen — nur status AKTIV/INAKTIV.
 """
 import json
+import re
 import uuid
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
-from django.db.models import Max
+from django.db.models import Max, Q
 
 from db_core.db_context import business_transaction
 from db_core.models import (
@@ -84,6 +85,84 @@ def _delivery_time(wert):
     if d < 0:
         raise ValueError("Lieferzeit (Tage) darf nicht negativ sein.")
     return d
+
+
+# ---------------------------------------------------------------------------
+# Artikelsuche mit Hero-Operatoren (`+` UND, `|` ODER, `*` Platzhalter)
+# ---------------------------------------------------------------------------
+# Durchsucht werden Artikelnummer, Bezeichnung und Matchcode (Hero-Kurzsuche).
+# `|` trennt ODER-Gruppen, innerhalb einer Gruppe `+` als UND, `*` als
+# Platzhalter INNERHALB eines Terms.
+#
+# Sicherheit (ReDoS/Injection): ein Term MIT `*` wird NICHT als roher User-Regex
+# ausgewertet. Nur `*` ist Sonderzeichen; es wird zum Zerlegen des Terms in
+# Literalsegmente benutzt. Jedes Segment maskiert `re.escape` vollständig (alle
+# regex-relevanten Zeichen — `.`, `(`, `\`, `[`, `+`, `?` … werden literal), die
+# Segmente werden mit `.*` verbunden. Der Nutzer kann so keine eigenen Quantoren/
+# Gruppen einschleusen (`(a+)+` o. Ä.); es entsteht nur ein Muster der Form
+# `literal.*literal`. Die Postgres-Regex-Engine (Spencer-NFA/DFA, kein reines
+# Backtracking) wertet solche Muster ohne katastrophales Backtracking aus.
+# `%`/`_` sind hier keine Sonderzeichen (iregex, nicht LIKE) und bleiben literal.
+
+_SEARCH_FIELDS = ("article_number", "description", "matchcode")
+
+
+def _wildcard_regex(term):
+    """Übersetzt einen `*`-Term in ein sicheres, unverankertes iregex-Muster.
+
+    Die Literalsegmente zwischen den `*` werden mit re.escape maskiert und mit
+    `.*` verbunden. Kein rohes User-Regex — nur `*` ist Sonderzeichen.
+    """
+    return ".*".join(re.escape(seg) for seg in term.split("*"))
+
+
+def _term_q(term):
+    """Ein einzelner Suchterm → Q über die drei Suchfelder (Feld-OR).
+
+    Ohne `*`: icontains (nutzt den Trigramm-Index auf description). Mit `*`:
+    iregex über das sichere Platzhaltermuster. Leerer Term → None.
+    """
+    term = term.strip()
+    if not term:
+        return None
+    if "*" in term:
+        lookup, value = "iregex", _wildcard_regex(term)
+    else:
+        lookup, value = "icontains", term
+    feld_q = Q()
+    for field in _SEARCH_FIELDS:
+        feld_q |= Q(**{f"{field}__{lookup}": value})
+    return feld_q
+
+
+def build_article_search_q(needle):
+    """Baut aus der Hero-Suchsyntax ein Django-`Q` über Nummer/Bezeichnung/Matchcode.
+
+    `|` trennt ODER-Gruppen, innerhalb einer Gruppe verknüpft `+` mit UND, `*`
+    ist Platzhalter innerhalb eines Terms. Leere Terme/Gruppen werden ignoriert.
+    Eine leere Suche (oder eine, die nur aus Trennzeichen besteht) ergibt None —
+    dann wird nicht gefiltert. Eine Suche ohne Operatoren verhält sich wie ein
+    einzelner icontains-Term über die drei Felder (rückwärtskompatibel).
+    """
+    if not needle:
+        return None
+    needle = needle.strip()
+    if not needle:
+        return None
+
+    or_q = None
+    for group in needle.split("|"):
+        and_q = None
+        for term in group.split("+"):
+            term_q = _term_q(term)
+            if term_q is None:
+                continue
+            and_q = term_q if and_q is None else (and_q & term_q)
+        if and_q is None:
+            continue
+        or_q = and_q if or_q is None else (or_q | and_q)
+    return or_q
+
 
 ARTICLE_LINE_TYPES = (
     "MATERIAL",
@@ -842,3 +921,99 @@ def set_verkaufspreise(actor_app_user_id, *, article_id, entries):
         ArticleSalePrice.objects.filter(
             article_id=article_id, sale_price_group_id=std_gid
         ).update(is_standard=True)
+
+
+# ---------------------------------------------------------------------------
+# Artikel kopieren (Hero „Kopieren")
+# ---------------------------------------------------------------------------
+# Stammfelder, die beim Kopieren 1:1 übernommen werden. NICHT dabei:
+# * id/version/status/created_at/updated_at — für die Kopie neu gesetzt
+#   (Status AKTIV, version 1).
+# * article_number — die Kopie bekommt eine NEUE, freie Nummer.
+# * gtin — `uq_article_gtin` ist (partiell) eindeutig: eine GTIN/EAN
+#   identifiziert genau EIN physisches Produkt und darf nicht an zwei Artikeln
+#   hängen. Die Kopie startet ohne GTIN (sonst IntegrityError/500).
+_ARTICLE_COPY_FIELDS = (
+    "description",
+    "long_description",
+    "manufacturer_name",
+    "manufacturer_number",
+    "manufacturer_type",
+    "unit",
+    "line_type",
+    "product_group",
+    "list_price",
+    "matchcode",
+    "min_order_quantity",
+    "quantity_step",
+    "delivery_time_days",
+    "tax_code_id",
+    "cost_center_id",
+    "price_unit",
+)
+
+
+def copy_article(actor_app_user_id, *, source_article_id, article_number):
+    """Dupliziert einen Artikel unter neuer Nummer (Hero „Kopieren").
+
+    In EINER Transaktion:
+    * alle Stammfelder des Quellartikels (inkl. price_unit, tax_code,
+      cost_center_id, matchcode, Hersteller-Felder, long_description,
+      list_price) — mit der neuen `article_number` und Status AKTIV. GTIN wird
+      bewusst nicht kopiert (eindeutiger Produktcode, siehe _ARTICLE_COPY_FIELDS).
+    * alle VK-Varianten (`article_sale_price`: Gruppen-Überschreibungen und die
+      Standard-Markierung).
+    * der primäre Lieferantenbezug, falls vorhanden — als `source_system='MANUELL'`
+      am Zielartikel (über set_primary_supplier).
+
+    GoBD: die Kopie ist ein neuer, eigenständiger Artikel mit eigener Nummer,
+    kein Verweis auf die Quelle. Gibt den neuen Artikel zurück.
+    """
+    # Lokaler Import: kein Modul-Zyklus (kalkulation importiert artikel nicht).
+    from db_core.services import kalkulation as kalkulation_service
+
+    nummer = (article_number or "").strip()
+    if not nummer:
+        raise ValueError("Die neue Artikelnummer darf nicht leer sein.")
+    source = Article.objects.filter(id=source_article_id).first()
+    if source is None:
+        raise ValueError("Quellartikel nicht gefunden.")
+    if Article.objects.filter(article_number=nummer).exists():
+        raise ValueError(f"Artikelnummer '{nummer}' ist bereits vergeben.")
+
+    werte = {feld: getattr(source, feld) for feld in _ARTICLE_COPY_FIELDS}
+    sale_prices = list(ArticleSalePrice.objects.filter(article_id=source_article_id))
+    primary_ref = kalkulation_service.primary_supplier_reference(source_article_id)
+
+    new_id = uuid.uuid4()
+    with business_transaction(actor_app_user_id):
+        Article.objects.create(
+            id=new_id,
+            article_number=nummer,
+            gtin=None,
+            status="AKTIV",
+            version=1,
+            **werte,
+        )
+        for asp in sale_prices:
+            ArticleSalePrice.objects.create(
+                id=uuid.uuid4(),
+                article_id=new_id,
+                label=asp.label,
+                sale_price_group_id=asp.sale_price_group_id,
+                fixed_price=asp.fixed_price,
+                is_standard=asp.is_standard,
+            )
+        if primary_ref is not None:
+            # set_primary_supplier öffnet eine geschachtelte business_transaction
+            # (Savepoint innerhalb dieser Transaktion) und legt den Bezug als
+            # MANUELL am Zielartikel an — die Kopie bleibt atomar.
+            set_primary_supplier(
+                actor_app_user_id,
+                article_id=new_id,
+                supplier_party_id=primary_ref.supplier_party_id,
+                supplier_article_number=primary_ref.supplier_article_number,
+                last_purchase_price=primary_ref.last_purchase_price,
+                currency=primary_ref.currency,
+            )
+    return Article.objects.get(id=new_id)

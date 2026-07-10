@@ -48,6 +48,40 @@ def primary_supplier_reference(article_id, on=None, *, require_price=False):
     )
 
 
+def primary_supplier_names(article_ids, on=None):
+    """Namen der primären Lieferanten für viele Artikel in EINER Query.
+
+    Vermeidet N+1 in der Artikelliste: statt je Zeile
+    `primary_supplier_reference` aufzurufen, werden alle aktuell gültigen
+    Referenzen der Seite gemeinsam geladen (mit Join auf die Partei über
+    select_related) und in Python je Artikel der primäre gewählt — dieselbe
+    Priorisierung wie `primary_supplier_reference` (jüngstes valid_from, dann
+    last_imported_at, dann id). Aufwand hängt an der Seitengröße (den übergebenen
+    IDs), nicht an der Gesamtzahl der 2,3-Mio-Artikel.
+
+    Gibt {article_id: display_name} zurück (nur Artikel mit gültigem Bezug).
+    """
+    ids = [i for i in article_ids if i is not None]
+    if not ids:
+        return {}
+    on = on or date.today()
+    refs = (
+        ArticleSupplierReference.objects.filter(article_id__in=ids, valid_from__lte=on)
+        .filter(Q(valid_until__isnull=True) | Q(valid_until__gt=on))
+        .select_related("supplier_party")
+        .order_by(
+            "article_id", "-valid_from",
+            F("last_imported_at").desc(nulls_last=True), "id",
+        )
+    )
+    namen = {}
+    for ref in refs:
+        # Erste Referenz je Artikel ist dank der Sortierung die primäre.
+        if ref.article_id not in namen:
+            namen[ref.article_id] = ref.supplier_party.display_name
+    return namen
+
+
 def _current_ek(article_id, on=None):
     """Einkaufspreis (last_purchase_price) des primären Lieferantenbezugs."""
     ref = primary_supplier_reference(article_id, on, require_price=True)
