@@ -139,28 +139,49 @@
             </div>
 
             <div class="pos-scroll">
-              @for (g of gruppen(); track g.rubrik?.uid ?? 'ohne'; let gi = $index) {
-                @if (g.rubrik !== null || g.lines.length > 0) {
+              <!--
+                Abschnitte: eigene DropList (nur echte Rubriken sind ziehbar).
+                Ziehen läuft über den Griff (cdkDragHandle); die ▲/▼-Knöpfe
+                bleiben als gleichwertige, nicht-ziehende Alternative (WCAG 2.5.7).
+              -->
+              <div
+                class="sektionen"
+                cdkDropList
+                cdkDropListOrientation="vertical"
+                [cdkDropListData]="rubriken()"
+                [cdkDropListDisabled]="readonly()"
+                (cdkDropListDropped)="sektionDrop($event)"
+              >
+                @for (g of rubrikGruppen(); track g.rubrik.uid; let gi = $index) {
+                  @let r = g.rubrik;
                   <section
                     class="sektion"
-                    [class.sektion--ohne]="g.rubrik === null"
-                    [attr.aria-label]="g.rubrik ? 'Abschnitt ' + g.rubrik.title : 'Ohne Abschnitt'"
+                    cdkDrag
+                    [cdkDragData]="r"
+                    [cdkDragDisabled]="readonly()"
+                    [attr.aria-label]="'Abschnitt ' + r.title"
                   >
                     <header class="sektion__kopf">
                       <div class="sektion__ident">
-                        @if (g.rubrik) {
-                          <span class="sektion__nr">{{ gi + 1 }}</span>
-                          <div>
-                            <h3 class="sektion__titel">{{ g.rubrik.title }}</h3>
-                            @if (g.rubrik.description) {
-                              <p class="sektion__desc">{{ g.rubrik.description }}</p>
-                            }
-                          </div>
-                        } @else {
-                          <h3 class="sektion__titel sektion__titel--ohne">Ohne Abschnitt</h3>
+                        @if (!readonly()) {
+                          <button
+                            type="button"
+                            class="griff sektion__griff"
+                            cdkDragHandle
+                            [attr.aria-label]="'Abschnitt ' + r.title + ' ziehen zum Umsortieren'"
+                          >
+                            <span aria-hidden="true">⣿</span>
+                          </button>
                         }
+                        <span class="sektion__nr">{{ gi + 1 }}</span>
+                        <div>
+                          <h3 class="sektion__titel">{{ r.title }}</h3>
+                          @if (r.description) {
+                            <p class="sektion__desc">{{ r.description }}</p>
+                          }
+                        </div>
                       </div>
-                      @if (!readonly() && g.rubrik; as r) {
+                      @if (!readonly()) {
                         <div class="sektion__akt">
                           <button
                             type="button"
@@ -190,110 +211,156 @@
                       }
                     </header>
 
-                    @if (g.lines.length === 0) {
-                      <p class="sektion__leer">
-                        Keine Positionen in diesem Abschnitt.
-                        @if (!readonly()) { Über die Palette rechts Positionen hinzufügen. }
-                      </p>
-                    } @else {
-                      <ul class="poslist">
-                        @for (l of g.lines; track l.uid; let li = $index) {
-                          <li
-                            class="posrow"
-                            [class.posrow--text]="istText(l.line_type)"
-                            [class.posrow--neben]="istNebenposition(l.line_kind)"
-                          >
-                            <div class="posrow__haupt">
-                              <div class="posrow__meta">
-                                <span class="posrow__typ">{{ lineTypeLabel(l.line_type) }}</span>
-                                @if (istNebenposition(l.line_kind)) {
-                                  <span class="stamp stamp--type posrow__kind">{{ lineKindLabel(l.line_kind) }}</span>
-                                }
-                              </div>
-                              <p class="posrow__desc">{{ l.description }}</p>
-                              @if (!istText(l.line_type)) {
-                                <p class="posrow__zahlen">
-                                  <span>{{ menge(l.quantity, l.unit) }}</span>
-                                  <span aria-hidden="true">×</span>
-                                  <span>{{ euro(l.unit_price) }}</span>
-                                  @if (l.discount_percent) {
-                                    <span class="posrow__rabatt">− {{ prozent(l.discount_percent) }}</span>
-                                  }
-                                </p>
-                              }
-                            </div>
-
-                            <div class="posrow__betrag">
-                              @if (istText(l.line_type)) {
-                                <span class="posrow__net posrow__net--leer">—</span>
-                              } @else if (l.netAmount !== null) {
-                                @if (istNebenposition(l.line_kind)) {
-                                  <span class="posrow__net posrow__net--neben">({{ euro(l.netAmount) }})</span>
-                                } @else {
-                                  <span class="posrow__net">{{ euro(l.netAmount) }}</span>
-                                }
-                              } @else {
-                                <span class="posrow__net posrow__net--leer" title="Betrag wird nach dem Speichern vom Server berechnet">nach Speichern</span>
-                              }
-                            </div>
-
-                            @if (!readonly()) {
-                              <div class="posrow__akt">
-                                <button type="button" class="ibtn" (click)="zeileOeffnen(l)" aria-label="Position bearbeiten">
-                                  <span aria-hidden="true">✎</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  class="ibtn"
-                                  [disabled]="li === 0"
-                                  (click)="zeileVerschieben(l, -1)"
-                                  aria-label="Position nach oben"
-                                >
-                                  <span aria-hidden="true">▲</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  class="ibtn"
-                                  [disabled]="li >= g.lines.length - 1"
-                                  (click)="zeileVerschieben(l, 1)"
-                                  aria-label="Position nach unten"
-                                >
-                                  <span aria-hidden="true">▼</span>
-                                </button>
-                                <label class="posrow__seclabel">
-                                  <span class="sr-only">Abschnitt der Position</span>
-                                  <!--
-                                    `selected` je Option statt `[value]` am <select>:
-                                    das Property-Binding am <select> greift, bevor die
-                                    @for-Optionen existieren, und der Wert verpufft —
-                                    jede Zeile stünde dann auf „Ohne Abschnitt", obwohl
-                                    sie einem Abschnitt zugeordnet ist.
-                                  -->
-                                  <select
-                                    class="feld-gruppe__input feld-gruppe__select posrow__secsel"
-                                    (change)="zeileAbschnittWechseln(l, $any($event.target).value)"
-                                  >
-                                    <option value="" [selected]="!l.rubrikUid">Ohne Abschnitt</option>
-                                    @for (r of rubriken(); track r.uid; let ri = $index) {
-                                      <option [value]="r.uid" [selected]="r.uid === l.rubrikUid">
-                                        {{ ri + 1 }}. {{ r.title }}
-                                      </option>
-                                    }
-                                  </select>
-                                </label>
-                                <button type="button" class="ibtn ibtn--weg" (click)="zeileEntfernen(l)" aria-label="Position entfernen">
-                                  <span aria-hidden="true">✕</span>
-                                </button>
-                              </div>
-                            }
-                          </li>
-                        }
-                      </ul>
-                    }
+                    <ng-container *ngTemplateOutlet="poslistTpl; context: { gruppe: g }"></ng-container>
                   </section>
                 }
+              </div>
+
+              <!--
+                „Ohne Abschnitt": eigene Positionsliste, aber KEIN ziehbarer
+                Abschnitt. Auch leer als Drop-Ziel vorhanden, solange bearbeitbar,
+                damit Positionen per Ziehen hinein- und hinausgehen können.
+              -->
+              @if (ohneGruppe().lines.length > 0 || !readonly()) {
+                <section class="sektion sektion--ohne" aria-label="Ohne Abschnitt">
+                  <header class="sektion__kopf">
+                    <div class="sektion__ident">
+                      <h3 class="sektion__titel sektion__titel--ohne">Ohne Abschnitt</h3>
+                    </div>
+                  </header>
+                  <ng-container *ngTemplateOutlet="poslistTpl; context: { gruppe: ohneGruppe() }"></ng-container>
+                </section>
               }
             </div>
+
+            <!-- Wiederverwendete Positionsliste (Abschnitt oder „Ohne Abschnitt").
+                 Als cdkDropList mit allen anderen Listen und der Palette verbunden. -->
+            <ng-template #poslistTpl let-g="gruppe">
+              <ul
+                class="poslist"
+                [class.poslist--leer]="g.lines.length === 0"
+                cdkDropList
+                [id]="posListId(g.rubrik?.uid ?? null)"
+                [cdkDropListData]="g"
+                [cdkDropListConnectedTo]="posListIds()"
+                [cdkDropListDisabled]="readonly()"
+                (cdkDropListDropped)="positionDrop($event)"
+              >
+                @if (g.lines.length === 0) {
+                  <li class="sektion__leer poslist__leer">
+                    Keine Positionen in diesem Abschnitt.
+                    @if (!readonly()) { Über die Palette hinzufügen oder Positionen herziehen. }
+                  </li>
+                }
+                @for (l of g.lines; track l.uid; let li = $index) {
+                  <li
+                    class="posrow"
+                    [class.posrow--text]="istText(l.line_type)"
+                    [class.posrow--neben]="istNebenposition(l.line_kind)"
+                    cdkDrag
+                    [cdkDragData]="l"
+                    [cdkDragDisabled]="readonly()"
+                  >
+                    @if (!readonly()) {
+                      <button
+                        type="button"
+                        class="griff posrow__griff"
+                        cdkDragHandle
+                        [attr.aria-label]="'Position „' + l.description + '“ ziehen zum Verschieben'"
+                      >
+                        <span aria-hidden="true">⣿</span>
+                      </button>
+                    }
+                    <div class="posrow__haupt">
+                      <div class="posrow__meta">
+                        <span class="posrow__typ">{{ lineTypeLabel(l.line_type) }}</span>
+                        @if (istNebenposition(l.line_kind)) {
+                          <span class="stamp stamp--type posrow__kind">{{ lineKindLabel(l.line_kind) }}</span>
+                        }
+                      </div>
+                      <p class="posrow__desc">{{ l.description }}</p>
+                      @if (!istText(l.line_type)) {
+                        <p class="posrow__zahlen">
+                          <span>{{ menge(l.quantity, l.unit) }}</span>
+                          <span aria-hidden="true">×</span>
+                          <span>{{ euro(l.unit_price) }}</span>
+                          @if (l.discount_percent) {
+                            <span class="posrow__rabatt">− {{ prozent(l.discount_percent) }}</span>
+                          }
+                        </p>
+                      }
+                    </div>
+
+                    <div class="posrow__betrag">
+                      @if (istText(l.line_type)) {
+                        <span class="posrow__net posrow__net--leer">—</span>
+                      } @else if (l.netAmount !== null) {
+                        @if (istNebenposition(l.line_kind)) {
+                          <span class="posrow__net posrow__net--neben">({{ euro(l.netAmount) }})</span>
+                        } @else {
+                          <span class="posrow__net">{{ euro(l.netAmount) }}</span>
+                        }
+                      } @else {
+                        <span class="posrow__net posrow__net--leer" title="Betrag wird nach dem Speichern vom Server berechnet">nach Speichern</span>
+                      }
+                    </div>
+
+                    @if (!readonly()) {
+                      <div class="posrow__akt">
+                        <button type="button" class="ibtn" (click)="zeileOeffnen(l)" aria-label="Position bearbeiten">
+                          <span aria-hidden="true">✎</span>
+                        </button>
+                        <button
+                          type="button"
+                          class="ibtn"
+                          [disabled]="li === 0"
+                          (click)="zeileVerschieben(l, -1)"
+                          aria-label="Position nach oben"
+                        >
+                          <span aria-hidden="true">▲</span>
+                        </button>
+                        <button
+                          type="button"
+                          class="ibtn"
+                          [disabled]="li >= g.lines.length - 1"
+                          (click)="zeileVerschieben(l, 1)"
+                          aria-label="Position nach unten"
+                        >
+                          <span aria-hidden="true">▼</span>
+                        </button>
+                        <label class="posrow__seclabel">
+                          <span class="sr-only">Abschnitt der Position</span>
+                          <!--
+                            `selected` je Option statt `[value]` am <select>:
+                            das Property-Binding am <select> greift, bevor die
+                            @for-Optionen existieren, und der Wert verpufft —
+                            jede Zeile stünde dann auf „Ohne Abschnitt", obwohl
+                            sie einem Abschnitt zugeordnet ist.
+                          -->
+                          <select
+                            class="feld-gruppe__input feld-gruppe__select posrow__secsel"
+                            (change)="zeileAbschnittWechseln(l, $any($event.target).value)"
+                          >
+                            <option value="" [selected]="!l.rubrikUid">Ohne Abschnitt</option>
+                            @for (r of rubriken(); track r.uid; let ri = $index) {
+                              <option [value]="r.uid" [selected]="r.uid === l.rubrikUid">
+                                {{ ri + 1 }}. {{ r.title }}
+                              </option>
+                            }
+                          </select>
+                        </label>
+                        <button type="button" class="ibtn ibtn--weg" (click)="zeileEntfernen(l)" aria-label="Position entfernen">
+                          <span aria-hidden="true">✕</span>
+                        </button>
+                      </div>
+                    }
+
+                    <!-- Ziehen-Platzhalter: Kontur + Muster (nicht nur Farbe). -->
+                    <div class="posrow__ph" *cdkDragPlaceholder aria-hidden="true"></div>
+                  </li>
+                }
+              </ul>
+            </ng-template>
           </main>
 
           <!-- ------------- Palette ------------- -->
@@ -362,9 +429,30 @@
                 } @else if (paletteTreffer().length === 0) {
                   <p class="palette__hinweis">Keine Treffer. Suchbegriff eingeben.</p>
                 } @else {
-                  <ul class="paloptions">
+                  <!--
+                    Palette als DropList-QUELLE: mit allen Positionslisten verbunden,
+                    nimmt selbst aber nichts entgegen (enterPredicate = false,
+                    Sortierung aus). Ziehen ist additiv — der „Übernehmen"-Knopf
+                    bleibt die gleichwertige, nicht-ziehende Alternative (WCAG 2.5.7).
+                  -->
+                  <ul
+                    class="paloptions"
+                    cdkDropList
+                    [id]="paletteListId"
+                    [cdkDropListConnectedTo]="posListIds()"
+                    [cdkDropListSortingDisabled]="true"
+                    [cdkDropListEnterPredicate]="niePredicate"
+                  >
                     @for (t of paletteTreffer(); track t.id) {
-                      <li class="paloption">
+                      <li class="paloption" cdkDrag [cdkDragData]="t.id">
+                        <button
+                          type="button"
+                          class="griff paloption__griff"
+                          cdkDragHandle
+                          [attr.aria-label]="'„' + t.zeile1 + '“ in einen Abschnitt ziehen'"
+                        >
+                          <span aria-hidden="true">⣿</span>
+                        </button>
                         <div class="paloption__text">
                           <p class="paloption__z1">{{ t.zeile1 }}</p>
                           <p class="paloption__z2">{{ t.zeile2 }}</p>
@@ -377,6 +465,7 @@
                         >
                           Übernehmen
                         </button>
+                        <div class="paloption__ph" *cdkDragPlaceholder aria-hidden="true"></div>
                       </li>
                     }
                   </ul>

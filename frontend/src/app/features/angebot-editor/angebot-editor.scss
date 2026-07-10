@@ -143,6 +143,12 @@
   flex-direction: column;
   gap: var(--space-5);
 }
+// Abschnitte-DropList: gleicher Abstand wie zuvor zwischen den Sektionen.
+.sektionen {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
 
 .sektion {
   border: 1px solid var(--line);
@@ -214,6 +220,7 @@
   gap: var(--space-2);
 }
 .posrow {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
@@ -223,6 +230,10 @@
   border-left: 3px solid var(--line-strong);
   border-radius: var(--radius);
   background: var(--paper);
+}
+// Platz für den Ziehgriff in der linken Gutter (nur im bearbeitbaren Editor).
+.editor:not(.editor--ro) .posrow {
+  padding-left: calc(var(--space-3) + 30px);
 }
 .posrow--text {
   border-left-color: var(--ink-faint);
@@ -505,4 +516,99 @@
 .pos-texthinweis {
   margin: 0;
   font-size: var(--step--1);
+}
+
+// ============================== Drag & Drop =================================
+// Ziehen ist ADDITIV zu Knöpfen/Selects (WCAG 2.5.7): jede Ziehen-Aktion hat
+// eine gleichwertige, nicht-ziehende Alternative. Nur der Griff ist ziehbar,
+// damit das Ziehen nicht mit dem Klick auf die Zeile/Detail kollidiert.
+.griff {
+  display: inline-grid;
+  place-items: center;
+  min-width: 30px;
+  min-height: 30px;
+  padding: 0;
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink-faint);
+  cursor: grab;
+  touch-action: none; // CDK-Drag per Touch am Griff
+  transition: border-color 0.15s ease, color 0.15s ease;
+
+  &:hover {
+    border-color: var(--ink);
+    color: var(--ink);
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+  &:active {
+    cursor: grabbing;
+  }
+}
+.posrow__griff {
+  position: absolute;
+  left: var(--space-2);
+  top: 50%;
+  transform: translateY(-50%);
+}
+.sektion__griff {
+  align-self: center;
+}
+
+// Leere Positionsliste bleibt ein sichtbares Drop-Ziel.
+.poslist--leer {
+  min-height: 3rem;
+}
+
+// Palette-Optionen tragen jetzt einen Griff vorneweg (Flex-Fluss).
+.paloption__griff {
+  flex: none;
+}
+
+// Ziehen-Platzhalter: Kontur (gestrichelt) + Streifenmuster, nie nur Farbe.
+.posrow__ph,
+.paloption__ph {
+  border: 2px dashed var(--accent-ink);
+  border-radius: var(--radius);
+  background: repeating-linear-gradient(
+    45deg,
+    var(--surface-sunken),
+    var(--surface-sunken) 6px,
+    transparent 6px,
+    transparent 12px
+  );
+}
+.posrow__ph {
+  height: 3.25rem;
+}
+.paloption__ph {
+  height: 2.75rem;
+}
+
+// Schwebendes Vorschau-Element beim Ziehen.
+.cdk-drag-preview {
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-2);
+}
+// Abschnitt-Platzhalter (kein Custom-Template): gestrichelte Kontur + gedämpft.
+.sektion.cdk-drag-placeholder {
+  opacity: 0.6;
+  outline: 2px dashed var(--accent-ink);
+  outline-offset: -2px;
+}
+// Rückflug-Animation nach dem Loslassen.
+.cdk-drag-animating {
+  transition: transform 0.2s cubic-bezier(0, 0, 0.2, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cdk-drag-animating {
+    transition: none !important;
+  }
+  .griff {
+    transition: none;
+  }
 }

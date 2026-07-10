@@ -1,6 +1,8 @@
 import { Component, HostListener, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, RouterLink } from '@angular/router';
+import { NgTemplateOutlet } from '@angular/common';
+import { CdkDragDrop, DragDropModule, moveItemInArray } from '@angular/cdk/drag-drop';
 import {
   FormBuilder,
   FormControl,
@@ -86,6 +88,25 @@ interface Gruppe {
   lines: EditorLine[];
 }
 
+/** Gruppe eines echten Abschnitts (rubrik nie null) — für das Sektionen-Template. */
+interface RubrikGruppe {
+  rubrik: EditorRubrik;
+  lines: EditorLine[];
+}
+
+/** Zielangabe für Drop/Palette: in welchen Abschnitt an welche Stelle. */
+interface DropZiel {
+  rubrikUid: string | null;
+  index: number;
+}
+
+/** Feste DropList-Kennung der Sammelgruppe „Ohne Abschnitt". */
+const DL_OHNE = 'dl-ohne';
+/** Feste DropList-Kennung der Palette (Quelle, nimmt selbst nichts entgegen). */
+const DL_PALETTE = 'dl-palette';
+/** Sentinel: „ans Ende der Zielgruppe" (Knopf-/Select-Pfad ohne feste Stelle). */
+const ANS_ENDE = Number.MAX_SAFE_INTEGER;
+
 const LINE_TYPE_OPTIONEN: FeldOption[] = [
   { wert: 'MATERIAL', label: 'Material' },
   { wert: 'ARBEITSZEIT', label: 'Arbeitszeit' },
@@ -122,7 +143,16 @@ const EDITIERBAR: QuoteStatus[] = ['ENTWURF', 'INTERN_GEPRUEFT', 'FREIGEGEBEN'];
  */
 @Component({
   selector: 'app-angebot-editor',
-  imports: [RouterLink, ReactiveFormsModule, KeinZugriff, Dialog, Feld, Bestaetigung],
+  imports: [
+    RouterLink,
+    ReactiveFormsModule,
+    DragDropModule,
+    NgTemplateOutlet,
+    KeinZugriff,
+    Dialog,
+    Feld,
+    Bestaetigung,
+  ],
   templateUrl: './angebot-editor.html',
   styleUrl: './angebot-editor.scss',
 })
@@ -213,16 +243,46 @@ export class AngebotEditor {
     currency: 'EUR',
   });
 
-  /** Anzeige-Gruppen: Abschnitte in Reihenfolge, „Ohne Abschnitt" zuletzt. */
-  protected readonly gruppen = computed<Gruppe[]>(() => {
+  /** Gruppen der echten Abschnitte, in Abschnittsreihenfolge. */
+  protected readonly rubrikGruppen = computed<RubrikGruppe[]>(() => {
     const lines = this.lines();
-    const out: Gruppe[] = this.rubriken().map((r) => ({
+    return this.rubriken().map((r) => ({
       rubrik: r,
       lines: lines.filter((l) => l.rubrikUid === r.uid),
     }));
-    out.push({ rubrik: null, lines: lines.filter((l) => l.rubrikUid === null) });
-    return out;
   });
+
+  /** Sammelgruppe „Ohne Abschnitt". */
+  protected readonly ohneGruppe = computed<Gruppe>(() => ({
+    rubrik: null,
+    lines: this.lines().filter((l) => l.rubrikUid === null),
+  }));
+
+  /** Anzeige-Gruppen: Abschnitte in Reihenfolge, „Ohne Abschnitt" zuletzt. */
+  protected readonly gruppen = computed<Gruppe[]>(() => [
+    ...this.rubrikGruppen(),
+    this.ohneGruppe(),
+  ]);
+
+  /** DropList-Kennung einer Positionsliste (je Abschnitt bzw. „Ohne Abschnitt"). */
+  protected posListId(rubrikUid: string | null): string {
+    return rubrikUid === null ? DL_OHNE : `dl-${rubrikUid}`;
+  }
+
+  /**
+   * Alle Positions-DropLists, mit denen jede Liste (und die Palette) verbunden
+   * ist. Reihenfolge: Abschnitte, dann „Ohne Abschnitt".
+   */
+  protected readonly posListIds = computed<string[]>(() => [
+    ...this.rubriken().map((r) => this.posListId(r.uid)),
+    DL_OHNE,
+  ]);
+
+  /** DropList-Kennung der Palette (für das Template). */
+  protected readonly paletteListId = DL_PALETTE;
+
+  /** Palette nimmt selbst keine Positionen entgegen (Quelle, nicht Ziel). */
+  protected readonly niePredicate = (): boolean => false;
 
   /** Zielabschnitt-Auswahl für die Palette. */
   protected readonly zielOptionen = computed<FeldOption[]>(() => [
@@ -445,44 +505,116 @@ export class AngebotEditor {
   }
 
   rubrikVerschieben(r: EditorRubrik, richtung: -1 | 1): void {
-    const rs = [...this.rubriken()];
-    const i = rs.findIndex((x) => x.uid === r.uid);
+    const i = this.rubriken().findIndex((x) => x.uid === r.uid);
     const j = i + richtung;
-    if (i < 0 || j < 0 || j >= rs.length) return;
-    [rs[i], rs[j]] = [rs[j], rs[i]];
-    this.rubriken.set(rs);
+    if (i < 0 || j < 0 || j >= this.rubriken().length) return;
+    this.rubrikBewegen(i, j);
     this.ansage.set(`Abschnitt „${r.title}" nach ${richtung < 0 ? 'oben' : 'unten'} verschoben.`);
+  }
+
+  /**
+   * Kernfunktion Abschnitt-Umsortierung: verschiebt die Rubrik von `von` nach
+   * `nach` (Positionen wandern automatisch mit, weil die Gruppen aus der
+   * Rubrik-Reihenfolge abgeleitet werden). Wird von Knopf UND Drag genutzt.
+   */
+  private rubrikBewegen(von: number, nach: number): void {
+    const rs = [...this.rubriken()];
+    if (von < 0 || nach < 0 || von >= rs.length || nach >= rs.length || von === nach) return;
+    moveItemInArray(rs, von, nach);
+    this.rubriken.set(rs);
     this.markiereGeaendert();
   }
 
+  /** Drop-Handler: Abschnitt per Ziehen umsortieren (gleicher Pfad wie ▲/▼). */
+  sektionDrop(event: CdkDragDrop<EditorRubrik[]>): void {
+    if (this.readonly() || event.previousIndex === event.currentIndex) return;
+    this.rubrikBewegen(event.previousIndex, event.currentIndex);
+    const moved = this.rubriken()[event.currentIndex];
+    this.ansage.set(`Abschnitt „${moved?.title ?? ''}" an Stelle ${event.currentIndex + 1} verschoben.`);
+  }
+
   // ======================= Positionen: verschieben ========================
-  /** Position innerhalb ihres Abschnitts nach oben/unten (tauscht mit Nachbar). */
+  /** Position innerhalb ihres Abschnitts nach oben/unten. */
   zeileVerschieben(line: EditorLine, richtung: -1 | 1): void {
-    const ls = [...this.lines()];
-    const gruppe = ls.filter((l) => l.rubrikUid === line.rubrikUid);
-    const posInGruppe = gruppe.findIndex((l) => l.uid === line.uid);
-    const nachbar = gruppe[posInGruppe + richtung];
-    if (!nachbar) return;
-    const iA = ls.findIndex((l) => l.uid === line.uid);
-    const iB = ls.findIndex((l) => l.uid === nachbar.uid);
-    [ls[iA], ls[iB]] = [ls[iB], ls[iA]];
-    this.lines.set(ls);
+    const gruppe = this.lines().filter((l) => l.rubrikUid === line.rubrikUid);
+    const pos = gruppe.findIndex((l) => l.uid === line.uid);
+    const ziel = pos + richtung;
+    if (pos < 0 || ziel < 0 || ziel >= gruppe.length) return;
+    this.lineEinordnen(line.uid, line.rubrikUid, ziel);
     this.ansage.set(`Position nach ${richtung < 0 ? 'oben' : 'unten'} verschoben.`);
-    this.markiereGeaendert();
   }
 
   /** Position in einen anderen Abschnitt verschieben (per Select, ans Ende). */
   zeileAbschnittWechseln(line: EditorLine, wert: string): void {
     const ziel = wert || null;
     if (ziel === line.rubrikUid) return;
-    // Element aus dem Array nehmen und ans Ende schieben, damit es in der neuen
-    // Gruppe zuletzt steht (deterministische position_number beim Speichern).
-    const ls = this.lines().filter((l) => l.uid !== line.uid);
-    ls.push({ ...line, rubrikUid: ziel });
-    this.lines.set(ls);
+    this.lineEinordnen(line.uid, ziel, ANS_ENDE);
     const name = ziel === null ? 'Ohne Abschnitt' : this.rubrikName(ziel);
     this.ansage.set(`Position nach „${name}" verschoben.`);
+  }
+
+  /** Drop-Handler: Position innerhalb/zwischen Abschnitten bzw. aus der Palette. */
+  positionDrop(event: CdkDragDrop<Gruppe>): void {
+    if (this.readonly()) return;
+    const zielRubrikUid = event.container.data.rubrik?.uid ?? null;
+    const zielIndex = event.currentIndex;
+    const name = zielRubrikUid === null ? 'Ohne Abschnitt' : this.rubrikName(zielRubrikUid);
+
+    // Aus der Palette gezogen: Artikel/Leistung an die Zielstelle übernehmen.
+    if (event.previousContainer.id === DL_PALETTE) {
+      this.uebernehmenAusPalette(event.item.data as string, { rubrikUid: zielRubrikUid, index: zielIndex });
+      return;
+    }
+
+    // Umsortierung: gleiche Liste ohne Positionswechsel = nichts zu tun.
+    if (event.previousContainer === event.container && event.previousIndex === event.currentIndex) return;
+    const line = event.item.data as EditorLine;
+    this.lineEinordnen(line.uid, zielRubrikUid, zielIndex);
+    this.ansage.set(`Position nach „${name}", Stelle ${zielIndex + 1} verschoben.`);
+  }
+
+  /**
+   * Kernfunktion Positions-Umsortierung: nimmt die Position `uid` aus dem
+   * flachen Zeilen-Array und setzt sie so wieder ein, dass sie in der Zielgruppe
+   * `zielRubrikUid` an Position `zielIndex` steht. `zielIndex >= Gruppengröße`
+   * hängt ans Ende. Knöpfe, Select UND Drag laufen ausschließlich hierüber —
+   * ein einziger Zustandspfad.
+   */
+  private lineEinordnen(uid: string, zielRubrikUid: string | null, zielIndex: number): void {
+    const alle = this.lines();
+    const moving = alle.find((l) => l.uid === uid);
+    if (!moving) return;
+    const rest = alle.filter((l) => l.uid !== uid);
+    const at = this.flatEinfuegeIndex(rest, zielRubrikUid, zielIndex);
+    rest.splice(at, 0, { ...moving, rubrikUid: zielRubrikUid });
+    this.lines.set(rest);
     this.markiereGeaendert();
+  }
+
+  /** Wie {@link lineEinordnen}, aber für eine noch nicht enthaltene neue Zeile. */
+  private lineEinsetzen(line: EditorLine, zielRubrikUid: string | null, zielIndex: number): void {
+    const rest = [...this.lines()];
+    const at = this.flatEinfuegeIndex(rest, zielRubrikUid, zielIndex);
+    rest.splice(at, 0, { ...line, rubrikUid: zielRubrikUid });
+    this.lines.set(rest);
+    this.markiereGeaendert();
+  }
+
+  /**
+   * Übersetzt „Stelle `zielIndex` in Gruppe `zielRubrikUid`" in einen Index im
+   * flachen Zeilen-Array `arr` (das die zu setzende Zeile NICHT enthält).
+   * Ist die Zielgruppe leer, wird ans Array-Ende gehängt (Gruppenreihenfolge
+   * ergibt sich beim Speichern ohnehin aus der Rubrik-Reihenfolge).
+   */
+  private flatEinfuegeIndex(arr: EditorLine[], zielRubrikUid: string | null, zielIndex: number): number {
+    const gruppenIdx: number[] = [];
+    arr.forEach((l, i) => {
+      if (l.rubrikUid === zielRubrikUid) gruppenIdx.push(i);
+    });
+    if (gruppenIdx.length === 0) return arr.length;
+    if (zielIndex <= 0) return gruppenIdx[0];
+    if (zielIndex >= gruppenIdx.length) return gruppenIdx[gruppenIdx.length - 1] + 1;
+    return gruppenIdx[zielIndex];
   }
 
   zeileEntfernen(line: EditorLine): void {
@@ -635,22 +767,29 @@ export class AngebotEditor {
     this.paletteFehler.set(true);
   }
 
-  /** Palette-Treffer als neue Position in den Zielabschnitt übernehmen. */
-  uebernehmenAusPalette(id: string): void {
+  /**
+   * Palette-Treffer als neue Position übernehmen. Ohne `ziel` (Knopf) landet die
+   * Position im aktuell gewählten Zielabschnitt ans Ende; mit `ziel` (Drag) an
+   * der Drop-Stelle.
+   */
+  uebernehmenAusPalette(id: string, ziel?: DropZiel): void {
     if (this.paletteModus() === 'artikel') {
-      this.artikelUebernehmen(id);
+      this.artikelUebernehmen(id, ziel);
     } else {
-      this.assemblyUebernehmen(id);
+      this.assemblyUebernehmen(id, ziel);
     }
   }
 
-  private artikelUebernehmen(id: string): void {
+  private artikelUebernehmen(id: string, ziel?: DropZiel): void {
+    const zielRubrik = ziel ? ziel.rubrikUid : this.zielRubrik();
+    const zielIndex = ziel ? ziel.index : ANS_ENDE;
+    const zielName = zielRubrik === null ? 'Ohne Abschnitt' : this.rubrikName(zielRubrik);
     // Zuerst Basisdaten aus der Liste, dann Kalkulation (EK/VK) nachladen.
     this.artikelSvc.getArticle(id).subscribe({
       next: (art) => {
         const line: EditorLine = {
           uid: neueUid(),
-          rubrikUid: this.zielRubrik(),
+          rubrikUid: zielRubrik,
           line_type: art.line_type as LineType,
           line_kind: 'NORMAL',
           description: art.description,
@@ -667,9 +806,8 @@ export class AngebotEditor {
           netAmount: null,
           taxRatePercent: null,
         };
-        this.lines.update((ls) => [...ls, line]);
-        this.markiereGeaendert();
-        this.ansage.set(`Artikel „${art.description}" übernommen.`);
+        this.lineEinsetzen(line, zielRubrik, zielIndex);
+        this.ansage.set(`Artikel „${art.description}" nach „${zielName}" übernommen.`);
         // EK/VK aus der Kalkulation ergänzen (best effort — 403 bleibt ohne EK/VK).
         this.artikelSvc.getKalkulation(id).subscribe({
           next: (k) => {
@@ -697,12 +835,15 @@ export class AngebotEditor {
     });
   }
 
-  private assemblyUebernehmen(id: string): void {
+  private assemblyUebernehmen(id: string, ziel?: DropZiel): void {
+    const zielRubrik = ziel ? ziel.rubrikUid : this.zielRubrik();
+    const zielIndex = ziel ? ziel.index : ANS_ENDE;
+    const zielName = zielRubrik === null ? 'Ohne Abschnitt' : this.rubrikName(zielRubrik);
     this.artikelSvc.getAssembly(id).subscribe({
       next: (asm) => {
         const line: EditorLine = {
           uid: neueUid(),
-          rubrikUid: this.zielRubrik(),
+          rubrikUid: zielRubrik,
           line_type: 'PAUSCHALE',
           line_kind: 'NORMAL',
           description: asm.name,
@@ -719,9 +860,8 @@ export class AngebotEditor {
           netAmount: null,
           taxRatePercent: null,
         };
-        this.lines.update((ls) => [...ls, line]);
-        this.markiereGeaendert();
-        this.ansage.set(`Leistung „${asm.name}" übernommen. Bitte Einzelpreis ergänzen.`);
+        this.lineEinsetzen(line, zielRubrik, zielIndex);
+        this.ansage.set(`Leistung „${asm.name}" nach „${zielName}" übernommen. Bitte Einzelpreis ergänzen.`);
       },
       error: (err) => {
         this.meldung.set({ art: 'fehler', text: this.fehlerText(err, 'Leistung konnte nicht geladen werden.') });
