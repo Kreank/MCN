@@ -1,0 +1,200 @@
+<section class="kanban" aria-labelledby="kanban-titel">
+  <header class="page-head">
+    <div class="page-head__text">
+      <p class="page-head__kicker">
+        <span class="page-head__scale" aria-hidden="true"></span>
+        Projektassistent
+      </p>
+      <h1 id="kanban-titel" class="page-head__titel">Vorgang-Board</h1>
+      <p class="page-head__hint">
+        Vorgänge nach Status. Karten per Ziehen oder über „Verschieben nach …"
+        in eine andere Spalte bewegen, um den Status zu wechseln.
+      </p>
+    </div>
+  </header>
+
+  <app-projekte-nav />
+
+  <div class="controls">
+    <div class="search">
+      <label class="search__label" for="kanban-suche">Vorgänge durchsuchen</label>
+      <div class="search__field">
+        <span class="search__icon" aria-hidden="true">⌕</span>
+        <input
+          id="kanban-suche"
+          class="search__input"
+          type="search"
+          inputmode="search"
+          autocomplete="off"
+          placeholder="Betreff oder Vorgangsnummer"
+          (input)="onSearch($any($event.target).value)"
+        />
+      </div>
+    </div>
+
+    <label class="toggle">
+      <input
+        type="checkbox"
+        [checked]="includeTerminal()"
+        (change)="terminalUmschalten()"
+      />
+      <span>Abgeschlossene &amp; abgelehnte anzeigen</span>
+    </label>
+  </div>
+
+  <!-- Screenreader: Ergebnis der Verschiebe-Aktionen -->
+  <p class="sr-only" aria-live="polite">{{ ansage() }}</p>
+  <p class="sr-only" role="status">{{ resultSummary() }}</p>
+
+  @if (meldung(); as m) {
+    <div class="melde melde--fehler kanban__melde" role="alert">
+      <span class="melde__mark" aria-hidden="true">!</span>
+      <span class="melde__text"><strong>Fehler:</strong> {{ m }}</span>
+      <button type="button" class="melde__zu" (click)="meldungSchliessen()" aria-label="Meldung schließen">
+        <span aria-hidden="true">✕</span>
+      </button>
+    </div>
+  }
+
+  @if (readonly() && state().kind === 'ready') {
+    <p class="hinweis" role="note">
+      Nur-Lese-Ansicht: Zum Verschieben von Vorgängen fehlt das Recht
+      „Ändern" im Modul Arbeitsablauf.
+    </p>
+  }
+
+  @if (abgeschnitten() && state().kind === 'ready') {
+    <p class="hinweis" role="note">
+      Es werden {{ cards().length }} von {{ total() }} Vorgängen gezeigt. Grenze
+      die Auswahl über die Suche ein, um weitere zu sehen.
+    </p>
+  }
+
+  @switch (state().kind) {
+    @case ('loading') {
+      <div class="board" aria-hidden="true">
+        @for (s of skeletons; track $index) {
+          <section class="col">
+            <header class="col__head"><span class="sk sk--line"></span></header>
+            <div class="col__list">
+              <span class="sk sk--card"></span>
+              <span class="sk sk--card"></span>
+            </div>
+          </section>
+        }
+      </div>
+    }
+
+    @case ('forbidden') {
+      <app-kein-zugriff [detail]="$any(state()).detail" />
+    }
+
+    @case ('error') {
+      <div class="note note--error" role="alert">
+        <h2 class="note__titel">Vorgänge ließen sich nicht laden</h2>
+        <p class="note__text">Prüfe die Verbindung und lade das Board erneut.</p>
+        <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
+      </div>
+    }
+
+    @case ('ready') {
+      <div class="board" cdkDropListGroup>
+        @for (col of columns(); track col.status) {
+          <section class="col" [class.col--terminal]="col.is_terminal">
+            <header class="col__head">
+              <h2 class="col__titel">{{ col.label }}</h2>
+              <span class="col__count" [attr.title]="count(col.status) + ' Vorgänge'">{{
+                count(col.status)
+              }}</span>
+            </header>
+
+            <ul
+              class="col__list"
+              cdkDropList
+              [cdkDropListData]="col"
+              [cdkDropListEnterPredicate]="enterPredicate"
+              [cdkDropListDisabled]="readonly()"
+              (cdkDropListDropped)="onDrop($event)"
+            >
+              @for (card of gruppen()[col.status] ?? []; track card.id) {
+                <li
+                  class="card prio-{{ card.priority }}"
+                  cdkDrag
+                  [cdkDragData]="card"
+                  [cdkDragDisabled]="readonly() || zielTransitions(card).length === 0"
+                >
+                  <div class="card__top">
+                    <button
+                      type="button"
+                      class="card__griff"
+                      cdkDragHandle
+                      [disabled]="readonly() || zielTransitions(card).length === 0"
+                      [attr.aria-label]="'Vorgang ' + card.case_number + ' ziehen, um den Status zu wechseln'"
+                    >
+                      <span aria-hidden="true">⣿</span>
+                    </button>
+                    <span class="card__nr">{{ card.case_number }}</span>
+                    <span class="stamp {{ priorityClass(card.priority) }} card__prio">{{
+                      priorityLabel(card.priority)
+                    }}</span>
+                  </div>
+
+                  <a class="card__link" [routerLink]="['/vorgaenge', card.id]">
+                    {{ card.subject }}
+                  </a>
+
+                  <p class="card__meta">
+                    <span class="card__status">Status: {{ statusLabel(card.status) }}</span>
+                    @if (card.project_name) {
+                      <span class="card__projekt" title="Projekt">{{ card.project_name }}</span>
+                    }
+                  </p>
+
+                  @if (!readonly() && zielTransitions(card).length > 0) {
+                    <label class="card__move">
+                      <span class="sr-only"
+                        >Vorgang {{ card.case_number }} in eine andere Spalte verschieben</span
+                      >
+                      <select
+                        #sel
+                        class="card__select"
+                        (change)="moveViaSelect(card, sel.value); sel.value = ''"
+                      >
+                        <option value="">Verschieben nach …</option>
+                        @for (t of zielTransitions(card); track t.to_status) {
+                          <option [value]="t.to_status">
+                            {{ t.label }}{{ t.reason_required ? ' (mit Begründung)' : '' }}
+                          </option>
+                        }
+                      </select>
+                    </label>
+                  }
+
+                  <div class="card__ph" *cdkDragPlaceholder aria-hidden="true"></div>
+                </li>
+              }
+
+              @if (count(col.status) === 0) {
+                <li class="col__leer">Keine Vorgänge in „{{ col.label }}"</li>
+              }
+            </ul>
+          </section>
+        }
+      </div>
+    }
+  }
+
+  <!-- Pflicht-Begründungsdialog für begründungspflichtige Ziele -->
+  <app-bestaetigung
+    [offen]="pendingMove() !== null"
+    [titel]="pendingTitel()"
+    [text]="pendingText()"
+    bestaetigenLabel="Statuswechsel bestätigen"
+    [gefahr]="true"
+    [begruendungPflicht]="true"
+    begruendungLabel="Begründung (Pflicht)"
+    [laedt]="moveLaedt()"
+    (bestaetigen)="bestaetigeMove($event)"
+    (abbrechen)="abbrechenMove()"
+  />
+</section>

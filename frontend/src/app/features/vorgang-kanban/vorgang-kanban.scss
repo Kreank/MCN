@@ -1,0 +1,375 @@
+.kanban {
+  max-width: 82rem;
+  margin: 0 auto;
+}
+
+// ============================== Seitenkopf ==================================
+.page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-6);
+}
+.page-head__kicker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+}
+.page-head__scale {
+  width: 2.5rem;
+  height: 0.5rem;
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--line-strong) 0,
+    var(--line-strong) 1px,
+    transparent 1px,
+    transparent 0.5rem
+  );
+  border-bottom: 1.5px solid var(--line-strong);
+}
+.page-head__titel {
+  font-size: var(--step-3);
+}
+.page-head__hint {
+  margin: var(--space-2) 0 0;
+  max-width: 32rem;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+.kanban__melde {
+  margin-bottom: var(--space-5);
+}
+.hinweis {
+  margin: 0 0 var(--space-5);
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+  background: var(--neutral-tint);
+  border-radius: var(--radius);
+}
+
+// ============================== Steuerung ===================================
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+.search {
+  flex: 1 1 18rem;
+}
+.search__label {
+  display: block;
+  margin-bottom: var(--space-2);
+  font-size: var(--step--1);
+  font-weight: 600;
+  color: var(--ink-muted);
+}
+.search__field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  min-height: 44px;
+  background: var(--surface);
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius);
+  transition: border-color 0.15s ease;
+
+  &:focus-within {
+    border-color: var(--ink);
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+.search__icon {
+  color: var(--ink-faint);
+  font-size: 1.1rem;
+}
+.search__input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--step-0);
+  padding: 0.4rem 0;
+
+  &:focus {
+    outline: none;
+  }
+  &::placeholder {
+    color: var(--ink-faint);
+  }
+}
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 44px;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+  cursor: pointer;
+
+  input {
+    width: 1.1rem;
+    height: 1.1rem;
+    accent-color: var(--accent);
+  }
+  input:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+
+// ================================ Board =====================================
+.board {
+  display: flex;
+  gap: var(--space-4);
+  overflow-x: auto;
+  padding-bottom: var(--space-4);
+  scroll-snap-type: x proximity;
+}
+.col {
+  flex: 0 0 17.5rem;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  scroll-snap-align: start;
+  background: var(--surface-sunken);
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+.col--terminal {
+  background: var(--paper);
+  border-style: dashed;
+}
+.col__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1.5px solid var(--line);
+}
+.col__titel {
+  font-size: var(--step-0);
+  font-weight: 700;
+  color: var(--ink);
+}
+.col__count {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.6rem;
+  height: 1.6rem;
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  background: var(--command);
+  color: var(--on-command);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+.col__list {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  flex: 1;
+  min-height: 6rem;
+  transition: background-color 0.15s ease;
+}
+// Gültiges Drop-Ziel (enterPredicate true): Spalte hebt sich hervor.
+.col__list.cdk-drop-list-receiving {
+  background: color-mix(in srgb, var(--positive) 30%, transparent);
+  outline: 2px dashed var(--positive-ink);
+  outline-offset: -4px;
+}
+.col__leer {
+  padding: var(--space-4) var(--space-2);
+  text-align: center;
+  font-size: var(--step--1);
+  color: var(--ink-faint);
+  border: 1.5px dashed var(--line);
+  border-radius: var(--radius);
+}
+
+// ================================ Karte =====================================
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-1);
+}
+.card.prio-DRINGEND {
+  border-left-color: var(--warn);
+}
+.card.prio-NOTFALL {
+  border-left-color: var(--accent);
+}
+.card__top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.card__griff {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--ink-faint);
+  cursor: grab;
+  line-height: 1;
+
+  &:hover:not(:disabled) {
+    color: var(--ink);
+    border-color: var(--line-strong);
+  }
+  &:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+.card__nr {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  color: var(--ink-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.card__prio {
+  flex: none;
+}
+.card__link {
+  color: var(--ink);
+  font-size: var(--step-0);
+  font-weight: 600;
+  text-decoration: none;
+  line-height: 1.3;
+
+  &:hover {
+    text-decoration: underline;
+    text-decoration-color: var(--accent);
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+}
+.card__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+.card__status {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.03em;
+  color: var(--ink-faint);
+}
+.card__projekt {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.card__move {
+  display: block;
+}
+.card__select {
+  width: 100%;
+  min-height: 38px;
+  padding: 0 var(--space-2);
+  background: var(--surface);
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius);
+  color: var(--ink);
+  font-size: var(--step--1);
+
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+
+// Platzhalter beim Ziehen (custom cdkDragPlaceholder).
+.card__ph {
+  height: 3.5rem;
+  border: 1.5px dashed var(--accent);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+// CDK-Zustände: bewegte Karte, Rückkehr-Animation.
+.cdk-drag-preview {
+  box-shadow: var(--shadow-2);
+  border-radius: var(--radius);
+}
+.cdk-drag-animating {
+  transition: transform 0.2s cubic-bezier(0, 0, 0.2, 1);
+}
+.col__list.cdk-drop-list-dragging .card:not(.cdk-drag-placeholder) {
+  transition: transform 0.2s cubic-bezier(0, 0, 0.2, 1);
+}
+
+// ================================ Skelett ===================================
+.sk {
+  display: block;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+}
+.sk--line {
+  width: 60%;
+  height: 1rem;
+}
+.sk--card {
+  height: 4rem;
+  margin: var(--space-3);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cdk-drag-animating,
+  .col__list.cdk-drop-list-dragging .card:not(.cdk-drag-placeholder),
+  .col__list {
+    transition: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .col {
+    flex-basis: 15rem;
+  }
+}

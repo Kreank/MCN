@@ -7,6 +7,7 @@ import { ProjektService } from '../../core/projekt.service';
 import { PropertyService } from '../../core/property.service';
 import { AuthService } from '../../core/auth.service';
 import { Project, ProjectCreate, ProjectPage, ProjectStatus } from '../../core/projekt.model';
+import { ProjekteNav } from '../projekte-nav/projekte-nav';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 import { Dialog } from '../../shared/dialog/dialog';
@@ -29,7 +30,7 @@ type Meldung = { art: 'erfolg' | 'fehler'; text: string };
 
 @Component({
   selector: 'app-projekte',
-  imports: [RouterLink, ReactiveFormsModule, KeinZugriff, Dialog, Feld, ReferenzWahl],
+  imports: [RouterLink, ReactiveFormsModule, ProjekteNav, KeinZugriff, Dialog, Feld, ReferenzWahl],
   templateUrl: './projekte.html',
   styleUrl: './projekte.scss',
 })

@@ -211,6 +211,111 @@ def get_project(request, project_id: UUID):
     return _project_detail(project_id)
 
 
+# --- Vorgangs-Board: Vorgänge über alle Projekte ---------------------------
+
+class BoardColumnOut(Schema):
+    status: str
+    label: str
+    sort_order: int
+    is_final: bool
+    # Endspalte (ABGESCHLOSSEN/ABGELEHNT): per Default ohne Karten geladen, aber
+    # als Spalte/Drop-Ziel weiter sichtbar.
+    is_terminal: bool
+
+
+class ServiceCaseCardOut(Schema):
+    id: UUID
+    case_number: str
+    subject: str
+    status: str
+    priority: str
+    project_id: UUID | None = None
+    project_name: str | None = None
+    received_at: datetime
+
+
+class ServiceCaseBoardOut(Schema):
+    # Spalten aus workflow.status_catalog (Reihenfolge/Labels), damit das Board
+    # ohne zweiten Request die Spalten kennt.
+    columns: list[BoardColumnOut]
+    items: list[ServiceCaseCardOut]
+    total: int
+    page: int
+    page_size: int
+
+
+class ServiceCaseBoardFilter(Schema):
+    project_id: UUID | None = None
+    status: str | None = None
+    q: str | None = None
+    # Endspalten-Karten mitladen (ABGESCHLOSSEN/ABGELEHNT). Default aus: das Board
+    # zeigt die offenen Vorgänge. Ein expliziter status-Filter hat Vorrang.
+    include_terminal: bool = False
+
+
+def _service_case_card(case):
+    return ServiceCaseCardOut(
+        id=case.id,
+        case_number=case.case_number,
+        subject=case.subject,
+        status=case.status,
+        priority=case.priority,
+        project_id=case.project_id,
+        project_name=case.project.name if case.project_id else None,
+        received_at=case.received_at,
+    )
+
+
+@router.get("/service_cases", response=ServiceCaseBoardOut)
+def list_service_cases(
+    request,
+    filters: ServiceCaseBoardFilter = Query(...),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(200, ge=1, le=500),
+):
+    """Vorgänge über alle Projekte fürs Kanban-Board (Spalten = Statuskatalog).
+
+    Recht workflow.LESEN über `require` (fail-closed), nicht `require_scoped`:
+    diese Ansicht wertet den row_scope nicht aus und listet Vorgänge quer über
+    alle Projekte — ein Konto mit Scope EIGENE (Monteur) erhält deshalb 403 statt
+    fremde Vorgänge zu sehen (analog zu list_projects und den übrigen
+    Vorgangs-Endpunkten).
+
+    Filter: project_id, status (exakt), q (Freitext auf Nummer/Betreff). Ohne
+    expliziten status-Filter werden Endspalten-Vorgänge (ABGESCHLOSSEN/ABGELEHNT)
+    per Default ausgeblendet; include_terminal=true lädt sie mit. N+1-frei über
+    select_related('project'); die Spalten kommen aus einem eigenen (zeilenzahl-
+    unabhängigen) Katalog-Query.
+    """
+    require(request, "workflow", "LESEN")
+    qs = ServiceCase.objects.select_related("project")
+
+    if filters.project_id:
+        qs = qs.filter(project_id=filters.project_id)
+    if filters.status:
+        qs = qs.filter(status=filters.status)
+    elif not filters.include_terminal:
+        qs = qs.exclude(status__in=projekt_service.TERMINAL_SERVICE_CASE_STATUSES)
+    if filters.q:
+        needle = filters.q.strip()
+        qs = qs.filter(
+            Q(subject__icontains=needle) | Q(case_number__icontains=needle)
+        )
+
+    qs = qs.order_by("-received_at", "id")
+
+    total = qs.count()
+    start = (page - 1) * page_size
+    items = [_service_case_card(c) for c in qs[start:start + page_size]]
+    return ServiceCaseBoardOut(
+        columns=[BoardColumnOut(**col) for col in projekt_service.service_case_board_columns()],
+        items=items,
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
 # --- Vorgang (service_case) Detail -----------------------------------------
 
 class PartyRefOut(Schema):

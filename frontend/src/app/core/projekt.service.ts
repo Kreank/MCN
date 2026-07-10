@@ -10,6 +10,8 @@ import {
   ProjectDetail,
   ProjectPage,
   ProjectQuery,
+  ServiceCaseBoard,
+  ServiceCaseBoardQuery,
   ServiceCaseCreate,
   ServiceCaseDetail,
   ServiceCaseRef,
@@ -36,6 +38,23 @@ export class ProjektService {
 
   get(id: string): Observable<ProjectDetail> {
     return this.http.get<ProjectDetail>(`${this.base}/${id}`);
+  }
+
+  /**
+   * Vorgänge über alle Projekte fürs Kanban-Board (Recht workflow.LESEN).
+   * Liefert zusätzlich die Spalten (Statuskatalog). Ohne status-Filter werden
+   * Endspalten-Vorgänge nur mit include_terminal geladen.
+   */
+  listServiceCases(query: ServiceCaseBoardQuery = {}): Observable<ServiceCaseBoard> {
+    let params = new HttpParams();
+    if (query.project_id) params = params.set('project_id', query.project_id);
+    if (query.status) params = params.set('status', query.status);
+    const q = query.q?.trim();
+    if (q) params = params.set('q', q);
+    if (query.include_terminal) params = params.set('include_terminal', 'true');
+    if (query.page) params = params.set('page', query.page);
+    if (query.page_size) params = params.set('page_size', query.page_size);
+    return this.http.get<ServiceCaseBoard>('/api/workflow/service_cases', { params });
   }
 
   getServiceCase(id: string): Observable<ServiceCaseDetail> {

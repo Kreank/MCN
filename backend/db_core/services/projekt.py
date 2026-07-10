@@ -38,6 +38,35 @@ PRIORITIES = ("NORMAL", "DRINGEND", "NOTFALL")
 
 SERVICE_CASE_ENTITY = "service_case"
 
+# Endstatus eines Vorgangs für die Board-Vorauswahl. Der Statuskatalog markiert
+# für service_case kein is_final (0042 setzt es nur für work_order/quote), fachlich
+# sind ABGESCHLOSSEN und ABGELEHNT aber die beiden Endpunkte des Lebenszyklus
+# (sort_order 6/7): ABGELEHNT ist eine Senke ohne ausgehende Kante, ABGESCHLOSSEN
+# kann nur mit Begründung wiedereröffnet werden. Das Board blendet ihre Karten
+# per Default aus (offene Vorgänge), zeigt die Spalten aber weiter als Drop-Ziele.
+TERMINAL_SERVICE_CASE_STATUSES = ("ABGESCHLOSSEN", "ABGELEHNT")
+
+
+def service_case_board_columns():
+    """Spalten des Vorgangs-Boards: der Statuskatalog (entity=service_case) nach
+    sort_order. Liefert Dicts {status, label, sort_order, is_final, is_terminal}.
+
+    Read-only Stammdaten; die Reihenfolge/Labels stammen aus workflow.status_catalog
+    (Pipeline-Editor 0042), damit eine geänderte Pipeline sofort auf dem Board wirkt.
+    is_terminal markiert die per Default ausgeblendeten Endspalten.
+    """
+    rows = StatusCatalog.objects.filter(entity=SERVICE_CASE_ENTITY).order_by("sort_order")
+    return [
+        {
+            "status": c.status,
+            "label": c.label,
+            "sort_order": c.sort_order,
+            "is_final": c.is_final,
+            "is_terminal": c.status in TERMINAL_SERVICE_CASE_STATUSES,
+        }
+        for c in rows
+    ]
+
 
 def create_project(
     actor_app_user_id,

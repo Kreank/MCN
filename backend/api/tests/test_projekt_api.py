@@ -414,3 +414,140 @@ def test_status_freigabe_uebergang_mit_freigeben_recht(admin_client, app_user):
     )
     assert r.status_code == 200, r.content
     assert r.json()["status"] == "BEAUFTRAGT"
+
+
+# --- Vorgangs-Board: GET /api/workflow/service_cases -----------------------
+
+def _vorgang_unter_projekt(app_user, *, subject="Boardvorgang", projektname="Boardprojekt"):
+    obj = property_service.create_property(
+        app_user.id, name="Boardobjekt", property_type="WEG",
+        street="B", postal_code="1", city="Berlin",
+    )
+    projekt = projekt_service.create_project(
+        app_user.id, name=projektname, property_ids=[obj.id]
+    )
+    case = projekt_service.create_service_case(
+        app_user.id, property_id=obj.id, subject=subject, project_id=projekt.id,
+    )
+    return projekt, case
+
+
+@pytest.mark.django_db
+def test_board_liefert_vorgaenge_mit_status_und_projekt(admin_client, app_user):
+    projekt, case = _vorgang_unter_projekt(app_user)
+    r = admin_client.get("/api/workflow/service_cases")
+    assert r.status_code == 200, r.content
+    body = r.json()
+    # Spalten kommen aus dem Statuskatalog (7 Status, nach sort_order).
+    stati = [c["status"] for c in body["columns"]]
+    assert stati == [
+        "NEU", "IN_PRUEFUNG", "RUECKFRAGE", "FREIGABE_AUSSTEHEND",
+        "BEAUFTRAGT", "ABGESCHLOSSEN", "ABGELEHNT",
+    ]
+    assert body["columns"][0]["label"] == "Neu"
+    assert body["columns"][-1]["is_terminal"] is True
+    assert body["columns"][-2]["is_terminal"] is True
+    assert body["columns"][0]["is_terminal"] is False
+    # Der Vorgang trägt Status und Projektbezug.
+    item = next(i for i in body["items"] if i["id"] == str(case.id))
+    assert item["status"] == "NEU"
+    assert item["project_id"] == str(projekt.id)
+    assert item["project_name"] == "Boardprojekt"
+    assert item["case_number"] == case.case_number
+
+
+@pytest.mark.django_db
+def test_board_filter_project_id(admin_client, app_user):
+    p1, c1 = _vorgang_unter_projekt(app_user, projektname="Projekt A")
+    p2, c2 = _vorgang_unter_projekt(app_user, projektname="Projekt B")
+    r = admin_client.get(f"/api/workflow/service_cases?project_id={p1.id}")
+    ids = {i["id"] for i in r.json()["items"]}
+    assert ids == {str(c1.id)}
+
+
+@pytest.mark.django_db
+def test_board_filter_status(admin_client, app_user):
+    _p, offen = _vorgang_unter_projekt(app_user)
+    _p2, geprueft = _vorgang_unter_projekt(app_user)
+    projekt_service.advance_service_case_status(
+        app_user.id, service_case_id=geprueft.id, to_status="IN_PRUEFUNG"
+    )
+    r = admin_client.get("/api/workflow/service_cases?status=IN_PRUEFUNG")
+    ids = {i["id"] for i in r.json()["items"]}
+    assert ids == {str(geprueft.id)}
+
+
+@pytest.mark.django_db
+def test_board_freitext_q(admin_client, app_user):
+    _p1, treffer = _vorgang_unter_projekt(app_user, subject="Heizung defekt")
+    _p2, _andere = _vorgang_unter_projekt(app_user, subject="Fenster klemmt")
+    r = admin_client.get("/api/workflow/service_cases?q=Heizung")
+    ids = {i["id"] for i in r.json()["items"]}
+    assert ids == {str(treffer.id)}
+    # Auch über die Vorgangsnummer.
+    r2 = admin_client.get(f"/api/workflow/service_cases?q={treffer.case_number}")
+    assert {i["id"] for i in r2.json()["items"]} == {str(treffer.id)}
+
+
+@pytest.mark.django_db
+def test_board_terminal_default_ausgeblendet(admin_client, app_user):
+    _p, offen = _vorgang_unter_projekt(app_user, subject="Offener Vorgang")
+    _p2, abgelehnt = _vorgang_unter_projekt(app_user, subject="Abzulehnen")
+    projekt_service.advance_service_case_status(
+        app_user.id, service_case_id=abgelehnt.id, to_status="ABGELEHNT",
+        reason="Nicht zuständig.",
+    )
+    # Default: der abgelehnte Vorgang ist nicht geladen.
+    r = admin_client.get("/api/workflow/service_cases")
+    ids = {i["id"] for i in r.json()["items"]}
+    assert str(offen.id) in ids
+    assert str(abgelehnt.id) not in ids
+    # include_terminal=true lädt ihn mit.
+    r2 = admin_client.get("/api/workflow/service_cases?include_terminal=true")
+    assert str(abgelehnt.id) in {i["id"] for i in r2.json()["items"]}
+    # Ein expliziter status-Filter hat Vorrang und zeigt Endspalten-Vorgänge auch
+    # ohne include_terminal.
+    r3 = admin_client.get("/api/workflow/service_cases?status=ABGELEHNT")
+    assert {i["id"] for i in r3.json()["items"]} == {str(abgelehnt.id)}
+
+
+@pytest.mark.django_db
+def test_board_recht_gate_eigene_403(client_with_role, app_user):
+    """MONTEUR hat höchstens row_scope EIGENE; diese Ansicht wertet den Scope
+    nicht aus und liefert deshalb fail-closed 403 (kein stiller Datenleak),
+    analog zu list_projects."""
+    _vorgang_unter_projekt(app_user)
+    c = client_with_role("MONTEUR")
+    r = c.get("/api/workflow/service_cases")
+    assert r.status_code == 403
+
+
+@pytest.mark.django_db
+def test_board_ohne_login_401(anonymous_client, app_user):
+    _vorgang_unter_projekt(app_user)
+    r = anonymous_client.get("/api/workflow/service_cases")
+    assert r.status_code in (401, 403)
+
+
+@pytest.mark.django_db
+def test_board_keine_n_plus_1(admin_client, app_user):
+    """Die Query-Zahl ist unabhängig von der Zeilenzahl (select_related('project')
+    + zeilenzahl-unabhängiger Spalten-/Count-Query)."""
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    # Sechs Vorgänge unter je eigenem Projekt (verschiedene FKs).
+    for i in range(6):
+        _vorgang_unter_projekt(app_user, projektname=f"NP-Projekt {i}")
+
+    def _queries(url):
+        with CaptureQueriesContext(connection) as ctx:
+            resp = admin_client.get(url)
+            assert resp.status_code == 200
+        return len(ctx.captured_queries)
+
+    q_eine = _queries("/api/workflow/service_cases?page_size=1")
+    q_alle = _queries("/api/workflow/service_cases?page_size=50")
+    assert q_eine == q_alle, (
+        f"N+1: {q_eine} Queries bei 1 Zeile vs. {q_alle} bei vielen Zeilen"
+    )

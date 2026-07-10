@@ -121,6 +121,47 @@ export interface ServiceCaseStatusInput {
   reason: string | null;
 }
 
+// --- Vorgangs-Board (GET /api/workflow/service_cases) ----------------------
+// Eine Spalte des Kanban-Boards (aus workflow.status_catalog, Reihenfolge
+// sort_order). is_terminal markiert die Endspalten (ABGESCHLOSSEN/ABGELEHNT),
+// deren Karten das Board per Default nicht lädt.
+export interface BoardColumn {
+  status: ServiceCaseStatus;
+  label: string;
+  sort_order: number;
+  is_final: boolean;
+  is_terminal: boolean;
+}
+
+// Kompakte Vorgangs-Karte fürs Board.
+export interface ServiceCaseCard {
+  id: string;
+  case_number: string;
+  subject: string;
+  status: ServiceCaseStatus;
+  priority: CasePriority;
+  project_id: string | null;
+  project_name: string | null;
+  received_at: string;
+}
+
+export interface ServiceCaseBoard {
+  columns: BoardColumn[];
+  items: ServiceCaseCard[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface ServiceCaseBoardQuery {
+  project_id?: string | null;
+  status?: ServiceCaseStatus | null;
+  q?: string;
+  include_terminal?: boolean;
+  page?: number;
+  page_size?: number;
+}
+
 // --- Projekt-Cockpit: Logbuch & Checklisten --------------------------------
 export type LogCategory = 'NOTIZ' | 'ANRUF' | 'ABSPRACHE' | 'ENTSCHEIDUNG' | 'SYSTEM';
 

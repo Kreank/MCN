@@ -68,6 +68,15 @@ export const routes: Routes = [
         loadComponent: () => import('./features/projekte/projekte').then((m) => m.Projekte),
       },
       {
+        // Vorgangs-Kanban. MUSS vor 'projekte/:id' stehen, sonst schluckt der
+        // Parameter das statische Segment 'kanban'.
+        path: 'projekte/kanban',
+        title: 'Vorgang-Board — MCN Leitstand',
+        canActivate: [darfGuard('workflow', 'LESEN')],
+        loadComponent: () =>
+          import('./features/vorgang-kanban/vorgang-kanban').then((m) => m.VorgangKanban),
+      },
+      {
         path: 'projekte/:id',
         title: 'Projekt — MCN Leitstand',
         canActivate: [darfGuard('workflow', 'LESEN')],
