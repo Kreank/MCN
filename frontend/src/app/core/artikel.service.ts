@@ -15,10 +15,13 @@ import {
   AssemblyIn,
   AssemblyPage,
   HistorieEintrag,
+  LieferantIn,
   SalePriceGroup,
   StammdatenUebernahmeIn,
   StammQuery,
   StammStatus,
+  VerkaufspreiseIn,
+  VerkaufspreiseUebersicht,
   WageGroup,
 } from './artikel.model';
 
@@ -114,6 +117,35 @@ export class ArtikelService {
   ): Observable<ArticleSalePrice> {
     return this.http.put<ArticleSalePrice>(
       `${this.base}/articles/${articleId}/sale_price`,
+      payload,
+    );
+  }
+
+  /** Alle aktiven VK-Gruppen mit errechnetem/überschriebenem VK je Stück
+   *  (Hero-Reiter „Kalkulation", rechte Tabelle). Recht pricing/LESEN. */
+  getVerkaufspreise(id: string): Observable<VerkaufspreiseUebersicht> {
+    return this.http.get<VerkaufspreiseUebersicht>(
+      `${this.base}/articles/${id}/verkaufspreise`,
+    );
+  }
+
+  /** Setzt die GANZE VK-Gruppen-Tabelle (genau eine Standard-Gruppe). Recht
+   *  pricing/AENDERN. `fixed_price=null` je Eintrag ⇒ Formelwert gilt. */
+  setVerkaufspreise(
+    id: string,
+    payload: VerkaufspreiseIn,
+  ): Observable<VerkaufspreiseUebersicht> {
+    return this.http.put<VerkaufspreiseUebersicht>(
+      `${this.base}/articles/${id}/verkaufspreise`,
+      payload,
+    );
+  }
+
+  /** Primären Lieferantenbezug setzen (Lieferant, Lieferanten-Nr., EK). Recht
+   *  pricing/AENDERN. */
+  setLieferant(id: string, payload: LieferantIn): Observable<ArticleDetail> {
+    return this.http.put<ArticleDetail>(
+      `${this.base}/articles/${id}/lieferant`,
       payload,
     );
   }

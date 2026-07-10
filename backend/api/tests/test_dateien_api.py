@@ -78,6 +78,32 @@ def _upload(client, projekt, name="Angebot.pdf", inhalt=PDF, kategorie="DOKUMENT
 
 
 @pytest.mark.django_db
+def test_upload_und_liste_am_artikel(admin_client, app_user, fake_storage):
+    """Das API-Ziel `article_id` muss im ZielFilter-Schema deklariert sein — sonst
+    verwirft Ninja das Formularfeld und Upload/Liste quittieren mit 422
+    (Artikelbild). Regressionsschutz für einen realen Befund."""
+    from django.core.files.uploadedfile import SimpleUploadedFile
+    from db_core.services import artikel as artikel_service
+
+    art = artikel_service.create_article(
+        app_user.id, article_number="BILD-1",
+        description="Mit Bild", unit="Stk",
+    )
+    r = admin_client.post(
+        f"{BASE}/files",
+        data={
+            "datei": SimpleUploadedFile("bild.png", b"\x89PNG\r\n\x1a\n"),
+            "article_id": str(art.id),
+            "link_category": "ARTIKELBILD",
+        },
+    )
+    assert r.status_code == 201, r.content
+    liste = admin_client.get(f"{BASE}/files?article_id={art.id}").json()
+    assert liste["total"] == 1
+    assert liste["items"][0]["link_category"] == "ARTIKELBILD"
+
+
+@pytest.mark.django_db
 def test_upload_und_liste(admin_client, projekt, fake_storage):
     r = _upload(admin_client, projekt)
     assert r.status_code == 201, r.content

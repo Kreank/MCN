@@ -61,68 +61,206 @@
       }
 
       @if (tab() === 'informationen') {
-        <dl class="feld-raster">
-          <div class="feld"><dt class="feld__label">Artikelnummer</dt><dd class="feld__wert">{{ daten()!.article_number }}</dd></div>
-          <div class="feld"><dt class="feld__label">Einheit</dt><dd class="feld__wert">{{ daten()!.unit }}</dd></div>
-          <div class="feld"><dt class="feld__label">Typ</dt><dd class="feld__wert">{{ lineTypeLabel(daten()!.line_type) }}</dd></div>
-          <div class="feld"><dt class="feld__label">Listenpreis</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.list_price">{{ euro(daten()!.list_price) }}</dd></div>
-          <div class="feld"><dt class="feld__label">Warengruppe</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.product_group">{{ daten()!.product_group || '—' }}</dd></div>
-          <div class="feld"><dt class="feld__label">Hersteller</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.manufacturer_name">{{ daten()!.manufacturer_name || '—' }}</dd></div>
-          <div class="feld"><dt class="feld__label">Hersteller-Nr.</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.manufacturer_number">{{ daten()!.manufacturer_number || '—' }}</dd></div>
-          <div class="feld"><dt class="feld__label">GTIN</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.gtin">{{ daten()!.gtin || '—' }}</dd></div>
-        </dl>
-        @if (daten()!.long_description) {
-          <p class="langtext">{{ daten()!.long_description }}</p>
-        }
+        <div class="info-layout">
+          <!-- Artikelbild ------------------------------------------------- -->
+          <aside class="bild" aria-labelledby="bild-titel">
+            <h2 id="bild-titel" class="bild__titel">Artikelbild</h2>
+            <div class="bild__rahmen">
+              @switch (bild().kind) {
+                @case ('loading') {
+                  <p class="bild__hinweis" role="status">Bild wird geladen …</p>
+                }
+                @case ('error') {
+                  <p class="bild__hinweis bild__hinweis--fehler">
+                    Bildvorschau derzeit nicht verfügbar.
+                  </p>
+                }
+                @case ('ready') {
+                  @if ($any(bild()).url) {
+                    <img class="bild__img" [src]="$any(bild()).url" [alt]="'Artikelbild: ' + daten()!.description" />
+                  } @else if ($any(bild()).datei) {
+                    <p class="bild__hinweis">Vorschau nicht ladbar.</p>
+                  } @else {
+                    <p class="bild__hinweis">Noch keine Datei hochgeladen.</p>
+                  }
+                }
+              }
+            </div>
+
+            <p class="sr-only" role="status">{{ bildMeldung() }}</p>
+            @if (bildMeldung(); as bm) {
+              <p class="bild__fehler" role="alert">{{ bm }}</p>
+            }
+
+            @if (darfBildAnlegen()) {
+              <div class="bild__aktionen">
+                <label class="btn bild__upload" [class.is-busy]="bildLaedt()">
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/gif"
+                    class="sr-only"
+                    [disabled]="bildLaedt()"
+                    (change)="bildFeldGeaendert($event)"
+                  />
+                  {{ bildLaedt() ? 'Wird übertragen …' : ($any(bild()).datei ? 'Bild ersetzen' : 'Bild hochladen') }}
+                </label>
+                @if (darfBildLoesen() && bild().kind === 'ready' && $any(bild()).datei) {
+                  <button type="button" class="btn" [disabled]="bildLaedt()" (click)="bildEntfernen()">
+                    Entfernen
+                  </button>
+                }
+              </div>
+            }
+          </aside>
+
+          <!-- Felder ------------------------------------------------------ -->
+          <div class="info-felder">
+            <dl class="feld-raster">
+              <div class="feld"><dt class="feld__label">Artikelnummer</dt><dd class="feld__wert">{{ daten()!.article_number }}</dd></div>
+              <div class="feld"><dt class="feld__label">Einheit</dt><dd class="feld__wert">{{ daten()!.unit }}</dd></div>
+              <div class="feld"><dt class="feld__label">Typ</dt><dd class="feld__wert">{{ lineTypeLabel(daten()!.line_type) }}</dd></div>
+              <div class="feld"><dt class="feld__label">Kategorie</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.product_group">{{ daten()!.product_group || '—' }}</dd></div>
+              <div class="feld"><dt class="feld__label">Matchcode</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.matchcode">{{ daten()!.matchcode || '—' }}</dd></div>
+              <div class="feld"><dt class="feld__label">EAN / GTIN</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.gtin">{{ daten()!.gtin || '—' }}</dd></div>
+              <div class="feld"><dt class="feld__label">Kostenstelle</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.cost_center_label">{{ daten()!.cost_center_label || '—' }}</dd></div>
+              <div class="feld"><dt class="feld__label">Listenpreis</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.list_price">{{ euro(daten()!.list_price) }}</dd></div>
+              <div class="feld"><dt class="feld__label">MwSt.</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.tax_code">{{ taxCodeLabel(daten()!.tax_code) }}</dd></div>
+              <div class="feld"><dt class="feld__label">Preiseinheit</dt><dd class="feld__wert">{{ priceUnitText(daten()!.price_unit) }}</dd></div>
+              <div class="feld"><dt class="feld__label">Mindestbestellmenge</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.min_order_quantity">{{ daten()!.min_order_quantity ? zahl(daten()!.min_order_quantity) : '—' }}</dd></div>
+              <div class="feld"><dt class="feld__label">Mengenstaffel</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.quantity_step">{{ daten()!.quantity_step ? zahl(daten()!.quantity_step) : '—' }}</dd></div>
+              <div class="feld"><dt class="feld__label">Lieferzeit</dt><dd class="feld__wert" [class.feld__wert--leer]="daten()!.delivery_time_days == null">{{ daten()!.delivery_time_days != null ? daten()!.delivery_time_days + ' Tage' : '—' }}</dd></div>
+              <div class="feld"><dt class="feld__label">Hersteller</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.manufacturer_name">{{ daten()!.manufacturer_name || '—' }}</dd></div>
+              <div class="feld"><dt class="feld__label">Hersteller-Nr.</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.manufacturer_number">{{ daten()!.manufacturer_number || '—' }}</dd></div>
+              <div class="feld"><dt class="feld__label">Hersteller-Typ</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.manufacturer_type">{{ daten()!.manufacturer_type || '—' }}</dd></div>
+              <div class="feld"><dt class="feld__label">Lieferant</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.supplier_name">{{ daten()!.supplier_name || '—' }}</dd></div>
+              <div class="feld"><dt class="feld__label">Lieferanten-Nr.</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.supplier_article_number">{{ daten()!.supplier_article_number || '—' }}</dd></div>
+              <div class="feld"><dt class="feld__label">Einkaufspreis</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.last_purchase_price">{{ euro(daten()!.last_purchase_price) }}</dd></div>
+            </dl>
+            @if (daten()!.long_description) {
+              <p class="langtext">{{ daten()!.long_description }}</p>
+            }
+          </div>
+        </div>
       }
 
       @if (tab() === 'kalkulation') {
-        @switch (kalk().kind) {
+        @switch (vk().kind) {
           @case ('loading') {
             <p class="lade-hinweis" role="status">Kalkulation wird geladen …</p>
           }
           @case ('forbidden') {
-            <app-kein-zugriff [detail]="$any(kalk()).detail" />
+            <app-kein-zugriff [detail]="$any(vk()).detail" />
           }
           @case ('error') {
             <div class="note note--error" role="alert">
               <h2 class="note__titel">Kalkulation nicht verfügbar</h2>
               <p class="note__text">Die VK-Kalkulation ließ sich nicht laden.</p>
-              <button type="button" class="btn btn--primary" (click)="retryKalk()">Erneut versuchen</button>
+              <button type="button" class="btn btn--primary" (click)="retryVk()">Erneut versuchen</button>
             </div>
           }
           @case ('ready') {
-            <dl class="feld-raster">
-              <div class="feld"><dt class="feld__label">Listenpreis</dt><dd class="feld__wert">{{ euro($any(kalk()).data.list_price) }}</dd></div>
-              <div class="feld"><dt class="feld__label">Einkaufspreis (aktuell)</dt><dd class="feld__wert" [class.feld__wert--leer]="!$any(kalk()).data.ek">{{ euro($any(kalk()).data.ek) }}</dd></div>
-            </dl>
+            <div class="kalk">
+              <!-- Links: Preis pro Mengeneinheit ---------------------------- -->
+              <section class="kalk__basis" aria-labelledby="kalk-basis-titel">
+                <h2 id="kalk-basis-titel" class="kalk__titel">Preis pro Mengeneinheit</h2>
+                <dl class="feld-raster">
+                  <div class="feld"><dt class="feld__label">Einkaufspreis</dt><dd class="feld__wert" [class.feld__wert--leer]="!$any(vk()).data.ek">{{ euro($any(vk()).data.ek) }}</dd></div>
+                  <div class="feld"><dt class="feld__label">Listenpreis</dt><dd class="feld__wert" [class.feld__wert--leer]="!$any(vk()).data.list_price">{{ euro($any(vk()).data.list_price) }}</dd></div>
+                  <div class="feld"><dt class="feld__label">MwSt.</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.tax_code">{{ taxCodeLabel(daten()!.tax_code) }}</dd></div>
+                </dl>
+                <p class="kalk__hinweis">
+                  {{ priceUnitText($any(vk()).data.price_unit) }}. Einkaufs-, Listenpreis
+                  und MwSt. werden über „Bearbeiten“ bzw. den Lieferantenbezug gepflegt.
+                </p>
+              </section>
 
-            @if (darfAendern()) {
-              <div class="tab-aktionen">
-                <button type="button" class="btn btn--primary" (click)="vkOeffnen()">
-                  <span aria-hidden="true">＋</span> Verkaufspreis setzen
-                </button>
-              </div>
-            }
+              <!-- Rechts: Verkaufspreise ----------------------------------- -->
+              <section class="kalk__vk" aria-labelledby="kalk-vk-titel">
+                <h2 id="kalk-vk-titel" class="kalk__titel">Verkaufspreise</h2>
 
-            @if ($any(kalk()).data.variants.length === 0) {
-              <div class="tab-platzhalter"><p>Für diesen Artikel ist noch keine VK-Variante hinterlegt.</p></div>
-            } @else {
-              <ul class="vk-liste">
-                @for (v of $any(kalk()).data.variants; track $index) {
-                  <li class="vk">
-                    <span class="vk__kopf">
-                      <span class="vk__label">{{ v.label }}</span>
-                      @if (v.is_standard) { <span class="stamp stamp--positive">Standard</span> }
-                    </span>
-                    <span class="vk__formel">{{ formelText(v) }}@if (v.group_name) { · {{ v.group_name }} }</span>
-                    <span class="vk__preis" [class.vk__preis--leer]="!v.sale_price">
-                      {{ v.sale_price ? euro(v.sale_price) : 'kein EK hinterlegt' }}
-                    </span>
-                  </li>
+                @if ($any(vk()).data.groups.length === 0) {
+                  <div class="tab-platzhalter"><p>Es sind keine VK-Gruppen hinterlegt.</p></div>
+                } @else {
+                  <p class="sr-only" role="status">{{ vkMeldung() }}</p>
+                  @if (vkMeldung(); as vm) {
+                    <div class="melde melde--fehler" role="alert">
+                      <span class="melde__mark" aria-hidden="true">!</span>
+                      <span class="melde__text"><strong>Fehler:</strong> {{ vm }}</span>
+                    </div>
+                  }
+                  <div class="vk-tabelle__wrap">
+                    <table class="vk-tabelle">
+                      <caption class="sr-only">
+                        Verkaufspreise je VK-Gruppe. VK/Einheit ist überschreibbar;
+                        stimmt der Wert mit dem errechneten Preis überein, gilt die Formel.
+                        Genau eine Gruppe ist der Standard.
+                      </caption>
+                      <thead>
+                        <tr>
+                          <th scope="col">VK Name</th>
+                          <th scope="col" class="vk-tabelle__num">Errechnet</th>
+                          <th scope="col" class="vk-tabelle__num">VK/Einheit</th>
+                          <th scope="col" class="vk-tabelle__mid">Standard VK</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        @for (g of $any(vk()).data.groups; track g.sale_price_group_id) {
+                          <tr>
+                            <th scope="row" class="vk-tabelle__name">
+                              <span class="vk-tabelle__gname">{{ g.name }}</span>
+                              <span class="vk-tabelle__formel">{{ gruppenFormel(g) }}</span>
+                            </th>
+                            <td class="vk-tabelle__num vk-tabelle__computed" [class.vk-tabelle__leer]="!g.computed_sale_price">
+                              {{ g.computed_sale_price ? euro(g.computed_sale_price) : 'kein EK' }}
+                            </td>
+                            <td class="vk-tabelle__num">
+                              @if (darfAendern()) {
+                                <span class="vk-eingabe">
+                                  <input
+                                    type="text"
+                                    inputmode="decimal"
+                                    class="vk-eingabe__input"
+                                    [value]="vkFeldWert(g.sale_price_group_id)"
+                                    (input)="vkFeldGeaendert(g.sale_price_group_id, $any($event.target).value)"
+                                    [attr.aria-label]="'VK/Einheit für ' + g.name + ' in Euro'"
+                                  />
+                                  <span class="vk-eingabe__einheit" aria-hidden="true">€</span>
+                                </span>
+                              } @else {
+                                {{ g.effective_sale_price ? euro(g.effective_sale_price) : '—' }}
+                              }
+                            </td>
+                            <td class="vk-tabelle__mid">
+                              @if (darfAendern()) {
+                                <input
+                                  type="radio"
+                                  name="vk-standard"
+                                  class="vk-radio"
+                                  [value]="g.sale_price_group_id"
+                                  [checked]="vkStandard() === g.sale_price_group_id"
+                                  (change)="vkStandardWaehlen(g.sale_price_group_id)"
+                                  [attr.aria-label]="'Standard-VK: ' + g.name"
+                                />
+                              } @else if (g.is_standard) {
+                                <span class="stamp stamp--positive">Standard</span>
+                              }
+                            </td>
+                          </tr>
+                        }
+                      </tbody>
+                    </table>
+                  </div>
+
+                  @if (darfAendern()) {
+                    <div class="tab-aktionen">
+                      <button type="button" class="btn btn--primary" [disabled]="vkSaving()" [attr.aria-busy]="vkSaving()" (click)="vkSpeichern()">
+                        {{ vkSaving() ? 'Wird gespeichert …' : 'Speichern' }}
+                      </button>
+                    </div>
+                  }
                 }
-              </ul>
-            }
+              </section>
+            </div>
           }
           @default {
             <p class="lade-hinweis" role="status">Kalkulation wird vorbereitet …</p>
@@ -197,24 +335,60 @@
             <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
           </div>
         }
-        <div class="pos-grid">
-          <app-feld [control]="bearbeitenForm.controls.article_number" label="Artikelnummer" [pflicht]="true" />
-          <app-feld [control]="bearbeitenForm.controls.unit" label="Einheit" [pflicht]="true" hinweis="z. B. Stk, m, h" />
-        </div>
-        <app-feld [control]="bearbeitenForm.controls.description" label="Bezeichnung" [pflicht]="true" />
-        <app-feld [control]="bearbeitenForm.controls.long_description" label="Langtext" typ="textarea" hinweis="Optional" />
-        <div class="pos-grid">
-          <app-feld [control]="bearbeitenForm.controls.line_type" label="Typ" typ="select" [optionen]="lineTypeOptionen" />
-          <app-feld [control]="bearbeitenForm.controls.list_price" label="Listenpreis (netto)" typ="zahl" hinweis="Optional, bis zu vier Nachkommastellen." />
-        </div>
-        <div class="pos-grid">
-          <app-feld [control]="bearbeitenForm.controls.manufacturer_name" label="Hersteller" />
-          <app-feld [control]="bearbeitenForm.controls.manufacturer_number" label="Hersteller-Nr." />
-        </div>
-        <div class="pos-grid">
-          <app-feld [control]="bearbeitenForm.controls.product_group" label="Warengruppe" />
-          <app-feld [control]="bearbeitenForm.controls.gtin" label="GTIN / EAN" hinweis="8, 12, 13 oder 14 Ziffern (mit Prüfziffer)." inputmode="numeric" />
-        </div>
+
+        <fieldset class="dlg-block">
+          <legend class="dlg-block__legend">Stammdaten</legend>
+          <app-feld [control]="bearbeitenForm.controls.description" label="Artikelname" [pflicht]="true" />
+          <div class="pos-grid">
+            <app-feld [control]="bearbeitenForm.controls.article_number" label="Artikelnummer" [pflicht]="true" />
+            <app-feld [control]="bearbeitenForm.controls.unit" label="Einheit" [pflicht]="true" hinweis="z. B. Stk, m, h" />
+            <app-feld [control]="bearbeitenForm.controls.product_group" label="Kategorie" />
+            <app-feld [control]="bearbeitenForm.controls.matchcode" label="Matchcode" />
+            <app-feld [control]="bearbeitenForm.controls.line_type" label="Typ" typ="select" [optionen]="lineTypeOptionen" />
+            <app-feld [control]="bearbeitenForm.controls.gtin" label="EAN / GTIN" hinweis="8, 12, 13 oder 14 Ziffern (mit Prüfziffer)." inputmode="numeric" />
+            @if (darfKostenstellen()) {
+              <app-feld [control]="bearbeitenForm.controls.cost_center_id" label="Kostenstelle" typ="select" platzhalter="Bitte auswählen" [optionen]="costCenterOptionen()" />
+            }
+          </div>
+        </fieldset>
+
+        <fieldset class="dlg-block">
+          <legend class="dlg-block__legend">Hersteller</legend>
+          <div class="pos-grid">
+            <app-feld [control]="bearbeitenForm.controls.manufacturer_name" label="Hersteller" />
+            <app-feld [control]="bearbeitenForm.controls.manufacturer_number" label="Hersteller-Nr." />
+            <app-feld [control]="bearbeitenForm.controls.manufacturer_type" label="Hersteller-Typ-Bezeichnung" />
+          </div>
+        </fieldset>
+
+        <fieldset class="dlg-block">
+          <legend class="dlg-block__legend">Lieferant</legend>
+          <app-referenz-wahl
+            [control]="bearbeitenForm.controls.supplier_party_id"
+            label="Lieferant"
+            platzhalter="Kontakt suchen …"
+            [hinweis]="'Aktuell: ' + (daten()!.supplier_name || 'keiner') + '. Zum Wechseln suchen.'"
+            [suche]="lieferantSuche"
+          />
+          <div class="pos-grid">
+            <app-feld [control]="bearbeitenForm.controls.supplier_article_number" label="Lieferanten-Nr." hinweis="Pflicht, wenn ein Lieferant gewählt ist." />
+            <app-feld [control]="bearbeitenForm.controls.last_purchase_price" label="Einkaufspreis" typ="zahl" hinweis="Je Preiseinheit." />
+          </div>
+        </fieldset>
+
+        <fieldset class="dlg-block">
+          <legend class="dlg-block__legend">Beschaffung &amp; Preise</legend>
+          <div class="pos-grid">
+            <app-feld [control]="bearbeitenForm.controls.min_order_quantity" label="Mindestbestellmenge" typ="zahl" />
+            <app-feld [control]="bearbeitenForm.controls.quantity_step" label="Mengenstaffel" typ="zahl" />
+            <app-feld [control]="bearbeitenForm.controls.price_unit" label="Preiseinheit" typ="select" [optionen]="priceUnitOptionen" hinweis="Der Preis gilt je … Einheiten." />
+            <app-feld [control]="bearbeitenForm.controls.delivery_time_days" label="Lieferzeit (Tage)" typ="zahl" inputmode="numeric" hinweis="Ganze Tage." />
+            <app-feld [control]="bearbeitenForm.controls.list_price" label="Listenpreis (netto)" typ="zahl" hinweis="Bis zu vier Nachkommastellen." />
+            <app-feld [control]="bearbeitenForm.controls.tax_code" label="MwSt." typ="select" platzhalter="Bitte auswählen" [optionen]="taxCodeOptionen" />
+          </div>
+        </fieldset>
+
+        <app-feld [control]="bearbeitenForm.controls.long_description" label="Beschreibung" typ="textarea" hinweis="Optional" />
       </form>
       <div dialog-aktionen class="dialog__aktionen">
         <button type="button" class="btn" [disabled]="bearbeitenLaedt()" (click)="bearbeitenSchliessen()">Abbrechen</button>
@@ -235,46 +409,5 @@
       (bestaetigen)="deaktivierenBestaetigen()"
       (abbrechen)="statusAbbrechen()"
     />
-
-    <!-- ---------------------------- Verkaufspreis setzen ------------------ -->
-    <app-dialog [offen]="vkOffen()" titel="Verkaufspreis setzen" (schliessen)="vkSchliessen()">
-      <form id="vk-form" class="dialog-form" (submit)="$event.preventDefault(); vkAbsenden()" novalidate>
-        @if (formularMeldung(); as fm) {
-          <div class="melde melde--fehler" role="alert">
-            <span class="melde__mark" aria-hidden="true">!</span>
-            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
-          </div>
-        }
-        <app-feld [control]="vkForm.controls.label" label="Bezeichnung" [pflicht]="true" hinweis="z. B. Standard." />
-        <app-feld
-          [control]="vkForm.controls.modus"
-          label="Preisart"
-          typ="select"
-          [pflicht]="true"
-          hinweis="Entweder ein fester Verkaufspreis oder eine Kalkulationsgruppe (Formel) — nicht beides."
-          [optionen]="preisArten"
-        />
-        @if (vkForm.controls.modus.value === 'festpreis') {
-          <app-feld [control]="vkForm.controls.fixed_price" label="Festpreis (netto)" typ="zahl" [pflicht]="true" hinweis="Betrag in Euro, z. B. 199,90." />
-        } @else {
-          <app-feld
-            [control]="vkForm.controls.sale_price_group_id"
-            label="Kalkulationsgruppe"
-            typ="select"
-            [pflicht]="true"
-            platzhalter="Gruppe wählen"
-            [optionen]="preisgruppen()"
-            [hinweis]="preisgruppen().length === 0 ? 'Keine Kalkulationsgruppen verfügbar.' : 'Auf-/Abschlag auf EK oder Listenpreis.'"
-          />
-        }
-        <app-feld [control]="vkForm.controls.is_standard" label="Als Standard-VK verwenden" typ="checkbox" />
-      </form>
-      <div dialog-aktionen class="dialog__aktionen">
-        <button type="button" class="btn" [disabled]="vkLaedt()" (click)="vkSchliessen()">Abbrechen</button>
-        <button type="submit" form="vk-form" class="btn btn--primary" [disabled]="vkLaedt()" [attr.aria-busy]="vkLaedt()">
-          {{ vkLaedt() ? 'Wird gesetzt …' : 'Verkaufspreis setzen' }}
-        </button>
-      </div>
-    </app-dialog>
   }
 }

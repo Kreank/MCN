@@ -60,6 +60,7 @@ class ZielFilter(Schema):
     service_job_id: UUID | None = None
     quote_id: UUID | None = None
     invoice_id: UUID | None = None
+    article_id: UUID | None = None
 
 
 def _out(link):

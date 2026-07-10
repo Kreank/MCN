@@ -7,6 +7,7 @@ gesetzt werden. Kein Löschen — nur status AKTIV/INAKTIV.
 """
 import json
 import uuid
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from django.db.models import Max
@@ -15,15 +16,74 @@ from db_core.db_context import business_transaction
 from db_core.models import (
     Article,
     ArticleSalePrice,
+    ArticleSupplierReference,
     Assembly,
     AssemblyComponent,
+    CostCenter,
     SalePriceGroup,
+    TaxCode,
     WageGroup,
 )
-from db_core.services._validation import ensure_all_exist, ensure_exists
+from db_core.services._validation import (
+    ensure_all_exist,
+    ensure_exists,
+    ensure_party_usable,
+)
 
 SALE_CALC_BASES = ("EK", "LISTENPREIS")
 SALE_OPERATORS = ("AUFSCHLAG", "ABSCHLAG")
+PRICE_UNITS = (1, 10, 100, 1000)
+
+
+def _ensure_tax_code(code):
+    """tax_code muss in der Belegpositions-Codeliste (invoicing.tax_code) stehen."""
+    if code is None:
+        return None
+    code = str(code).strip()
+    if not code:
+        return None
+    if not TaxCode.objects.filter(code=code).exists():
+        raise ValueError(f"Unbekannter Steuercode '{code}'.")
+    return code
+
+
+def _ensure_cost_center(cost_center_id):
+    """Kostenstelle muss existieren und aktiv sein (archivierte sind gesperrt)."""
+    if cost_center_id is None:
+        return None
+    cc = CostCenter.objects.filter(id=cost_center_id).values("active").first()
+    if cc is None:
+        raise ValueError(f"Kostenstelle {cost_center_id} existiert nicht.")
+    if not cc["active"]:
+        raise ValueError("Die Kostenstelle ist archiviert und nicht mehr wählbar.")
+    return cost_center_id
+
+
+def _positiv(wert, feld):
+    """Menge > 0 (Mindestbestellmenge/Mengenstaffel). None bleibt None."""
+    if wert is None:
+        return None
+    d = Decimal(str(wert))
+    if d <= 0:
+        raise ValueError(f"{feld} muss größer als 0 sein.")
+    return d
+
+
+def _price_unit(wert):
+    if wert is None:
+        return None
+    if int(wert) not in PRICE_UNITS:
+        raise ValueError("Preiseinheit muss 1, 10, 100 oder 1000 sein.")
+    return int(wert)
+
+
+def _delivery_time(wert):
+    if wert is None:
+        return None
+    d = int(wert)
+    if d < 0:
+        raise ValueError("Lieferzeit (Tage) darf nicht negativ sein.")
+    return d
 
 ARTICLE_LINE_TYPES = (
     "MATERIAL",
@@ -61,7 +121,16 @@ def create_article(
     list_price=None,
     long_description=None,
     manufacturer_name=None,
+    manufacturer_number=None,
+    manufacturer_type=None,
     product_group=None,
+    matchcode=None,
+    min_order_quantity=None,
+    quantity_step=None,
+    delivery_time_days=None,
+    tax_code=None,
+    cost_center_id=None,
+    price_unit=None,
 ):
     """Legt einen Artikel (Status AKTIV) an."""
     if line_type not in ARTICLE_LINE_TYPES:
@@ -72,6 +141,13 @@ def create_article(
     for feld, wert in (("article_number", article_number), ("description", description), ("unit", unit)):
         if not wert or not str(wert).strip():
             raise ValueError(f"{feld} darf nicht leer sein.")
+    # Fremdschlüssel/Wertebereiche vorab prüfen → klarer 422 statt IntegrityError.
+    tax_code = _ensure_tax_code(tax_code)
+    cost_center_id = _ensure_cost_center(cost_center_id)
+    min_order_quantity = _positiv(min_order_quantity, "Mindestbestellmenge")
+    quantity_step = _positiv(quantity_step, "Mengenstaffel")
+    delivery_time_days = _delivery_time(delivery_time_days)
+    price_unit = _price_unit(price_unit)
     with business_transaction(actor_app_user_id):
         article = Article.objects.create(
             id=uuid.uuid4(),
@@ -82,7 +158,16 @@ def create_article(
             list_price=list_price,
             long_description=long_description,
             manufacturer_name=manufacturer_name,
+            manufacturer_number=manufacturer_number,
+            manufacturer_type=manufacturer_type,
             product_group=product_group,
+            matchcode=matchcode,
+            min_order_quantity=min_order_quantity,
+            quantity_step=quantity_step,
+            delivery_time_days=delivery_time_days,
+            tax_code_id=tax_code,
+            cost_center_id=cost_center_id,
+            price_unit=price_unit if price_unit is not None else 1,
             status="AKTIV",
             version=1,
         )
@@ -104,7 +189,15 @@ ARTICLE_UPDATE_FIELDS = (
     "gtin",
     "manufacturer_name",
     "manufacturer_number",
+    "manufacturer_type",
     "product_group",
+    "matchcode",
+    "min_order_quantity",
+    "quantity_step",
+    "delivery_time_days",
+    "tax_code",
+    "cost_center_id",
+    "price_unit",
 )
 
 
@@ -125,20 +218,29 @@ def update_article(actor_app_user_id, *, article_id, **felder):
     if article is None:
         raise ValueError("Artikel nicht gefunden.")
 
+    # werte: attname -> Wert (für setattr); spalten: Feldnamen (für update_fields).
+    # Für die Fremdschlüssel weichen beide ab: tax_code -> attname tax_code_id,
+    # cost_center_id -> Feldname cost_center.
     werte = {}
+    spalten = []
+
+    def _merke(attname, feldname, wert):
+        werte[attname] = wert
+        spalten.append(feldname)
+
     for feld, wert in felder.items():
         if feld in ("article_number", "description", "unit"):
             # NOT NULL + CHECK btrim(...) <> '' — leer wäre ein 500.
             if wert is None or not str(wert).strip():
                 raise ValueError(f"{feld} darf nicht leer sein.")
-            werte[feld] = str(wert).strip()
+            _merke(feld, feld, str(wert).strip())
         elif feld == "line_type":
             if wert not in ARTICLE_LINE_TYPES:
                 raise ValueError(
                     f"Ungültiger line_type '{wert}'. "
                     f"Erlaubt: {', '.join(ARTICLE_LINE_TYPES)}."
                 )
-            werte[feld] = wert
+            _merke(feld, feld, wert)
         elif feld == "gtin":
             wert = (wert or "").strip() or None
             if wert is not None and not _gtin_gueltig(wert):
@@ -146,13 +248,28 @@ def update_article(actor_app_user_id, *, article_id, **felder):
                     "Ungültige GTIN/EAN: erwartet 8, 12, 13 oder 14 Ziffern mit "
                     "korrekter Prüfziffer."
                 )
-            werte[feld] = wert
+            _merke(feld, feld, wert)
         elif feld == "list_price":
             if wert is not None and Decimal(str(wert)) < 0:
                 raise ValueError("list_price darf nicht negativ sein.")
-            werte[feld] = wert
+            _merke(feld, feld, wert)
+        elif feld == "min_order_quantity":
+            _merke(feld, feld, _positiv(wert, "Mindestbestellmenge"))
+        elif feld == "quantity_step":
+            _merke(feld, feld, _positiv(wert, "Mengenstaffel"))
+        elif feld == "delivery_time_days":
+            _merke(feld, feld, _delivery_time(wert))
+        elif feld == "price_unit":
+            pu = _price_unit(wert)
+            if pu is None:
+                raise ValueError("Preiseinheit darf nicht leer sein.")
+            _merke(feld, feld, pu)
+        elif feld == "tax_code":
+            _merke("tax_code_id", "tax_code", _ensure_tax_code(wert))
+        elif feld == "cost_center_id":
+            _merke("cost_center_id", "cost_center", _ensure_cost_center(wert))
         else:
-            werte[feld] = (str(wert).strip() or None) if wert is not None else None
+            _merke(feld, feld, (str(wert).strip() or None) if wert is not None else None)
 
     if "article_number" in werte:
         vergeben = (
@@ -167,10 +284,10 @@ def update_article(actor_app_user_id, *, article_id, **felder):
 
     if not werte:
         return article
-    for feld, wert in werte.items():
-        setattr(article, feld, wert)
+    for attname, wert in werte.items():
+        setattr(article, attname, wert)
     with business_transaction(actor_app_user_id):
-        article.save(update_fields=list(werte) + ["updated_at"])
+        article.save(update_fields=spalten + ["updated_at"])
     article.refresh_from_db()
     return article
 
@@ -384,6 +501,16 @@ def set_article_sale_price(
         )
     ensure_exists(Article, article_id, "Artikel")
     ensure_exists(SalePriceGroup, sale_price_group_id, "Kalkulationsgruppe")
+    # Höchstens eine Zeile je (Artikel, VK-Gruppe) — seit Migration 0042 als
+    # partieller Unique-Index (uq_article_sale_price_group). Ohne Vorabprüfung
+    # schlüge ein Doppel-Anlegen als IntegrityError (500) durch statt als 422;
+    # die ganze VK-Tabelle wird über set_verkaufspreise (Upsert je Gruppe) gepflegt.
+    if sale_price_group_id is not None and ArticleSalePrice.objects.filter(
+        article_id=article_id, sale_price_group_id=sale_price_group_id
+    ).exists():
+        raise ValueError(
+            "Für diese VK-Gruppe besteht bereits ein Eintrag an diesem Artikel."
+        )
     with business_transaction(actor_app_user_id):
         asp = ArticleSalePrice.objects.create(
             id=uuid.uuid4(),
@@ -509,6 +636,11 @@ def positionswerte_in_stammdaten(
     article = update_article(actor_app_user_id, article_id=article_id, **gesetzt)
 
     if verkaufspreis is not None:
+        # BEWUSST KEINE price_unit-Umrechnung: `verkaufspreis` ist der
+        # Belegpositions-Preis JE STÜCK, und `fixed_price` (die VK-Überschreibung)
+        # ist ebenfalls je Stück (die VK-Übersicht teilt nur die BASIS durch
+        # price_unit, nicht die Überschreibung). Ein Teilen/Multiplizieren hier
+        # verfälschte den Rundlauf Beleg <-> Stamm.
         preis = Decimal(str(verkaufspreis))
         if preis < 0:
             raise ValueError("Der Verkaufspreis darf nicht negativ sein.")
@@ -528,3 +660,185 @@ def positionswerte_in_stammdaten(
             )
     article.refresh_from_db()
     return article
+
+
+# ---------------------------------------------------------------------------
+# Lieferantenbezug setzen (Hero-Reiter „Informationen": Lieferant + EK)
+# ---------------------------------------------------------------------------
+
+def set_primary_supplier(
+    actor_app_user_id,
+    *,
+    article_id,
+    supplier_party_id,
+    supplier_article_number,
+    last_purchase_price=None,
+    currency="EUR",
+):
+    """Setzt den primären (manuellen) Lieferantenbezug eines Artikels.
+
+    Ein Artikel kann mehrere Lieferantenbezüge tragen; für den Dialog zählt der
+    PRIMÄRE — aktuell gültig mit dem jüngsten valid_from (siehe
+    kalkulation.primary_supplier_reference). Diese Funktion pflegt den manuell
+    gesetzten Bezug (`source_system='MANUELL'`):
+
+    * Besteht bereits ein offener Bezug für denselben Lieferanten und dieselbe
+      Lieferanten-Artikelnummer, wird nur der Einkaufspreis aktualisiert (der
+      Wechsel wird über `trg_supplier_ref_audit` historisiert). Lieferant,
+      Quellsystem, Namespace und Nummer sind laut Schema unveränderlich
+      (trg_supplier_ref_protect).
+    * Andernfalls entsteht ein neuer Bezug ab heute; er wird durch das jüngste
+      valid_from/last_imported_at zum primären.
+
+    `last_purchase_price` wird UNVERÄNDERT gespeichert (je `price_unit` Einheiten;
+    die Umrechnung auf je Stück macht der Kalkulations-Service). NULL heisst
+    „Einkaufspreis unbekannt" — dann verlangt der DB-CHECK auch keine Währung.
+    """
+    ensure_exists(Article, article_id, "Artikel")
+    ensure_party_usable(supplier_party_id, "Lieferant")
+    san = (supplier_article_number or "").strip()
+    if not san:
+        raise ValueError("Die Lieferanten-Artikelnummer darf nicht leer sein.")
+    if last_purchase_price is not None:
+        ek = Decimal(str(last_purchase_price))
+        if ek < 0:
+            raise ValueError("Der Einkaufspreis darf nicht negativ sein.")
+        cur = (currency or "EUR").strip().upper() or "EUR"
+    else:
+        ek = None
+        cur = None  # CHECK ((last_purchase_price IS NULL) = (currency IS NULL))
+
+    heute = date.today()
+    with business_transaction(actor_app_user_id):
+        vorhanden = (
+            ArticleSupplierReference.objects.filter(
+                article_id=article_id,
+                source_system="MANUELL",
+                supplier_party_id=supplier_party_id,
+                supplier_article_number=san,
+                valid_until__isnull=True,
+            )
+            .order_by("-valid_from")
+            .first()
+        )
+        if vorhanden is not None:
+            vorhanden.last_purchase_price = ek
+            vorhanden.currency = cur
+            vorhanden.last_imported_at = datetime.now(timezone.utc)
+            vorhanden.save(
+                update_fields=[
+                    "last_purchase_price", "currency", "last_imported_at", "updated_at"
+                ]
+            )
+            ref = vorhanden
+        else:
+            ref = ArticleSupplierReference.objects.create(
+                id=uuid.uuid4(),
+                article_id=article_id,
+                supplier_party_id=supplier_party_id,
+                source_system="MANUELL",
+                # Namespace je Artikel+Lieferant: die Kollisionsschranke (EXCLUDE)
+                # greift dann nur bei genau diesem Bezug, nicht über Artikel hinweg.
+                source_namespace=f"{article_id}:{supplier_party_id}",
+                supplier_article_number=san,
+                last_purchase_price=ek,
+                currency=cur,
+                valid_from=heute,
+                last_imported_at=datetime.now(timezone.utc),
+            )
+    return ref
+
+
+# ---------------------------------------------------------------------------
+# VK-Tabelle „auf einmal" speichern (Hero-Reiter „Kalkulation" rechts)
+# ---------------------------------------------------------------------------
+
+def set_verkaufspreise(actor_app_user_id, *, article_id, entries):
+    """Setzt die komplette VK-Gruppen-Tabelle eines Artikels in EINEM Vorgang.
+
+    `entries`: Liste von dicts {sale_price_group_id, fixed_price|None, is_standard}.
+    Je Gruppe entsteht/aktualisiert sich eine `article_sale_price`-Zeile:
+    fixed_price gesetzt = manuelle Überschreibung des Formel-VK dieser Gruppe,
+    None = Formel gilt. Genau eine Gruppe ist Standard.
+
+    Der Hero-Dialog speichert die ganze Tabelle auf einmal; darum ein einziger
+    business_transaction-Block. Bestehende freistehende Festpreise (Gruppe NULL,
+    z. B. „aus Beleg übernommen") verlieren dabei ihren Standard-Status — den
+    vergibt die Tabelle.
+    """
+    ensure_exists(Article, article_id, "Artikel")
+    entries = list(entries or [])
+    if not entries:
+        raise ValueError("Es wurde keine VK-Gruppe übergeben.")
+
+    gesehen = set()
+    standard = []
+    normiert = []
+    for e in entries:
+        gid = e.get("sale_price_group_id")
+        if gid is None:
+            raise ValueError("Jede Zeile braucht eine VK-Gruppe.")
+        if gid in gesehen:
+            raise ValueError("Eine VK-Gruppe darf nur einmal vorkommen.")
+        gesehen.add(gid)
+        fixed = e.get("fixed_price")
+        if fixed is not None:
+            fixed = Decimal(str(fixed))
+            if fixed < 0:
+                raise ValueError("Ein überschriebener VK darf nicht negativ sein.")
+        is_std = bool(e.get("is_standard"))
+        if is_std:
+            standard.append(gid)
+        normiert.append({"gid": gid, "fixed": fixed, "is_std": is_std})
+
+    if len(standard) != 1:
+        raise ValueError("Genau eine VK-Gruppe muss als Standard markiert sein.")
+
+    # Alle genannten Gruppen müssen existieren UND aktiv sein.
+    gruppen = {
+        g.id: g
+        for g in SalePriceGroup.objects.filter(id__in=list(gesehen))
+    }
+    fehlend = gesehen - set(gruppen)
+    if fehlend:
+        raise ValueError(
+            "Unbekannte VK-Gruppe(n): "
+            + ", ".join(str(m) for m in sorted(fehlend, key=str))
+        )
+    inaktiv = [str(gid) for gid, g in gruppen.items() if g.status != "AKTIV"]
+    if inaktiv:
+        raise ValueError("Inaktive VK-Gruppe(n): " + ", ".join(sorted(inaktiv)))
+
+    bestehend = {
+        asp.sale_price_group_id: asp
+        for asp in ArticleSalePrice.objects.filter(
+            article_id=article_id, sale_price_group_id__in=list(gesehen)
+        )
+    }
+
+    with business_transaction(actor_app_user_id):
+        # Erst alle Standard-Marker löschen (auch freistehende Festpreise), damit
+        # der partielle Unique-Index nie zwei Standards gleichzeitig sieht.
+        ArticleSalePrice.objects.filter(
+            article_id=article_id, is_standard=True
+        ).update(is_standard=False)
+
+        std_gid = standard[0]
+        for row in normiert:
+            asp = bestehend.get(row["gid"])
+            if asp is not None:
+                asp.fixed_price = row["fixed"]
+                asp.save(update_fields=["fixed_price", "updated_at"])
+            else:
+                ArticleSalePrice.objects.create(
+                    id=uuid.uuid4(),
+                    article_id=article_id,
+                    sale_price_group_id=row["gid"],
+                    label=gruppen[row["gid"]].name,
+                    fixed_price=row["fixed"],
+                    is_standard=False,
+                )
+        # Genau eine Zeile als Standard markieren.
+        ArticleSalePrice.objects.filter(
+            article_id=article_id, sale_price_group_id=std_gid
+        ).update(is_standard=True)

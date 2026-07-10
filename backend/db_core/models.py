@@ -1228,12 +1228,35 @@ class Article(models.Model):
     line_type = models.TextField()
     product_group = models.TextField(null=True, blank=True)
     status = models.TextField()  # AKTIV | INAKTIV
-    # Listenpreis je EINER Mengeneinheit, vier Nachkommastellen (Migration 0039).
-    # Kann Basis einer Verkaufspreisgruppe sein (calc_basis = LISTENPREIS), daher
-    # dieselbe Genauigkeit wie der Einkaufspreis.
+    # Listenpreis je `price_unit` Mengeneinheiten, vier Nachkommastellen
+    # (Migration 0039). Kann Basis einer Verkaufspreisgruppe sein
+    # (calc_basis = LISTENPREIS), daher dieselbe Genauigkeit wie der EK.
     list_price = models.DecimalField(
         max_digits=15, decimal_places=4, null=True, blank=True
     )
+    # Hero-Feldsatz (Migration 0042).
+    matchcode = models.TextField(null=True, blank=True)
+    manufacturer_type = models.TextField(null=True, blank=True)
+    min_order_quantity = models.DecimalField(
+        max_digits=15, decimal_places=3, null=True, blank=True
+    )
+    quantity_step = models.DecimalField(
+        max_digits=15, decimal_places=3, null=True, blank=True
+    )
+    delivery_time_days = models.SmallIntegerField(null=True, blank=True)
+    # Steuercode-Vorschlag für neue Belegpositionen (FK invoicing.tax_code.code).
+    # attname = tax_code_id, db_column = 'tax_code' (wie bei quote_line).
+    tax_code = models.ForeignKey(
+        "TaxCode", models.DO_NOTHING, db_column="tax_code",
+        null=True, blank=True, related_name="articles",
+    )
+    cost_center = models.ForeignKey(
+        "CostCenter", models.DO_NOTHING, db_column="cost_center_id",
+        null=True, blank=True, related_name="articles",
+    )
+    # Preiseinheit: list_price/EK gelten je `price_unit` Einheiten (1/10/100/1000).
+    # Der je-Stück-Preis ergibt sich durch Division (Kalkulations-Service).
+    price_unit = models.SmallIntegerField(db_default=models.Value(1))
     version = models.IntegerField()
     created_at = models.DateTimeField(db_default=Now())
     updated_at = models.DateTimeField(db_default=Now())
@@ -2516,6 +2539,10 @@ class FileLink(models.Model):
     )
     invoice = models.ForeignKey(
         "Invoice", models.DO_NOTHING, db_column="invoice_id",
+        null=True, blank=True, related_name="file_links",
+    )
+    article = models.ForeignKey(
+        "Article", models.DO_NOTHING, db_column="article_id",
         null=True, blank=True, related_name="file_links",
     )
     asset_id = models.UUIDField(null=True, blank=True)

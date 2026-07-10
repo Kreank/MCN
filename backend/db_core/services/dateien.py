@@ -82,6 +82,7 @@ ZIELE = (
     "quote_id",
     "invoice_id",
     "communication_id",
+    "article_id",
 )
 
 # Fachliche Einordnung. Freitext in der DB; hier eine gepflegte Liste, damit die
@@ -94,6 +95,8 @@ LINK_KATEGORIEN = (
     "SCAN",
     "PLAN",
     "VERTRAG",
+    # Artikelbild: höchstens eines je Artikel (partieller Unique-Index 0042).
+    "ARTIKELBILD",
     "SONSTIGES",
 )
 

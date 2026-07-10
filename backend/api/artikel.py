@@ -67,10 +67,61 @@ class ArticleDetailOut(ArticleOut):
     gtin: str | None = None
     manufacturer_name: str | None = None
     manufacturer_number: str | None = None
+    manufacturer_type: str | None = None
     product_group: str | None = None
+    matchcode: str | None = None
+    min_order_quantity: Decimal | None = None
+    quantity_step: Decimal | None = None
+    delivery_time_days: int | None = None
+    tax_code: str | None = None
+    cost_center_id: UUID | None = None
+    cost_center_label: str | None = None
+    price_unit: int = 1
+    # Primärer Lieferantenbezug (Hero-Reiter „Informationen").
+    supplier_party_id: UUID | None = None
+    supplier_name: str | None = None
+    supplier_article_number: str | None = None
+    last_purchase_price: Decimal | None = None
     version: int
     created_at: datetime
     updated_at: datetime
+
+
+def _article_detail_out(article) -> "ArticleDetailOut":
+    """Artikel-Detail inkl. abgeleitetem primären Lieferantenbezug und
+    Kostenstellen-Bezeichnung."""
+    ref = kalkulation_service.primary_supplier_reference(article.id)
+    cc = article.cost_center if article.cost_center_id else None
+    return ArticleDetailOut(
+        id=article.id,
+        article_number=article.article_number,
+        description=article.description,
+        unit=article.unit,
+        line_type=article.line_type,
+        status=article.status,
+        list_price=article.list_price,
+        long_description=article.long_description,
+        gtin=article.gtin,
+        manufacturer_name=article.manufacturer_name,
+        manufacturer_number=article.manufacturer_number,
+        manufacturer_type=article.manufacturer_type,
+        product_group=article.product_group,
+        matchcode=article.matchcode,
+        min_order_quantity=article.min_order_quantity,
+        quantity_step=article.quantity_step,
+        delivery_time_days=article.delivery_time_days,
+        tax_code=article.tax_code_id,
+        cost_center_id=article.cost_center_id,
+        cost_center_label=(f"{cc.code} — {cc.label}" if cc else None),
+        price_unit=article.price_unit,
+        supplier_party_id=(ref.supplier_party_id if ref else None),
+        supplier_name=(ref.supplier_party.display_name if ref else None),
+        supplier_article_number=(ref.supplier_article_number if ref else None),
+        last_purchase_price=(ref.last_purchase_price if ref else None),
+        version=article.version,
+        created_at=article.created_at,
+        updated_at=article.updated_at,
+    )
 
 
 class ArticleFilter(Schema):
@@ -204,10 +255,14 @@ def list_articles(
 @router.get("/articles/{article_id}", response=ArticleDetailOut)
 def get_article(request, article_id: UUID):
     require(request, "pricing", "LESEN")
-    article = Article.objects.filter(id=article_id).first()
+    article = (
+        Article.objects.select_related("cost_center", "tax_code")
+        .filter(id=article_id)
+        .first()
+    )
     if article is None:
         raise HttpError(404, "Artikel nicht gefunden.")
-    return article
+    return _article_detail_out(article)
 
 
 class KalkulationVariantOut(Schema):
@@ -353,7 +408,16 @@ class ArticleIn(Schema):
     list_price: Decimal | None = None
     long_description: str | None = None
     manufacturer_name: str | None = None
+    manufacturer_number: str | None = None
+    manufacturer_type: str | None = None
     product_group: str | None = None
+    matchcode: str | None = None
+    min_order_quantity: Decimal | None = None
+    quantity_step: Decimal | None = None
+    delivery_time_days: int | None = None
+    tax_code: str | None = None
+    cost_center_id: UUID | None = None
+    price_unit: int | None = None
 
 
 class ComponentIn(Schema):
@@ -420,11 +484,20 @@ def create_article(request, payload: ArticleIn):
             list_price=_quantize(payload.list_price, 4),   # numeric(15,4) seit Migration 0039
             long_description=payload.long_description,
             manufacturer_name=payload.manufacturer_name,
+            manufacturer_number=payload.manufacturer_number,
+            manufacturer_type=payload.manufacturer_type,
             product_group=payload.product_group,
+            matchcode=payload.matchcode,
+            min_order_quantity=_quantize(payload.min_order_quantity, 3),
+            quantity_step=_quantize(payload.quantity_step, 3),
+            delivery_time_days=payload.delivery_time_days,
+            tax_code=payload.tax_code,
+            cost_center_id=payload.cost_center_id,
+            price_unit=payload.price_unit,
         )
     except ValueError as exc:
         raise HttpError(422, str(exc))
-    return Status(201, Article.objects.get(id=article.id))
+    return Status(201, _article_detail_out(Article.objects.get(id=article.id)))
 
 
 @router.post("/assemblies", response={201: AssemblyDetailOut}, auth=django_auth)
@@ -595,7 +668,15 @@ class ArticleUpdateIn(Schema):
     gtin: str | None = None
     manufacturer_name: str | None = None
     manufacturer_number: str | None = None
+    manufacturer_type: str | None = None
     product_group: str | None = None
+    matchcode: str | None = None
+    min_order_quantity: Decimal | None = None
+    quantity_step: Decimal | None = None
+    delivery_time_days: int | None = None
+    tax_code: str | None = None
+    cost_center_id: UUID | None = None
+    price_unit: int | None = None
 
 
 @router.put("/articles/{article_id}", response=ArticleDetailOut, auth=django_auth)
@@ -605,11 +686,14 @@ def update_article(request, article_id: UUID, payload: ArticleUpdateIn):
     felder = payload.model_dump(exclude_unset=True)
     if "list_price" in felder:
         felder["list_price"] = _quantize(felder["list_price"], 4)
+    for feld in ("min_order_quantity", "quantity_step"):
+        if feld in felder:
+            felder[feld] = _quantize(felder[feld], 3)
     try:
         artikel_service.update_article(actor, article_id=article_id, **felder)
     except ValueError as exc:
         raise HttpError(422, str(exc))
-    return Article.objects.get(id=article_id)
+    return _article_detail_out(Article.objects.get(id=article_id))
 
 
 class ArticleStatusIn(Schema):
@@ -626,7 +710,7 @@ def set_article_status(request, article_id: UUID, payload: ArticleStatusIn):
         )
     except ValueError as exc:
         raise HttpError(422, str(exc))
-    return Article.objects.get(id=article_id)
+    return _article_detail_out(Article.objects.get(id=article_id))
 
 
 class HistorieFeldOut(Schema):
@@ -703,4 +787,111 @@ def stammdaten_uebernehmen(request, article_id: UUID, payload: StammdatenUeberna
         )
     except ValueError as exc:
         raise HttpError(422, str(exc))
-    return Article.objects.get(id=article_id)
+    return _article_detail_out(Article.objects.get(id=article_id))
+
+
+# --- Verkaufspreis-Tabelle (Hero-Reiter „Kalkulation" rechts) --------------
+
+class VerkaufspreisGruppeOut(Schema):
+    sale_price_group_id: UUID
+    name: str
+    calc_basis: str          # EK | LISTENPREIS
+    operator: str            # AUFSCHLAG | ABSCHLAG
+    percent_change: str | None = None
+    amount_change: str | None = None
+    basis_amount: str | None = None          # je Stück (Basis / price_unit)
+    computed_sale_price: str | None = None   # errechneter VK je Stück
+    override_price: str | None = None        # manuelle Überschreibung, wenn gesetzt
+    effective_sale_price: str | None = None  # Überschreibung sonst errechnet
+    is_standard: bool
+
+
+class VerkaufspreiseOut(Schema):
+    article_id: UUID
+    article_number: str
+    description: str
+    unit: str
+    price_unit: int
+    list_price: str | None = None
+    ek: str | None = None
+    groups: list[VerkaufspreisGruppeOut]
+
+
+@router.get("/articles/{article_id}/verkaufspreise", response=VerkaufspreiseOut)
+def get_verkaufspreise(request, article_id: UUID):
+    """Alle aktiven VK-Gruppen mit errechnetem/überschriebenem VK je Stück und
+    der Standard-Markierung (Hero-Reiter „Verkaufspreise")."""
+    require(request, "pricing", "LESEN")
+    data = kalkulation_service.verkaufspreise_uebersicht(article_id)
+    if data is None:
+        raise HttpError(404, "Artikel nicht gefunden.")
+    return data
+
+
+class VerkaufspreisEintragIn(Schema):
+    sale_price_group_id: UUID
+    fixed_price: Decimal | None = None
+    is_standard: bool = False
+
+
+class VerkaufspreiseIn(Schema):
+    entries: list[VerkaufspreisEintragIn]
+
+
+@router.put("/articles/{article_id}/verkaufspreise", response=VerkaufspreiseOut, auth=django_auth)
+def set_verkaufspreise(request, article_id: UUID, payload: VerkaufspreiseIn):
+    """Setzt die ganze VK-Gruppen-Tabelle auf einmal (genau eine Standard-Gruppe).
+
+    Recht `pricing/AENDERN`. Fremdschlüssel/Werte prüft der Service vorab
+    (klarer 422 statt 500)."""
+    actor, _ = require(request, "pricing", "AENDERN")
+    if not Article.objects.filter(id=article_id).exists():
+        raise HttpError(404, "Artikel nicht gefunden.")
+    entries = [
+        {
+            "sale_price_group_id": e.sale_price_group_id,
+            "fixed_price": _quantize(e.fixed_price, 2),  # numeric(12,2)
+            "is_standard": e.is_standard,
+        }
+        for e in payload.entries
+    ]
+    try:
+        artikel_service.set_verkaufspreise(actor, article_id=article_id, entries=entries)
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return kalkulation_service.verkaufspreise_uebersicht(article_id)
+
+
+# --- Primärer Lieferantenbezug (Hero-Reiter „Informationen") ---------------
+
+class LieferantIn(Schema):
+    supplier_party_id: UUID
+    supplier_article_number: str
+    last_purchase_price: Decimal | None = None
+    currency: str = "EUR"
+
+
+@router.put("/articles/{article_id}/lieferant", response=ArticleDetailOut, auth=django_auth)
+def set_lieferant(request, article_id: UUID, payload: LieferantIn):
+    """Setzt den primären (manuellen) Lieferantenbezug eines Artikels
+    (Lieferant, Lieferanten-Artikelnummer, Einkaufspreis). Recht `pricing/AENDERN`.
+
+    Der Einkaufspreis wird je `price_unit` Einheiten gespeichert; die Umrechnung
+    auf je Stück macht die VK-Kalkulation."""
+    actor, _ = require(request, "pricing", "AENDERN")
+    if not Article.objects.filter(id=article_id).exists():
+        raise HttpError(404, "Artikel nicht gefunden.")
+    try:
+        artikel_service.set_primary_supplier(
+            actor,
+            article_id=article_id,
+            supplier_party_id=payload.supplier_party_id,
+            supplier_article_number=payload.supplier_article_number,
+            last_purchase_price=_quantize(payload.last_purchase_price, 4),  # numeric(15,4)
+            currency=payload.currency,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _article_detail_out(
+        Article.objects.select_related("cost_center", "tax_code").get(id=article_id)
+    )

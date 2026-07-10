@@ -162,26 +162,87 @@
 
   <!-- ------------------------------ Artikel anlegen ------------------------ -->
   <app-dialog [offen]="artikelOffen()" titel="Neuer Artikel" (schliessen)="artikelSchliessen()">
-    <form id="neu-artikel-form" class="dialog-form" (submit)="$event.preventDefault(); artikelAbsenden()" novalidate>
+    <form #artikelFormEl id="neu-artikel-form" class="dialog-form" (submit)="$event.preventDefault(); artikelAbsenden()" novalidate>
+      <!-- Erfolg innerhalb des offenen Dialogs (nach „Speichern und neu"). -->
+      <p class="sr-only" role="status">{{ neuErfolg() }}</p>
+      @if (neuErfolg(); as ok) {
+        <div class="melde melde--erfolg" role="status">
+          <span class="melde__mark" aria-hidden="true">✓</span>
+          <span class="melde__text"><strong>Angelegt:</strong> {{ ok }}</span>
+        </div>
+      }
       @if (formularMeldung(); as fm) {
         <div class="melde melde--fehler" role="alert">
           <span class="melde__mark" aria-hidden="true">!</span>
           <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
         </div>
       }
-      <app-feld [control]="artikelForm.controls.article_number" label="Artikelnummer" [pflicht]="true" hinweis="Eindeutig; keine automatische Vergabe." />
-      <app-feld [control]="artikelForm.controls.description" label="Bezeichnung" [pflicht]="true" />
-      <app-feld [control]="artikelForm.controls.unit" label="Einheit" [pflicht]="true" hinweis="z. B. Stk, m, h, Pauschal." />
-      <app-feld [control]="artikelForm.controls.line_type" label="Typ" typ="select" [optionen]="lineTypOptionen" />
-      <app-feld [control]="artikelForm.controls.list_price" label="Listenpreis" typ="zahl" hinweis="Optional. Betrag in Euro, z. B. 1.234,56." />
-      <app-feld [control]="artikelForm.controls.long_description" label="Langtext" typ="textarea" hinweis="Optional." />
-      <app-feld [control]="artikelForm.controls.manufacturer_name" label="Hersteller" hinweis="Optional." />
-      <app-feld [control]="artikelForm.controls.product_group" label="Warengruppe" hinweis="Optional." />
+
+      <fieldset class="dlg-block">
+        <legend class="dlg-block__legend">Stammdaten</legend>
+        <app-feld [control]="artikelForm.controls.description" label="Artikelname" [pflicht]="true" />
+        <div class="dlg-grid">
+          <app-feld [control]="artikelForm.controls.article_number" label="Artikelnummer" [pflicht]="true" hinweis="Eindeutig; keine automatische Vergabe." />
+          <app-feld [control]="artikelForm.controls.product_group" label="Kategorie" hinweis="Warengruppe (optional)." />
+          <app-feld [control]="artikelForm.controls.unit" label="Einheit" [pflicht]="true" hinweis="z. B. Stk, m, h." />
+          <app-feld [control]="artikelForm.controls.matchcode" label="Matchcode" hinweis="Kurzsuchbegriff (optional)." />
+          <app-feld [control]="artikelForm.controls.line_type" label="Typ" typ="select" [optionen]="lineTypOptionen" />
+          @if (darfKostenstellen()) {
+            <app-feld [control]="artikelForm.controls.cost_center_id" label="Kostenstelle" typ="select" platzhalter="Bitte auswählen" [optionen]="costCenterOptionen()" hinweis="Optional." />
+          }
+        </div>
+      </fieldset>
+
+      <fieldset class="dlg-block">
+        <legend class="dlg-block__legend">Hersteller</legend>
+        <div class="dlg-grid">
+          <app-feld [control]="artikelForm.controls.manufacturer_name" label="Hersteller" />
+          <app-feld [control]="artikelForm.controls.manufacturer_number" label="Hersteller-Nr." />
+          <app-feld [control]="artikelForm.controls.manufacturer_type" label="Hersteller-Typ-Bezeichnung" />
+        </div>
+      </fieldset>
+
+      <fieldset class="dlg-block">
+        <legend class="dlg-block__legend">Lieferant (optional)</legend>
+        <p class="dialog-form__hinweis">
+          Wird der Lieferant samt Lieferanten-Nr. gesetzt, legt MCN ihn direkt nach
+          dem Anlegen als primären Bezug an. Der Einkaufspreis gilt je gewählter
+          Preiseinheit.
+        </p>
+        <app-referenz-wahl
+          [control]="artikelForm.controls.supplier_party_id"
+          label="Lieferant"
+          platzhalter="Kontakt suchen …"
+          hinweis="Optional. Aus dem Kontaktstamm."
+          [suche]="lieferantSuche"
+        />
+        <div class="dlg-grid">
+          <app-feld [control]="artikelForm.controls.supplier_article_number" label="Lieferanten-Nr." hinweis="Pflicht, wenn ein Lieferant gewählt ist." />
+          <app-feld [control]="artikelForm.controls.last_purchase_price" label="Einkaufspreis" typ="zahl" hinweis="Optional, je Preiseinheit." />
+        </div>
+      </fieldset>
+
+      <fieldset class="dlg-block">
+        <legend class="dlg-block__legend">Beschaffung &amp; Preise</legend>
+        <div class="dlg-grid">
+          <app-feld [control]="artikelForm.controls.min_order_quantity" label="Mindestbestellmenge" typ="zahl" hinweis="Optional." />
+          <app-feld [control]="artikelForm.controls.quantity_step" label="Mengenstaffel" typ="zahl" hinweis="Optional." />
+          <app-feld [control]="artikelForm.controls.price_unit" label="Preiseinheit" typ="select" [optionen]="priceUnitOptionen" hinweis="Der Preis gilt je … Einheiten." />
+          <app-feld [control]="artikelForm.controls.delivery_time_days" label="Lieferzeit (Tage)" typ="zahl" inputmode="numeric" hinweis="Optional, ganze Tage." />
+          <app-feld [control]="artikelForm.controls.list_price" label="Listenpreis (netto)" typ="zahl" hinweis="Optional, z. B. 1.234,56." />
+          <app-feld [control]="artikelForm.controls.tax_code" label="MwSt." typ="select" platzhalter="Bitte auswählen" [optionen]="taxCodeOptionen" hinweis="Optional." />
+        </div>
+      </fieldset>
+
+      <app-feld [control]="artikelForm.controls.long_description" label="Beschreibung" typ="textarea" hinweis="Optional." />
     </form>
     <div dialog-aktionen class="dialog__aktionen">
       <button type="button" class="btn" [disabled]="neuLaedt()" (click)="artikelSchliessen()">Abbrechen</button>
+      <button type="button" class="btn" [disabled]="neuLaedt()" (click)="artikelSpeichernUndNeu()">
+        {{ neuLaedt() ? 'Wird angelegt …' : 'Speichern und neu' }}
+      </button>
       <button type="submit" form="neu-artikel-form" class="btn btn--primary" [disabled]="neuLaedt()" [attr.aria-busy]="neuLaedt()">
-        {{ neuLaedt() ? 'Wird angelegt …' : 'Artikel anlegen' }}
+        {{ neuLaedt() ? 'Wird angelegt …' : 'Speichern' }}
       </button>
     </div>
   </app-dialog>
