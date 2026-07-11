@@ -1,9 +1,10 @@
-import { Component, computed, inject, signal } from '@angular/core';
+import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { RouterLink } from '@angular/router';
-import { AuswertungService } from '../../core/auswertungen.service';
+import { AuswertungService, csvDownloadAusloesen } from '../../core/auswertungen.service';
 import { MitarbeitendeDashboard } from '../../core/auswertungen.model';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
-import { VerbotenState, fehlerState } from '../../shared/http-fehler';
+import { VerbotenState, fehlerDetail, fehlerState } from '../../shared/http-fehler';
 
 type ViewState =
   | { kind: 'loading' }
@@ -34,8 +35,11 @@ const ABSENCE_LABEL: Record<string, string> = {
 })
 export class AuswertungenMitarbeitende {
   private readonly svc = inject(AuswertungService);
+  private readonly destroyRef = inject(DestroyRef);
   protected readonly year = signal(new Date().getFullYear());
   protected readonly state = signal<ViewState>({ kind: 'loading' });
+  protected readonly exportLaeuft = signal(false);
+  protected readonly exportMeldung = signal<string | null>(null);
   private reqId = 0;
 
   protected readonly daten = computed(() => {
@@ -73,6 +77,27 @@ export class AuswertungenMitarbeitende {
   nextYear(): void {
     this.year.update((y) => y + 1);
     this.load();
+  }
+
+  /** Laedt den CSV-Export fuer das AKTUELL gewaehlte Jahr (Export = Ansicht). */
+  exportieren(): void {
+    if (this.exportLaeuft()) return;
+    this.exportLaeuft.set(true);
+    this.exportMeldung.set(null);
+    this.svc
+      .mitarbeitendeExport(this.year())
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: ({ blob, filename }) => {
+          csvDownloadAusloesen(blob, filename);
+          this.exportLaeuft.set(false);
+          this.exportMeldung.set(`Export „${filename}" wurde heruntergeladen.`);
+        },
+        error: (err) => {
+          this.exportLaeuft.set(false);
+          this.exportMeldung.set(fehlerDetail(err) ?? 'Der Export konnte nicht erstellt werden.');
+        },
+      });
   }
 
   private load(): void {

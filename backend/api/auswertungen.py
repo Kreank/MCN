@@ -4,14 +4,86 @@ Ausschließlich GET; keine Schreibpfade. In der Dev-Phase ohne Auth (wie die
 übrigen Leseendpunkte); das spätere Zugriffsrecht („kennzahlengated") kommt mit
 dem Rechte-/Auth-Slice. Beträge sind Strings (Decimal, verlustfrei).
 """
+import csv
+import io
 from datetime import date
 
+from django.http import HttpResponse
 from ninja import Query, Router, Schema
 
 from api.permissions import check, require
 from db_core.services import auswertungen as auswertungen_service
 
 router = Router()
+
+# ---------------------------------------------------------------------------
+# CSV-Serialisierung (deutsches Excel-Format)
+# ---------------------------------------------------------------------------
+# Trenner Semikolon, UTF-8 MIT BOM (damit Excel de Umlaute erkennt), Zahlen im
+# deutschen Format (Komma-Dezimal, keine Tausendertrenner — die stören den
+# Excel-Import). Werte mit ;/"/Zeilenumbruch werden über das csv-Modul
+# (QUOTE_MINIMAL) korrekt gequotet. Die Zeilen/Spalten liefert der Service
+# (auswertungen_service.build_*_export) — hier wird nur formatiert und geschrieben.
+
+# Spaltenarten, die als deutsche Dezimalzahl (Komma) ausgegeben werden.
+_NUMERISCH = {"geld", "prozent", "menge", "stunden", "dezimal"}
+
+
+def _fmt_zahl(wert):
+    """Decimal-/Zahl-String → deutsches Format (Punkt→Komma). None → „unbekannt".
+
+    None steht für „unbekannt" (fehlender EK bei der Marge, kein Anteil bei
+    Nullsumme) — bewusst nicht 0 (Ehrlichkeit wie im Dashboard). Der Wert kommt
+    als verlustfreier Decimal-String; das Komma entsteht erst hier."""
+    if wert is None:
+        return "unbekannt"
+    return str(wert).replace(".", ",")
+
+
+def _fmt_zelle(wert, kind):
+    if kind in _NUMERISCH:
+        return _fmt_zahl(wert)
+    if kind == "ganzzahl":
+        return "" if wert is None else str(wert)
+    if kind == "datum":
+        return "" if wert is None else wert.strftime("%d.%m.%Y")
+    if kind == "bool":
+        if wert is None:
+            return "unbekannt"
+        return "Ja" if wert else "Nein"
+    return "" if wert is None else str(wert)
+
+
+def render_csv(tabelle):
+    """Serialisiert eine CsvTabelle in eine Excel-taugliche CSV-Antwort (de-DE).
+
+    Mehrere Blöcke werden durch eine Leerzeile getrennt; jeder Block schreibt
+    optional seinen Titel, dann die Kopfzeile, dann die Datenzeilen. Eine Zelle
+    kann als `auswertungen_service.Zelle(wert, kind)` ihre eigene Formatierungsart
+    tragen (Kennzahlen-Blöcke); sonst gilt die Spaltenart."""
+    puffer = io.StringIO()
+    writer = csv.writer(puffer, delimiter=";", quoting=csv.QUOTE_MINIMAL, lineterminator="\r\n")
+    for i, block in enumerate(tabelle.bloecke):
+        if i > 0:
+            writer.writerow([])
+        if block.titel:
+            writer.writerow([block.titel])
+        writer.writerow([s.header for s in block.spalten])
+        for zeile in block.zeilen:
+            ausgabe = []
+            for spalte, zelle in zip(block.spalten, zeile):
+                if isinstance(zelle, auswertungen_service.Zelle):
+                    wert, kind = zelle
+                else:
+                    wert, kind = zelle, spalte.kind
+                ausgabe.append(_fmt_zelle(wert, kind))
+            writer.writerow(ausgabe)
+    # utf-8-sig schreibt das BOM voran (Excel de erkennt sonst keine Umlaute).
+    inhalt = puffer.getvalue().encode("utf-8-sig")
+    antwort = HttpResponse(inhalt, content_type="text/csv; charset=utf-8")
+    antwort["Content-Disposition"] = f'attachment; filename="{tabelle.dateiname}.csv"'
+    antwort["X-Content-Type-Options"] = "nosniff"
+    return antwort
 
 
 class DashboardOut(Schema):
@@ -228,6 +300,20 @@ def umsatz_projektuebersicht(request, filters: DashboardFilter = Query(...)):
     )
 
 
+@router.get("/umsatz-projektuebersicht/export.csv")
+def umsatz_projektuebersicht_export(request, filters: DashboardFilter = Query(...)):
+    """CSV-Export der Umsatz-/Projektübersicht (gleiche Filter + gleiches Recht).
+
+    Marge-Spalten (nach Gewerk) nur mit `pricing/LESEN` — sonst weggelassen,
+    kein 403."""
+    require(request, "invoicing", "LESEN")
+    ek_allowed = check(request, "pricing", "LESEN") is not None
+    tabelle = auswertungen_service.build_umsatz_export(
+        date_from=filters.date_from, date_to=filters.date_to, ek_allowed=ek_allowed
+    )
+    return render_csv(tabelle)
+
+
 @router.get("/kunden", response=KundenOut)
 def kunden(request, filters: DashboardFilter = Query(...)):
     """Umsatz und Rechnungsanzahl je Kunde (primärer Rechnungsschuldner),
@@ -236,6 +322,16 @@ def kunden(request, filters: DashboardFilter = Query(...)):
     return auswertungen_service.kunden_summary(
         date_from=filters.date_from, date_to=filters.date_to
     )
+
+
+@router.get("/kunden/export.csv")
+def kunden_export(request, filters: DashboardFilter = Query(...)):
+    """CSV-Export des Kunden-Dashboards (Umsatz/Anteil je Kunde). Recht wie oben."""
+    require(request, "invoicing", "LESEN")
+    tabelle = auswertungen_service.build_kunden_export(
+        date_from=filters.date_from, date_to=filters.date_to
+    )
+    return render_csv(tabelle)
 
 
 @router.get("/projekte", response=ProjekteOut)
@@ -253,6 +349,17 @@ def projekte(request, filters: DashboardFilter = Query(...)):
     )
 
 
+@router.get("/projekte/export.csv")
+def projekte_export(request, filters: DashboardFilter = Query(...)):
+    """CSV-Export des Projekte-Dashboards. Marge-Spalten nur mit `pricing/LESEN`."""
+    require(request, "invoicing", "LESEN")
+    ek_allowed = check(request, "pricing", "LESEN") is not None
+    tabelle = auswertungen_service.build_projekte_export(
+        date_from=filters.date_from, date_to=filters.date_to, ek_allowed=ek_allowed
+    )
+    return render_csv(tabelle)
+
+
 @router.get("/artikel", response=ArtikelOut)
 def artikel(request, filters: DashboardFilter = Query(...)):
     """Meistverwendete Positionen und Umsatz je Artikel/Leistung aus den
@@ -268,6 +375,17 @@ def artikel(request, filters: DashboardFilter = Query(...)):
     )
 
 
+@router.get("/artikel/export.csv")
+def artikel_export(request, filters: DashboardFilter = Query(...)):
+    """CSV-Export des Artikel-/Leistungs-Dashboards. Ø-Marge nur mit `pricing/LESEN`."""
+    require(request, "invoicing", "LESEN")
+    ek_allowed = check(request, "pricing", "LESEN") is not None
+    tabelle = auswertungen_service.build_artikel_export(
+        date_from=filters.date_from, date_to=filters.date_to, ek_allowed=ek_allowed
+    )
+    return render_csv(tabelle)
+
+
 @router.get("/mitarbeitende", response=MitarbeitendeOut)
 def mitarbeitende(request, filters: YearFilter = Query(...)):
     """Mitarbeitenden-Auswertung für ein Kalenderjahr: Auslastung (Ist-Zeiten),
@@ -280,3 +398,13 @@ def mitarbeitende(request, filters: YearFilter = Query(...)):
     require(request, "hr", "LESEN")
     year = filters.year or date.today().year
     return auswertungen_service.mitarbeitende_summary(year=year)
+
+
+@router.get("/mitarbeitende/export.csv")
+def mitarbeitende_export(request, filters: YearFilter = Query(...)):
+    """CSV-Export der Mitarbeitenden-Auswertung eines Jahres. Recht `hr/LESEN`
+    (Personaldaten). Abwesenheiten nach Art bleiben unternehmensweit aggregiert."""
+    require(request, "hr", "LESEN")
+    year = filters.year or date.today().year
+    tabelle = auswertungen_service.build_mitarbeitende_export(year=year)
+    return render_csv(tabelle)

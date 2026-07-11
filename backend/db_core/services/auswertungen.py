@@ -13,6 +13,7 @@ business_transaction nötig. Die Berechnungsdefinitionen folgen der Roadmap
 
 Beträge werden als String (Decimal, verlustfrei) zurückgegeben.
 """
+from dataclasses import dataclass
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 
@@ -834,3 +835,379 @@ def mitarbeitende_summary(*, year):
         "people": people,
         "absence_by_type": absence_by_type,
     }
+
+
+# ===========================================================================
+# CSV-Export der Dashboards — Ausleitung der Tabellen (Aggregation NICHT ändern)
+# ===========================================================================
+# Diese Helfer KONSUMIEREN die vorhandenen *_summary()-Aggregate und übersetzen
+# sie in Blöcke aus typisierten Zeilen/Spalten. Die eigentliche CSV-Serialisierung
+# (Semikolon, UTF-8-BOM, de-DE-Zahlen, Quoting) macht die API-Schicht
+# (api/auswertungen.py::render_csv). Hier fällt bewusst KEINE Formatierung an:
+# Geld/Prozente bleiben verlustfreie Decimal-Strings, damit erst am äußersten Rand
+# (im CSV) auf Komma-Dezimal umgestellt wird — Geld reist als String durch die Kette.
+#
+# Need-to-know der Marge: Deckungsbeitrag/Marge stützen sich auf die Einkaufspreise
+# (Modul pricing). Die Marge-SPALTEN werden nur aufgenommen, wenn der Aufrufer
+# `ek_allowed` (pricing/LESEN) übergibt — sonst fehlen sie ganz (kein 403), exakt
+# wie die Dashboards es halten. Ein fehlender EK bleibt „unbekannt" (None), nie 0.
+
+# Formatierungsarten der Spalten (Auswertung in api/auswertungen.py::_fmt_zelle):
+#   text · geld · prozent · menge · stunden · dezimal · ganzzahl · datum · bool
+
+
+class Zelle(tuple):
+    """Zelle mit EIGENER Formatierungsart (überschreibt die Spaltenart).
+
+    Für Kennzahlen-Blöcke, in denen dieselbe Spalte je Zeile unterschiedliche
+    Werttypen trägt (mal Geld, mal Ganzzahl)."""
+
+    __slots__ = ()
+
+    def __new__(cls, wert, kind):
+        return super().__new__(cls, (wert, kind))
+
+
+@dataclass(frozen=True)
+class CsvSpalte:
+    header: str
+    kind: str = "text"
+
+
+@dataclass
+class CsvBlock:
+    """Ein Tabellenblock: optionaler Titel, Kopfzeile, Datenzeilen."""
+
+    titel: str | None
+    spalten: list
+    zeilen: list
+
+
+@dataclass
+class CsvTabelle:
+    """Das ausleitbare Ganze: sprechender Dateiname (ohne .csv) + Blöcke."""
+
+    dateiname: str
+    bloecke: list
+
+
+# Deutsche Beschriftungen (Spiegel der Frontend-Labels), damit die CSV liest wie
+# die Tabelle auf dem Schirm.
+_STATUS_LABEL = {"OPEN": "Offen", "CLOSED": "Abgeschlossen"}
+_ABSENCE_LABEL = {
+    "URLAUB": "Urlaub",
+    "KRANKHEIT": "Krankheit",
+    "ELTERNZEIT": "Elternzeit",
+    "SONDERURLAUB": "Sonderurlaub",
+    "UNBEZAHLT": "Unbezahlt",
+    "FORTBILDUNG": "Fortbildung",
+}
+_LINE_TYPE_LABEL = {
+    "MATERIAL": "Material",
+    "ARBEITSZEIT": "Arbeitszeit",
+    "PAUSCHALE": "Pauschale",
+    "FREMDLEISTUNG": "Fremdleistung",
+    "FAHRT": "Fahrt",
+    "ZUSCHLAG": "Zuschlag",
+    "TEXT": "Text",
+    "ZWISCHENSUMME": "Zwischensumme",
+}
+
+# Die fünf Marge-Spalten (nur mit ek_allowed). „ohne EK"-Header wird je Dashboard
+# überschrieben (Positionen vs. Vorkommen); die Werte kommen aus _marge_zellen.
+_MARGE_SPALTEN = [
+    CsvSpalte("EK gesamt", "geld"),
+    CsvSpalte("Deckungsbeitrag", "geld"),
+    CsvSpalte("Marge %", "prozent"),
+    CsvSpalte("Positionen ohne EK", "ganzzahl"),
+    CsvSpalte("EK vollständig", "bool"),
+]
+
+
+def _marge_zellen(m):
+    """Fünf Marge-Werte aus einem Marge-dict bzw. einer Top-Zeile (raw, ungeformt).
+
+    None (Deckungsbeitrag/Marge unbekannt, weil kein EK hinterlegt) bleibt None
+    und wird im CSV als „unbekannt" ausgewiesen — nie als erfundene 0."""
+    return [
+        m.get("ek_total"),
+        m.get("deckungsbeitrag"),
+        m.get("marge_prozent"),
+        m.get("positionen_ohne_ek"),
+        m.get("ek_vollstaendig"),
+    ]
+
+
+def _export_name(stub, date_from, date_to):
+    """Sprechender Dateistamm inkl. Zeitraum (ohne Erweiterung, ASCII)."""
+    if date_from and date_to:
+        zeitraum = f"{date_from.isoformat()}_bis_{date_to.isoformat()}"
+    elif date_from:
+        zeitraum = f"ab_{date_from.isoformat()}"
+    elif date_to:
+        zeitraum = f"bis_{date_to.isoformat()}"
+    else:
+        zeitraum = "gesamt"
+    return f"{stub}_{zeitraum}"
+
+
+def _kennzahlen_block(titel, zeilen):
+    """Zwei-Spalten-Block (Kennzahl | Wert) mit je Zeile getippten Zellen."""
+    return CsvBlock(titel, [CsvSpalte("Kennzahl"), CsvSpalte("Wert")], zeilen)
+
+
+def build_umsatz_export(*, date_from=None, date_to=None, ek_allowed=False):
+    """Umsatz-/Projektübersicht als CSV-Tabelle (konsumiert das Dashboard-Aggregat).
+
+    Blöcke: Kennzahlen (Umsatz/Projekte) · Umsatzverlauf je Monat · Projekte nach
+    Gewerk · (nur mit pricing/LESEN) Deckungsbeitrag/Marge nach Gewerk."""
+    data = umsatz_projektuebersicht_summary(
+        date_from=date_from, date_to=date_to, ek_allowed=ek_allowed
+    )
+    rev, proj = data["revenue"], data["projects"]
+    bloecke = [
+        _kennzahlen_block(
+            "Kennzahlen",
+            [
+                ["Umsatz netto", Zelle(rev["net_total"], "geld")],
+                ["Umsatz brutto", Zelle(rev["gross_total"], "geld")],
+                ["Rechnungen (Anzahl)", Zelle(rev["invoice_count"], "ganzzahl")],
+                ["Korrekturbelege (Anzahl)", Zelle(rev["credit_count"], "ganzzahl")],
+                ["Projekte gesamt", Zelle(proj["total"], "ganzzahl")],
+                ["Projekte offen", Zelle(proj["open"], "ganzzahl")],
+                ["Projekte abgeschlossen", Zelle(proj["closed"], "ganzzahl")],
+                ["Projekte im Zeitraum erstellt", Zelle(proj["created_in_range"], "ganzzahl")],
+            ],
+        ),
+        CsvBlock(
+            "Umsatzverlauf (netto je Monat)",
+            [CsvSpalte("Monat"), CsvSpalte("Umsatz netto", "geld")],
+            [[p["month"], p["net"]] for p in data["timeline"]],
+        ),
+        CsvBlock(
+            "Erstellte Projekte nach Gewerk",
+            [CsvSpalte("Gewerk"), CsvSpalte("Anzahl", "ganzzahl")],
+            [[g["name"], g["count"]] for g in proj["by_gewerk"]],
+        ),
+    ]
+    if ek_allowed:
+        spalten = [
+            CsvSpalte("Gewerk"),
+            CsvSpalte("Umsatz netto", "geld"),
+            CsvSpalte("Netto mit EK", "geld"),
+            CsvSpalte("Netto ohne EK", "geld"),
+            *_MARGE_SPALTEN,
+        ]
+        zeilen = [
+            [g["name"], g["net_total"], g["net_mit_ek"], g["net_ohne_ek"], *_marge_zellen(g)]
+            for g in data["marge_by_gewerk"]
+        ]
+        bloecke.append(CsvBlock("Deckungsbeitrag/Marge nach Gewerk", spalten, zeilen))
+    return CsvTabelle(_export_name("Umsatz-Projektuebersicht", date_from, date_to), bloecke)
+
+
+def build_kunden_export(*, date_from=None, date_to=None):
+    """Kunden-Dashboard als CSV: Kennzahlen + Umsatz/Anteil je Kunde.
+
+    Der Umsatzanteil wird hier (Ausleitung, keine Aggregatsänderung) aus dem
+    Netto je Kunde und der Gesamtsumme abgeleitet."""
+    data = kunden_summary(date_from=date_from, date_to=date_to)
+    total = Decimal(data["net_total"])
+    zeilen = []
+    for c in data["customers"]:
+        anteil = None
+        if total != 0:
+            anteil = str(_round2(Decimal(c["net_total"]) / total * Decimal(100)))
+        zeilen.append(
+            [
+                c["display_name"],
+                c["net_total"],
+                c["gross_total"],
+                anteil,
+                c["invoice_count"],
+                c["credit_count"],
+            ]
+        )
+    bloecke = [
+        _kennzahlen_block(
+            "Kennzahlen",
+            [
+                ["Kunden (Anzahl)", Zelle(data["customer_count"], "ganzzahl")],
+                ["Umsatz netto gesamt", Zelle(data["net_total"], "geld")],
+            ],
+        ),
+        CsvBlock(
+            "Umsatz je Kunde (Top nach Netto)",
+            [
+                CsvSpalte("Kunde"),
+                CsvSpalte("Umsatz netto", "geld"),
+                CsvSpalte("Umsatz brutto", "geld"),
+                CsvSpalte("Anteil %", "prozent"),
+                CsvSpalte("Rechnungen", "ganzzahl"),
+                CsvSpalte("Korrekturen", "ganzzahl"),
+            ],
+            zeilen,
+        ),
+    ]
+    return CsvTabelle(_export_name("Kunden", date_from, date_to), bloecke)
+
+
+def build_projekte_export(*, date_from=None, date_to=None, ek_allowed=False):
+    """Projekte-Dashboard als CSV: Kennzahlen/Durchlaufzeit · Volumen nach Status ·
+    Top-Projekte (mit Marge nur bei pricing/LESEN) · realisierte vs. geplante Marge."""
+    data = projekte_summary(date_from=date_from, date_to=date_to, ek_allowed=ek_allowed)
+    tp = data["throughput"]
+    bloecke = [
+        _kennzahlen_block(
+            "Kennzahlen",
+            [
+                ["Projekte gesamt", Zelle(data["total"], "ganzzahl")],
+                ["Projekte offen", Zelle(data["open"], "ganzzahl")],
+                ["Projekte abgeschlossen", Zelle(data["closed"], "ganzzahl")],
+                ["Ø Alter offener Projekte (Tage)", Zelle(tp["avg_open_age_days"], "dezimal")],
+                [
+                    "Ø Dauer abgeschlossener Projekte (Tage)",
+                    Zelle(tp["avg_closed_duration_days"], "dezimal"),
+                ],
+            ],
+        ),
+        CsvBlock(
+            "Volumen nach Status",
+            [CsvSpalte("Status"), CsvSpalte("Anzahl", "ganzzahl"), CsvSpalte("Umsatz netto", "geld")],
+            [
+                [_STATUS_LABEL.get(s["status"], s["status"]), s["count"], s["net_total"]]
+                for s in data["by_status"]
+            ],
+        ),
+    ]
+    top_spalten = [CsvSpalte("Projektnummer"), CsvSpalte("Projekt"), CsvSpalte("Umsatz netto", "geld")]
+    if ek_allowed:
+        top_spalten += _MARGE_SPALTEN
+    top_zeilen = []
+    for p in data["top_projects"]:
+        zeile = [p["project_number"], p["name"], p["net_total"]]
+        if ek_allowed:
+            zeile += _marge_zellen(p)
+        top_zeilen.append(zeile)
+    bloecke.append(CsvBlock("Top-Projekte nach Umsatz", top_spalten, top_zeilen))
+
+    if ek_allowed and data["marge"]:
+        m = data["marge"]
+        gp = data["geplante_marge"] or {}
+        bloecke.append(
+            CsvBlock(
+                "Deckungsbeitrag/Marge (Ist realisiert / Plan aus Angeboten)",
+                [CsvSpalte("Kennzahl"), CsvSpalte("Realisiert"), CsvSpalte("Geplant")],
+                [
+                    ["Netto mit EK", Zelle(m["net_mit_ek"], "geld"), Zelle(gp.get("net_mit_ek"), "geld")],
+                    ["EK gesamt", Zelle(m["ek_total"], "geld"), Zelle(gp.get("ek_total"), "geld")],
+                    [
+                        "Deckungsbeitrag",
+                        Zelle(m["deckungsbeitrag"], "geld"),
+                        Zelle(gp.get("deckungsbeitrag"), "geld"),
+                    ],
+                    ["Marge %", Zelle(m["marge_prozent"], "prozent"), Zelle(gp.get("marge_prozent"), "prozent")],
+                    [
+                        "EK vollständig",
+                        Zelle(m["ek_vollstaendig"], "bool"),
+                        Zelle(gp.get("ek_vollstaendig"), "bool"),
+                    ],
+                ],
+            )
+        )
+    return CsvTabelle(_export_name("Projekte", date_from, date_to), bloecke)
+
+
+def build_artikel_export(*, date_from=None, date_to=None, ek_allowed=False):
+    """Artikel-/Leistungs-Dashboard als CSV: Kennzahlen · nach Positionsart ·
+    Positionen (mit Ø-Marge nur bei pricing/LESEN)."""
+    data = artikel_summary(date_from=date_from, date_to=date_to, ek_allowed=ek_allowed)
+    art_spalten = [
+        CsvSpalte("Bezeichnung"),
+        CsvSpalte("Vorkommen", "ganzzahl"),
+        CsvSpalte("Menge gesamt", "menge"),
+        CsvSpalte("Umsatz netto", "geld"),
+    ]
+    if ek_allowed:
+        art_spalten += [
+            CsvSpalte("EK gesamt", "geld"),
+            CsvSpalte("Deckungsbeitrag", "geld"),
+            CsvSpalte("Ø-Marge %", "prozent"),
+            CsvSpalte("Vorkommen ohne EK", "ganzzahl"),
+            CsvSpalte("EK vollständig", "bool"),
+        ]
+    art_zeilen = []
+    for a in data["articles"]:
+        zeile = [a["description"], a["count"], a["quantity_total"], a["net_total"]]
+        if ek_allowed:
+            zeile += _marge_zellen(a)
+        art_zeilen.append(zeile)
+    bloecke = [
+        _kennzahlen_block(
+            "Kennzahlen",
+            [
+                ["Positionszeilen (Anzahl)", Zelle(data["line_count"], "ganzzahl")],
+                ["Umsatz netto gesamt", Zelle(data["net_total"], "geld")],
+            ],
+        ),
+        CsvBlock(
+            "Umsatz nach Positionsart",
+            [CsvSpalte("Positionsart"), CsvSpalte("Anzahl", "ganzzahl"), CsvSpalte("Umsatz netto", "geld")],
+            [
+                [_LINE_TYPE_LABEL.get(t["line_type"], t["line_type"]), t["count"], t["net_total"]]
+                for t in data["by_type"]
+            ],
+        ),
+        CsvBlock("Artikel & Leistungen (Top nach Umsatz)", art_spalten, art_zeilen),
+    ]
+    return CsvTabelle(_export_name("Artikel-Leistungen", date_from, date_to), bloecke)
+
+
+def build_mitarbeitende_export(*, year):
+    """Mitarbeitenden-Dashboard als CSV (Personaldaten → Recht hr/LESEN).
+
+    Blöcke: Kennzahlen · Auslastung/Urlaub je Mitarbeiter · Abwesenheiten nach Art
+    (unternehmensweit — nie je Person, DSGVO wie im Dashboard)."""
+    data = mitarbeitende_summary(year=year)
+    bloecke = [
+        _kennzahlen_block(
+            "Kennzahlen",
+            [
+                ["Jahr", Zelle(data["year"], "ganzzahl")],
+                ["Mitarbeitende (Anzahl)", Zelle(data["employee_count"], "ganzzahl")],
+                ["Ist-Stunden gesamt", Zelle(data["total_worked_hours"], "stunden")],
+                ["Abwesenheitstage gesamt", Zelle(data["total_absence_days"], "dezimal")],
+            ],
+        ),
+        CsvBlock(
+            "Auslastung & Urlaub je Mitarbeiter",
+            [
+                CsvSpalte("Personalnummer"),
+                CsvSpalte("Name"),
+                CsvSpalte("Ist-Stunden", "stunden"),
+                CsvSpalte("Urlaubsanspruch (Tage)", "dezimal"),
+                CsvSpalte("Urlaub genommen (Tage)", "dezimal"),
+                CsvSpalte("Urlaub Rest (Tage)", "dezimal"),
+            ],
+            [
+                [
+                    p["employee_number"],
+                    p["display_name"],
+                    p["worked_hours"],
+                    p["vacation_entitlement"],
+                    p["vacation_used"],
+                    p["vacation_remaining"],
+                ]
+                for p in data["people"]
+            ],
+        ),
+        CsvBlock(
+            "Abwesenheiten nach Art (unternehmensweit aggregiert)",
+            [CsvSpalte("Abwesenheitsart"), CsvSpalte("Tage", "dezimal"), CsvSpalte("Vorgänge", "ganzzahl")],
+            [
+                [_ABSENCE_LABEL.get(a["absence_type"], a["absence_type"]), a["days"], a["count"]]
+                for a in data["absence_by_type"]
+            ],
+        ),
+    ]
+    return CsvTabelle(f"Mitarbeitende_{year}", bloecke)

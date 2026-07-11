@@ -1,8 +1,9 @@
-import { Component, computed, inject, signal } from '@angular/core';
+import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { RouterLink } from '@angular/router';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
-import { VerbotenState, fehlerState } from '../../shared/http-fehler';
-import { AuswertungService } from '../../core/auswertungen.service';
+import { VerbotenState, fehlerDetail, fehlerState } from '../../shared/http-fehler';
+import { AuswertungService, csvDownloadAusloesen } from '../../core/auswertungen.service';
 import { Kunden } from '../../core/auswertungen.model';
 
 type ViewState =
@@ -25,7 +26,10 @@ interface Bar {
 })
 export class AuswertungenKunden {
   private readonly svc = inject(AuswertungService);
+  private readonly destroyRef = inject(DestroyRef);
   protected readonly state = signal<ViewState>({ kind: 'loading' });
+  protected readonly exportLaeuft = signal(false);
+  protected readonly exportMeldung = signal<string | null>(null);
 
   protected readonly daten = computed(() => {
     const s = this.state();
@@ -53,6 +57,27 @@ export class AuswertungenKunden {
 
   retry(): void {
     this.load();
+  }
+
+  /** Laedt den CSV-Export mit den AKTUELLEN Filtern (Export = Ansicht). */
+  exportieren(): void {
+    if (this.exportLaeuft()) return;
+    this.exportLaeuft.set(true);
+    this.exportMeldung.set(null);
+    this.svc
+      .kundenExport()
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: ({ blob, filename }) => {
+          csvDownloadAusloesen(blob, filename);
+          this.exportLaeuft.set(false);
+          this.exportMeldung.set(`Export „${filename}" wurde heruntergeladen.`);
+        },
+        error: (err) => {
+          this.exportLaeuft.set(false);
+          this.exportMeldung.set(fehlerDetail(err) ?? 'Der Export konnte nicht erstellt werden.');
+        },
+      });
   }
 
   private load(): void {

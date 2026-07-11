@@ -29,6 +29,13 @@
       </div>
     }
     @case ('ready') {
+      <div class="export-leiste">
+        <button type="button" class="btn btn--klein" (click)="exportieren()" [disabled]="exportLaeuft()">
+          {{ exportLaeuft() ? 'Export läuft …' : 'Als CSV exportieren' }}
+        </button>
+        <p class="export-leiste__meldung" role="status" aria-live="polite">{{ exportMeldung() }}</p>
+      </div>
+
       <div class="kpi-reihe" role="group" aria-label="Kundenkennzahlen">
         <div class="kpi kpi--stark">
           <span class="kpi__label">Umsatz gesamt (netto)</span>
