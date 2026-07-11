@@ -1,0 +1,141 @@
+<section class="lohngruppen" aria-labelledby="lohngruppen-titel">
+  <header class="page-head">
+    <div>
+      <p class="page-head__kicker">
+        <span class="page-head__scale" aria-hidden="true"></span>
+        Einstellungen
+      </p>
+      <h1 id="lohngruppen-titel" class="page-head__titel">Lohn- &amp; Maschinengruppen</h1>
+    </div>
+    @if (darfAendern() && modus() === null) {
+      <button type="button" class="btn btn--primary" (click)="neu()">+ Lohngruppe</button>
+    }
+  </header>
+
+  <app-einstellungen-nav />
+
+  <p class="intro note" role="note">
+    Der <strong>Verrechnungssatz</strong> ist der Stundensatz, den der Kunde zahlt.
+    Der <strong>Kostensatz</strong> sind Ihre internen Kosten pro Stunde und dient
+    der Margenberechnung — bleibt er leer, rechnet die Auswertung konservativ mit
+    dem Verrechnungssatz (kein Gewinn auf Lohn).
+  </p>
+
+  @if (meldung(); as m) {
+    <p class="note note--error" role="alert">{{ m }}</p>
+  }
+
+  @if (modus() !== null) {
+    <form class="edit-form" [formGroup]="form" (ngSubmit)="speichern()" novalidate>
+      <h2 class="edit-form__titel">
+        {{ modus() === 'neu' ? 'Neue Lohngruppe' : 'Lohngruppe bearbeiten' }}
+      </h2>
+      <div class="edit-grid">
+        <app-feld [control]="form.controls.name" label="Bezeichnung" [pflicht]="true" />
+        <app-feld
+          [control]="form.controls.kind"
+          label="Art"
+          typ="select"
+          [optionen]="arten"
+        />
+        <app-feld
+          [control]="form.controls.hourly_rate"
+          label="Verrechnungssatz (€/Std.)"
+          typ="zahl"
+          [pflicht]="true"
+          hinweis="Stundensatz für den Kunden, z. B. 65,00"
+        />
+        <app-feld
+          [control]="form.controls.cost_rate"
+          label="Kostensatz (€/Std.)"
+          typ="zahl"
+          hinweis="Interne Kosten je Stunde (optional), z. B. 42,00"
+        />
+      </div>
+      <div class="edit-aktionen">
+        <button type="submit" class="btn btn--primary" [disabled]="laedt()">
+          {{ laedt() ? 'Speichern …' : 'Speichern' }}
+        </button>
+        <button type="button" class="btn" [disabled]="laedt()" (click)="abbrechen()">
+          Abbrechen
+        </button>
+      </div>
+    </form>
+  }
+
+  @switch (state().kind) {
+    @case ('loading') {
+      <p class="lade-hinweis" role="status">Lohngruppen werden geladen.</p>
+    }
+    @case ('forbidden') {
+      <app-kein-zugriff [detail]="$any(state()).detail" />
+    }
+    @case ('error') {
+      <p class="note note--error" role="alert">
+        Die Lohngruppen konnten nicht geladen werden. Bitte erneut versuchen.
+      </p>
+    }
+    @case ('ready') {
+      @if ($any(state()).data.length === 0) {
+        <p class="note" role="note">Es sind noch keine Lohngruppen hinterlegt.</p>
+      } @else {
+        <div class="tabelle-rahmen">
+          <table class="lg-tabelle">
+            <caption class="sr-only">
+              Lohn- und Maschinengruppen mit Verrechnungs- und Kostensatz
+            </caption>
+            <thead>
+              <tr>
+                <th scope="col">Bezeichnung</th>
+                <th scope="col">Art</th>
+                <th scope="col" class="num">Verrechnungssatz</th>
+                <th scope="col" class="num">Kostensatz</th>
+                <th scope="col">Status</th>
+                @if (darfAendern()) {
+                  <th scope="col"><span class="sr-only">Aktionen</span></th>
+                }
+              </tr>
+            </thead>
+            <tbody>
+              @for (g of $any(state()).data; track g.id) {
+                <tr [class.zeile--inaktiv]="g.status !== 'AKTIV'">
+                  <th scope="row">{{ g.name }}</th>
+                  <td>{{ artLabel(g.kind) }}</td>
+                  <td class="num">{{ euro(g.hourly_rate) }}</td>
+                  <td class="num">{{ euro(g.cost_rate) }}</td>
+                  <td>
+                    <span
+                      class="status"
+                      [class.status--aktiv]="g.status === 'AKTIV'"
+                      [class.status--inaktiv]="g.status !== 'AKTIV'"
+                    >
+                      <span aria-hidden="true">{{ g.status === 'AKTIV' ? '●' : '○' }}</span>
+                      {{ g.status === 'AKTIV' ? 'Aktiv' : 'Inaktiv' }}
+                    </span>
+                  </td>
+                  @if (darfAendern()) {
+                    <td class="aktionen-zelle">
+                      <div class="zeilen-aktionen">
+                        <button type="button" class="btn" (click)="starteBearbeiten(g)">
+                          Bearbeiten
+                        </button>
+                        <button
+                          type="button"
+                          class="btn"
+                          [disabled]="laedt()"
+                          (click)="umschalten(g)"
+                        >
+                          {{ g.status === 'AKTIV' ? 'Deaktivieren' : 'Aktivieren' }}
+                        </button>
+                      </div>
+                    </td>
+                  }
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    }
+  }
+</section>

@@ -25,6 +25,9 @@ import { AuthService } from '../../core/auth.service';
       <a routerLink="/einstellungen/niederlassungen" routerLinkActive="is-active"
         >Niederlassungen</a
       >
+      @if (darfLohngruppen()) {
+        <a routerLink="/einstellungen/lohngruppen" routerLinkActive="is-active">Lohngruppen</a>
+      }
       @if (darfRechteSehen()) {
         <a routerLink="/einstellungen/rechte" routerLinkActive="is-active">Rechte &amp; Rollen</a>
       }
@@ -69,4 +72,5 @@ import { AuthService } from '../../core/auth.service';
 export class EinstellungenNav {
   private readonly auth = inject(AuthService);
   protected readonly darfRechteSehen = computed(() => this.auth.darf('security', 'LESEN'));
+  protected readonly darfLohngruppen = computed(() => this.auth.darf('pricing', 'LESEN'));
 }

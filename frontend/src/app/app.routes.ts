@@ -387,6 +387,13 @@ export const routes: Routes = [
           import('./features/niederlassungen/niederlassungen').then((m) => m.Niederlassungen),
       },
       {
+        path: 'einstellungen/lohngruppen',
+        title: 'Lohngruppen — MCN Leitstand',
+        canActivate: [darfGuard('pricing', 'LESEN')],
+        loadComponent: () =>
+          import('./features/lohngruppen/lohngruppen').then((m) => m.Lohngruppen),
+      },
+      {
         // Rechtematrix & Rollenzuordnungen. Lesen genügt für die Ansicht; das
         // Ändern gatet der Server mit security/AENDERN (UI schaltet read-only).
         path: 'einstellungen/rechte',
