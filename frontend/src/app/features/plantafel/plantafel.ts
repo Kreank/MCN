@@ -191,7 +191,11 @@ export class Plantafel {
   }
 
   // ---- Termin für einen Auftrag setzen (Klick in eine Bahn/Tag-Zelle) -------
-  protected readonly darfPlanen = computed(() => this.auth.darf('workflow', 'ANLEGEN'));
+  // Der Ablauf braucht ANLEGEN (create) UND AENDERN (Status/Zuweisung) — beides
+  // gaten, sonst startet der Nutzer die Kette und kassiert mittendrin ein 403.
+  protected readonly darfPlanen = computed(
+    () => this.auth.darf('workflow', 'ANLEGEN') && this.auth.darf('workflow', 'AENDERN'),
+  );
   protected readonly neuOffen = signal(false);
   protected readonly neuBusy = signal(false);
   protected readonly neuFehler = signal<string | null>(null);
@@ -272,7 +276,14 @@ export class Plantafel {
         },
         error: (err) => {
           this.neuBusy.set(false);
-          this.neuFehler.set(fehlerDetail(err) ?? 'Der Termin konnte nicht angelegt werden.');
+          // Der Einsatz kann bereits (teilweise) angelegt sein (create ok, aber
+          // Status/Zuweisung schlug fehl). Das Board neu laden, damit der reale
+          // Zustand sichtbar wird, und ehrlich benennen (kein stilles „nichts").
+          this.neuFehler.set(
+            (fehlerDetail(err) ?? 'Der Termin konnte nicht vollständig angelegt werden.') +
+              ' Der Einsatz ist ggf. angelegt, aber noch nicht verplant/zugewiesen — bitte in der Einsatzliste prüfen.',
+          );
+          this.fetch();
         },
       });
   }

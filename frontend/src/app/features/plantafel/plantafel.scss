@@ -178,6 +178,13 @@
 .cell-add:focus-visible {
   opacity: 1;
 }
+// Touch-/Grobzeiger-Geräte (Tablet des Disponenten) haben keinen Hover — dort
+// den Knopf dauerhaft sichtbar halten, sonst ist er unauffindbar.
+@media (hover: none), (pointer: coarse) {
+  .cell-add {
+    opacity: 0.75;
+  }
+}
 .cell-add:hover,
 .cell-add:focus-visible {
   color: var(--accent-ink);
