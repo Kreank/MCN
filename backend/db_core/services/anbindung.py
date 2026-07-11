@@ -28,9 +28,14 @@ App-Schicht) und wird hier weder gespeichert noch angezeigt.
 import re
 import uuid
 
+from db_core import mail_crypto
 from db_core.db_context import business_transaction
-from db_core.models import SupplierConnection
+from db_core.models import SupplierConnection, SupplierCredential
 from db_core.services._validation import ensure_party_usable
+
+# IDS-Connect Warenkorb-Verfahren (itek 2.5): Aktionscodes des Punchout.
+IDS_ACTIONS = ("WKE", "WKS")  # WKE = leeren Warenkorb füllen, WKS = eigenen übergeben
+IDS_VERSION = "2.5"
 
 _SOURCE_SYSTEMS = ("IDS_CONNECT", "DATANORM")
 _KINDS = ("GROSSHAENDLER", "HERSTELLER")
@@ -166,3 +171,141 @@ def update_connection(actor_app_user_id, *, connection_id, **fields):
             conn.save(update_fields=changed + ["updated_at"])
         conn.refresh_from_db()
     return conn
+
+
+# --- IDS-Connect-Zugangsdaten (verschlüsselt) -------------------------------
+
+def get_credential(connection_id):
+    """Der Zugangsdaten-Satz einer Anbindung oder None."""
+    return SupplierCredential.objects.filter(connection_id=connection_id).first()
+
+
+def credential_status(connection_id):
+    """Lesbarer Status der Zugangsdaten OHNE das Passwort (nie zurückgeben):
+    `{username, customer_number, has_password}`."""
+    cred = get_credential(connection_id)
+    if cred is None:
+        return {"username": None, "customer_number": None, "has_password": False}
+    return {
+        "username": cred.username,
+        "customer_number": cred.customer_number,
+        "has_password": cred.password_encrypted is not None,
+    }
+
+
+def set_credentials(actor_app_user_id, *, connection_id, **fields):
+    """Legt die IDS-Zugangsdaten einer Anbindung an oder ändert sie (Upsert 1:1).
+
+    **Nur ausdrücklich übergebene Felder** werden geändert (der Aufrufer nutzt
+    `exclude_unset`): wer nur das Passwort setzt, verliert nicht den Benutzernamen.
+    Felder: `username`, `customer_number` (Klartext), `password`. Für das Passwort
+    gilt: **nicht übergeben** = unverändert, leer (""/None) = löschen (NULL), sonst
+    Fernet-verschlüsselt speichern (`mail_crypto`/`MCN_MAIL_KEY`, fail-closed). Gibt
+    den Status (ohne Passwort) zurück.
+    """
+    allowed = {"username", "customer_number", "password"}
+    unknown = set(fields) - allowed
+    if unknown:
+        raise ValueError(f"Unbekannte Felder: {', '.join(sorted(unknown))}")
+
+    conn = SupplierConnection.objects.filter(id=connection_id).first()
+    if conn is None:
+        raise ValueError("Anbindung nicht gefunden.")
+
+    # Passwort-Konvention (wie Mailkonto): fehlt/None = unverändert, "" = löschen,
+    # sonst setzen. Verschlüsselung VOR der Transaktion (fail-closed).
+    password_gesetzt = fields.get("password") is not None
+    cipher = None
+    if password_gesetzt and fields["password"]:
+        try:
+            cipher = mail_crypto.encrypt(fields["password"])
+        except mail_crypto.MailKeyError as exc:
+            raise ValueError(str(exc))
+
+    cred = get_credential(connection_id)
+    with business_transaction(actor_app_user_id):
+        if cred is None:
+            cred = SupplierCredential.objects.create(
+                id=uuid.uuid4(), connection_id=connection_id,
+                username=_clean(fields.get("username")),
+                customer_number=_clean(fields.get("customer_number")),
+                password_encrypted=cipher,
+                version=1,
+            )
+        else:
+            changed = []
+            if "username" in fields:
+                cred.username = _clean(fields["username"])
+                changed.append("username")
+            if "customer_number" in fields:
+                cred.customer_number = _clean(fields["customer_number"])
+                changed.append("customer_number")
+            if password_gesetzt:
+                cred.password_encrypted = cipher  # None = löschen
+                changed.append("password_encrypted")
+            if changed:
+                cred.save(update_fields=changed + ["updated_at"])
+    return credential_status(connection_id)
+
+
+def build_punchout(connection_id, *, hook_url, action="WKE", target=None,
+                   warenkorb_xml=None):
+    """Baut die IDS-Connect-Punchout-Formularfelder (itek 2.5) zum Öffnen des
+    Händler-Shops.
+
+    Der Aufrufer (Frontend) sendet ein auto-submittendes POST-Formular
+    (`multipart/form-data`) an `url` (die Connector-/Shop-URL der Anbindung). Der
+    Shop meldet den fertigen Warenkorb per POST an `hook_url` zurück.
+
+    Gibt `{url, method, enctype, fields}` zurück. **Enthält das Klartext-Passwort**
+    in `fields['pw_kunde']` — das ist dem IDS-Verfahren inhärent (der Browser des
+    Handwerkers meldet sich beim Shop an); nur über HTTPS ausliefern.
+
+    Wirft ValueError (→ 422), wenn Connector-URL oder Zugangsdaten fehlen oder der
+    Aktionscode ungültig ist.
+    """
+    action = (action or "WKE").upper()
+    if action not in IDS_ACTIONS:
+        raise ValueError(f"Ungültige IDS-Aktion '{action}'. Erlaubt: WKE, WKS.")
+    conn = SupplierConnection.objects.filter(id=connection_id).first()
+    if conn is None:
+        raise ValueError("Anbindung nicht gefunden.")
+    if conn.source_system != "IDS_CONNECT":
+        raise ValueError("Punchout ist nur für IDS-Connect-Anbindungen möglich.")
+    connector_url = _clean(conn.shop_url)
+    if not connector_url:
+        raise ValueError(
+            "Für den Punchout fehlt die Shop-/Connector-URL an der Anbindung."
+        )
+
+    cred = get_credential(connection_id)
+    if cred is None or cred.password_encrypted is None or not cred.username:
+        raise ValueError(
+            "Für den Punchout fehlen die Zugangsdaten (Benutzername/Passwort)."
+        )
+    try:
+        passwort = mail_crypto.decrypt(cred.password_encrypted)
+    except mail_crypto.MailKeyError as exc:
+        raise ValueError(str(exc))
+
+    # IDS-2.5-Formularfelder (verbatim; nur gesetzte optionale Felder aufnehmen).
+    fields = {
+        "action": action,
+        "name_kunde": cred.username,
+        "pw_kunde": passwort,
+        "hookurl": hook_url,
+        "Version": IDS_VERSION,
+    }
+    if cred.customer_number:
+        fields["kndnr"] = cred.customer_number
+    if target:
+        fields["Target"] = target
+    if action == "WKS" and warenkorb_xml:
+        fields["warenkorb"] = warenkorb_xml
+
+    return {
+        "url": connector_url,
+        "method": "POST",
+        "enctype": "multipart/form-data",
+        "fields": fields,
+    }

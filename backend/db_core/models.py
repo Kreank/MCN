@@ -2837,3 +2837,32 @@ class SupplierConnection(models.Model):
 
     def __str__(self):
         return f"{self.source_namespace} ({self.connection_kind})"
+
+
+class SupplierCredential(models.Model):
+    """pricing.supplier_credential — IDS-Connect-Zugangsdaten einer Anbindung
+    (Migration 0052, 1:1 zu supplier_connection).
+
+    Das Passwort liegt Fernet-verschlüsselt in `password_encrypted` (bytea); der
+    Klartext wird nie gespeichert/zurückgegeben/geloggt (Muster wie
+    company.mail_account). Benutzername/Kundennummer sind keine Geheimnisse.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    connection = models.OneToOneField(
+        SupplierConnection, models.DO_NOTHING, db_column="connection_id",
+        related_name="credential",
+    )
+    username = models.TextField(null=True, blank=True)
+    customer_number = models.TextField(null=True, blank=True)
+    password_encrypted = models.BinaryField(null=True, blank=True)
+    version = models.IntegerField(db_default=models.Value(1))
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'pricing"."supplier_credential'
+
+    def __str__(self):
+        return f"Zugangsdaten {self.connection_id}"

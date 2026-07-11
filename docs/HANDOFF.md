@@ -16,7 +16,7 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 > und Freigaben laufen aus dem UI durch Rechte, Statusautomaten und DB-Trigger.
 > Dazu **Vier-Augen-Freigaben**, **Belegerfassung** (Eingangsrechnungen) und die
 > **Rechtematrix-Pflege** als UI.
-> **1671 Backend-Tests grün**, db_core-Migrationen bis **0051**, accounts bis **0002**.
+> **1687 Backend-Tests grün**, db_core-Migrationen bis **0053**, accounts bis **0002**.
 > Stand 2026-07-11 (Hero-Paritäts-Ausbau, 20 Slices an einem Tag — Details in
 > `git log`): Artikelstamm nach Hero (Felder/VK-Gruppen/Lieferant/Bild,
 > Suchoperatoren + · | · *, Spaltenwahl, Kopieren), **Marge/Deckungsbeitrag** in
@@ -271,8 +271,8 @@ Default `mcn-dev-passwort-2026`):
 **Backend** (`cd backend`, uv):
 ```bash
 uv run python manage.py check
-uv run pytest -p no:cacheprovider -q          # aktuell 1671 grün, 2 skipped
-uv run python manage.py migrate               # Migrationskopf: 0051
+uv run pytest -p no:cacheprovider -q          # aktuell 1687 grün, 2 skipped
+uv run python manage.py migrate               # Migrationskopf: 0053
 uv run python manage.py runserver 127.0.0.1:8000 --noreload
 uv run python manage.py seed_demo             # idempotenter Demo-Datensatz
 ```

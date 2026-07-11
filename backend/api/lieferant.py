@@ -167,3 +167,87 @@ def warenkorb_preview(request, connection_id: UUID):
             for r in resolved
         ],
     )
+
+
+# --- IDS-Connect: Zugangsdaten + Punchout ----------------------------------
+
+class CredentialStatusOut(Schema):
+    username: str | None = None
+    customer_number: str | None = None
+    has_password: bool
+
+
+class CredentialIn(Schema):
+    username: str | None = None
+    customer_number: str | None = None
+    # Write-only: None = unverändert, "" = Passwort löschen, sonst neu setzen.
+    password: str | None = None
+
+
+class PunchoutIn(Schema):
+    hook_url: str
+    target: str | None = None
+    # Aktion ist derzeit fest WKE (leeren Warenkorb füllen lassen). Die Übergabe
+    # eines bestehenden Warenkorbs (WKS) kommt mit dem Warenkorb-Handover-Slice.
+
+
+class PunchoutOut(Schema):
+    url: str
+    method: str
+    enctype: str
+    fields: dict[str, str]
+
+
+def _connection_or_404(connection_id):
+    conn = SupplierConnection.objects.filter(id=connection_id).first()
+    if conn is None:
+        raise HttpError(404, "Anbindung nicht gefunden.")
+    return conn
+
+
+@router.get("/supplier-connections/{connection_id}/credentials", response=CredentialStatusOut)
+def get_credentials(request, connection_id: UUID):
+    """Status der IDS-Zugangsdaten (Benutzername/Kundennummer + `has_password`) —
+    das Passwort wird NIE zurückgegeben. Recht `pricing/LESEN`."""
+    require(request, "pricing", "LESEN")
+    _connection_or_404(connection_id)
+    return CredentialStatusOut(**anbindung_service.credential_status(connection_id))
+
+
+@router.put("/supplier-connections/{connection_id}/credentials", response=CredentialStatusOut, auth=django_auth)
+def put_credentials(request, connection_id: UUID, payload: CredentialIn):
+    """IDS-Zugangsdaten setzen/ändern. Passwort ist write-only (None=unverändert,
+    ""=löschen); es wird verschlüsselt gespeichert. Recht `pricing/AENDERN`."""
+    actor, _ = require(request, "pricing", "AENDERN")
+    _connection_or_404(connection_id)
+    try:
+        # Nur ausdrücklich gesendete Felder ändern (Passwort nur, wenn mitgeschickt) —
+        # sonst nullte ein reines Passwort-Update Benutzername/Kundennummer.
+        status = anbindung_service.set_credentials(
+            actor, connection_id=connection_id,
+            **payload.model_dump(exclude_unset=True),
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return CredentialStatusOut(**status)
+
+
+@router.post("/supplier-connections/{connection_id}/punchout", response=PunchoutOut, auth=django_auth)
+def punchout(request, connection_id: UUID, payload: PunchoutIn):
+    """Baut die IDS-Punchout-Formularfelder (itek 2.5) zum Öffnen des Händler-Shops.
+
+    Der Client submittet damit ein POST-Formular an `url`. Die Antwort enthält das
+    Klartext-Passwort (`fields.pw_kunde`) — dem IDS-Verfahren inhärent (der Browser
+    meldet sich beim Shop an); nur über HTTPS. Deshalb `pricing/AENDERN`. Fehlende
+    Connector-URL/Zugangsdaten → 422.
+    """
+    require(request, "pricing", "AENDERN")
+    _connection_or_404(connection_id)
+    try:
+        result = anbindung_service.build_punchout(
+            connection_id, hook_url=payload.hook_url, action="WKE",
+            target=payload.target,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return PunchoutOut(**result)

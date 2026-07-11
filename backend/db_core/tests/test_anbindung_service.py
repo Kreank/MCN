@@ -5,14 +5,26 @@ Unveränderlichkeit der Identität (System/Namespace/Lieferant) und die
 UNIQUE-Regel — alles gespiegelt aus den DB-Constraints (422 statt 500).
 """
 import pytest
+from cryptography.fernet import Fernet
+from django.test import override_settings
 
 from db_core.services import anbindung as anbindung_service
 from db_core.services import identity as identity_service
+
+TEST_KEY = Fernet.generate_key().decode()
 
 
 def _lieferant(app_user, last="Großhandel"):
     return identity_service.create_person(
         app_user.id, first_name="Liefer", last_name=last
+    )
+
+
+def _ids_conn(app_user, *, shop_url="https://gut.example/ids"):
+    return anbindung_service.create_connection(
+        app_user.id, supplier_party_id=_lieferant(app_user).id,
+        source_namespace="gut", label="G.U.T.", source_system="IDS_CONNECT",
+        shop_url=shop_url,
     )
 
 
@@ -138,3 +150,93 @@ def test_list_include_inactive(app_user):
     anbindung_service.update_connection(app_user.id, connection_id=c.id, status="INACTIVE")
     assert anbindung_service.list_connections(include_inactive=True).count() == 1
     assert anbindung_service.list_connections(include_inactive=False).count() == 0
+
+
+# --- Zugangsdaten + Punchout -----------------------------------------------
+
+@override_settings(MCN_MAIL_KEY=TEST_KEY)
+@pytest.mark.django_db
+def test_credentials_setzen_und_punchout(app_user):
+    conn = _ids_conn(app_user)
+    st = anbindung_service.set_credentials(
+        app_user.id, connection_id=conn.id, username="handwerk1",
+        customer_number="4711", password="geheim",
+    )
+    assert st["username"] == "handwerk1"
+    assert st["customer_number"] == "4711"
+    assert st["has_password"] is True
+    assert "password" not in st  # Passwort wird NIE zurückgegeben
+
+    po = anbindung_service.build_punchout(
+        conn.id, hook_url="https://mcn.example/hook/T1"
+    )
+    assert po["url"] == "https://gut.example/ids"
+    assert po["method"] == "POST"
+    f = po["fields"]
+    assert f["action"] == "WKE"
+    assert f["name_kunde"] == "handwerk1"
+    assert f["pw_kunde"] == "geheim"          # entschlüsselt für den Browser-Post
+    assert f["kndnr"] == "4711"
+    assert f["hookurl"] == "https://mcn.example/hook/T1"
+    assert f["Version"] == "2.5"
+
+
+@override_settings(MCN_MAIL_KEY=TEST_KEY)
+@pytest.mark.django_db
+def test_passwort_none_bleibt_unveraendert(app_user):
+    conn = _ids_conn(app_user)
+    anbindung_service.set_credentials(
+        app_user.id, connection_id=conn.id, username="u", password="pw1"
+    )
+    # Nur Benutzername ändern, Passwort None → bleibt.
+    st = anbindung_service.set_credentials(
+        app_user.id, connection_id=conn.id, username="u2", password=None
+    )
+    assert st["username"] == "u2" and st["has_password"] is True
+
+
+@override_settings(MCN_MAIL_KEY=TEST_KEY)
+@pytest.mark.django_db
+def test_passwort_leer_loescht(app_user):
+    conn = _ids_conn(app_user)
+    anbindung_service.set_credentials(
+        app_user.id, connection_id=conn.id, username="u", password="pw1"
+    )
+    st = anbindung_service.set_credentials(
+        app_user.id, connection_id=conn.id, username="u", password=""
+    )
+    assert st["has_password"] is False
+
+
+@override_settings(MCN_MAIL_KEY=TEST_KEY)
+@pytest.mark.django_db
+def test_punchout_ohne_zugangsdaten_scheitert(app_user):
+    conn = _ids_conn(app_user)
+    with pytest.raises(ValueError):
+        anbindung_service.build_punchout(conn.id, hook_url="https://x/hook")
+
+
+@override_settings(MCN_MAIL_KEY=TEST_KEY)
+@pytest.mark.django_db
+def test_punchout_ohne_shop_url_scheitert(app_user):
+    conn = _ids_conn(app_user, shop_url=None)
+    anbindung_service.set_credentials(
+        app_user.id, connection_id=conn.id, username="u", password="pw"
+    )
+    with pytest.raises(ValueError):
+        anbindung_service.build_punchout(conn.id, hook_url="https://x/hook")
+
+
+@override_settings(MCN_MAIL_KEY=TEST_KEY)
+@pytest.mark.django_db
+def test_punchout_nur_fuer_ids(app_user):
+    conn = anbindung_service.create_connection(
+        app_user.id, supplier_party_id=_lieferant(app_user).id,
+        source_namespace="gut", label="G.U.T. DN", source_system="DATANORM",
+        shop_url="https://x/ids",
+    )
+    anbindung_service.set_credentials(
+        app_user.id, connection_id=conn.id, username="u", password="pw"
+    )
+    with pytest.raises(ValueError):
+        anbindung_service.build_punchout(conn.id, hook_url="https://x/hook")

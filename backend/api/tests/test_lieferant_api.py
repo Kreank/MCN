@@ -7,7 +7,8 @@ identity-Service an.
 import uuid
 
 import pytest
-from django.test import Client
+from cryptography.fernet import Fernet
+from django.test import Client, override_settings
 
 from db_core.db_context import business_transaction
 from db_core.models import AppUser, ArticleSupplierReference
@@ -17,6 +18,7 @@ from db_core.services import identity as identity_service
 from .conftest import make_role_user
 
 _URL = "/api/pricing/supplier-connections"
+_MAIL_KEY = Fernet.generate_key().decode()
 
 
 def _seed_actor():
@@ -151,3 +153,80 @@ def test_warenkorb_preview_unbekannte_anbindung_404(admin_client):
         content_type="application/xml",
     )
     assert r.status_code == 404
+
+
+# --- Zugangsdaten + Punchout -----------------------------------------------
+
+def _ids_connection():
+    actor = _seed_actor()
+    supplier = identity_service.create_person(actor.id, first_name="Gross", last_name="Handel")
+    return anbindung_service.create_connection(
+        actor.id, supplier_party_id=supplier.id, source_namespace="gut",
+        label="G.U.T.", source_system="IDS_CONNECT", shop_url="https://gut.example/ids",
+    )
+
+
+@override_settings(MCN_MAIL_KEY=_MAIL_KEY)
+@pytest.mark.django_db
+def test_credentials_und_punchout_fluss(admin_client):
+    conn = _ids_connection()
+    # Zugangsdaten setzen (Passwort write-only)
+    r = admin_client.put(
+        f"{_URL}/{conn.id}/credentials",
+        data={"username": "hw1", "customer_number": "4711", "password": "geheim"},
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    assert r.json()["has_password"] is True
+    assert "password" not in r.json()
+
+    # Status lesen — nie das Passwort
+    st = admin_client.get(f"{_URL}/{conn.id}/credentials").json()
+    assert st["username"] == "hw1" and st["has_password"] is True
+
+    # Punchout-Formularfelder erzeugen
+    r2 = admin_client.post(
+        f"{_URL}/{conn.id}/punchout",
+        data={"hook_url": "https://mcn.example/hook/T1"},
+        content_type="application/json",
+    )
+    assert r2.status_code == 200, r2.content
+    body = r2.json()
+    assert body["url"] == "https://gut.example/ids"
+    assert body["fields"]["action"] == "WKE"
+    assert body["fields"]["name_kunde"] == "hw1"
+    assert body["fields"]["pw_kunde"] == "geheim"
+    assert body["fields"]["hookurl"] == "https://mcn.example/hook/T1"
+
+
+@override_settings(MCN_MAIL_KEY=_MAIL_KEY)
+@pytest.mark.django_db
+def test_punchout_ohne_zugangsdaten_422(admin_client):
+    conn = _ids_connection()
+    r = admin_client.post(
+        f"{_URL}/{conn.id}/punchout",
+        data={"hook_url": "https://x/hook"}, content_type="application/json",
+    )
+    assert r.status_code == 422
+
+
+@override_settings(MCN_MAIL_KEY=_MAIL_KEY)
+@pytest.mark.django_db
+def test_nur_passwort_aendern_behaelt_benutzername(admin_client):
+    """Regression: ein reines Passwort-Update darf Benutzername/Kundennummer nicht
+    nullen (exclude_unset)."""
+    conn = _ids_connection()
+    admin_client.put(
+        f"{_URL}/{conn.id}/credentials",
+        data={"username": "hw1", "customer_number": "4711", "password": "alt"},
+        content_type="application/json",
+    )
+    r = admin_client.put(
+        f"{_URL}/{conn.id}/credentials",
+        data={"password": "neu"}, content_type="application/json",
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["username"] == "hw1"          # NICHT genullt
+    assert body["customer_number"] == "4711"
+    assert body["has_password"] is True
