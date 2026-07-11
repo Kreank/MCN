@@ -7,8 +7,11 @@ firma-Service (business_transaction); Fachfehler → 422.
 """
 from uuid import UUID
 
+from django.http import HttpResponse
+from ninja import File as NinjaFile
 from ninja import Router, Schema
 from ninja.errors import HttpError
+from ninja.files import UploadedFile
 from ninja.responses import Status
 from ninja.security import django_auth
 
@@ -42,6 +45,8 @@ class CompanyProfileOut(Schema):
     managing_director_title: str | None = None
     default_language: str | None = None
     logo_file_id: UUID | None = None
+    # Additiv: OB ein Firmenlogo hinterlegt ist (die Bytes holt GET /profile/logo).
+    has_logo: bool = False
     # Gesetzt, wenn eine Bankdaten-Änderung einen Vier-Augen-Antrag ausgelöst hat
     # (BANKDATEN): die IBAN/BIC-Änderung wurde NICHT geschrieben, sondern wartet
     # auf Genehmigung. Die übrigen Felder sind bereits übernommen.
@@ -138,6 +143,7 @@ def _profile_out(p, pending_bank_approval=None):
         iban=p.iban, bic=p.bic, managing_director=p.managing_director,
         managing_director_title=p.managing_director_title,
         default_language=p.default_language, logo_file_id=p.logo_file_id,
+        has_logo=p.logo_file_id is not None,
         pending_bank_approval=pending_bank_approval,
     )
 
@@ -175,6 +181,62 @@ def put_profile(request, payload: CompanyProfileIn):
     except ValueError as exc:
         raise HttpError(422, str(exc))
     return _profile_out(profile, pending_bank_approval=pending.id if pending else None)
+
+
+# --- Firmenlogo ------------------------------------------------------------
+# Das Logo erscheint im Kopf der Beleg-PDFs. Upload/Entfernen nur mit
+# company/AENDERN, Abruf mit company/LESEN. Der Abruf läuft durch die Anwendung
+# (nie als vorsignierte Direkt-URL), analog zum Datei-Download.
+
+@router.post("/profile/logo", response=CompanyProfileOut, auth=django_auth)
+def upload_logo(request, datei: UploadedFile = NinjaFile(...)):
+    """Firmenlogo hochladen/ersetzen (nur ADMINISTRATION/GESCHAEFTSFUEHRUNG).
+
+    Nur PNG/JPEG und höchstens 2 MB; ungültiger Typ/zu groß → 422. Der Typ wird
+    aus dem Inhalt bestimmt, nicht aus dem gemeldeten Content-Type.
+    """
+    actor, _ = require(request, "company", "AENDERN")
+    try:
+        profile = firma_service.set_company_logo(
+            actor, dateiname=datei.name, inhalt=datei.read()
+        )
+    except firma_service.LogoFehler as exc:
+        raise HttpError(422, str(exc))
+    return _profile_out(profile)
+
+
+@router.delete("/profile/logo", response=CompanyProfileOut, auth=django_auth)
+def delete_logo(request):
+    """Firmenlogo entfernen (nur ADMINISTRATION/GESCHAEFTSFUEHRUNG).
+
+    Setzt logo_file_id auf NULL; die Datei selbst bleibt im Objektspeicher
+    (unveränderlich, GoBD). Idempotent.
+    """
+    actor, _ = require(request, "company", "AENDERN")
+    try:
+        profile = firma_service.remove_company_logo(actor)
+    except firma_service.LogoFehler as exc:
+        raise HttpError(422, str(exc))
+    return _profile_out(profile)
+
+
+@router.get("/profile/logo")
+def get_logo(request):
+    """Bytes des Firmenlogos (LESEN für alle Rollen) — durch die Anwendung, nie
+    als Direkt-URL. 404, wenn kein Logo gesetzt oder gerade nicht abrufbar ist.
+
+    `inline` (Vorschau) mit `nosniff`: da nur PNG/JPEG (inhaltsgeprüft) abgelegt
+    werden, kann so kein aktiver Inhalt im Ursprung der Anwendung ausgeführt werden.
+    """
+    require(request, "company", "LESEN")
+    try:
+        datei, inhalt = firma_service.company_logo_inhalt()
+    except firma_service.LogoFehler as exc:
+        raise HttpError(404, str(exc))
+    antwort = HttpResponse(inhalt, content_type=datei.mime_type)
+    antwort["Content-Disposition"] = 'inline; filename="firmenlogo"'
+    antwort["X-Content-Type-Options"] = "nosniff"
+    return antwort
 
 
 # --- Niederlassungen -------------------------------------------------------

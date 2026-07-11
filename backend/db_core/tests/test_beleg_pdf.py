@@ -6,9 +6,11 @@ oder fehlende Rechnung gibt es kein PDF (None).
 """
 import re
 from decimal import Decimal
+from hashlib import sha256
 
 import pytest
 
+from db_core import storage as storage_module
 from db_core.db_context import business_transaction
 from db_core.models import Quote
 from db_core.services import auftrag as auftrag_service
@@ -17,6 +19,46 @@ from db_core.services import beleg_pdf
 from db_core.services import firma as firma_service
 from db_core.services import identity as identity_service
 from db_core.services import property as property_service
+
+
+# Kleinstes gültiges 1x1-PNG — von fpdf2/Pillow einbettbar.
+PNG_1x1 = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+    b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00"
+    b"\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
+)
+
+
+class FakeStorage:
+    """In-memory-Objektspeicher (Schnittstelle wie ObjectStorage)."""
+
+    def __init__(self):
+        self.objects = {}
+
+    def ensure_bucket(self):
+        pass
+
+    def put_object(self, key, data, content_type="application/octet-stream"):
+        payload = bytes(data)
+        self.objects[key] = payload
+        return storage_module.ObjectInfo(
+            storage_key=key, sha256=sha256(payload).hexdigest(), size_bytes=len(payload)
+        )
+
+    def get_object(self, key):
+        if key not in self.objects:
+            raise storage_module.StorageError(f"unbekannt {key}")
+        return self.objects[key]
+
+    def remove_object(self, key):
+        self.objects.pop(key, None)
+
+
+@pytest.fixture
+def fake_storage(monkeypatch):
+    fake = FakeStorage()
+    monkeypatch.setattr(storage_module, "get_storage", lambda: fake)
+    return fake
 
 
 def _published_invoice(app_user):
@@ -91,6 +133,79 @@ def test_pdf_nutzt_firmenprofil_als_aussteller(app_user):
     assert any("12/345/67890" in p for p in parts)
     assert any("IBAN DE12500105170648489890" in p for p in parts)
     # Und das vollständige PDF rendert weiterhin zu gültigen Bytes.
+    data = beleg_pdf.render_invoice_pdf(inv.id)
+    assert data is not None and data[:4] == b"%PDF"
+
+
+# --- Firmenlogo im PDF-Kopf ------------------------------------------------
+
+@pytest.mark.django_db
+def test_pdf_bettet_logo_ein(app_user, fake_storage):
+    """Ist ein Logo gepflegt, enthält das gerenderte PDF das eingebettete Bild."""
+    inv = _published_invoice(app_user)
+    firma_service.update_company_profile(app_user.id, company_name="Logo GmbH")
+    firma_service.set_company_logo(app_user.id, dateiname="logo.png", inhalt=PNG_1x1)
+
+    data = beleg_pdf.render_invoice_pdf(inv.id)
+    assert data is not None and data[:4] == b"%PDF"
+    # fpdf2 legt eingebettete Bilder als Image-XObject ab.
+    assert b"/Subtype /Image" in data
+
+
+@pytest.mark.django_db
+def test_pdf_ohne_logo_enthaelt_kein_bild(app_user, fake_storage):
+    """Regressionsschutz: ohne Logo bleibt das PDF bildfrei (Text-Kopf unverändert)."""
+    inv = _published_invoice(app_user)
+    firma_service.update_company_profile(app_user.id, company_name="Ohne Logo GmbH")
+    data = beleg_pdf.render_invoice_pdf(inv.id)
+    assert data is not None and b"/Subtype /Image" not in data
+
+
+@pytest.mark.django_db
+def test_pdf_ohne_logo_bytegleich_mit_ohne_profilfeld(app_user):
+    """Der „kein Logo"-Pfad ist unverändert: dieselbe Rechnung rendert (bis auf
+    die eingefrorene Zeit) mit derselben Struktur wie vor dem Logo-Feature —
+    insbesondere ohne Bild und ohne Absturz, auch wenn nie ein Storage berührt wird."""
+    inv = _published_invoice(app_user)
+    data = beleg_pdf.render_invoice_pdf(inv.id)
+    assert data is not None and data[:4] == b"%PDF"
+    assert b"/Subtype /Image" not in data
+
+
+@pytest.mark.django_db
+def test_pdf_logo_gesetzt_aber_storage_weg_rendert_ohne_logo(app_user, monkeypatch):
+    """Logo ist gesetzt, der Objektspeicher aber nicht erreichbar → das PDF
+    rendert trotzdem (ohne Logo), kein Absturz."""
+    # Logo mit funktionierendem Speicher setzen …
+    fake = FakeStorage()
+    monkeypatch.setattr(storage_module, "get_storage", lambda: fake)
+    inv = _published_invoice(app_user)
+    firma_service.update_company_profile(app_user.id, company_name="Degrad GmbH")
+    firma_service.set_company_logo(app_user.id, dateiname="logo.png", inhalt=PNG_1x1)
+
+    # … dann den Speicher „ausschalten".
+    def boom():
+        raise storage_module.StorageError("MinIO weg")
+
+    monkeypatch.setattr(storage_module, "get_storage", boom)
+    data = beleg_pdf.render_invoice_pdf(inv.id)
+    assert data is not None and data[:4] == b"%PDF"
+    assert b"/Subtype /Image" not in data
+
+
+@pytest.mark.django_db
+def test_pdf_kaputtes_logo_rendert_ohne_absturz(app_user, monkeypatch):
+    """Sind die Logo-Bytes kein gültiges Bild, wird das Logo übersprungen — das
+    PDF darf nie an einem Logo scheitern."""
+    fake = FakeStorage()
+    monkeypatch.setattr(storage_module, "get_storage", lambda: fake)
+    inv = _published_invoice(app_user)
+    firma_service.update_company_profile(app_user.id, company_name="Kaputt GmbH")
+    # Magic-Bytes gaukeln PNG vor, der Rest ist Müll → fpdf2/Pillow scheitert am
+    # Einbetten, _place_logo fängt das ab.
+    firma_service.set_company_logo(
+        app_user.id, dateiname="logo.png", inhalt=b"\x89PNG\r\n\x1a\n" + b"\x00" * 40
+    )
     data = beleg_pdf.render_invoice_pdf(inv.id)
     assert data is not None and data[:4] == b"%PDF"
 

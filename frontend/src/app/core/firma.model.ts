@@ -21,10 +21,14 @@ export interface CompanyProfile {
   managing_director_title: string | null;
   default_language: string | null;
   logo_file_id: string | null;
+  /** Ob ein Firmenlogo hinterlegt ist (die Bytes holt GET /company/profile/logo). */
+  has_logo: boolean;
 }
 
 /** Änderungs-Payload des Firmenprofils (nur gesetzte Felder werden gesendet). */
-export type CompanyProfileInput = Partial<Omit<CompanyProfile, 'exists' | 'logo_file_id'>>;
+export type CompanyProfileInput = Partial<
+  Omit<CompanyProfile, 'exists' | 'logo_file_id' | 'has_logo'>
+>;
 
 export interface Branch {
   id: string;

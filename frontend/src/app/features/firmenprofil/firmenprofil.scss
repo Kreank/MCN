@@ -76,3 +76,78 @@
   justify-content: flex-end;
   gap: var(--space-3);
 }
+
+// ============================== Firmenlogo ==================================
+.logo-bereich {
+  margin-top: var(--space-4);
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  background: var(--surface);
+}
+.logo-bereich__kopf {
+  margin-bottom: var(--space-4);
+}
+.logo-bereich__titel {
+  font-size: var(--step-0);
+  font-weight: 700;
+  color: var(--ink);
+  margin: 0 0 var(--space-2);
+}
+.logo-bereich__hinweis {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--ink-muted, var(--ink));
+}
+.logo-bereich__inhalt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-5);
+}
+.logo-vorschau {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 12rem;
+  min-height: 6rem;
+  padding: var(--space-3);
+  border: 1.5px dashed var(--line-strong);
+  border-radius: var(--radius-md, var(--radius-lg));
+  // Karo-Muster, damit transparente PNG-Ränder sichtbar bleiben.
+  background:
+    repeating-conic-gradient(
+      color-mix(in srgb, var(--line) 40%, transparent) 0% 25%,
+      transparent 0% 50%
+    )
+    center / 1.25rem 1.25rem;
+}
+.logo-vorschau__bild {
+  max-width: 100%;
+  max-height: 8rem;
+  object-fit: contain;
+}
+.logo-vorschau__leer {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--ink-muted, var(--ink));
+}
+.logo-aktionen {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+.logo-aktionen__waehlen {
+  cursor: pointer;
+  // Sichtbarer Fokuszustand, obwohl das <input> per sr-only verborgen ist.
+  &:focus-within {
+    outline: 2px solid var(--accent-ink);
+    outline-offset: 2px;
+  }
+}
+.logo-bereich__meldungen {
+  margin-top: var(--space-3);
+  &:empty {
+    margin-top: 0;
+  }
+}

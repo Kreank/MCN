@@ -12,11 +12,14 @@ ist eine Konfig-Ebene. Damit die Konfiguration immer ausführbar bleibt, erzwing
 bilden — eine mittlere Stufe zu deaktivieren, während eine höhere aktiv bleibt,
 wird verboten (sonst wäre ein Sprung 1 -> 3 nötig, den der Trigger nie zulässt).
 """
+import hashlib
 import re
 import uuid
+from pathlib import PurePosixPath
 
+from db_core import storage as storage_module
 from db_core.db_context import business_transaction
-from db_core.models import Branch, CompanyProfile, DunningLevel, Trade
+from db_core.models import Branch, CompanyProfile, DunningLevel, File, Trade
 from db_core.services import vier_augen
 
 # --- Firmenprofil (Singleton) ----------------------------------------------
@@ -125,6 +128,141 @@ def update_company_profile(actor_app_user_id, **fields):
             reason="Änderung der Firmen-Bankverbindung",
         )
     return profile, pending
+
+
+# --- Firmenlogo (content.file, referenziert über company_profile.logo_file_id) ---
+# Das Logo erscheint im Kopf der Beleg-PDFs. Es liegt als ganz normale
+# content.file im Objektspeicher (dieselbe Infrastruktur wie die Datei-Ablage:
+# Storage + File-Model + SHA-256-Dedup), wird aber NICHT über content.file_link
+# angehängt — es gibt keine company-Zielspalte —, sondern direkt über
+# company_profile.logo_file_id referenziert. Entfernen = logo_file_id auf NULL;
+# die Datei selbst bleibt (content.file ist unveränderlich, GoBD).
+
+# Nur Rasterformate, die fpdf2 in ein PDF einbetten kann: PNG und JPEG. Kein
+# SVG (kann Skripte ausführen), kein PDF, kein GIF/WebP.
+LOGO_MAX_BYTES = 2 * 1024 * 1024  # 2 MB
+
+
+class LogoFehler(ValueError):
+    """Der Logo-Upload ist fachlich unzulässig (→ 422)."""
+
+
+def _logo_mime(inhalt):
+    """Bildtyp aus den Magic Bytes (nur fpdf2-einbettbare Raster: PNG/JPEG).
+
+    Der vom Client gemeldete Content-Type wird bewusst nicht geglaubt (wie in der
+    Datei-Ablage): der Typ ergibt sich aus dem Inhalt. Alles außer PNG/JPEG wird
+    abgelehnt — SVG kann Skripte ausführen, und fpdf2 bettet ohnehin nur Raster
+    ein.
+    """
+    if inhalt[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if inhalt[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    raise LogoFehler(
+        "Nur PNG- oder JPEG-Bilder sind als Logo zulässig "
+        "(kein SVG, PDF oder anderes Format)."
+    )
+
+
+def _logo_dateiname(dateiname):
+    """Anzeigename des Logos (nur Basisname, ohne Pfadanteile, begrenzt)."""
+    name = (dateiname or "").strip().replace("\\", "/")
+    basis = PurePosixPath(name).name.replace("\x00", "")
+    return basis[:255] or "firmenlogo"
+
+
+def set_company_logo(actor_app_user_id, *, dateiname, inhalt):
+    """Legt das Firmenlogo als content.file ab und setzt logo_file_id.
+
+    Nur PNG/JPEG (fpdf2-einbettbar) und höchstens 2 MB; sonst LogoFehler (→ 422).
+    Ein bereits vorhandenes Logo wird ersetzt (logo_file_id zeigt auf die neue
+    Datei; die alte content.file bleibt bestehen — unveränderlich/GoBD). Gibt das
+    aktualisierte Firmenprofil zurück.
+
+    Das Profil muss existieren: das Logo hängt an ihm. Ohne Profil zuerst die
+    Firmendaten anlegen.
+    """
+    profile = get_company_profile()
+    if profile is None:
+        raise LogoFehler(
+            "Es ist noch kein Firmenprofil gepflegt. Bitte zuerst die "
+            "Firmendaten hinterlegen, dann das Logo hochladen."
+        )
+    if not inhalt:
+        raise LogoFehler("Die Bilddatei ist leer.")
+    if len(inhalt) > LOGO_MAX_BYTES:
+        raise LogoFehler(
+            f"Das Logo ist zu groß ({len(inhalt) / 1_048_576:.1f} MB). "
+            f"Erlaubt sind {LOGO_MAX_BYTES // 1_048_576} MB."
+        )
+    mime = _logo_mime(inhalt)
+
+    # Denselben Inhalt (SHA-256) nicht erneut ablegen — nur referenzieren.
+    digest = hashlib.sha256(inhalt).hexdigest()
+    vorhanden = File.objects.filter(sha256=digest, size_bytes=len(inhalt)).first()
+    if vorhanden is None:
+        storage_key = f"logo/{uuid.uuid4()}"
+        try:
+            storage_module.get_storage().put_object(
+                storage_key, inhalt, content_type=mime
+            )
+        except storage_module.StorageError as exc:
+            raise LogoFehler(f"Das Logo konnte nicht gespeichert werden: {exc}")
+        with business_transaction(actor_app_user_id):
+            datei = File.objects.create(
+                id=uuid.uuid4(),
+                storage_key=storage_key,
+                original_filename=_logo_dateiname(dateiname),
+                mime_type=mime,
+                size_bytes=len(inhalt),
+                sha256=digest,
+                media_metadata={},
+                uploaded_by_id=actor_app_user_id,
+            )
+    else:
+        datei = vorhanden
+
+    with business_transaction(actor_app_user_id):
+        profile.logo_file_id = datei.id
+        profile.save(update_fields=["logo_file_id", "updated_at"])
+    profile.refresh_from_db()
+    return profile
+
+
+def remove_company_logo(actor_app_user_id):
+    """Entfernt das Firmenlogo (logo_file_id → NULL); die Datei selbst bleibt.
+
+    Idempotent: ist kein Logo gesetzt, passiert nichts. Gibt das Firmenprofil
+    zurück.
+    """
+    profile = get_company_profile()
+    if profile is None:
+        raise LogoFehler("Es ist noch kein Firmenprofil gepflegt.")
+    if profile.logo_file_id is not None:
+        with business_transaction(actor_app_user_id):
+            profile.logo_file_id = None
+            profile.save(update_fields=["logo_file_id", "updated_at"])
+        profile.refresh_from_db()
+    return profile
+
+
+def company_logo_inhalt():
+    """(File, Bytes) des Firmenlogos aus dem Objektspeicher.
+
+    Wirft LogoFehler, wenn kein Logo gesetzt ist, der Steckbrief fehlt oder der
+    Objektspeicher das Objekt gerade nicht liefert (die API übersetzt das in 404).
+    """
+    profile = get_company_profile()
+    if profile is None or profile.logo_file_id is None:
+        raise LogoFehler("Es ist kein Firmenlogo gesetzt.")
+    datei = File.objects.filter(id=profile.logo_file_id).first()
+    if datei is None:
+        raise LogoFehler("Der Logo-Datensatz fehlt.")
+    try:
+        return datei, storage_module.get_storage().get_object(datei.storage_key)
+    except storage_module.StorageError as exc:
+        raise LogoFehler(f"Das Logo ist derzeit nicht abrufbar: {exc}")
 
 
 # --- Niederlassungen --------------------------------------------------------

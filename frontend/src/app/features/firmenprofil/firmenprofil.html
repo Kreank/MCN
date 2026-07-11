@@ -37,6 +37,71 @@
       </p>
     }
 
+    @if ($any(state()).data.exists) {
+      <section class="logo-bereich" aria-labelledby="logo-titel">
+        <div class="logo-bereich__kopf">
+          <h2 id="logo-titel" class="logo-bereich__titel">Firmenlogo</h2>
+          <p class="logo-bereich__hinweis">
+            Erscheint im Kopf der Rechnungs- und Angebots-PDFs. Erlaubt sind PNG oder
+            JPEG bis 2&nbsp;MB.
+          </p>
+        </div>
+
+        <div class="logo-bereich__inhalt">
+          <div class="logo-vorschau">
+            @if (logoUrl(); as url) {
+              <img [src]="url" alt="Aktuell hinterlegtes Firmenlogo"
+                   class="logo-vorschau__bild" />
+            } @else {
+              <p class="logo-vorschau__leer" role="note">Kein Logo hinterlegt.</p>
+            }
+          </div>
+
+          @if (darfAendern()) {
+            <div class="logo-aktionen">
+              <label class="btn btn--primary logo-aktionen__waehlen">
+                <span>{{ logoVorhanden() ? 'Logo ersetzen' : 'Logo hochladen' }}</span>
+                <input
+                  type="file"
+                  class="sr-only"
+                  [accept]="logoAkzeptiert"
+                  [disabled]="logoLaedt()"
+                  (change)="logoGewaehlt($event)"
+                  aria-label="Logo-Bilddatei auswählen (PNG oder JPEG, bis 2 MB)"
+                />
+              </label>
+              @if (logoVorhanden()) {
+                <button type="button" class="btn btn--gefahr"
+                        (click)="logoEntfernenFragenOeffnen()" [disabled]="logoLaedt()">
+                  Logo entfernen
+                </button>
+              }
+            </div>
+          }
+        </div>
+
+        <div class="logo-bereich__meldungen" aria-live="polite">
+          @if (logoLaedt()) {
+            <p class="note" role="status">Logo wird verarbeitet …</p>
+          }
+          @if (logoFehler(); as m) {
+            <p class="note note--error" role="alert">{{ m }}</p>
+          }
+        </div>
+      </section>
+
+      <app-bestaetigung
+        [offen]="logoEntfernenFragen()"
+        titel="Firmenlogo entfernen?"
+        text="Das Logo wird aus dem Kopf der Beleg-PDFs entfernt. Die Bilddatei selbst bleibt gespeichert und kann später wieder hochgeladen werden."
+        bestaetigenLabel="Entfernen"
+        [gefahr]="true"
+        [laedt]="logoLaedt()"
+        (bestaetigen)="logoEntfernenBestaetigen()"
+        (abbrechen)="logoEntfernenAbbrechen()"
+      />
+    }
+
     <form class="profil-form" [formGroup]="form" (ngSubmit)="absenden()" novalidate>
       @if (erfolg(); as m) {
         <p class="note note--erfolg" role="status">{{ m }}</p>

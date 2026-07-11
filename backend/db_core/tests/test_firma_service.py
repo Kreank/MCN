@@ -6,14 +6,57 @@ Trigger verboten), Niederlassungs-/Gewerk-Pflege inkl. Deaktivieren, sowie die
 bewusste Mahnstufen-Lücken-Entscheidung (aktive Stufen = lückenloser Präfix).
 """
 import uuid
+from hashlib import sha256
 
 import pytest
 from django.db import transaction
 from django.db.utils import IntegrityError, ProgrammingError
 
-from db_core.models import Branch, CompanyProfile, DunningLevel, Trade
+from db_core import storage as storage_module
+from db_core.models import Branch, CompanyProfile, DunningLevel, File, Trade
 from db_core.services import buchhaltung as buchhaltung_service
 from db_core.services import firma as firma_service
+
+
+# Kleinstes gültiges PNG (1x1) bzw. JPEG-Magic für die Logo-Tests.
+PNG_1x1 = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+    b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00"
+    b"\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
+)
+JPEG_MAGIC = b"\xff\xd8\xff\xe0" + b"\x00" * 32
+
+
+class FakeStorage:
+    """In-memory-Objektspeicher (dieselbe Schnittstelle wie ObjectStorage)."""
+
+    def __init__(self):
+        self.objects = {}
+
+    def ensure_bucket(self):
+        pass
+
+    def put_object(self, key, data, content_type="application/octet-stream"):
+        payload = bytes(data)
+        self.objects[key] = payload
+        return storage_module.ObjectInfo(
+            storage_key=key, sha256=sha256(payload).hexdigest(), size_bytes=len(payload)
+        )
+
+    def get_object(self, key):
+        if key not in self.objects:
+            raise storage_module.StorageError(f"unbekannt {key}")
+        return self.objects[key]
+
+    def remove_object(self, key):
+        self.objects.pop(key, None)
+
+
+@pytest.fixture
+def fake_storage(monkeypatch):
+    fake = FakeStorage()
+    monkeypatch.setattr(storage_module, "get_storage", lambda: fake)
+    return fake
 
 
 # --- Firmenprofil (Singleton) ----------------------------------------------
@@ -76,6 +119,113 @@ def test_profile_delete_verboten(app_user):
     with pytest.raises(ProgrammingError, match="append-only"):
         with transaction.atomic():
             CompanyProfile.objects.all().delete()
+
+
+# --- Firmenlogo -------------------------------------------------------------
+
+@pytest.mark.django_db
+def test_logo_hochladen_setzt_logo_file_id_und_speichert(app_user, fake_storage):
+    firma_service.update_company_profile(app_user.id, company_name="Logo GmbH")
+    profile = firma_service.set_company_logo(
+        app_user.id, dateiname="logo.png", inhalt=PNG_1x1
+    )
+    assert profile.logo_file_id is not None
+    # content.file trägt Prüfsumme/Größe/MIME der abgelegten Bytes.
+    datei = File.objects.get(id=profile.logo_file_id)
+    assert datei.mime_type == "image/png"
+    assert datei.size_bytes == len(PNG_1x1)
+    assert datei.sha256 == sha256(PNG_1x1).hexdigest()
+    # und genau diese Bytes liegen im Objektspeicher.
+    assert fake_storage.objects[datei.storage_key] == PNG_1x1
+
+
+@pytest.mark.django_db
+def test_logo_jpeg_erlaubt(app_user, fake_storage):
+    firma_service.update_company_profile(app_user.id, company_name="JPEG GmbH")
+    profile = firma_service.set_company_logo(
+        app_user.id, dateiname="logo.jpg", inhalt=JPEG_MAGIC
+    )
+    assert File.objects.get(id=profile.logo_file_id).mime_type == "image/jpeg"
+
+
+@pytest.mark.django_db
+def test_logo_ungueltiger_typ_422(app_user, fake_storage):
+    """SVG/PDF/andere Formate werden über die Magic Bytes abgelehnt."""
+    firma_service.update_company_profile(app_user.id, company_name="SVG GmbH")
+    with pytest.raises(firma_service.LogoFehler, match="PNG- oder JPEG"):
+        firma_service.set_company_logo(
+            app_user.id, dateiname="logo.svg", inhalt=b"<svg>evil</svg>"
+        )
+
+
+@pytest.mark.django_db
+def test_logo_zu_gross_422(app_user, fake_storage):
+    firma_service.update_company_profile(app_user.id, company_name="Groß GmbH")
+    riesig = PNG_1x1 + b"\x00" * firma_service.LOGO_MAX_BYTES
+    with pytest.raises(firma_service.LogoFehler, match="zu groß"):
+        firma_service.set_company_logo(
+            app_user.id, dateiname="logo.png", inhalt=riesig
+        )
+
+
+@pytest.mark.django_db
+def test_logo_ohne_profil_422(app_user, fake_storage):
+    with pytest.raises(firma_service.LogoFehler, match="kein Firmenprofil"):
+        firma_service.set_company_logo(
+            app_user.id, dateiname="logo.png", inhalt=PNG_1x1
+        )
+
+
+@pytest.mark.django_db
+def test_logo_ersetzen_zeigt_auf_neue_datei(app_user, fake_storage):
+    firma_service.update_company_profile(app_user.id, company_name="Ersatz GmbH")
+    p1 = firma_service.set_company_logo(app_user.id, dateiname="a.png", inhalt=PNG_1x1)
+    erstes = p1.logo_file_id
+    p2 = firma_service.set_company_logo(app_user.id, dateiname="b.jpg", inhalt=JPEG_MAGIC)
+    assert p2.logo_file_id != erstes
+    # Die alte Datei bleibt bestehen (unveränderlich, GoBD).
+    assert File.objects.filter(id=erstes).exists()
+
+
+@pytest.mark.django_db
+def test_logo_entfernen_setzt_null(app_user, fake_storage):
+    firma_service.update_company_profile(app_user.id, company_name="Weg GmbH")
+    p = firma_service.set_company_logo(app_user.id, dateiname="a.png", inhalt=PNG_1x1)
+    datei_id = p.logo_file_id
+    p2 = firma_service.remove_company_logo(app_user.id)
+    assert p2.logo_file_id is None
+    # Die Datei selbst bleibt (nur die Referenz ist weg).
+    assert File.objects.filter(id=datei_id).exists()
+    # Idempotent: erneutes Entfernen ist unschädlich.
+    assert firma_service.remove_company_logo(app_user.id).logo_file_id is None
+
+
+@pytest.mark.django_db
+def test_logo_inhalt_liefert_bytes(app_user, fake_storage):
+    firma_service.update_company_profile(app_user.id, company_name="Abruf GmbH")
+    firma_service.set_company_logo(app_user.id, dateiname="a.png", inhalt=PNG_1x1)
+    datei, inhalt = firma_service.company_logo_inhalt()
+    assert inhalt == PNG_1x1
+    assert datei.mime_type == "image/png"
+
+
+@pytest.mark.django_db
+def test_logo_inhalt_ohne_logo_fehler(app_user, fake_storage):
+    firma_service.update_company_profile(app_user.id, company_name="Leer GmbH")
+    with pytest.raises(firma_service.LogoFehler, match="kein Firmenlogo"):
+        firma_service.company_logo_inhalt()
+
+
+@pytest.mark.django_db
+def test_logo_dedup_bei_gleichem_inhalt(app_user, fake_storage):
+    """Derselbe Inhalt (SHA-256) wird nicht doppelt abgelegt."""
+    firma_service.update_company_profile(app_user.id, company_name="Dedup GmbH")
+    p1 = firma_service.set_company_logo(app_user.id, dateiname="a.png", inhalt=PNG_1x1)
+    firma_service.remove_company_logo(app_user.id)
+    p2 = firma_service.set_company_logo(app_user.id, dateiname="a2.png", inhalt=PNG_1x1)
+    # Gleicher Inhalt → gleiche content.file, nur ein Objekt im Speicher.
+    assert p2.logo_file_id == p1.logo_file_id
+    assert len(fake_storage.objects) == 1
 
 
 # --- Niederlassungen --------------------------------------------------------

@@ -35,6 +35,32 @@ export class FirmaService {
     return this.http.put<CompanyProfile>(`${this.base}/profile`, payload);
   }
 
+  // --- Firmenlogo ----------------------------------------------------------
+
+  /**
+   * Lädt das Firmenlogo hoch/ersetzt es (multipart). Recht: company/AENDERN.
+   * Nur PNG/JPEG, <= 2 MB (der Server prüft und antwortet bei Verstoß mit 422).
+   * Gibt das aktualisierte Profil zurück (u. a. `has_logo`).
+   */
+  uploadLogo(datei: File): Observable<CompanyProfile> {
+    const form = new FormData();
+    form.append('datei', datei, datei.name);
+    return this.http.post<CompanyProfile>(`${this.base}/profile/logo`, form);
+  }
+
+  /** Entfernt das Firmenlogo (logo_file_id → NULL). Recht: company/AENDERN. */
+  deleteLogo(): Observable<CompanyProfile> {
+    return this.http.delete<CompanyProfile>(`${this.base}/profile/logo`);
+  }
+
+  /**
+   * Holt die Logo-Bytes als Blob (durch die Anwendung, nicht per Direkt-URL) —
+   * so gehen Session-Cookie und Rechteprüfung durch. Recht: company/LESEN.
+   */
+  getLogo(): Observable<Blob> {
+    return this.http.get(`${this.base}/profile/logo`, { responseType: 'blob' });
+  }
+
   // --- Niederlassungen -----------------------------------------------------
 
   listBranches(includeInactive = true): Observable<Branch[]> {

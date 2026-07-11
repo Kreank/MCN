@@ -26,13 +26,14 @@ Nutzt fpdf2 (reines Python). Beträge in deutscher Formatierung.
 import logging
 import uuid
 from decimal import Decimal
+from io import BytesIO
 
 from django.db import IntegrityError, connection
 from fpdf import FPDF
 
 from db_core import storage as storage_module
 from db_core.db_context import business_transaction
-from db_core.models import CompanyProfile, Invoice, Quote
+from db_core.models import CompanyProfile, File, Invoice, Quote
 
 log = logging.getLogger(__name__)
 
@@ -129,8 +130,68 @@ def _footer_parts(profile):
     return parts
 
 
+# Rahmen (mm), in den das Logo oben rechts eingepasst wird (Seitenverhältnis
+# gewahrt). Höhe bewusst knapp unter dem Aussteller-Textblock (Name + Unterzeile),
+# damit das Logo nicht in den Empfängerbereich darunter ragt.
+_LOGO_BOX_W_MM = 50
+_LOGO_BOX_H_MM = 20
+
+
+def _logo_bytes(profile):
+    """Bytes des Firmenlogos für den PDF-Kopf, oder None.
+
+    Graceful degradation (wie bei der PDF-Archivierung): kein Logo gesetzt / der
+    content.file-Steckbrief fehlt / der Objektspeicher ist nicht erreichbar → None;
+    der Kopf wird dann ohne Logo gerendert. Ein Logo darf das PDF nie scheitern
+    lassen.
+    """
+    file_id = getattr(profile, "logo_file_id", None) if profile else None
+    if file_id is None:
+        return None
+    try:
+        datei = File.objects.filter(id=file_id).only("id", "storage_key").first()
+        if datei is None:
+            return None
+        return storage_module.get_storage().get_object(datei.storage_key)
+    except storage_module.StorageError as exc:
+        log.warning(
+            "Beleg-PDF: Firmenlogo nicht abrufbar (%s); rendere ohne Logo.", exc
+        )
+        return None
+
+
+def _place_logo(pdf, logo_bytes):
+    """Bettet das Firmenlogo oben rechts im Kopf ein (Seitenverhältnis gewahrt),
+    ohne den Textcursor zu verschieben — der Aussteller-Text rendert unverändert
+    links daneben. Lässt sich das Bild nicht einbetten (kaputte/unlesbare Bytes),
+    wird es übersprungen: das PDF darf nie wegen des Logos scheitern.
+    """
+    x0, y0 = pdf.get_x(), pdf.get_y()
+    x = pdf.w - pdf.r_margin - _LOGO_BOX_W_MM
+    try:
+        pdf.image(
+            BytesIO(logo_bytes), x=x, y=y0,
+            w=_LOGO_BOX_W_MM, h=_LOGO_BOX_H_MM, keep_aspect_ratio=True,
+        )
+    except Exception as exc:  # noqa: BLE001 - Logo darf das PDF nie scheitern lassen
+        log.warning(
+            "Beleg-PDF: Firmenlogo nicht einbettbar (%s); rendere ohne Logo.", exc
+        )
+    finally:
+        # Cursor exakt zurücksetzen: der nachfolgende Text-Kopf bleibt bit-genau.
+        pdf.set_xy(x0, y0)
+
+
 def _render_issuer(pdf, profile):
-    """Kopfzeile des Ausstellers aus dem Firmenprofil (oder Fallback)."""
+    """Kopfzeile des Ausstellers aus dem Firmenprofil (oder Fallback).
+
+    Ist ein Firmenlogo gepflegt und abrufbar, wird es oben rechts eingebettet;
+    fehlt es oder ist der Objektspeicher weg, bleibt der Text-Kopf unverändert
+    (graceful degradation).
+    """
+    logo = _logo_bytes(profile)
+    if logo is not None:
+        _place_logo(pdf, logo)
     name, subline = _issuer_lines(profile)
     pdf.set_font("Helvetica", "B", 14)
     pdf.cell(0, 8, _txt(name), new_x="LMARGIN", new_y="NEXT")
