@@ -1,0 +1,134 @@
+<section class="personalakte" aria-labelledby="personalakte-titel">
+  <header class="page-head">
+    <div>
+      <p class="page-head__kicker">
+        <span class="page-head__scale" aria-hidden="true"></span>
+        Mein Konto
+      </p>
+      <h1 id="personalakte-titel" class="page-head__titel">Meine Personalakte</h1>
+    </div>
+    <a class="btn" routerLink="/profil">Zu meinem Profil</a>
+  </header>
+
+  @switch (state().kind) {
+    @case ('loading') {
+      <p class="lade-hinweis" role="status">Ihre Personalakte wird geladen …</p>
+    }
+    @case ('forbidden') {
+      <app-kein-zugriff [detail]="$any(state()).detail" />
+    }
+    @case ('kein-mitarbeiter') {
+      <div class="note note--empty">
+        <h2 class="note__titel">Kein Mitarbeiterdatensatz</h2>
+        <p class="note__text">
+          Zu Ihrem Konto ist (noch) kein Mitarbeiterdatensatz hinterlegt. Bitte
+          wenden Sie sich an die Personalverwaltung.
+        </p>
+      </div>
+    }
+    @case ('error') {
+      <div class="note note--error" role="alert">
+        <p>Die Personalakte ließ sich nicht laden.</p>
+        <button type="button" class="btn btn--primary" (click)="laden()">Erneut versuchen</button>
+      </div>
+    }
+    @case ('ready') {
+      @let data = $any(state()).data;
+
+      <!-- Resturlaub im laufenden Jahr -->
+      <div class="urlaub-karte" role="group" aria-label="Urlaubskonto">
+        <div class="urlaub-haupt">
+          <span class="urlaub-zahl">{{ tage(data.vacation_account.remaining_days) }}</span>
+          <span class="urlaub-einheit">Resturlaub-Tage {{ data.vacation_account.year }}</span>
+        </div>
+        <dl class="urlaub-detail">
+          <div>
+            <dt>Anspruch</dt>
+            <dd>{{ tage(data.vacation_account.entitlement_days) }}</dd>
+          </div>
+          @if (data.vacation_account.carryover_days !== '0.00') {
+            <div>
+              <dt>Übertrag</dt>
+              <dd>{{ tage(data.vacation_account.carryover_days) }}</dd>
+            </div>
+          }
+          @if (data.vacation_account.adjustment_days !== '0.00') {
+            <div>
+              <dt>Korrektur</dt>
+              <dd>{{ tage(data.vacation_account.adjustment_days) }}</dd>
+            </div>
+          }
+          <div>
+            <dt>Gesamt</dt>
+            <dd>{{ tage(data.vacation_account.total_days) }}</dd>
+          </div>
+          <div>
+            <dt>Genommen</dt>
+            <dd>{{ tage(data.vacation_account.used_days) }}</dd>
+          </div>
+        </dl>
+      </div>
+
+      <!-- Aktueller Vertrag -->
+      @if (aktuellerVertrag(data); as v) {
+        <section class="block" aria-labelledby="vertrag-titel">
+          <h2 id="vertrag-titel" class="block__titel">Mein Vertrag</h2>
+          <dl class="fakten">
+            <div>
+              <dt>Wochenstunden</dt>
+              <dd>{{ tage(v.weekly_hours) }} h</dd>
+            </div>
+            <div>
+              <dt>Urlaubsanspruch / Jahr</dt>
+              <dd>{{ tage(v.vacation_days_per_year) }} Tage</dd>
+            </div>
+            <div>
+              <dt>Gültig ab</dt>
+              <dd>{{ datum(v.valid_from) }}</dd>
+            </div>
+            <div>
+              <dt>Gültig bis</dt>
+              <dd>{{ v.valid_to ? datum(v.valid_to) : 'unbefristet' }}</dd>
+            </div>
+          </dl>
+        </section>
+      }
+
+      <!-- Eigene Abwesenheiten -->
+      <section class="block" aria-labelledby="abw-titel">
+        <h2 id="abw-titel" class="block__titel">Meine Abwesenheiten</h2>
+        @if (data.absences.length === 0) {
+          <p class="note" role="note">Es sind keine Abwesenheiten erfasst.</p>
+        } @else {
+          <div class="tabelle-wrap">
+            <table class="tabelle">
+              <caption class="sr-only">Eigene Abwesenheiten mit Zeitraum und Status</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Art</th>
+                  <th scope="col">Zeitraum</th>
+                  <th scope="col" class="num">Tage</th>
+                  <th scope="col">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (a of data.absences; track a.id) {
+                  <tr>
+                    <td>{{ absenceTypeLabel(a.absence_type) }}</td>
+                    <td>{{ datum(a.start_date) }} – {{ datum(a.end_date) }}</td>
+                    <td class="num">{{ tage(a.days_count) }}</td>
+                    <td>
+                      <span class="status {{ absenceStatusClass(a.status) }}">
+                        {{ absenceStatusLabel(a.status) }}
+                      </span>
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+      </section>
+    }
+  }
+</section>

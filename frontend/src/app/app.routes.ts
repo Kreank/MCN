@@ -42,6 +42,17 @@ export const routes: Routes = [
         loadComponent: () => import('./features/profil/profil').then((m) => m.Profil),
       },
       {
+        // Selbstauskunft (eigene HR-Daten). Recht hr/LESEN; der Server liefert
+        // nur die eigene Zeile (row_scope EIGENE ist hier zulässig).
+        path: 'meine-personalakte',
+        title: 'Meine Personalakte — MCN Leitstand',
+        canActivate: [darfGuard('hr', 'LESEN')],
+        loadComponent: () =>
+          import('./features/meine-personalakte/meine-personalakte').then(
+            (m) => m.MeinePersonalakte,
+          ),
+      },
+      {
         path: 'kein-zugriff',
         title: 'Kein Zugriff — MCN Leitstand',
         loadComponent: () =>

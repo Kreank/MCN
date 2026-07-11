@@ -20,7 +20,7 @@ from ninja.errors import HttpError
 from ninja.responses import Status
 from ninja.security import django_auth
 
-from api.permissions import require
+from api.permissions import require, require_scoped
 from db_core.models import Absence, Employee, EmploymentContract
 from db_core.services import mitarbeiter as mitarbeiter_service
 
@@ -248,6 +248,39 @@ def _employee_qs():
     return Employee.objects.select_related("party", "wage_group")
 
 
+def _employee_detail_out(employee, year=None):
+    """Baut die Mitarbeiter-Mappe (Stammdaten + Verträge + Abwesenheiten +
+    Urlaubskonto) — geteilt von der Admin-Ansicht und der Selbstauskunft."""
+    today = date.today()
+    year = year or today.year
+    # `year` fließt in Absence.filter(start_date__year=...) → Django baut daraus
+    # date(year, 1, 1)/date(year, 12, 31). Außerhalb 2000–2100 (wie im Schreib-
+    # pfad set_vacation_budget) ist das fachlich unsinnig und für year<1/>9999
+    # sogar ein date()-ValueError → 500. Deshalb hier sauber als 422 abfangen.
+    if not (2000 <= year <= 2100):
+        raise HttpError(422, "Das Jahr muss zwischen 2000 und 2100 liegen.")
+    contracts = (
+        EmploymentContract.objects.select_related("wage_group")
+        .filter(employee_id=employee.id)
+        .order_by("-valid_from")
+    )
+    absences = Absence.objects.filter(employee_id=employee.id).order_by("-start_date")
+    account = mitarbeiter_service.vacation_account(employee.id, year)
+
+    person = employee.party
+    base = _employee_out(employee).model_dump()
+    return EmployeeDetailOut(
+        **base,
+        salutation=person.salutation,
+        birth_date=person.birth_date,
+        notes=employee.notes,
+        created_at=employee.created_at,
+        contracts=[_contract_out(c, today) for c in contracts],
+        absences=[_absence_out(a) for a in absences],
+        vacation_account=VacationAccountOut(**account),
+    )
+
+
 # --- Lesende Endpoints -----------------------------------------------------
 
 @router.get("/employees", response=EmployeeListOut)
@@ -299,30 +332,30 @@ def get_employee(request, employee_id: UUID, year: int | None = None):
     employee = _employee_qs().filter(id=employee_id).first()
     if employee is None:
         raise HttpError(404, "Mitarbeiter nicht gefunden.")
+    return _employee_detail_out(employee, year)
 
-    today = date.today()
-    year = year or today.year
 
-    contracts = (
-        EmploymentContract.objects.select_related("wage_group")
-        .filter(employee_id=employee_id)
-        .order_by("-valid_from")
-    )
-    absences = Absence.objects.filter(employee_id=employee_id).order_by("-start_date")
-    account = mitarbeiter_service.vacation_account(employee_id, year)
+@router.get("/self", response=EmployeeDetailOut)
+def get_self(request, year: int | None = None):
+    """Selbstauskunft: die EIGENE Personalakte des angemeldeten Kontos —
+    Stammdaten, Verträge, eigene Abwesenheiten und Resturlaub.
 
-    person = employee.party
-    base = _employee_out(employee).model_dump()
-    return EmployeeDetailOut(
-        **base,
-        salutation=person.salutation,
-        birth_date=person.birth_date,
-        notes=employee.notes,
-        created_at=employee.created_at,
-        contracts=[_contract_out(c, today) for c in contracts],
-        absences=[_absence_out(a) for a in absences],
-        vacation_account=VacationAccountOut(**account),
-    )
+    `require_scoped` statt `require`: dieser Endpunkt liefert ausschließlich die
+    eigene Zeile (Login → hr.employee über app_user_id), deshalb ist der Scope
+    'EIGENE' hier zulässig (und gewollt — genau dafür ist die Selbstauskunft da).
+    Auch mit Scope 'ALLE' gibt es nie fremde Daten: es wird immer nur der eigene
+    Mitarbeiterdatensatz aufgelöst. Wer kein hr/LESEN hat, bekommt 403; wer nicht
+    als Mitarbeiter erfasst ist, 404.
+    """
+    actor, _ = require_scoped(request, "hr", "LESEN")
+    employee = _employee_qs().filter(app_user_id=actor).first()
+    if employee is None:
+        raise HttpError(
+            404,
+            "Zu Ihrem Konto ist kein Mitarbeiterdatensatz hinterlegt. "
+            "Wenden Sie sich an die Personalverwaltung.",
+        )
+    return _employee_detail_out(employee, year)
 
 
 @router.get("/absences", response=list[AbsenceOut], auth=django_auth)

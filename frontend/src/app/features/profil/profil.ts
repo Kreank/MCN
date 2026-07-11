@@ -7,6 +7,7 @@ import {
   Validators,
 } from '@angular/forms';
 import { HttpErrorResponse } from '@angular/common/http';
+import { RouterLink } from '@angular/router';
 import { AuthService } from '../../core/auth.service';
 import { feldFehlerText } from '../../shared/formular/feld-fehler';
 import {
@@ -27,7 +28,7 @@ import {
  */
 @Component({
   selector: 'app-profil',
-  imports: [ReactiveFormsModule],
+  imports: [ReactiveFormsModule, RouterLink],
   templateUrl: './profil.html',
   styleUrl: './profil.scss',
 })
@@ -40,6 +41,8 @@ export class Profil {
     const rollen = this.user()?.roles ?? [];
     return rollen.length ? rollen.join(' · ') : 'Ohne Rolle';
   });
+  /** „Meine Personalakte" nur zeigen, wenn hr/LESEN vorliegt (Server gatet ebenso). */
+  protected readonly darfPersonalakte = computed(() => this.auth.darf('hr', 'LESEN'));
 
   protected readonly laedt = signal(false);
   protected readonly erfolg = signal<string | null>(null);

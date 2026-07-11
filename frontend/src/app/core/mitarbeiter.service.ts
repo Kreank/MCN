@@ -38,6 +38,13 @@ export class MitarbeiterService {
     return this.http.get<EmployeeDetail>(`${this.base}/${id}`);
   }
 
+  /** Selbstauskunft: die EIGENE Personalakte des angemeldeten Kontos
+   * (Resturlaub, Verträge, eigene Abwesenheiten). Recht hr/LESEN; liefert
+   * ausschließlich die eigene Zeile. 404, wenn kein Mitarbeiterdatensatz. */
+  getSelf(): Observable<EmployeeDetail> {
+    return this.http.get<EmployeeDetail>('/api/hr/self');
+  }
+
   // --- Schreibend (Session-Auth Pflicht) -----------------------------------
 
   /** Personalsatz anlegen (Status AKTIV). */

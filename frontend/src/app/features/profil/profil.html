@@ -35,6 +35,17 @@
       </dl>
     </div>
 
+    @if (darfPersonalakte()) {
+      <!-- ===================== Selbstauskunft ===================== -->
+      <div class="karte">
+        <h2 class="karte__titel">Meine Personalakte</h2>
+        <p class="karte__hint">
+          Ihr Resturlaub, Ihr Vertrag und Ihre Abwesenheiten auf einen Blick.
+        </p>
+        <a class="btn btn--primary" routerLink="/meine-personalakte">Personalakte öffnen</a>
+      </div>
+    }
+
     <!-- ===================== Passwort ändern ===================== -->
     <div class="karte">
       <h2 class="karte__titel">Passwort ändern</h2>

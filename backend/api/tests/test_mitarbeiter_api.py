@@ -316,3 +316,115 @@ def test_create_employee_eingeloggt_ohne_app_user_403(client, db):
         content_type="application/json",
     )
     assert r.status_code == 403
+
+
+# --- Selbstauskunft (GET /hr/self) -----------------------------------------
+
+def _employee_login(client, *, role="ADMINISTRATION", first_name="Selma",
+                    last_name="Selbst", year=None, entitlement="30", urlaub_tage=5):
+    """Eingeloggter Nutzer, dessen app_user ZUGLEICH ein hr.employee ist —
+    inkl. Vertrag, Urlaubskonto und einem genehmigten Urlaub im Jahr.
+
+    Gibt (client, employee, app_user) zurück.
+    """
+    from datetime import date, timedelta
+    from .conftest import grant_role
+    year = year or date.today().year
+    user = User.objects.create_user(username=f"u{uuid.uuid4().hex[:8]}", password="x")
+    au = AppUser.objects.create(
+        id=uuid.uuid4(), display_name=f"{first_name} {last_name}",
+        status="ACTIVE", version=1,
+    )
+    user.app_user_id = au.id
+    user.save()
+    grant_role(au.id, role)
+
+    person = identity_service.create_person(au.id, first_name, last_name)
+    emp = mitarbeiter_service.create_employee(
+        au.id, app_user_id=au.id, party_id=person.id, hired_on=date(2024, 1, 1)
+    )
+    mitarbeiter_service.create_contract(
+        au.id, employee_id=emp.id, valid_from=date(2024, 1, 1),
+        hours=VOLLZEIT, vacation_days_per_year=Decimal("30"),
+    )
+    mitarbeiter_service.set_vacation_budget(
+        au.id, employee_id=emp.id, year=year, entitlement_days=Decimal(entitlement)
+    )
+    # Genehmigter Urlaub (Mo–Fr → 5 Arbeitstage) im laufenden Jahr.
+    ab = mitarbeiter_service.create_absence(
+        au.id, employee_id=emp.id, absence_type="URLAUB",
+        start_date=date(year, 6, 1), end_date=date(year, 6, 1) + timedelta(days=4),
+    )
+    mitarbeiter_service.submit_absence(au.id, absence_id=ab.id)
+    mitarbeiter_service.approve_absence(au.id, absence_id=ab.id)
+    client.force_login(user)
+    return client, emp, au
+
+
+@pytest.mark.django_db
+def test_self_eigene_akte(client):
+    """Der angemeldete Mitarbeiter sieht seine eigene Mappe inkl. Resturlaub."""
+    c, emp, _ = _employee_login(client, entitlement="30")
+    r = c.get("/api/hr/self")
+    assert r.status_code == 200, r.content
+    body = r.json()
+    assert body["id"] == str(emp.id)
+    assert body["display_name"] == "Selma Selbst"
+    assert len(body["contracts"]) == 1
+    # 30 Anspruch − 5 genehmigt = 25 Resttage.
+    assert body["vacation_account"]["remaining_days"] == "25.00"
+    assert any(a["absence_type"] == "URLAUB" for a in body["absences"])
+
+
+@pytest.mark.django_db
+def test_self_nur_eigene_daten(client, seeded):
+    """Trotz vieler Mitarbeiter in der DB liefert /self ausschließlich die eigene
+    Akte — nie die eines Kollegen."""
+    c, emp, _ = _employee_login(client, first_name="Nora", last_name="Nurselbst")
+    body = c.get("/api/hr/self").json()
+    assert body["id"] == str(emp.id)
+    fremde = {str(seeded["aktiv"].id), str(seeded["inaktiv"].id),
+              str(seeded["ausgetreten"].id)}
+    assert body["id"] not in fremde
+
+
+@pytest.mark.django_db
+def test_self_eigene_scope_nicht_403(client):
+    """Mit row_scope 'EIGENE' auf hr/LESEN liefert /self die eigene Akte (200) —
+    require_scoped, nicht require (das wäre fail-closed 403)."""
+    from db_core.models import RolePermission
+    c, emp, _ = _employee_login(client)
+    # Den hr/LESEN-Scope der genutzten Rolle testweise auf EIGENE stellen.
+    RolePermission.objects.filter(
+        role_id="ADMINISTRATION", module="hr", action="LESEN"
+    ).update(row_scope="EIGENE")
+    r = c.get("/api/hr/self")
+    assert r.status_code == 200, r.content
+    assert r.json()["id"] == str(emp.id)
+
+
+@pytest.mark.django_db
+def test_self_ungueltiges_jahr_422(client):
+    """Ein Jahr außerhalb 2000–2100 (bzw. date-untauglich) → 422 statt 500."""
+    c, _, _ = _employee_login(client)
+    assert c.get("/api/hr/self?year=10000").status_code == 422
+    assert c.get("/api/hr/self?year=-1").status_code == 422
+
+
+@pytest.mark.django_db
+def test_self_ohne_mitarbeiterdatensatz_404(admin_client):
+    """Ein Login ohne hr.employee (admin_client) bekommt 404, nicht 500."""
+    r = admin_client.get("/api/hr/self")
+    assert r.status_code == 404
+
+
+@pytest.mark.django_db
+def test_self_ohne_hr_recht_403(client_with_role):
+    """MONTEUR hat kein hr/LESEN → 403 (kein Zugriff auf HR-Selbstauskunft)."""
+    c = client_with_role("MONTEUR")
+    assert c.get("/api/hr/self").status_code == 403
+
+
+@pytest.mark.django_db
+def test_self_anonym_401(anonymous_client):
+    assert anonymous_client.get("/api/hr/self").status_code == 401
