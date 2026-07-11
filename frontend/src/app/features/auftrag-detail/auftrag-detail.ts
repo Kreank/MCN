@@ -1,13 +1,15 @@
-import { Component, computed, inject, signal } from '@angular/core';
+import { Component, computed, effect, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { map } from 'rxjs';
 import { Mappe, MappeTab } from '../../shared/mappe/mappe';
 import { AuftragService } from '../../core/auftrag.service';
+import { EinsatzService } from '../../core/einsatz.service';
 import { PartyService } from '../../core/party.service';
 import { AuthService } from '../../core/auth.service';
 import {
+  Kundenhistorie,
   OrderPriority,
   WorkOrderDetail,
   WorkOrderPartyCreate,
@@ -15,6 +17,7 @@ import {
   workOrderStatusClass,
   workOrderStatusLabel,
 } from '../../core/auftrag.model';
+import { ServiceJob, serviceJobStatusLabel } from '../../core/einsatz.model';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { Dateien } from '../../shared/dateien/dateien';
 import { ZielFilter } from '../../core/datei.model';
@@ -70,6 +73,7 @@ const STATUS_KANDIDATEN: WorkOrderStatus[] = [
 export class AuftragDetail {
   private readonly route = inject(ActivatedRoute);
   private readonly svc = inject(AuftragService);
+  private readonly einsatzSvc = inject(EinsatzService);
   private readonly partySvc = inject(PartyService);
   private readonly auth = inject(AuthService);
   private readonly fb = inject(FormBuilder);
@@ -84,9 +88,18 @@ export class AuftragDetail {
   protected readonly tabs: MappeTab[] = [
     { id: 'uebersicht', label: 'Übersicht' },
     { id: 'beteiligte', label: 'Beteiligte' },
+    { id: 'termine', label: 'Termine' },
     { id: 'verlauf', label: 'Verlauf' },
     { id: 'dateien', label: 'Dateien' },
   ];
+
+  // --- Termine-Tab (Einsätze des Auftrags + Kundenhistorie) -----------------
+  // Lazy: erst beim Öffnen des Reiters laden; je Auftrag einmal.
+  protected readonly termineLaden = signal(false);
+  protected readonly termineFehler = signal(false);
+  protected readonly termine = signal<ServiceJob[]>([]);
+  protected readonly historie = signal<Kundenhistorie | null>(null);
+  private termineFuer: string | null = null;
 
   protected readonly daten = computed(() => {
     const s = this.state();
@@ -164,11 +177,42 @@ export class AuftragDetail {
     this.route.paramMap.pipe(takeUntilDestroyed()).subscribe((pm) => {
       const id = pm.get('id');
       this.tab.set('uebersicht');
+      this.termineFuer = null;
+      this.termine.set([]);
+      this.historie.set(null);
       if (!id) {
         this.state.set({ kind: 'error' });
         return;
       }
       this.load(id);
+    });
+
+    // Termine-Reiter erst beim Öffnen laden (je Auftrag einmal).
+    effect(() => {
+      const d = this.daten();
+      if (this.tab() === 'termine' && d && this.termineFuer !== d.id) {
+        this.termineFuer = d.id;
+        this.ladeTermine(d.id);
+      }
+    });
+  }
+
+  private ladeTermine(id: string): void {
+    this.termineLaden.set(true);
+    this.termineFehler.set(false);
+    this.einsatzSvc.list({ page: 1, page_size: 100, work_order_id: id }).subscribe({
+      next: (p) => {
+        this.termine.set(p.items);
+        this.termineLaden.set(false);
+      },
+      error: () => {
+        this.termineLaden.set(false);
+        this.termineFehler.set(true);
+      },
+    });
+    this.svc.kundenhistorie(id).subscribe({
+      next: (h) => this.historie.set(h),
+      error: () => this.historie.set(null),
     });
   }
 
@@ -355,6 +399,17 @@ export class AuftragDetail {
   }
 
   // ---- Darstellungshelfer -------------------------------------------------
+  private readonly terminFmt = new Intl.DateTimeFormat('de-DE', {
+    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
+  /** Geplanter Termin-Zeitpunkt eines Einsatzes (oder „ohne Termin"). */
+  terminZeit(iso: string | null): string {
+    return iso ? this.terminFmt.format(new Date(iso)) : 'ohne Termin';
+  }
+  jobStatusLabel(s: string): string {
+    return serviceJobStatusLabel(s as any);
+  }
+
   statusLabel(s: WorkOrderStatus): string {
     return workOrderStatusLabel(s);
   }

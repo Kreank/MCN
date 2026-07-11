@@ -126,3 +126,11 @@ export function workOrderStatusClass(s: WorkOrderStatus): string {
   if (s === 'STORNIERT') return 'stamp--warn';
   return '';
 }
+
+/** Auftraggeber eines Auftrags + wie viele Aufträge/Termine dieser Kunde hat. */
+export interface Kundenhistorie {
+  customer_party_id: string | null;
+  customer_name: string | null;
+  auftraege_gesamt: number;
+  termine_gesamt: number;
+}

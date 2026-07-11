@@ -257,6 +257,23 @@ def get_work_order(request, work_order_id: UUID):
     return _work_order_detail(work_order_id)
 
 
+class KundenhistorieOut(Schema):
+    customer_party_id: UUID | None = None
+    customer_name: str | None = None
+    auftraege_gesamt: int
+    termine_gesamt: int
+
+
+@router.get("/work_orders/{work_order_id}/kundenhistorie", response=KundenhistorieOut)
+def work_order_kundenhistorie(request, work_order_id: UUID):
+    """Auftraggeber des Auftrags + wie viele Aufträge/Termine dieser Kunde
+    insgesamt hat (rein lesend, workflow/LESEN)."""
+    require(request, "workflow", "LESEN")
+    if not WorkOrder.objects.filter(id=work_order_id).exists():
+        raise HttpError(404, "Auftrag nicht gefunden.")
+    return KundenhistorieOut(**auftrag_service.kundenhistorie(work_order_id))
+
+
 # --- Schreibende Endpoints (Session-Auth Pflicht) --------------------------
 
 @router.post("/work_orders", response={201: WorkOrderDetailOut}, auth=django_auth)

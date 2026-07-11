@@ -121,6 +121,46 @@
         }
       }
 
+      @if (tab() === 'termine') {
+        @if (historie(); as h) {
+          <div class="kundenhistorie">
+            <span class="kundenhistorie__wert">{{ h.termine_gesamt }}</span>
+            <span class="kundenhistorie__text">
+              {{ h.termine_gesamt === 1 ? 'Termin' : 'Termine' }}
+              @if (h.customer_name) { bei <strong>{{ h.customer_name }}</strong> }
+              <span class="kundenhistorie__sub">
+                über {{ h.auftraege_gesamt }} {{ h.auftraege_gesamt === 1 ? 'Auftrag' : 'Aufträge' }}
+              </span>
+            </span>
+          </div>
+        }
+
+        @if (termineLaden()) {
+          <p class="lade-hinweis" role="status">Termine werden geladen …</p>
+        } @else if (termineFehler()) {
+          <p class="note note--error" role="alert">Die Termine konnten nicht geladen werden.</p>
+        } @else if (termine().length === 0) {
+          <div class="tab-platzhalter">
+            <p>Für diesen Auftrag ist noch kein Termin geplant. Termine setzt du in der Plantafel.</p>
+          </div>
+        } @else {
+          <ul class="termine" role="list">
+            @for (t of termine(); track t.id) {
+              <li class="termine__item">
+                <a class="termine__link" [routerLink]="['/planung', t.id]">
+                  <span class="termine__zeit">{{ terminZeit(t.scheduled_start) }}</span>
+                  <span class="termine__nr">{{ t.job_number }}</span>
+                  @if (t.category) {
+                    <span class="termine__kat">{{ t.category.name }}</span>
+                  }
+                  <span class="termine__status stamp">{{ jobStatusLabel(t.status) }}</span>
+                </a>
+              </li>
+            }
+          </ul>
+        }
+      }
+
       @if (tab() === 'verlauf') {
         @if (daten()!.history.length === 0) {
           <div class="tab-platzhalter"><p>Für diesen Auftrag ist noch kein Statusverlauf protokolliert.</p></div>

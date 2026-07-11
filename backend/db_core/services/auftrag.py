@@ -21,8 +21,57 @@ from django.utils import timezone
 
 from db_core.db_context import business_transaction
 from db_core.gate_errors import as_business_error
-from db_core.models import Project, Property, ServiceCase, WorkOrder, WorkOrderParty
+from db_core.models import (
+    Project,
+    Property,
+    ServiceCase,
+    ServiceJob,
+    WorkOrder,
+    WorkOrderParty,
+)
 from db_core.services._validation import ensure_exists, ensure_party_usable
+
+
+def kundenhistorie(work_order_id):
+    """Auftraggeber (PRINCIPAL) des Auftrags samt Kundenhistorie.
+
+    Liefert den primären Auftraggeber und wie viele Aufträge bzw. Einsätze/Termine
+    dieser Kunde insgesamt hat (über alle seine Aufträge). „Kunde" = die Party in
+    der Rolle PRINCIPAL; ohne Auftraggeber sind die Zähler 0. Rein lesend.
+    """
+    ensure_exists(WorkOrder, work_order_id, "Auftrag")
+    principal = (
+        WorkOrderParty.objects.filter(work_order_id=work_order_id, role="PRINCIPAL")
+        .select_related("party")
+        .order_by("-is_primary", "created_at")
+        .first()
+    )
+    if principal is None:
+        return {
+            "customer_party_id": None,
+            "customer_name": None,
+            "auftraege_gesamt": 0,
+            "termine_gesamt": 0,
+        }
+    pid = principal.party_id
+    auftraege = (
+        WorkOrder.objects.filter(parties__party_id=pid, parties__role="PRINCIPAL")
+        .distinct()
+        .count()
+    )
+    termine = (
+        ServiceJob.objects.filter(
+            work_order__parties__party_id=pid, work_order__parties__role="PRINCIPAL"
+        )
+        .distinct()
+        .count()
+    )
+    return {
+        "customer_party_id": pid,
+        "customer_name": principal.party.display_name,
+        "auftraege_gesamt": auftraege,
+        "termine_gesamt": termine,
+    }
 
 PRIORITIES = ("NORMAL", "DRINGEND", "NOTFALL")
 RESPONSIBILITY_SCOPES = ("UNKNOWN", "COMMON_PROPERTY", "PRIVATE_UNIT", "MIXED")

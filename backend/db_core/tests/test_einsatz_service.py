@@ -273,3 +273,51 @@ def test_log_material_menge_null(app_user):
             description="Nichts", quantity=Decimal("0"), unit="kg",
             recorded_by=app_user.id,
         )
+
+
+# --- Kundenhistorie (Auftraggeber + Anzahl Aufträge/Termine) ---------------
+
+def _order_for(app_user, obj, principal, title):
+    """Getorten Auftrag für einen gegebenen Auftraggeber anlegen (bis IN_AUSFUEHRUNG)."""
+    o = auftrag_service.create_work_order(app_user.id, property_id=obj.id, title=title)
+    auftrag_service.set_order_evidence(app_user.id, work_order_id=o.id, reference="N")
+    auftrag_service.confirm_responsibility(
+        app_user.id, work_order_id=o.id, scope="COMMON_PROPERTY"
+    )
+    auftrag_service.add_work_order_party(
+        app_user.id, work_order_id=o.id, party_id=principal.id,
+        role="PRINCIPAL", is_primary=True,
+    )
+    for s in ["FREIGEGEBEN", "IN_PLANUNG", "IN_AUSFUEHRUNG"]:
+        auftrag_service.advance_status(app_user.id, work_order_id=o.id, to_status=s)
+    return o
+
+
+@pytest.mark.django_db
+def test_kundenhistorie_zaehlt_ueber_alle_auftraege(app_user):
+    obj = _property(app_user)
+    principal = _party(app_user, first="Erika", last="Kundenschmidt")
+    o1 = _order_for(app_user, obj, principal, "A1")
+    einsatz_service.create_service_job(app_user.id, work_order_id=o1.id)
+    einsatz_service.create_service_job(app_user.id, work_order_id=o1.id)
+    o2 = _order_for(app_user, obj, principal, "A2")
+    einsatz_service.create_service_job(app_user.id, work_order_id=o2.id)
+    # Anderer Kunde — darf NICHT mitzählen.
+    other = _party(app_user, first="Max", last="Anders")
+    o3 = _order_for(app_user, obj, other, "A3")
+    einsatz_service.create_service_job(app_user.id, work_order_id=o3.id)
+
+    h = auftrag_service.kundenhistorie(o1.id)
+    assert h["customer_name"] == "Erika Kundenschmidt"
+    assert h["auftraege_gesamt"] == 2      # o1, o2
+    assert h["termine_gesamt"] == 3        # 2 + 1
+
+
+@pytest.mark.django_db
+def test_kundenhistorie_ohne_auftraggeber(app_user):
+    obj = _property(app_user)
+    o = auftrag_service.create_work_order(app_user.id, property_id=obj.id, title="X")
+    h = auftrag_service.kundenhistorie(o.id)
+    assert h["customer_party_id"] is None
+    assert h["auftraege_gesamt"] == 0
+    assert h["termine_gesamt"] == 0

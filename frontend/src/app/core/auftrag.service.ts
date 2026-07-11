@@ -3,6 +3,7 @@ import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import {
   EvidenceInput,
+  Kundenhistorie,
   ResponsibilityInput,
   WorkOrderCreate,
   WorkOrderDetail,
@@ -31,6 +32,11 @@ export class AuftragService {
       params = params.set('service_case_id', query.service_case_id);
     }
     return this.http.get<WorkOrderPage>(this.base, { params });
+  }
+
+  /** Auftraggeber + Kundenhistorie (Anzahl Aufträge/Termine des Kunden). */
+  kundenhistorie(id: string): Observable<Kundenhistorie> {
+    return this.http.get<Kundenhistorie>(`${this.base}/${id}/kundenhistorie`);
   }
 
   get(id: string): Observable<WorkOrderDetail> {
