@@ -22,6 +22,9 @@ import { AuthService } from '../../core/auth.service';
       <a routerLink="/einstellungen/mahnstufen" routerLinkActive="is-active">Mahnstufen</a>
       <a routerLink="/einstellungen/mailversand" routerLinkActive="is-active">Mailversand</a>
       <a routerLink="/einstellungen/gewerke" routerLinkActive="is-active">Gewerke</a>
+      <a routerLink="/einstellungen/akquisekanaele" routerLinkActive="is-active"
+        >Akquisekanäle</a
+      >
       <a routerLink="/einstellungen/niederlassungen" routerLinkActive="is-active"
         >Niederlassungen</a
       >

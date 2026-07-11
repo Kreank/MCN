@@ -68,9 +68,21 @@ class OrganizationOut(Schema):
     vat_id: str | None = None
 
 
+class AcquisitionSourceRef(Schema):
+    id: UUID
+    code: str
+    label: str
+
+
 class PartyDetailOut(PartyOut):
     person: PersonOut | None = None
     organization: OrganizationOut | None = None
+    acquisition_source: AcquisitionSourceRef | None = None
+
+
+class AcquisitionSourceIn(Schema):
+    # None löst die Quelle wieder (Kontakt ohne Kanal).
+    source_id: UUID | None = None
 
 
 class PersonIn(Schema):
@@ -206,7 +218,7 @@ def _party_detail(party_id):
     """Detail-Schema einer Party inkl. Subtyp; 404 wenn nicht vorhanden."""
     party = (
         Party.objects.filter(id=party_id)
-        .select_related("person", "organization")
+        .select_related("person", "organization", "acquisition_source")
         .first()
     )
     if party is None:
@@ -218,6 +230,7 @@ def _party_detail(party_id):
         if party.party_type == "ORGANIZATION"
         else None
     )
+    src = party.acquisition_source
     return PartyDetailOut(
         id=party.id,
         party_type=party.party_type,
@@ -225,6 +238,10 @@ def _party_detail(party_id):
         status=party.status,
         person=PersonOut.from_orm(person) if person else None,
         organization=OrganizationOut.from_orm(organization) if organization else None,
+        acquisition_source=(
+            AcquisitionSourceRef(id=src.id, code=src.code, label=src.label)
+            if src else None
+        ),
     )
 
 
@@ -274,6 +291,19 @@ def create_organization(request, payload: OrganizationIn):
 def get_party(request, party_id: UUID):
     """Detail einer Party inkl. Subtyp-Feldern (Person ODER Organisation)."""
     require(request, "identity", "LESEN")
+    return _party_detail(party_id)
+
+
+@router.put("/parties/{party_id}/acquisition-source", response=PartyDetailOut, auth=django_auth)
+def set_acquisition_source(request, party_id: UUID, payload: AcquisitionSourceIn):
+    """Akquisekanal eines Kontakts setzen/ändern (`source_id=null` löst ihn)."""
+    actor, _ = require(request, "identity", "AENDERN")
+    try:
+        identity_service.set_party_acquisition_source(
+            actor, party_id=party_id, source_id=payload.source_id
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
     return _party_detail(party_id)
 
 

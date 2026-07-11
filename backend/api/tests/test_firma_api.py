@@ -343,3 +343,70 @@ def test_onboarding_lesen_fuer_nur_lesen(client_with_role):
 @pytest.mark.django_db
 def test_onboarding_anonym_401(anonymous_client):
     assert anonymous_client.get("/api/company/onboarding").status_code == 401
+
+
+# --- Akquisekanäle / Quellen -----------------------------------------------
+
+@pytest.mark.django_db
+def test_quellen_liste_seed(admin_client):
+    """Der Katalog hat Start-Kanäle (0049)."""
+    r = admin_client.get("/api/company/acquisition-sources")
+    assert r.status_code == 200
+    codes = [s["code"] for s in r.json()]
+    assert "EMPFEHLUNG" in codes and "WEBSITE" in codes
+
+
+@pytest.mark.django_db
+def test_quelle_anlegen_und_deaktivieren(admin_client):
+    r = admin_client.post(
+        "/api/company/acquisition-sources",
+        data={"code": "PARTNER", "label": "Partnerbetrieb", "sort_order": 15},
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    sid = r.json()["id"]
+    assert r.json()["code"] == "PARTNER"
+    r2 = admin_client.put(
+        f"/api/company/acquisition-sources/{sid}",
+        data={"active": False, "label": "Partner (alt)"},
+        content_type="application/json",
+    )
+    assert r2.status_code == 200
+    assert r2.json()["active"] is False
+    assert r2.json()["label"] == "Partner (alt)"
+    # nur aktive
+    aktiv = admin_client.get(
+        "/api/company/acquisition-sources?include_inactive=false"
+    ).json()
+    assert all(s["id"] != sid for s in aktiv)
+
+
+@pytest.mark.django_db
+def test_quelle_doppelter_code_422(admin_client):
+    r = admin_client.post(
+        "/api/company/acquisition-sources",
+        data={"code": "EMPFEHLUNG", "label": "Doppelt"},
+        content_type="application/json",
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.django_db
+def test_quelle_ungueltiger_code_422(admin_client):
+    r = admin_client.post(
+        "/api/company/acquisition-sources",
+        data={"code": "kein code!", "label": "X"},
+        content_type="application/json",
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.django_db
+def test_quelle_anlegen_nur_lesen_403(client_with_role):
+    c = client_with_role("NUR_LESEN")
+    r = c.post(
+        "/api/company/acquisition-sources",
+        data={"code": "X2", "label": "X"},
+        content_type="application/json",
+    )
+    assert r.status_code == 403

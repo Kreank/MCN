@@ -136,6 +136,14 @@ class Party(models.Model):
         db_column="merged_into_party_id",
         related_name="merged_parties",
     )
+    acquisition_source = models.ForeignKey(
+        "AcquisitionSource",
+        models.DO_NOTHING,
+        null=True,
+        blank=True,
+        db_column="acquisition_source_id",
+        related_name="parties",
+    )
     version = models.IntegerField()
     created_at = models.DateTimeField(db_default=Now())
     updated_at = models.DateTimeField(db_default=Now())
@@ -2426,6 +2434,30 @@ class Trade(models.Model):
     class Meta:
         managed = False
         db_table = 'company"."trade'
+
+    def __str__(self):
+        return f"{self.code} — {self.label}"
+
+
+class AcquisitionSource(models.Model):
+    """company.acquisition_source — Akquisekanal/Quelle (0049 db_core).
+
+    „Wie ist der Kunde auf uns gekommen?" (Empfehlung/Website/Messe …). Wird von
+    identity.party referenziert. Deaktivieren statt Löschen; Änderung auditiert.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    code = models.TextField(unique=True)
+    label = models.TextField()
+    active = models.BooleanField(db_default=True)
+    sort_order = models.IntegerField(db_default=models.Value(0))
+    version = models.IntegerField(db_default=models.Value(1))
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'company"."acquisition_source'
 
     def __str__(self):
         return f"{self.code} — {self.label}"

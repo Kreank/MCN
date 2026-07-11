@@ -423,6 +423,12 @@ export const routes: Routes = [
           import('./features/lohngruppen/lohngruppen').then((m) => m.Lohngruppen),
       },
       {
+        path: 'einstellungen/akquisekanaele',
+        title: 'Akquisekanäle — MCN Leitstand',
+        canActivate: [darfGuard('company', 'LESEN')],
+        loadComponent: () => import('./features/quellen/quellen').then((m) => m.Quellen),
+      },
+      {
         // Rechtematrix & Rollenzuordnungen. Lesen genügt für die Ansicht; das
         // Ändern gatet der Server mit security/AENDERN (UI schaltet read-only).
         path: 'einstellungen/rechte',

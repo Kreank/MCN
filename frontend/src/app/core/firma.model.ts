@@ -83,6 +83,27 @@ export interface TradePatch {
   sort_order?: number;
 }
 
+/** Akquisekanal/Quelle (company.acquisition_source) — „wie kam der Kunde zu uns". */
+export interface AcquisitionSource {
+  id: string;
+  code: string;
+  label: string;
+  active: boolean;
+  sort_order: number;
+}
+
+export interface AcquisitionSourceInput {
+  code: string;
+  label: string;
+  sort_order?: number;
+}
+
+export interface AcquisitionSourcePatch {
+  label?: string;
+  active?: boolean;
+  sort_order?: number;
+}
+
 /** Mahnstufe (Konfiguration). fee/interest_note bleiben NULL (STB-Vorbehalt). */
 export interface DunningLevel {
   level: number;

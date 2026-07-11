@@ -49,6 +49,15 @@ export class PartyService {
     return this.http.post<PartyDetail>(`${this.base}/organization`, payload);
   }
 
+  /** Akquisekanal des Kontakts setzen/ändern (`sourceId=null` löst ihn). Recht
+   * identity.AENDERN. */
+  setAcquisitionSource(partyId: string, sourceId: string | null): Observable<PartyDetail> {
+    return this.http.put<PartyDetail>(
+      `${this.base}/${partyId}/acquisition-source`,
+      { source_id: sourceId },
+    );
+  }
+
   // --- Kommunikationswege --------------------------------------------------
   listContactPoints(partyId: string): Observable<ContactPoint[]> {
     return this.http.get<ContactPoint[]>(`${this.base}/${partyId}/contact-points`);

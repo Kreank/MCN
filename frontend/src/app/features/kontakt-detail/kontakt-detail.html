@@ -67,6 +67,32 @@
           </dl>
         }
 
+        <!-- Akquisekanal / Quelle -->
+        <section class="mappe-block" aria-labelledby="quelle-titel">
+          <div class="mappe-block__kopf">
+            <h2 id="quelle-titel" class="mappe-block__titel">Akquisekanal</h2>
+          </div>
+          @if (darfQuelleAendern()) {
+            <label class="quelle-wahl">
+              <span class="sr-only">Akquisekanal wählen</span>
+              <select
+                [disabled]="quelleLaedt()"
+                [value]="daten()!.acquisition_source?.id ?? ''"
+                (change)="quelleSetzen($any($event.target).value)"
+              >
+                <option value="">— keine Angabe —</option>
+                @for (q of quelleOptionen(); track q.id) {
+                  <option [value]="q.id">{{ q.label }}</option>
+                }
+              </select>
+            </label>
+          } @else {
+            <p class="quelle-anzeige">
+              {{ daten()!.acquisition_source?.label || 'keine Angabe' }}
+            </p>
+          }
+        </section>
+
         <!-- Kommunikationswege -->
         <section class="mappe-block" aria-labelledby="kw-titel">
           <div class="mappe-block__kopf">

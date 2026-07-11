@@ -1,0 +1,108 @@
+<section class="quellen" aria-labelledby="quellen-titel">
+  <header class="page-head">
+    <div>
+      <p class="page-head__kicker">
+        <span class="page-head__scale" aria-hidden="true"></span>
+        Einstellungen
+      </p>
+      <h1 id="quellen-titel" class="page-head__titel">Akquisekanäle</h1>
+    </div>
+  </header>
+
+  <app-einstellungen-nav />
+
+  <p class="page-hint">
+    Woher Ihre Kunden kommen (Empfehlung, Website, Messe …). Am Kontakt hinterlegt,
+    hilft es zu sehen, welche Kanäle sich lohnen. Nicht mehr genutzte Kanäle werden
+    deaktiviert, nicht gelöscht — so behalten alte Kontakte ihre Zuordnung.
+  </p>
+
+  @if (meldung(); as m) {
+    <p class="note note--error" role="alert">{{ m }}</p>
+  }
+
+  @switch (state().kind) {
+    @case ('loading') {
+      <p class="lade-hinweis" role="status">Akquisekanäle werden geladen.</p>
+    }
+    @case ('forbidden') {
+      <app-kein-zugriff [detail]="$any(state()).detail" />
+    }
+    @case ('error') {
+      <p class="note note--error" role="alert">
+        Die Akquisekanäle konnten nicht geladen werden. Bitte erneut versuchen.
+      </p>
+    }
+    @case ('ready') {
+      @if (darfAendern()) {
+        <form class="neu-form" [formGroup]="neuForm" (ngSubmit)="anlegen()" novalidate>
+          <app-feld [control]="neuForm.controls.code" label="Code" [pflicht]="true"
+                    hinweis="Großbuchstaben/Ziffern, z. B. MESSE" />
+          <app-feld [control]="neuForm.controls.label" label="Bezeichnung" [pflicht]="true" />
+          <button type="submit" class="btn btn--primary" [disabled]="laedt()">
+            Kanal anlegen
+          </button>
+        </form>
+      }
+
+      <div class="tabelle-rahmen">
+        <table class="katalog-tabelle">
+          <caption class="sr-only">Akquisekanäle mit Code, Bezeichnung und Status</caption>
+          <thead>
+            <tr>
+              <th scope="col">Code</th>
+              <th scope="col">Bezeichnung</th>
+              <th scope="col">Status</th>
+              @if (darfAendern()) {
+                <th scope="col"><span class="sr-only">Aktionen</span></th>
+              }
+            </tr>
+          </thead>
+          <tbody>
+            @for (s of $any(state()).data; track s.id) {
+              <tr>
+                <th scope="row"><code>{{ s.code }}</code></th>
+                <td>
+                  @if (bearbeite() === s.id) {
+                    <app-feld [control]="editLabel" label="Bezeichnung" [pflicht]="true" />
+                  } @else {
+                    {{ s.label }}
+                  }
+                </td>
+                <td>
+                  <span class="status" [class.status--aktiv]="s.active"
+                        [class.status--inaktiv]="!s.active">
+                    <span aria-hidden="true">{{ s.active ? '●' : '○' }}</span>
+                    {{ s.active ? 'Aktiv' : 'Inaktiv' }}
+                  </span>
+                </td>
+                @if (darfAendern()) {
+                  <td class="aktionen-zelle">
+                    @if (bearbeite() === s.id) {
+                      <div class="zeilen-aktionen">
+                        <button type="button" class="btn btn--primary" [disabled]="laedt()"
+                                (click)="speichern(s)">Speichern</button>
+                        <button type="button" class="btn" [disabled]="laedt()"
+                                (click)="abbrechen()">Abbrechen</button>
+                      </div>
+                    } @else {
+                      <div class="zeilen-aktionen">
+                        <button type="button" class="btn" (click)="starteBearbeiten(s)">
+                          Umbenennen
+                        </button>
+                        <button type="button" class="btn" [disabled]="laedt()"
+                                (click)="umschalten(s)">
+                          {{ s.active ? 'Deaktivieren' : 'Aktivieren' }}
+                        </button>
+                      </div>
+                    }
+                  </td>
+                }
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+  }
+</section>

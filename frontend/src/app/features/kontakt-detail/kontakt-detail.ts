@@ -6,7 +6,9 @@ import { map } from 'rxjs';
 import { Mappe, MappeTab } from '../../shared/mappe/mappe';
 import { PartyService } from '../../core/party.service';
 import { AufgabeService } from '../../core/aufgabe.service';
+import { FirmaService } from '../../core/firma.service';
 import { AuthService } from '../../core/auth.service';
+import { AcquisitionSource } from '../../core/firma.model';
 import { Task, TaskStatus } from '../../core/aufgabe.model';
 import {
   Address,
@@ -25,7 +27,7 @@ import {
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { Dateien } from '../../shared/dateien/dateien';
 import { ZielFilter } from '../../core/datei.model';
-import { VerbotenState, fehlerState } from '../../shared/http-fehler';
+import { VerbotenState, fehlerDetail, fehlerState } from '../../shared/http-fehler';
 import { Dialog } from '../../shared/dialog/dialog';
 import { Bestaetigung } from '../../shared/bestaetigung/bestaetigung';
 import { Feld, FeldOption } from '../../shared/formular/feld';
@@ -72,6 +74,7 @@ export class KontaktDetail {
   private readonly route = inject(ActivatedRoute);
   private readonly svc = inject(PartyService);
   private readonly aufgabeSvc = inject(AufgabeService);
+  private readonly firmaSvc = inject(FirmaService);
   private readonly auth = inject(AuthService);
   private readonly fb = inject(FormBuilder);
 
@@ -103,6 +106,25 @@ export class KontaktDetail {
   protected readonly istOrganisation = computed(
     () => this.daten()?.party_type === 'ORGANIZATION',
   );
+
+  /** Aktive Akquisekanäle für die Auswahl am Kontakt. */
+  protected readonly akquiseQuellen = signal<AcquisitionSource[]>([]);
+  protected readonly darfQuelleAendern = computed(() => this.auth.darf('identity', 'AENDERN'));
+  protected readonly quelleLaedt = signal(false);
+
+  /** Auswahloptionen: aktive Kanäle plus der aktuell gesetzte, falls dieser
+   * zwischenzeitlich deaktiviert wurde (sonst fiele er wortlos aus der Liste). */
+  protected readonly quelleOptionen = computed<AcquisitionSource[]>(() => {
+    const aktive = this.akquiseQuellen();
+    const aktuell = this.daten()?.acquisition_source;
+    if (aktuell && !aktive.some((q) => q.id === aktuell.id)) {
+      return [
+        ...aktive,
+        { ...aktuell, label: `${aktuell.label} (inaktiv)`, active: false, sort_order: 0 },
+      ];
+    }
+    return aktive;
+  });
 
   /** Ansprechpartner-Tab nur bei Organisationen (bei Personen sinnlos). */
   protected readonly tabs = computed<MappeTab[]>(() => {
@@ -192,6 +214,12 @@ export class KontaktDetail {
   protected readonly ansprechNeu = computed(() => this.ansprechForm.controls.quelle.value === 'neu');
 
   constructor() {
+    // Aktive Akquisekanäle einmal laden (für die Quelle-Auswahl im Stammdaten-Tab).
+    this.firmaSvc.listAcquisitionSources(false).subscribe({
+      next: (q) => this.akquiseQuellen.set(q),
+      error: () => this.akquiseQuellen.set([]),
+    });
+
     this.route.paramMap.pipe(takeUntilDestroyed()).subscribe((pm) => {
       const id = pm.get('id');
       this.tab.set('stammdaten');
@@ -487,6 +515,25 @@ export class KontaktDetail {
       },
       error: (err) => {
         if (rid === this.reqId) this.state.set(fehlerState(err));
+      },
+    });
+  }
+
+  /** Akquisekanal des Kontakts setzen/ändern (leerer Wert löst ihn). */
+  quelleSetzen(sourceId: string): void {
+    const d = this.daten();
+    if (!d || this.quelleLaedt() || !this.darfQuelleAendern()) return;
+    const ziel = sourceId || null;
+    if ((d.acquisition_source?.id ?? null) === ziel) return;
+    this.quelleLaedt.set(true);
+    this.svc.setAcquisitionSource(d.id, ziel).subscribe({
+      next: (data) => {
+        this.quelleLaedt.set(false);
+        if (this.state().kind === 'ready') this.state.set({ kind: 'ready', data });
+      },
+      error: (err) => {
+        this.quelleLaedt.set(false);
+        this.meldung.set({ art: 'fehler', text: fehlerDetail(err) ?? 'Der Akquisekanal konnte nicht gesetzt werden.' });
       },
     });
   }

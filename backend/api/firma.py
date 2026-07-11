@@ -139,6 +139,26 @@ class TradePatch(Schema):
     sort_order: int | None = None
 
 
+class AcquisitionSourceOut(Schema):
+    id: UUID
+    code: str
+    label: str
+    active: bool
+    sort_order: int
+
+
+class AcquisitionSourceIn(Schema):
+    code: str
+    label: str
+    sort_order: int = 0
+
+
+class AcquisitionSourcePatch(Schema):
+    label: str | None = None
+    active: bool | None = None
+    sort_order: int | None = None
+
+
 # --- Mapper ----------------------------------------------------------------
 
 def _profile_out(p, pending_bank_approval=None):
@@ -318,3 +338,40 @@ def update_trade(request, trade_id: UUID, payload: TradePatch):
     except ValueError as exc:
         raise HttpError(422, str(exc))
     return _trade_out(trade)
+
+
+# --- Akquisekanäle / Quellen -----------------------------------------------
+
+def _source_out(s):
+    return AcquisitionSourceOut(
+        id=s.id, code=s.code, label=s.label, active=s.active, sort_order=s.sort_order
+    )
+
+
+@router.get("/acquisition-sources", response=list[AcquisitionSourceOut])
+def list_acquisition_sources(request, include_inactive: bool = True):
+    require(request, "company", "LESEN")
+    return [_source_out(s) for s in firma_service.list_acquisition_sources(
+        include_inactive=include_inactive)]
+
+
+@router.post("/acquisition-sources", response={201: AcquisitionSourceOut}, auth=django_auth)
+def create_acquisition_source(request, payload: AcquisitionSourceIn):
+    actor = require_create(request, "company", "ANLEGEN")
+    try:
+        source = firma_service.create_acquisition_source(actor, **payload.model_dump())
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return Status(201, _source_out(source))
+
+
+@router.put("/acquisition-sources/{source_id}", response=AcquisitionSourceOut, auth=django_auth)
+def update_acquisition_source(request, source_id: UUID, payload: AcquisitionSourcePatch):
+    actor, _ = require(request, "company", "AENDERN")
+    try:
+        source = firma_service.update_acquisition_source(
+            actor, source_id=source_id, **payload.model_dump(exclude_unset=True)
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _source_out(source)

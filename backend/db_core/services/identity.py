@@ -22,6 +22,7 @@ from django.db import IntegrityError, transaction
 from db_core.db_context import business_transaction
 from db_core.gate_errors import as_business_error
 from db_core.models import (
+    AcquisitionSource,
     Address,
     ContactPoint,
     Organization,
@@ -131,6 +132,23 @@ def create_organization(
             tax_number=tax_number,
             vat_id=vat_id,
         )
+    return party
+
+
+def set_party_acquisition_source(actor_app_user_id, *, party_id, source_id):
+    """Setzt/ändert den Akquisekanal eines Kontakts (`source_id=None` löst ihn wieder).
+
+    Prüft, dass der Kanal existiert (sonst 422 statt FK-500). Gibt die Party zurück.
+    """
+    party = Party.objects.filter(id=party_id).first()
+    if party is None:
+        raise ValueError("Kontakt nicht gefunden.")
+    if source_id is not None and not AcquisitionSource.objects.filter(id=source_id).exists():
+        raise ValueError("Akquisekanal nicht gefunden.")
+    party.acquisition_source_id = source_id
+    with business_transaction(actor_app_user_id):
+        party.save(update_fields=["acquisition_source_id", "updated_at"])
+    party.refresh_from_db()
     return party
 
 

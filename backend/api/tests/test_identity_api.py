@@ -339,3 +339,57 @@ def test_create_ohne_csrf_token_abgelehnt(db):
     )
     assert r.status_code == 403
     assert not Party.objects.filter(display_name="Csrf Fehlt").exists()
+
+
+# --- Akquisekanal am Kontakt (0049) ----------------------------------------
+
+@pytest.mark.django_db
+def test_akquisekanal_setzen_detail_und_loesen(admin_client):
+    pid = admin_client.post(
+        "/api/identity/parties/person",
+        data={"first_name": "Quelle", "last_name": "Test"},
+        content_type="application/json",
+    ).json()["id"]
+    sid = admin_client.get("/api/company/acquisition-sources").json()[0]["id"]
+
+    r = admin_client.put(
+        f"/api/identity/parties/{pid}/acquisition-source",
+        data={"source_id": sid}, content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    assert r.json()["acquisition_source"]["id"] == sid
+    # Auch das Detail liefert die Quelle.
+    d = admin_client.get(f"/api/identity/parties/{pid}").json()
+    assert d["acquisition_source"]["id"] == sid
+    # Wieder lösen.
+    r2 = admin_client.put(
+        f"/api/identity/parties/{pid}/acquisition-source",
+        data={"source_id": None}, content_type="application/json",
+    )
+    assert r2.status_code == 200
+    assert r2.json()["acquisition_source"] is None
+
+
+@pytest.mark.django_db
+def test_akquisekanal_unbekannt_422(admin_client):
+    pid = admin_client.post(
+        "/api/identity/parties/person",
+        data={"first_name": "Q", "last_name": "T"},
+        content_type="application/json",
+    ).json()["id"]
+    r = admin_client.put(
+        f"/api/identity/parties/{pid}/acquisition-source",
+        data={"source_id": str(uuid.uuid4())}, content_type="application/json",
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.django_db
+def test_akquisekanal_setzen_ohne_recht_403(client_with_role):
+    """NUR_LESEN hat kein identity/AENDERN."""
+    c = client_with_role("NUR_LESEN")
+    r = c.put(
+        f"/api/identity/parties/{uuid.uuid4()}/acquisition-source",
+        data={"source_id": None}, content_type="application/json",
+    )
+    assert r.status_code == 403

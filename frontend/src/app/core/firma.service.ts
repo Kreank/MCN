@@ -7,6 +7,9 @@ import {
   BranchPatch,
   CompanyProfile,
   CompanyProfileInput,
+  AcquisitionSource,
+  AcquisitionSourceInput,
+  AcquisitionSourcePatch,
   DunningLevel,
   DunningLevelPatch,
   Onboarding,
@@ -95,6 +98,24 @@ export class FirmaService {
 
   updateTrade(id: string, payload: TradePatch): Observable<Trade> {
     return this.http.put<Trade>(`${this.base}/trades/${id}`, payload);
+  }
+
+  // --- Akquisekanäle / Quellen ---------------------------------------------
+
+  listAcquisitionSources(includeInactive = true): Observable<AcquisitionSource[]> {
+    const params = new HttpParams().set('include_inactive', includeInactive);
+    return this.http.get<AcquisitionSource[]>(`${this.base}/acquisition-sources`, { params });
+  }
+
+  createAcquisitionSource(payload: AcquisitionSourceInput): Observable<AcquisitionSource> {
+    return this.http.post<AcquisitionSource>(`${this.base}/acquisition-sources`, payload);
+  }
+
+  updateAcquisitionSource(
+    id: string,
+    payload: AcquisitionSourcePatch,
+  ): Observable<AcquisitionSource> {
+    return this.http.put<AcquisitionSource>(`${this.base}/acquisition-sources/${id}`, payload);
   }
 
   // --- Mahnstufen ----------------------------------------------------------

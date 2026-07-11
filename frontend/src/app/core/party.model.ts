@@ -41,9 +41,16 @@ export interface Organization {
   vat_id: string | null;
 }
 
+export interface AcquisitionSourceRef {
+  id: string;
+  code: string;
+  label: string;
+}
+
 export interface PartyDetail extends Party {
   person: Person | null;
   organization: Organization | null;
+  acquisition_source: AcquisitionSourceRef | null;
 }
 
 // --- Anlage (POST /api/identity/parties/person | /organization) ------------

@@ -20,6 +20,7 @@ from pathlib import PurePosixPath
 from db_core import storage as storage_module
 from db_core.db_context import business_transaction
 from db_core.models import (
+    AcquisitionSource,
     Branch,
     CompanyProfile,
     DunningLevel,
@@ -400,6 +401,66 @@ def update_trade(actor_app_user_id, *, trade_id, **fields):
             trade.save(update_fields=changed + ["updated_at"])
         trade.refresh_from_db()
     return trade
+
+
+# --- Akquisekanäle / Quellen (company.acquisition_source, 0049) --------------
+
+def list_acquisition_sources(*, include_inactive=True):
+    qs = AcquisitionSource.objects.all()
+    if not include_inactive:
+        qs = qs.filter(active=True)
+    return qs.order_by("sort_order", "label", "id")
+
+
+def create_acquisition_source(actor_app_user_id, *, code, label, sort_order=0):
+    code = (_clean(code) or "").upper()
+    label = _clean(label)
+    if not code:
+        raise ValueError("Kanal-Code ist erforderlich.")
+    # Spiegelt den DB-CHECK (^[A-Z0-9_]{2,}$); sonst 500 statt 422.
+    if not re.fullmatch(r"[A-Z0-9_]{2,}", code):
+        raise ValueError(
+            "Kanal-Code darf nur A–Z, 0–9 und _ enthalten (mindestens 2 Zeichen)."
+        )
+    if not label:
+        raise ValueError("Kanal-Bezeichnung ist erforderlich.")
+    if AcquisitionSource.objects.filter(code=code).exists():
+        raise ValueError(f"Kanal-Code '{code}' ist bereits vergeben.")
+    with business_transaction(actor_app_user_id):
+        source = AcquisitionSource.objects.create(
+            id=uuid.uuid4(), code=code, label=label, sort_order=sort_order or 0,
+        )
+    return source
+
+
+def update_acquisition_source(actor_app_user_id, *, source_id, **fields):
+    source = AcquisitionSource.objects.filter(id=source_id).first()
+    if source is None:
+        raise ValueError("Akquisekanal nicht gefunden.")
+    allowed = ("label", "active", "sort_order")
+    unknown = set(fields) - set(allowed)
+    if unknown:
+        raise ValueError(f"Unbekannte Felder: {', '.join(sorted(unknown))}")
+    changed = []
+    for key in allowed:
+        if key not in fields:
+            continue
+        val = fields[key]
+        if key == "active":
+            val = bool(val)
+        elif key == "label":
+            val = _clean(val)
+            if not val:
+                raise ValueError("Kanal-Bezeichnung darf nicht leer sein.")
+        elif key == "sort_order":
+            val = int(val or 0)
+        setattr(source, key, val)
+        changed.append(key)
+    if changed:
+        with business_transaction(actor_app_user_id):
+            source.save(update_fields=changed + ["updated_at"])
+        source.refresh_from_db()
+    return source
 
 
 # --- Mahnstufen -------------------------------------------------------------
