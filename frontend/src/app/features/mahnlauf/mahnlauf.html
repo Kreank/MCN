@@ -1,0 +1,173 @@
+<section class="mahnlauf" aria-labelledby="mahnlauf-titel">
+  <header class="page-head">
+    <div>
+      <p class="page-head__kicker">
+        <span class="page-head__scale" aria-hidden="true"></span>
+        Buchhaltung · Mahnwesen
+      </p>
+      <h1 id="mahnlauf-titel" class="page-head__titel">Mahnlauf</h1>
+    </div>
+    <a class="btn" routerLink="/buchhaltung/mahnwesen">Zur Mahnübersicht</a>
+  </header>
+
+  <p class="page-head__hint">
+    Alle veröffentlichten Rechnungen, die zum Stichtag für ihre nächste Mahnstufe
+    fällig sind. Wählen Sie die Fälle aus und stellen Sie die Stufen im Stapel aus —
+    auf Wunsch gleich als E-Mail an den Schuldner. Es läuft nichts automatisch:
+    Sie bestätigen den Lauf.
+  </p>
+
+  <div class="steuerung">
+    <label class="feld">
+      <span class="feld__label">Stichtag</span>
+      <input
+        type="date"
+        [ngModel]="stichtag()"
+        (ngModelChange)="stichtag.set($event)"
+        (change)="aktualisieren()"
+      />
+    </label>
+    <button type="button" class="btn" (click)="aktualisieren()">Vorschau aktualisieren</button>
+    <label class="schalter">
+      <input type="checkbox" [ngModel]="sendEmail()" (ngModelChange)="sendEmail.set($event)" />
+      <span>Mahnung direkt per E-Mail versenden</span>
+    </label>
+  </div>
+
+  @if (meldung(); as m) {
+    <p class="note note--error" role="alert">{{ m }}</p>
+  }
+
+  @switch (state().kind) {
+    @case ('loading') {
+      <p class="lade-hinweis" role="status">Fällige Mahnungen werden ermittelt …</p>
+    }
+    @case ('forbidden') {
+      <app-kein-zugriff [detail]="$any(state()).detail" />
+    }
+    @case ('error') {
+      <div class="note note--error" role="alert">
+        <p>Die Vorschau ließ sich nicht laden.</p>
+        <button type="button" class="btn btn--primary" (click)="aktualisieren()">Erneut versuchen</button>
+      </div>
+    }
+    @case ('ready') {
+      @if (ergebnis(); as e) {
+        <!-- Ergebnis nach dem Lauf -->
+        <div class="ergebnis" role="status" aria-live="polite">
+          <h2 class="ergebnis__titel">Mahnlauf abgeschlossen</h2>
+          <ul class="ergebnis__zahlen">
+            <li><strong>{{ e.issued }}</strong> Stufe(n) ausgestellt</li>
+            <li><strong>{{ e.sent }}</strong> per E-Mail versendet</li>
+            @if (e.skipped) { <li><strong>{{ e.skipped }}</strong> übersprungen</li> }
+            @if (e.failed) { <li class="ist-fehler"><strong>{{ e.failed }}</strong> fehlgeschlagen</li> }
+          </ul>
+          @if (hatHinweise(e)) {
+            <ul class="ergebnis__hinweise">
+              @for (r of e.results; track r.invoice_id) {
+                @if (r.detail) {
+                  <li>
+                    <span class="status status--{{ r.status }}">{{ statusLabel(r.status) }}</span>
+                    {{ r.detail }}
+                  </li>
+                }
+              }
+            </ul>
+          }
+          <button type="button" class="btn btn--primary" (click)="aktualisieren()">Neue Vorschau</button>
+        </div>
+      } @else if ($any(state()).candidates.length === 0) {
+        <div class="note note--empty">
+          <h2 class="note__titel">Keine fälligen Mahnungen</h2>
+          <p class="note__text">
+            Zum {{ datum($any(state()).stichtag) }} ist keine Rechnung für ihre nächste
+            Mahnstufe fällig.
+          </p>
+        </div>
+      } @else {
+        <div class="lauf-kopf">
+          <p class="auswahl-info" role="status">
+            {{ anzahlAusgewaehlt() }} von {{ $any(state()).candidates.length }} ausgewählt
+          </p>
+          @if (darfVersenden()) {
+            <button
+              type="button"
+              class="btn btn--primary"
+              [disabled]="laeuft() || anzahlAusgewaehlt() === 0"
+              (click)="starten($any(state()).candidates)"
+            >
+              {{ laeuft() ? 'Mahnlauf läuft …' : 'Mahnlauf starten (' + anzahlAusgewaehlt() + ')' }}
+            </button>
+          } @else {
+            <p class="note" role="note">Zum Ausführen fehlt das Recht „Versenden".</p>
+          }
+        </div>
+
+        <div class="tabelle-wrap">
+          <table class="tabelle">
+            <thead>
+              <tr>
+                <th scope="col" class="mitte">
+                  <input
+                    type="checkbox"
+                    aria-label="Alle auswählen"
+                    [checked]="anzahlAusgewaehlt() === $any(state()).candidates.length"
+                    (change)="alleUmschalten($any(state()).candidates)"
+                  />
+                </th>
+                <th scope="col">Rechnung</th>
+                <th scope="col">Schuldner</th>
+                <th scope="col" class="num">Fällig</th>
+                <th scope="col" class="num">Offen</th>
+                <th scope="col">Nächste Stufe</th>
+                <th scope="col" class="num">Überfällig</th>
+                <th scope="col">E-Mail</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (c of $any(state()).candidates; track c.invoice_id) {
+                <tr [class.zeile--gewaehlt]="istAusgewaehlt(c.invoice_id)">
+                  <td class="mitte">
+                    <input
+                      type="checkbox"
+                      [attr.aria-label]="'Rechnung ' + (c.invoice_number || '') + ' auswählen'"
+                      [checked]="istAusgewaehlt(c.invoice_id)"
+                      (change)="umschalten(c.invoice_id)"
+                    />
+                  </td>
+                  <td>
+                    <a class="zelle-link" [routerLink]="['/buchhaltung', c.invoice_id]">
+                      {{ c.invoice_number || '—' }}
+                    </a>
+                  </td>
+                  <td>{{ c.debtor || '—' }}</td>
+                  <td class="num">{{ datum(c.due_date) }}</td>
+                  <td class="num betrag">{{ euro(c.open_amount) }}</td>
+                  <td>
+                    <span class="stufe">Stufe {{ c.next_level }}</span>
+                    <span class="stufe-label">{{ c.next_level_label }}</span>
+                  </td>
+                  <td class="num">{{ c.days_overdue }} Tage</td>
+                  <td>
+                    @if (c.recipient_email) {
+                      <span class="mail-ok" [title]="c.recipient_email">vorhanden</span>
+                    } @else {
+                      <span class="mail-fehlt">keine Adresse</span>
+                    }
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+
+        @if (sendEmail()) {
+          <p class="fuss-hinweis" role="note">
+            Für Rechnungen ohne hinterlegte E-Mail-Adresse wird die Mahnstufe
+            ausgestellt, aber nicht versendet.
+          </p>
+        }
+      }
+    }
+  }
+</section>

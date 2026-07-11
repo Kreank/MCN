@@ -37,6 +37,7 @@ from db_core.services import beleg as beleg_service
 from db_core.services import beleg_versand as beleg_versand_service
 from db_core.services import buchhaltung as buchhaltung_service
 from db_core.services import firma as firma_service
+from db_core.services import mahnlauf as mahnlauf_service
 from db_core.services import vier_augen
 from db_core.services.buchhaltung import PAYMENT_SIGN
 from db_core.services.mail import MailSendError
@@ -845,3 +846,84 @@ def send_dunning_email(request, notice_id: UUID, payload: DunningEmailIn):
         # Passwortfreie, klare Meldung an das UI statt eines 500-Leaks.
         raise HttpError(422, str(exc))
     return DunningEmailOut(sent=True, to_address=communication.counterpart_raw)
+
+
+# --- Mahnlauf (semi-automatischer Stapel) ----------------------------------
+
+class MahnlaufCandidateOut(Schema):
+    invoice_id: UUID
+    invoice_number: str | None = None
+    debtor: str | None = None
+    due_date: date | None = None
+    open_amount: Decimal
+    current_level: int
+    next_level: int
+    next_level_label: str
+    days_overdue: int
+    # Ermittelte Schuldner-E-Mail; None → Stufe ausstellbar, aber nicht mailbar.
+    recipient_email: str | None = None
+
+
+class MahnlaufPreviewOut(Schema):
+    stichtag: date
+    candidates: list[MahnlaufCandidateOut]
+
+
+class MahnlaufItemIn(Schema):
+    invoice_id: UUID
+    # Erwartete nächste Stufe (aus der Vorschau); der Lauf prüft sie erneut.
+    level: int
+
+
+class MahnlaufIn(Schema):
+    items: list[MahnlaufItemIn]
+    send_email: bool = True
+    stichtag: date | None = None
+
+
+class MahnlaufResultRowOut(Schema):
+    invoice_id: UUID
+    status: str  # issued | sent | skipped | failed
+    level: int | None = None
+    notice_id: UUID | None = None
+    detail: str | None = None
+
+
+class MahnlaufResultOut(Schema):
+    issued: int
+    sent: int
+    skipped: int
+    failed: int
+    results: list[MahnlaufResultRowOut]
+
+
+@router.get("/mahnlauf/vorschau", response=MahnlaufPreviewOut)
+def mahnlauf_vorschau(request, stichtag: date | None = Query(None)):
+    """Vorschau des Mahnlaufs: alle Rechnungen, die zum Stichtag (Vorgabe: heute)
+    für ihre nächste Mahnstufe fällig sind. Reine Ansicht (invoicing/LESEN)."""
+    require(request, "invoicing", "LESEN")
+    tag = stichtag or date.today()
+    candidates = mahnlauf_service.list_candidates(stichtag=tag)
+    return MahnlaufPreviewOut(
+        stichtag=tag,
+        candidates=[MahnlaufCandidateOut(**c) for c in candidates],
+    )
+
+
+@router.post("/mahnlauf", response=MahnlaufResultOut, auth=django_auth)
+def mahnlauf_ausfuehren(request, payload: MahnlaufIn):
+    """Führt einen bestätigten Mahnlauf aus: stellt je Rechnung die nächste
+    Mahnstufe aus und versendet sie optional per E-Mail.
+
+    Recht VERSENDEN (wie die Einzel-Mahnung — nach außen wirkende Kundenkommuni-
+    kation). Jede Rechnung ist unabhängig: der Lauf bricht bei einem Fehler nicht
+    ab, sondern meldet je Zeile issued/sent/skipped/failed. Ein zwischenzeitlich
+    anderweitig gemahnter Beleg wird übersprungen (kein Doppel-Eskalieren)."""
+    actor, _ = require(request, "invoicing", "VERSENDEN")
+    result = mahnlauf_service.run(
+        actor,
+        items=[{"invoice_id": i.invoice_id, "level": i.level} for i in payload.items],
+        stichtag=payload.stichtag or date.today(),
+        send_email=payload.send_email,
+    )
+    return MahnlaufResultOut(**result)

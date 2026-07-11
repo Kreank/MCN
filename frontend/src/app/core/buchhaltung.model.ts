@@ -229,3 +229,51 @@ export function euro(value: string | null): string {
   if (value === null || value === '') return '—';
   return EUR.format(Number(value));
 }
+
+// --- Mahnlauf (semi-automatischer Stapel) ----------------------------------
+
+/** Ein Rechnungs­kandidat für die nächste Mahnstufe (aus der Vorschau). */
+export interface MahnlaufCandidate {
+  invoice_id: string;
+  invoice_number: string | null;
+  debtor: string | null;
+  due_date: string | null;
+  open_amount: string;
+  current_level: number;
+  next_level: number;
+  next_level_label: string;
+  days_overdue: number;
+  recipient_email: string | null;
+}
+
+export interface MahnlaufPreview {
+  stichtag: string;
+  candidates: MahnlaufCandidate[];
+}
+
+export interface MahnlaufItem {
+  invoice_id: string;
+  level: number;
+}
+
+export interface MahnlaufInput {
+  items: MahnlaufItem[];
+  send_email: boolean;
+  stichtag?: string | null;
+}
+
+export interface MahnlaufResultRow {
+  invoice_id: string;
+  status: 'issued' | 'sent' | 'skipped' | 'failed';
+  level: number | null;
+  notice_id: string | null;
+  detail: string | null;
+}
+
+export interface MahnlaufResult {
+  issued: number;
+  sent: number;
+  skipped: number;
+  failed: number;
+  results: MahnlaufResultRow[];
+}

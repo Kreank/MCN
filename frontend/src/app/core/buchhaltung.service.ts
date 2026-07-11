@@ -8,6 +8,9 @@ import {
   DunningIssue,
   DunningList,
   DunningNotice,
+  MahnlaufInput,
+  MahnlaufPreview,
+  MahnlaufResult,
   OpenItemDetail,
   OpenItemPage,
   OpenItemQuery,
@@ -125,5 +128,20 @@ export class BuchhaltungService {
       return { kind: 'wartet', pending: res.body as PendingApproval };
     }
     return { kind: 'erzeugt', credit: res.body as CreditRef };
+  }
+
+  // --- Mahnlauf (semi-automatischer Stapel) --------------------------------
+
+  /** Vorschau: Rechnungen, die zum Stichtag für ihre nächste Mahnstufe fällig
+   * sind (Vorgabe: heute). Reine Ansicht (invoicing/LESEN). */
+  mahnlaufVorschau(stichtag?: string | null): Observable<MahnlaufPreview> {
+    let params = new HttpParams();
+    if (stichtag) params = params.set('stichtag', stichtag);
+    return this.http.get<MahnlaufPreview>(`${this.base}/mahnlauf/vorschau`, { params });
+  }
+
+  /** Bestätigten Mahnlauf ausführen (Stufen ausstellen, optional versenden). */
+  mahnlaufAusfuehren(payload: MahnlaufInput): Observable<MahnlaufResult> {
+    return this.http.post<MahnlaufResult>(`${this.base}/mahnlauf`, payload);
   }
 }

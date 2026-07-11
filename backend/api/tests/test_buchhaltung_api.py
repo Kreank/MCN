@@ -10,7 +10,7 @@ from uuid import uuid4
 import pytest
 from django.contrib.auth import get_user_model
 
-from db_core.models import AppUser, Payment
+from db_core.models import AppUser, DunningNotice, Payment
 from db_core.services import auftrag as auftrag_service
 from db_core.services import beleg as beleg_service
 from db_core.services import buchhaltung as buchhaltung_service
@@ -556,3 +556,164 @@ def test_gescheiterte_korrektur_verbraucht_genehmigung_nicht(client, seeded, app
         "RECHNUNGSKORREKTUR", target_table="invoicing.invoice", target_id=inv.id,
         payload={"operation": "GUTSCHRIFT", "positions": [99]},
     ) is not None
+
+
+# --- Mahnlauf (semi-automatischer Stapel) ----------------------------------
+
+def _max_level(invoice_id):
+    from django.db.models import Max
+    return DunningNotice.objects.filter(invoice_id=invoice_id).aggregate(
+        m=Max("level")
+    )["m"]
+
+
+@pytest.mark.django_db
+def test_mahnlauf_vorschau_findet_faellige(admin_client, seeded):
+    """Die 30 Tage überfällige Rechnung (Stufe 1) ist Kandidat für Stufe 2
+    (days_after_due=21 <= 30). Offener Betrag = 285,60 - 100 = 185,60."""
+    r = admin_client.get("/api/buchhaltung/mahnlauf/vorschau")
+    assert r.status_code == 200, r.content
+    body = r.json()
+    row = next(c for c in body["candidates"] if c["invoice_id"] == str(seeded["inv"].id))
+    assert row["current_level"] == 1
+    assert row["next_level"] == 2
+    assert row["next_level_label"] == "2. Zahlungserinnerung"
+    assert row["days_overdue"] >= 14
+    assert row["open_amount"] == "185.60"
+    # Für den Schuldner ist keine E-Mail gepflegt → mailbar erst nach Pflege.
+    assert row["recipient_email"] is None
+
+
+@pytest.mark.django_db
+def test_mahnlauf_vorschau_stichtag_zu_frueh(admin_client, seeded):
+    """Zum Stichtag mit nur 10 Überfälligkeitstagen ist Stufe 2 (Frist 14) noch
+    nicht fällig — die Rechnung erscheint nicht."""
+    stichtag = date.today() - timedelta(days=20)  # due_date war today-30 → 10 Tage
+    r = admin_client.get(f"/api/buchhaltung/mahnlauf/vorschau?stichtag={stichtag}")
+    assert r.status_code == 200
+    ids = [c["invoice_id"] for c in r.json()["candidates"]]
+    assert str(seeded["inv"].id) not in ids
+
+
+@pytest.mark.django_db
+def test_mahnlauf_ausfuehren_stellt_stufe_aus(admin_client, seeded):
+    """Lauf ohne Versand: Stufe 2 wird ausgestellt (issued), Rechnung steht danach
+    auf Stufe 2."""
+    r = admin_client.post(
+        "/api/buchhaltung/mahnlauf",
+        data={"items": [{"invoice_id": str(seeded["inv"].id), "level": 2}],
+              "send_email": False},
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    body = r.json()
+    assert body["issued"] == 1
+    assert body["sent"] == 0
+    assert body["results"][0]["status"] == "issued"
+    assert body["results"][0]["level"] == 2
+    assert _max_level(seeded["inv"].id) == 2
+
+
+@pytest.mark.django_db
+def test_mahnlauf_ausfuehren_ohne_adresse_ausgestellt_nicht_versendet(admin_client, seeded):
+    """Mit Versand, aber ohne Schuldner-E-Mail: die Stufe bleibt ausgestellt, nur
+    der Versand scheitert (Best-Effort) → status 'issued' mit Hinweis."""
+    r = admin_client.post(
+        "/api/buchhaltung/mahnlauf",
+        data={"items": [{"invoice_id": str(seeded["inv"].id), "level": 2}],
+              "send_email": True},
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    body = r.json()
+    assert body["issued"] == 1
+    assert body["sent"] == 0
+    row = body["results"][0]
+    assert row["status"] == "issued"
+    assert "nicht versendet" in (row["detail"] or "")
+    assert _max_level(seeded["inv"].id) == 2
+
+
+@pytest.mark.django_db
+def test_mahnlauf_stale_stufe_uebersprungen(admin_client, seeded):
+    """Eine erwartete Stufe, die nicht die nächste lückenlose ist (3 statt 2),
+    wird übersprungen statt fälschlich eskaliert."""
+    r = admin_client.post(
+        "/api/buchhaltung/mahnlauf",
+        data={"items": [{"invoice_id": str(seeded["inv"].id), "level": 3}]},
+        content_type="application/json",
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["skipped"] == 1
+    assert body["issued"] == 0
+    assert body["results"][0]["status"] == "skipped"
+    # Nichts wurde ausgestellt: die Rechnung bleibt auf Stufe 1.
+    assert _max_level(seeded["inv"].id) == 1
+
+
+@pytest.mark.django_db
+def test_mahnlauf_bezahlt_im_fenster_uebersprungen(admin_client, seeded, app_user):
+    """Wird die Rechnung zwischen Vorschau und Lauf voll bezahlt, prüft der Lauf
+    die Eignung erneut und stellt KEINE weitere Mahnstufe aus (übersprungen)."""
+    inv = seeded["inv"]
+    # Restbetrag begleichen → kein offener Posten mehr.
+    remaining = inv.gross_total - Decimal("100.00")
+    buchhaltung_service.record_payment(
+        app_user.id, invoice_id=inv.id, amount=remaining, paid_at=date.today()
+    )
+    r = admin_client.post(
+        "/api/buchhaltung/mahnlauf",
+        data={"items": [{"invoice_id": str(inv.id), "level": 2}], "send_email": False},
+        content_type="application/json",
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["issued"] == 0
+    assert body["skipped"] == 1
+    assert body["results"][0]["status"] == "skipped"
+    # Es blieb bei Stufe 1 aus der Fixture.
+    assert _max_level(inv.id) == 1
+
+
+@pytest.mark.django_db
+def test_mahnlauf_doppelauswahl_einmal_ausgestellt(admin_client, seeded):
+    """Steht dieselbe Rechnung zweimal im Stapel, wird sie nur einmal ausgestellt,
+    die zweite Zeile übersprungen (kein Doppel-Eskalieren)."""
+    r = admin_client.post(
+        "/api/buchhaltung/mahnlauf",
+        data={"items": [
+            {"invoice_id": str(seeded["inv"].id), "level": 2},
+            {"invoice_id": str(seeded["inv"].id), "level": 2},
+        ], "send_email": False},
+        content_type="application/json",
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["issued"] == 1
+    assert body["skipped"] == 1
+    assert _max_level(seeded["inv"].id) == 2
+
+
+@pytest.mark.django_db
+def test_mahnlauf_vorschau_ohne_recht_403(client_with_role, seeded):
+    """MONTEUR hat kein invoicing/LESEN → Vorschau 403."""
+    c = client_with_role("MONTEUR")
+    assert c.get("/api/buchhaltung/mahnlauf/vorschau").status_code == 403
+
+
+@pytest.mark.django_db
+def test_mahnlauf_ausfuehren_ohne_recht_403(client_with_role, seeded):
+    """NUR_LESEN hat kein invoicing/VERSENDEN → Ausführen 403."""
+    c = client_with_role("NUR_LESEN")
+    r = c.post(
+        "/api/buchhaltung/mahnlauf",
+        data={"items": [{"invoice_id": str(seeded["inv"].id), "level": 2}]},
+        content_type="application/json",
+    )
+    assert r.status_code == 403
+
+
+@pytest.mark.django_db
+def test_mahnlauf_vorschau_anonym_401(anonymous_client):
+    assert anonymous_client.get("/api/buchhaltung/mahnlauf/vorschau").status_code == 401

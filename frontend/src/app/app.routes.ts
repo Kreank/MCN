@@ -237,6 +237,14 @@ export const routes: Routes = [
         loadComponent: () => import('./features/mahnwesen/mahnwesen').then((m) => m.Mahnwesen),
       },
       {
+        // Mahnlauf (Stapel). MUSS vor 'buchhaltung/:id' stehen, sonst schluckt der
+        // Parameter das statische Segment 'mahnlauf'.
+        path: 'buchhaltung/mahnlauf',
+        title: 'Mahnlauf — MCN Leitstand',
+        canActivate: [darfGuard('invoicing', 'LESEN')],
+        loadComponent: () => import('./features/mahnlauf/mahnlauf').then((m) => m.Mahnlauf),
+      },
+      {
         path: 'buchhaltung/:id',
         title: 'Rechnung — MCN Leitstand',
         canActivate: [darfGuard('invoicing', 'LESEN')],

@@ -38,6 +38,11 @@
 .page-head__titel {
   font-size: var(--step-3);
 }
+.kopf-aktionen {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
 .page-head__hint {
   margin: 0 0 var(--space-5);
   max-width: 40rem;

@@ -1,0 +1,259 @@
+.mahnlauf {
+  max-width: 72rem;
+  margin: 0 auto;
+}
+
+// ============================== Seitenkopf ==================================
+.page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-3);
+}
+.page-head__kicker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+}
+.page-head__scale {
+  width: 2.5rem;
+  height: 0.5rem;
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--line-strong) 0,
+    var(--line-strong) 1px,
+    transparent 1px,
+    transparent 0.5rem
+  );
+  border-bottom: 1.5px solid var(--line-strong);
+}
+.page-head__titel {
+  font-size: var(--step-3);
+}
+.page-head__hint {
+  margin: 0 0 var(--space-4);
+  max-width: 46rem;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+// ============================== Steuerung ===================================
+.steuerung {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  margin-bottom: var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+}
+.feld {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.feld__label {
+  font-size: var(--step--1);
+  font-weight: 600;
+  color: var(--ink-muted);
+}
+.feld input {
+  min-height: 40px;
+  padding: 0 var(--space-3);
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+}
+.schalter {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--step--1);
+}
+
+// ============================== Lauf-Kopf ===================================
+.lauf-kopf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.auswahl-info {
+  margin: 0;
+  font-size: var(--step--1);
+  font-weight: 600;
+  color: var(--ink-muted);
+}
+.fuss-hinweis {
+  margin: var(--space-3) 0 0;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+// ============================== Tabelle =====================================
+.tabelle-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-1);
+}
+.tabelle {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--step--1);
+  min-width: 52rem;
+
+  th,
+  td {
+    padding: var(--space-3) var(--space-4);
+    text-align: left;
+    border-bottom: 1px solid var(--line);
+  }
+  th {
+    background: var(--surface-sunken);
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+    white-space: nowrap;
+  }
+  tbody tr:last-child td {
+    border-bottom: none;
+  }
+  tbody tr:hover {
+    background: var(--surface-sunken);
+  }
+  .zeile--gewaehlt {
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+  }
+  .mitte {
+    text-align: center;
+    width: 2.5rem;
+  }
+  .num {
+    text-align: right;
+    white-space: nowrap;
+    font-family: var(--font-mono);
+  }
+  .betrag {
+    font-weight: 600;
+    color: var(--ink);
+  }
+}
+
+.zelle-link {
+  font-family: var(--font-mono);
+  color: var(--accent-ink);
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+}
+
+.stufe {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1em 0.55em;
+  border-radius: var(--radius-sm);
+  background: var(--warn-tint);
+  color: var(--warn-ink);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.stufe-label {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.72rem;
+  color: var(--ink-muted);
+}
+.mail-ok {
+  color: var(--positive-ink);
+  font-weight: 600;
+}
+.mail-fehlt {
+  color: var(--ink-muted);
+}
+
+// ============================== Ergebnis ====================================
+.ergebnis {
+  padding: var(--space-5);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+}
+.ergebnis__titel {
+  margin: 0 0 var(--space-3);
+  font-size: var(--step-1);
+}
+.ergebnis__zahlen {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  font-size: var(--step--1);
+
+  strong {
+    font-size: var(--step-1);
+  }
+  .ist-fehler strong {
+    color: var(--danger-ink, #b00020);
+  }
+}
+.ergebnis__hinweise {
+  margin: 0 0 var(--space-4);
+  padding-left: var(--space-4);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+
+  li {
+    margin-bottom: var(--space-2);
+  }
+}
+.status {
+  display: inline-block;
+  margin-right: var(--space-2);
+  padding: 0.05em 0.5em;
+  border-radius: var(--radius-sm);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+.status--issued {
+  background: var(--warn-tint);
+  color: var(--warn-ink);
+}
+.status--sent {
+  background: color-mix(in srgb, var(--positive-ink) 15%, transparent);
+  color: var(--positive-ink);
+}
+.status--skipped {
+  background: var(--surface-sunken);
+  color: var(--ink-muted);
+}
+.status--failed {
+  background: color-mix(in srgb, #b00020 14%, transparent);
+  color: var(--danger-ink, #b00020);
+}
