@@ -64,6 +64,13 @@ def create_person(
     Gibt die angelegte Party zurück. Der Anzeigename entsteht aus Vor- und
     Nachname; die Subtyp-Trigger stellen die Typkonsistenz sicher.
     """
+    # display_name trägt den DB-CHECK btrim(...) <> '' (0002). Leere Namen vorab
+    # als klaren 422 abweisen, statt sie als DB-IntegrityError (500) enden zu
+    # lassen — analog zu create_property/create_organization.
+    if not first_name or not first_name.strip():
+        raise ValueError("first_name darf nicht leer sein.")
+    if not last_name or not last_name.strip():
+        raise ValueError("last_name darf nicht leer sein.")
     display_name = _person_display_name(first_name, last_name)
     with business_transaction(actor_app_user_id):
         # PK explizit: die Models tragen keinen Model-Default, ein von Django

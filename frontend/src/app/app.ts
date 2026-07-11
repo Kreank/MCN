@@ -70,6 +70,20 @@ export class App {
     },
   ];
 
+  /**
+   * Header-CTA „Meldung erfassen" — der Schnelleinstieg legt Person +
+   * Liegenschaft + Vorgang atomar an. Nur zeigen, wenn ALLE vier beteiligten
+   * Tore vorliegen (der Server würde sonst mit 403 abbrechen und alles
+   * zurückrollen). Spiegelt die Server-Durchsetzung, setzt sie nicht durch.
+   */
+  protected readonly darfSchnellerfassung = computed(
+    () =>
+      this.auth.darf('identity', 'ANLEGEN') &&
+      this.auth.darf('property', 'ANLEGEN') &&
+      this.auth.darf('property', 'AENDERN') &&
+      this.auth.darf('workflow', 'ANLEGEN'),
+  );
+
   /** Nur Navigationspunkte, für die (mindestens) ein Recht vorliegt. */
   protected readonly sichtbareNav = computed(() =>
     this.nav.filter((n) => {

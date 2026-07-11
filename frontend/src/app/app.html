@@ -53,6 +53,13 @@
       </div>
 
       <div class="header__actions">
+        @if (darfSchnellerfassung()) {
+          <a class="header__cta" routerLink="/schnellerfassung">
+            <span class="header__cta-plus" aria-hidden="true">＋</span>
+            <span class="header__cta-text">Meldung erfassen</span>
+          </a>
+        }
+
         @if (auth.istAngemeldet(); as _) {
           <div class="userchip">
             <a class="userchip__ident" routerLink="/profil" title="Mein Profil">

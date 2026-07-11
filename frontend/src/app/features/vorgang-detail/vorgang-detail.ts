@@ -1,6 +1,6 @@
 import { Component, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { ActivatedRoute, RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { Mappe, MappeTab } from '../../shared/mappe/mappe';
 import { ProjektService } from '../../core/projekt.service';
 import { AuthService } from '../../core/auth.service';
@@ -39,6 +39,7 @@ const SCHWER_UMKEHRBAR: ReadonlySet<ServiceCaseStatus> = new Set<ServiceCaseStat
 })
 export class VorgangDetail {
   private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
   private readonly svc = inject(ProjektService);
   private readonly auth = inject(AuthService);
 
@@ -188,6 +189,69 @@ export class VorgangDetail {
           });
         },
       });
+  }
+
+  // ---- Zum Projekt hochstufen ---------------------------------------------
+  /** Eingabepanel für den Projektnamen offen? */
+  protected readonly hochstufenOffen = signal(false);
+  protected readonly hochstufenLaedt = signal(false);
+  /** Vorbelegt mit dem Vorgangsbetreff, vom Nutzer änderbar. */
+  protected readonly projektName = signal('');
+
+  /**
+   * Sichtbar nur, wenn der Vorgang noch kein Projekt hat UND der Nutzer das
+   * Recht workflow.ANLEGEN besitzt. Hängt er schon an einem Projekt, zeigt die
+   * Mappe ohnehin den Projekt-Link. Die Durchsetzung liegt beim Server.
+   */
+  protected readonly kannHochstufen = computed(
+    () =>
+      !this.daten()?.project &&
+      this.auth.darf('workflow', 'ANLEGEN') &&
+      this.auth.darf('workflow', 'AENDERN'),
+  );
+
+  /** Absenden erst mit nicht-leerem Namen und außerhalb eines laufenden Requests. */
+  protected readonly hochstufenBereit = computed(
+    () => !this.hochstufenLaedt() && this.projektName().trim().length > 0,
+  );
+
+  hochstufenFragen(): void {
+    const d = this.daten();
+    if (!d) return;
+    this.meldung.set(null);
+    this.projektName.set(d.subject);
+    this.hochstufenOffen.set(true);
+  }
+
+  hochstufenAbbrechen(): void {
+    if (!this.hochstufenLaedt()) this.hochstufenOffen.set(false);
+  }
+
+  hochstufenName(wert: string): void {
+    this.projektName.set(wert);
+  }
+
+  hochstufenBestaetigen(): void {
+    const d = this.daten();
+    if (!d || !this.hochstufenBereit()) return;
+    const name = this.projektName().trim();
+    this.hochstufenLaedt.set(true);
+    this.svc.promoteToProject(d.id, { name: name.length ? name : null }).subscribe({
+      next: (res) => {
+        this.hochstufenLaedt.set(false);
+        this.hochstufenOffen.set(false);
+        this.router.navigate(['/projekte', res.id]);
+      },
+      error: (err) => {
+        this.hochstufenLaedt.set(false);
+        // Panel bleibt offen, damit der Nutzer den Namen anpassen/erneut senden
+        // kann. 404/422/403 werden vom Server als deutsche detail-Meldung geliefert.
+        this.meldung.set({
+          art: 'fehler',
+          text: fehlerDetail(err) ?? 'Das Hochstufen zum Projekt ist fehlgeschlagen.',
+        });
+      },
+    });
   }
 
   // ---- Darstellungshelfer -------------------------------------------------

@@ -25,6 +25,7 @@ from db_core.models import (
     ServiceCase,
     StatusCatalog,
     StatusTransition,
+    WorkOrder,
 )
 from db_core.services._validation import (
     ensure_all_exist,
@@ -104,6 +105,56 @@ def create_project(
                 project_id=project.id, property_id=property_id
             )
         project.refresh_from_db()
+    return project
+
+
+def promote_service_case_to_project(actor_app_user_id, *, service_case_id, name=None):
+    """Stuft einen Vorgang zum Projekt hoch: legt ein neues Projekt an und hängt
+    den Vorgang UND alle seine Aufträge darunter (project_id setzen).
+
+    Das Projekt ist die optionale Klammer (B-09); dieser Weg fügt sie nachträglich
+    hinzu, wenn ein zunächst kleiner Vorgang wächst. Nur zulässig, solange der
+    Vorgang noch KEIN Projekt hat. Das neue Projekt umfasst die Liegenschaften des
+    Vorgangs und aller Aufträge (die abweichen können, B-10). Umgehängt werden nur
+    Aufträge ohne eigenes Projekt (ein Auftrag eines anderen Projekts wird nicht
+    „gestohlen").
+
+    Alles läuft in EINER Transaktion; der interne create_project öffnet dabei einen
+    Savepoint. Das Setzen von project_id ist per UPDATE erlaubt (kein Immutable-/
+    No-Update-Trigger auf der Spalte). Ohne `name` wird der Vorgangsbetreff genutzt.
+    """
+    case = ServiceCase.objects.filter(id=service_case_id).first()
+    if case is None:
+        raise ValueError("Vorgang nicht gefunden.")
+    if case.project_id:
+        raise ValueError("Der Vorgang hängt bereits an einem Projekt.")
+    projektname = (name or "").strip() or case.subject
+    # Nur Liegenschaften der Objekte, die auch umgehängt werden (Vorgang + seine
+    # projektlosen Aufträge) — deckungsgleich mit der Umhäng-Menge unten.
+    property_ids = list(
+        {case.property_id}
+        | set(
+            WorkOrder.objects.filter(
+                service_case_id=service_case_id, project_id__isnull=True
+            ).values_list("property_id", flat=True)
+        )
+    )
+    with as_business_error():
+        with business_transaction(actor_app_user_id):
+            project = create_project(
+                actor_app_user_id, name=projektname, property_ids=property_ids
+            )
+            # Race-sicher: nur umhängen, solange der Vorgang wirklich projektlos ist.
+            umgehaengt = (
+                ServiceCase.objects.filter(
+                    id=service_case_id, project_id__isnull=True
+                ).update(project_id=project.id)
+            )
+            if umgehaengt != 1:
+                raise ValueError("Der Vorgang hängt bereits an einem Projekt.")
+            WorkOrder.objects.filter(
+                service_case_id=service_case_id, project_id__isnull=True
+            ).update(project_id=project.id)
     return project
 
 

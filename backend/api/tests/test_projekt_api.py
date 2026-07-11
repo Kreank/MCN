@@ -551,3 +551,279 @@ def test_board_keine_n_plus_1(admin_client, app_user):
     assert q_eine == q_alle, (
         f"N+1: {q_eine} Queries bei 1 Zeile vs. {q_alle} bei vielen Zeilen"
     )
+
+
+# --- Vorgang ohne Projekt: POST /api/workflow/service_cases ----------------
+
+@pytest.mark.django_db
+def test_service_case_standalone_happy(admin_client, seeded):
+    """Vorgang ohne Projekt anlegen: 201, Status NEU, project_id bleibt NULL."""
+    from db_core.models import ServiceCase
+
+    r = admin_client.post(
+        "/api/workflow/service_cases",
+        data={"property_id": str(seeded["obj"].id), "subject": "Therme defekt"},
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    body = r.json()
+    assert body["subject"] == "Therme defekt"
+    assert body["status"] == "NEU"
+    case = ServiceCase.objects.get(id=body["id"])
+    assert case.project_id is None
+
+
+@pytest.mark.django_db
+def test_service_case_standalone_leerer_subject_422(admin_client, seeded):
+    r = admin_client.post(
+        "/api/workflow/service_cases",
+        data={"property_id": str(seeded["obj"].id), "subject": "  "},
+        content_type="application/json",
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.django_db
+def test_service_case_standalone_ohne_recht_403(client_with_role, seeded):
+    c = client_with_role("NUR_LESEN")
+    r = c.post(
+        "/api/workflow/service_cases",
+        data={"property_id": str(seeded["obj"].id), "subject": "X"},
+        content_type="application/json",
+    )
+    assert r.status_code == 403
+
+
+# --- Schnellerfassung: POST /api/workflow/quick-intake ---------------------
+
+def _quick_intake_payload(**overrides):
+    payload = {
+        "person": {
+            "salutation": "Herr",
+            "first_name": "Max",
+            "last_name": "Mustermann",
+        },
+        "contact": {"phone": "030 123456", "email": "max@example.de"},
+        "property": {
+            "street": "Hauptstraße",
+            "house_number": "5",
+            "postal_code": "10115",
+            "city": "Berlin",
+        },
+        "meldung": {"subject": "Therme Fehler F28", "priority": "DRINGEND"},
+    }
+    payload.update(overrides)
+    return payload
+
+
+@pytest.mark.django_db
+def test_quick_intake_happy(admin_client, db):
+    """Ein Durchstich legt Person + Liegenschaft (EFH) + Eigentümer-Rolle +
+    Kontaktwege + Vorgang (ohne Projekt) an."""
+    from db_core.models import (
+        ContactPoint,
+        Party,
+        Property,
+        PropertyPartyRole,
+        ServiceCase,
+    )
+
+    r = admin_client.post(
+        "/api/workflow/quick-intake",
+        data=_quick_intake_payload(),
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    body = r.json()
+
+    party = Party.objects.get(id=body["party_id"])
+    assert party.party_type == "PERSON"
+    assert party.display_name == "Max Mustermann"
+
+    prop = Property.objects.get(id=body["property_id"])
+    assert prop.property_type == "EINFAMILIENHAUS"
+    # name wird nicht abgefragt → aus der Adresse abgeleitet.
+    assert "Hauptstraße" in prop.name
+
+    assert PropertyPartyRole.objects.filter(
+        property_id=prop.id, party_id=party.id, role="PROPERTY_OWNER"
+    ).exists()
+
+    typen = set(
+        ContactPoint.objects.filter(party_id=party.id).values_list(
+            "contact_type", flat=True
+        )
+    )
+    assert typen == {"PHONE", "EMAIL"}
+
+    case = ServiceCase.objects.get(id=body["service_case"]["id"])
+    assert case.status == "NEU"
+    assert case.project_id is None
+    assert case.reported_by_party_id == party.id
+    assert case.priority == "DRINGEND"
+    assert body["service_case"]["case_number"].startswith("V-")
+
+
+@pytest.mark.django_db
+def test_quick_intake_ohne_kontakt(admin_client, db):
+    """contact ist optional; ohne Telefon/E-Mail entsteht kein Kontaktweg."""
+    from db_core.models import ContactPoint
+
+    payload = _quick_intake_payload(contact=None)
+    r = admin_client.post(
+        "/api/workflow/quick-intake", data=payload, content_type="application/json"
+    )
+    assert r.status_code == 201, r.content
+    party_id = r.json()["party_id"]
+    assert not ContactPoint.objects.filter(party_id=party_id).exists()
+
+
+@pytest.mark.django_db
+def test_quick_intake_rollback_bei_ungueltiger_meldung(admin_client, db):
+    """Atomarität: schlägt der letzte Schritt (Vorgang) fehl, bleiben KEINE
+    Waisen (Person/Liegenschaft) zurück — alles wird zurückgerollt."""
+    from db_core.models import Party, Property
+
+    parties_vorher = Party.objects.count()
+    props_vorher = Property.objects.count()
+
+    payload = _quick_intake_payload(
+        meldung={"subject": "   ", "priority": "NORMAL"}  # leer → ValueError zuletzt
+    )
+    r = admin_client.post(
+        "/api/workflow/quick-intake", data=payload, content_type="application/json"
+    )
+    assert r.status_code == 422, r.content
+    assert Party.objects.count() == parties_vorher
+    assert Property.objects.count() == props_vorher
+
+
+@pytest.mark.django_db
+def test_quick_intake_ohne_recht_403(client_with_role, db):
+    c = client_with_role("NUR_LESEN")
+    r = c.post(
+        "/api/workflow/quick-intake",
+        data=_quick_intake_payload(),
+        content_type="application/json",
+    )
+    assert r.status_code == 403
+
+
+@pytest.mark.django_db
+def test_quick_intake_leerer_name_422_statt_500(admin_client, db):
+    """Nur-Leerzeichen-Name ist ein Fachfehler → 422 (nicht 500), und der erste
+    Schritt scheitert vor jeder Anlage: keine Waisen."""
+    from db_core.models import Party
+
+    parties_vorher = Party.objects.count()
+    payload = _quick_intake_payload(
+        person={"first_name": "   ", "last_name": "Mustermann"}
+    )
+    r = admin_client.post(
+        "/api/workflow/quick-intake", data=payload, content_type="application/json"
+    )
+    assert r.status_code == 422, r.content
+    assert Party.objects.count() == parties_vorher
+
+
+# --- Zum Projekt hochstufen: POST .../service_cases/{id}/promote-to-project -
+
+@pytest.mark.django_db
+def test_promote_to_project_haengt_vorgang_und_auftraege_um(admin_client, app_user):
+    """Hochstufen legt ein Projekt an und hängt Vorgang UND Auftrag darunter;
+    das Projekt führt die Liegenschaft als project_property."""
+    from db_core.models import ProjectProperty, ServiceCase, WorkOrder
+    from db_core.services import auftrag as auftrag_service
+
+    obj = property_service.create_property(
+        app_user.id, name="EFH Musterweg", property_type="EINFAMILIENHAUS",
+        street="Musterweg", house_number="1", postal_code="10115", city="Berlin",
+    )
+    case = projekt_service.create_service_case(
+        app_user.id, property_id=obj.id, subject="Therme tauschen",
+    )
+    order = auftrag_service.create_work_order(
+        app_user.id, property_id=obj.id, title="Thermentausch",
+        service_case_id=case.id,
+    )
+    assert case.project_id is None
+
+    r = admin_client.post(
+        f"/api/workflow/service_cases/{case.id}/promote-to-project",
+        data={},
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    body = r.json()
+    proj_id = body["id"]
+    # Ohne Name übernimmt das Projekt den Vorgangsbetreff.
+    assert body["name"] == "Therme tauschen"
+    assert body["project_number"].startswith("P-")
+
+    assert str(ServiceCase.objects.get(id=case.id).project_id) == proj_id
+    assert str(WorkOrder.objects.get(id=order.id).project_id) == proj_id
+    assert ProjectProperty.objects.filter(
+        project_id=proj_id, property_id=obj.id
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_promote_to_project_mit_eigenem_namen(admin_client, app_user):
+    obj = property_service.create_property(
+        app_user.id, name="EFH", property_type="EINFAMILIENHAUS",
+        street="Weg", postal_code="10115", city="Berlin",
+    )
+    case = projekt_service.create_service_case(
+        app_user.id, property_id=obj.id, subject="Klein",
+    )
+    r = admin_client.post(
+        f"/api/workflow/service_cases/{case.id}/promote-to-project",
+        data={"name": "Heizungssanierung 2026"},
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    assert r.json()["name"] == "Heizungssanierung 2026"
+
+
+@pytest.mark.django_db
+def test_promote_to_project_schon_projekt_422(admin_client, seeded):
+    """Ein Vorgang, der bereits unter einem Projekt hängt, kann nicht hochgestuft
+    werden."""
+    from db_core.models import ServiceCase
+
+    case = ServiceCase.objects.filter(project_id=seeded["p1"].id).first()
+    assert case is not None
+    r = admin_client.post(
+        f"/api/workflow/service_cases/{case.id}/promote-to-project",
+        data={},
+        content_type="application/json",
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.django_db
+def test_promote_to_project_unbekannter_vorgang_404(admin_client, db):
+    r = admin_client.post(
+        f"/api/workflow/service_cases/{uuid.uuid4()}/promote-to-project",
+        data={},
+        content_type="application/json",
+    )
+    assert r.status_code == 404
+
+
+@pytest.mark.django_db
+def test_promote_to_project_ohne_recht_403(client_with_role, app_user):
+    obj = property_service.create_property(
+        app_user.id, name="EFH", property_type="EINFAMILIENHAUS",
+        street="Weg", postal_code="10115", city="Berlin",
+    )
+    case = projekt_service.create_service_case(
+        app_user.id, property_id=obj.id, subject="X",
+    )
+    c = client_with_role("NUR_LESEN")
+    r = c.post(
+        f"/api/workflow/service_cases/{case.id}/promote-to-project",
+        data={},
+        content_type="application/json",
+    )
+    assert r.status_code == 403

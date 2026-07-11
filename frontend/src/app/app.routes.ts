@@ -59,6 +59,16 @@ export const routes: Routes = [
           import('./shared/kein-zugriff/kein-zugriff').then((m) => m.KeinZugriff),
       },
       {
+        // Schnelleinstieg „Meldung erfassen" — legt Person + Liegenschaft +
+        // Vorgang atomar an. Der Server gatet zusätzlich identity/property; der
+        // Route-Guard spiegelt das primäre Recht (Vorgangsanlage).
+        path: 'schnellerfassung',
+        title: 'Meldung erfassen — MCN Leitstand',
+        canActivate: [darfGuard('workflow', 'ANLEGEN')],
+        loadComponent: () =>
+          import('./features/schnellerfassung/schnellerfassung').then((m) => m.Schnellerfassung),
+      },
+      {
         path: 'kontakte',
         title: 'Kontakte — MCN Leitstand',
         canActivate: [darfGuard('identity', 'LESEN')],

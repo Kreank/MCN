@@ -1,3 +1,5 @@
+import { PropertyType } from './property.model';
+
 // Vertrag zu /api/workflow/projects (workflow.project in der DB).
 export type ProjectStatus = 'OPEN' | 'CLOSED';
 
@@ -215,4 +217,47 @@ export interface ServiceCaseCreate {
   description?: string | null;
   reported_by_party_id?: string | null;
   priority: CasePriority;
+}
+
+// --- Schnelleinstieg "Meldung erfassen" ------------------------------------
+// POST /api/workflow/quick-intake — legt Person + Liegenschaft + Vorgang in
+// EINEM atomaren Aufruf an (EFH-Eigentümer meldet einen Defekt am Telefon).
+export interface QuickIntakePerson {
+  salutation: string | null;
+  first_name: string;
+  last_name: string;
+}
+
+export interface QuickIntakeContact {
+  phone: string | null;
+  email: string | null;
+}
+
+export interface QuickIntakeProperty {
+  property_type: PropertyType;
+  // Der Liegenschaftsname wird serverseitig abgeleitet — Frontend sendet null.
+  name: string | null;
+  street: string;
+  house_number: string | null;
+  postal_code: string;
+  city: string;
+}
+
+export interface QuickIntakeMeldung {
+  subject: string;
+  description: string | null;
+  priority: CasePriority;
+}
+
+export interface QuickIntakeIn {
+  person: QuickIntakePerson;
+  contact: QuickIntakeContact;
+  property: QuickIntakeProperty;
+  meldung: QuickIntakeMeldung;
+}
+
+export interface QuickIntakeOut {
+  party_id: string;
+  property_id: string;
+  service_case: ServiceCaseRef;
 }

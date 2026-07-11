@@ -1,5 +1,11 @@
 // Vertrag zu GET /api/property/properties (property.property in der DB).
-export type PropertyType = 'WEG' | 'RENTAL_PROPERTY' | 'COMMERCIAL' | 'MIXED' | 'OTHER';
+export type PropertyType =
+  | 'EINFAMILIENHAUS'
+  | 'WEG'
+  | 'RENTAL_PROPERTY'
+  | 'COMMERCIAL'
+  | 'MIXED'
+  | 'OTHER';
 export type PropertyStatus = 'ACTIVE' | 'INACTIVE';
 
 export interface Property {

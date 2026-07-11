@@ -16,8 +16,15 @@ from db_core.db_context import business_transaction
 from db_core.models import Address, Building, Property, PropertyPartyRole, Unit
 from db_core.services._validation import ensure_exists, ensure_party_usable
 
-# Beschlossene Codelisten (Migration 0004_property.sql).
-PROPERTY_TYPES = ("WEG", "RENTAL_PROPERTY", "COMMERCIAL", "MIXED", "OTHER")
+# Beschlossene Codelisten (Migration 0004_property.sql; EINFAMILIENHAUS aus 0048).
+PROPERTY_TYPES = (
+    "WEG",
+    "RENTAL_PROPERTY",
+    "COMMERCIAL",
+    "MIXED",
+    "OTHER",
+    "EINFAMILIENHAUS",
+)
 UNIT_TYPES = (
     "APARTMENT",
     "COMMERCIAL",

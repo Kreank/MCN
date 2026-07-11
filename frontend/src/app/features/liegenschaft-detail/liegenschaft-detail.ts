@@ -343,6 +343,8 @@ export class LiegenschaftDetail {
   // ---- Darstellungshelfer -------------------------------------------------
   typeLabel(t: PropertyType): string {
     switch (t) {
+      case 'EINFAMILIENHAUS':
+        return 'Einfamilienhaus';
       case 'WEG':
         return 'WEG';
       case 'RENTAL_PROPERTY':

@@ -45,6 +45,7 @@ export class Liegenschaften {
   protected readonly pageSize = 20;
   protected readonly segments: Segment[] = [
     { value: null, label: 'Alle' },
+    { value: 'EINFAMILIENHAUS', label: 'Einfamilienhaus' },
     { value: 'WEG', label: 'WEG' },
     { value: 'RENTAL_PROPERTY', label: 'Mietobjekt' },
     { value: 'COMMERCIAL', label: 'Gewerbe' },
@@ -53,6 +54,7 @@ export class Liegenschaften {
   ];
 
   protected readonly typOptionen: FeldOption[] = [
+    { wert: 'EINFAMILIENHAUS', label: 'Einfamilienhaus' },
     { wert: 'WEG', label: 'WEG' },
     { wert: 'RENTAL_PROPERTY', label: 'Mietobjekt' },
     { wert: 'COMMERCIAL', label: 'Gewerbe' },
@@ -255,6 +257,8 @@ export class Liegenschaften {
 
   typeLabel(t: PropertyType): string {
     switch (t) {
+      case 'EINFAMILIENHAUS':
+        return 'Einfamilienhaus';
       case 'WEG':
         return 'WEG';
       case 'RENTAL_PROPERTY':

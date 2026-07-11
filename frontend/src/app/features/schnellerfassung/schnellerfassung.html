@@ -1,0 +1,147 @@
+<section class="schnell" aria-labelledby="schnell-titel">
+  <header class="page-head">
+    <div>
+      <p class="page-head__kicker">
+        <span class="page-head__scale" aria-hidden="true"></span>
+        Schnelleinstieg
+      </p>
+      <h1 id="schnell-titel" class="page-head__titel">Meldung erfassen</h1>
+      <p class="page-head__hint">
+        Ruft ein Eigentümer mit einem Defekt an: Person, Liegenschaft und Vorgang
+        in einem Zug anlegen. Der Vorgang öffnet sich danach direkt.
+      </p>
+    </div>
+  </header>
+
+  <form class="schnell-form" (submit)="$event.preventDefault(); absenden()" novalidate>
+    @if (formularMeldung(); as fm) {
+      <div class="melde melde--fehler" role="alert">
+        <span class="melde__mark" aria-hidden="true">!</span>
+        <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+      </div>
+    }
+
+    <!-- ------------------------------- Person ------------------------------- -->
+    <fieldset class="schnell-abschnitt">
+      <legend>Person</legend>
+      <div class="schnell-grid">
+        <app-feld
+          [control]="form.controls.salutation"
+          label="Anrede"
+          hinweis="Optional, z. B. Herr, Frau."
+          autocomplete="honorific-prefix"
+        />
+        <app-feld
+          [control]="form.controls.first_name"
+          label="Vorname"
+          [pflicht]="true"
+          autocomplete="given-name"
+        />
+        <app-feld
+          [control]="form.controls.last_name"
+          label="Nachname"
+          [pflicht]="true"
+          autocomplete="family-name"
+        />
+      </div>
+    </fieldset>
+
+    <!-- ------------------------------ Kontakt ------------------------------- -->
+    <fieldset class="schnell-abschnitt">
+      <legend>Kontakt</legend>
+      <div class="schnell-grid">
+        <app-feld
+          [control]="form.controls.phone"
+          label="Telefon"
+          typ="tel"
+          hinweis="Optional."
+          autocomplete="tel"
+        />
+        <app-feld
+          [control]="form.controls.email"
+          label="E-Mail"
+          typ="email"
+          hinweis="Optional."
+          autocomplete="email"
+        />
+      </div>
+    </fieldset>
+
+    <!-- ---------------------------- Liegenschaft ---------------------------- -->
+    <fieldset class="schnell-abschnitt">
+      <legend>Liegenschaft</legend>
+      <div class="schnell-grid">
+        <app-feld
+          [control]="form.controls.property_type"
+          label="Liegenschaftstyp"
+          typ="select"
+          [pflicht]="true"
+          [optionen]="typOptionen"
+        />
+        <app-feld
+          [control]="form.controls.street"
+          label="Straße"
+          [pflicht]="true"
+          autocomplete="address-line1"
+        />
+        <app-feld
+          [control]="form.controls.house_number"
+          label="Hausnummer"
+          hinweis="Optional."
+        />
+        <app-feld
+          [control]="form.controls.postal_code"
+          label="PLZ"
+          [pflicht]="true"
+          autocomplete="postal-code"
+        />
+        <app-feld
+          [control]="form.controls.city"
+          label="Ort"
+          [pflicht]="true"
+          autocomplete="address-level2"
+        />
+      </div>
+    </fieldset>
+
+    <!-- ------------------------------ Meldung ------------------------------- -->
+    <fieldset class="schnell-abschnitt">
+      <legend>Meldung</legend>
+      <div class="schnell-grid">
+        <app-feld
+          class="schnell-grid__voll"
+          [control]="form.controls.subject"
+          label="Betreff"
+          [pflicht]="true"
+          hinweis="Kurz, worum es geht — z. B. „Heizung fällt aus“."
+        />
+        <app-feld
+          class="schnell-grid__voll"
+          [control]="form.controls.description"
+          label="Beschreibung"
+          typ="textarea"
+          hinweis="Optional. Details zum Defekt."
+        />
+        <app-feld
+          [control]="form.controls.priority"
+          label="Priorität"
+          typ="select"
+          [pflicht]="true"
+          [optionen]="prioOptionen"
+        />
+      </div>
+    </fieldset>
+
+    <div class="schnell-aktionen">
+      <a class="btn" routerLink="/uebersicht">Abbrechen</a>
+      <button
+        type="submit"
+        class="btn btn--cta"
+        [disabled]="neuLaedt()"
+        [attr.aria-busy]="neuLaedt()"
+      >
+        {{ neuLaedt() ? 'Wird angelegt …' : 'Meldung erfassen' }}
+      </button>
+    </div>
+  </form>
+</section>

@@ -69,6 +69,21 @@ def test_create_person_ohne_app_user_id(db):
         identity_service.create_person(None, first_name="X", last_name="Y")
 
 
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "first_name,last_name", [("  ", "Meyer"), ("Max", "   "), ("", "")]
+)
+def test_create_person_leerer_name_ist_valuefehler(app_user, first_name, last_name):
+    """Leere/nur-Leerzeichen-Namen sind ein Fachfehler (ValueError → 422), kein
+    roher DB-IntegrityError (500): display_name trägt den CHECK btrim(...) <> ''."""
+    vorher = Party.objects.count()
+    with pytest.raises(ValueError):
+        identity_service.create_person(
+            app_user.id, first_name=first_name, last_name=last_name
+        )
+    assert Party.objects.count() == vorher
+
+
 # --- Ansprechpartner --------------------------------------------------------
 
 @pytest.mark.django_db

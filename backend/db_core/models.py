@@ -316,7 +316,7 @@ class Property(models.Model):
     address = models.ForeignKey(
         Address, models.DO_NOTHING, db_column="address_id", related_name="properties"
     )
-    property_type = models.TextField()  # WEG|RENTAL_PROPERTY|COMMERCIAL|MIXED|OTHER
+    property_type = models.TextField()  # WEG|RENTAL_PROPERTY|COMMERCIAL|MIXED|OTHER|EINFAMILIENHAUS
     status = models.TextField()  # ACTIVE|INACTIVE
     version = models.IntegerField()
     created_at = models.DateTimeField(db_default=Now())

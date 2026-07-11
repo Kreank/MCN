@@ -10,6 +10,8 @@ import {
   ProjectDetail,
   ProjectPage,
   ProjectQuery,
+  QuickIntakeIn,
+  QuickIntakeOut,
   ServiceCaseBoard,
   ServiceCaseBoardQuery,
   ServiceCaseCreate,
@@ -112,6 +114,32 @@ export class ProjektService {
   /** Vorgang unter dem Projekt anlegen (Recht workflow.ANLEGEN). */
   createServiceCase(id: string, payload: ServiceCaseCreate): Observable<ServiceCaseRef> {
     return this.http.post<ServiceCaseRef>(`${this.base}/${id}/service_cases`, payload);
+  }
+
+  /**
+   * Vorgang zum Projekt hochstufen: legt ein neues Projekt an und hängt den
+   * Vorgang samt Aufträgen darunter (Recht workflow.ANLEGEN). `name` = null/leer
+   * lässt der Server auf den Vorgangsbetreff zurückfallen. Liefert das neue
+   * Projekt (gleiche Struktur wie GET /api/workflow/projects/{id}).
+   */
+  promoteToProject(
+    caseId: string,
+    payload: { name: string | null },
+  ): Observable<ProjectDetail> {
+    return this.http.post<ProjectDetail>(
+      `/api/workflow/service_cases/${caseId}/promote-to-project`,
+      payload,
+    );
+  }
+
+  /**
+   * Schnelleinstieg „Meldung erfassen": legt Person + Liegenschaft + Vorgang
+   * (ohne Projekt) atomar in EINEM Aufruf an. Der Server prüft die Tore der
+   * beteiligten Bereiche (identity.ANLEGEN, property.ANLEGEN/AENDERN,
+   * workflow.ANLEGEN) und rollt bei einem Fehler alles zurück.
+   */
+  quickIntake(payload: QuickIntakeIn): Observable<QuickIntakeOut> {
+    return this.http.post<QuickIntakeOut>('/api/workflow/quick-intake', payload);
   }
 }
 

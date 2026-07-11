@@ -45,13 +45,62 @@
       <span mappe-kopf class="stamp {{ statusClass(daten()!.status) }}">{{ statusLabel(daten()!.status) }}</span>
 
       @if (tab() === 'uebersicht') {
-        @if (erlaubteUebergaenge().length > 0) {
-          <div class="tab-toolbar" role="group" aria-label="Statusaktionen">
+        @if (erlaubteUebergaenge().length > 0 || kannHochstufen()) {
+          <div class="tab-toolbar" role="group" aria-label="Vorgangsaktionen">
             @for (t of erlaubteUebergaenge(); track t.to_status) {
               <button type="button" class="btn" (click)="statusFragen(t)">
                 {{ t.label }}
               </button>
             }
+            @if (kannHochstufen()) {
+              <button
+                type="button"
+                class="btn btn--primary"
+                [disabled]="hochstufenOffen()"
+                (click)="hochstufenFragen()"
+              >
+                Zum Projekt hochstufen
+              </button>
+            }
+          </div>
+        }
+
+        @if (hochstufenOffen()) {
+          <div class="hochstufen" role="group" aria-label="Zum Projekt hochstufen">
+            <div class="feld-gruppe">
+              <label class="feld-gruppe__label" for="hochstufen-name">Projektname</label>
+              <input
+                id="hochstufen-name"
+                class="feld-gruppe__input"
+                type="text"
+                autocomplete="off"
+                [value]="projektName()"
+                [disabled]="hochstufenLaedt()"
+                (input)="hochstufenName($any($event.target).value)"
+              />
+            </div>
+            <p class="hochstufen__hinweis">
+              Legt ein neues Projekt an und hängt diesen Vorgang samt Aufträgen darunter.
+            </p>
+            <div class="hochstufen__aktionen">
+              <button
+                type="button"
+                class="btn"
+                [disabled]="hochstufenLaedt()"
+                (click)="hochstufenAbbrechen()"
+              >
+                Abbrechen
+              </button>
+              <button
+                type="button"
+                class="btn btn--primary"
+                [disabled]="!hochstufenBereit()"
+                [attr.aria-busy]="hochstufenLaedt()"
+                (click)="hochstufenBestaetigen()"
+              >
+                {{ hochstufenLaedt() ? 'Wird ausgeführt …' : 'Projekt anlegen' }}
+              </button>
+            </div>
           </div>
         }
         <dl class="feld-raster">

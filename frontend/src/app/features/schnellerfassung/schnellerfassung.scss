@@ -1,0 +1,98 @@
+.schnell {
+  max-width: 60rem;
+  margin: 0 auto;
+}
+
+// ============================== Seitenkopf ==================================
+.page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+.page-head__kicker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+}
+.page-head__scale {
+  width: 2.5rem;
+  height: 0.5rem;
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--line-strong) 0,
+    var(--line-strong) 1px,
+    transparent 1px,
+    transparent 0.5rem
+  );
+  border-bottom: 1.5px solid var(--line-strong);
+}
+.page-head__titel {
+  font-size: var(--step-3);
+}
+.page-head__hint {
+  margin: var(--space-2) 0 0;
+  max-width: 34rem;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+// ============================== Formular ====================================
+.schnell-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+.schnell-abschnitt {
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+
+  legend {
+    padding: 0 var(--space-2);
+    font-weight: 700;
+    font-size: var(--step-0);
+    color: var(--ink);
+  }
+}
+.schnell-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: var(--space-4);
+}
+// Felder, die die volle Formularbreite einnehmen (Betreff, Beschreibung).
+.schnell-grid__voll {
+  grid-column: 1 / -1;
+}
+
+.schnell-aktionen {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+
+// ============================== CTA-Knopf ===================================
+// Orange Handlungsaufforderung auf heller Arbeitsflaeche. Der Text traegt Navy
+// (--navy) statt der Reinform-Orange — Navy auf Orange erreicht ~4,75:1 (AA),
+// waehrend Orange-Text auf Weiss nur ~2,7:1 schafft (CLAUDE.md). Der Knopf
+// traegt immer einen klaren Text; Farbe ist nie alleiniger Traeger.
+.btn--cta {
+  background: var(--accent);
+  color: var(--navy);
+  border-color: var(--accent);
+
+  &:hover:not(:disabled) {
+    border-color: var(--navy);
+  }
+}

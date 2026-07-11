@@ -15,8 +15,11 @@ from ninja.responses import Status
 from ninja.security import django_auth
 
 from api.permissions import require, require_create
+from db_core.db_context import run_business_transaction
 from db_core.models import Checklist, Project, ProjectLog, ServiceCase, StatusChange
+from db_core.services import identity as identity_service
 from db_core.services import projekt as projekt_service
+from db_core.services import property as property_service
 
 router = Router()
 
@@ -700,3 +703,231 @@ def create_service_case(request, project_id: UUID, payload: ServiceCaseIn):
             received_at=case.received_at,
         ),
     )
+
+
+# --- Schnellerfassung / Vorgang ohne Projekt (Session-Auth Pflicht) --------
+
+@router.post("/service_cases", response={201: ServiceCaseOut}, auth=django_auth)
+def create_service_case_standalone(request, payload: ServiceCaseIn):
+    """Vorgang (service_case) OHNE Projekt anlegen (Initialstatus NEU).
+
+    Das Projekt ist eine optionale Klammer (B-09); kleine Meldungen — der
+    Regelfall beim Einfamilienhaus — brauchen keins. `service_case.project_id`
+    ist NULL-fähig; der Service lässt project_id auf None. Die Liegenschaft
+    (`property_id`) bleibt Pflicht.
+
+    Torfunktion `require` (fail-closed), nicht `require_create`: Der Vorgang
+    verbraucht eine GoBD-Belegnummer (V-JJJJ-NNNNNN). Ein Konto mit Scope EIGENE
+    bekommt hier fail-closed 403, analog zum projektgebundenen Endpunkt.
+    """
+    actor, _ = require(request, "workflow", "ANLEGEN")
+    try:
+        case = projekt_service.create_service_case(
+            actor,
+            property_id=payload.property_id,
+            subject=payload.subject,
+            description=payload.description,
+            reported_by_party_id=payload.reported_by_party_id,
+            priority=payload.priority,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return Status(
+        201,
+        ServiceCaseOut(
+            id=case.id,
+            case_number=case.case_number,
+            subject=case.subject,
+            status=case.status,
+            priority=case.priority,
+            received_at=case.received_at,
+        ),
+    )
+
+
+class QuickIntakePersonIn(Schema):
+    salutation: str | None = None
+    first_name: str
+    last_name: str
+
+
+class QuickIntakeContactIn(Schema):
+    phone: str | None = None
+    email: str | None = None
+
+
+class QuickIntakePropertyIn(Schema):
+    property_type: str = "EINFAMILIENHAUS"
+    name: str | None = None
+    street: str
+    house_number: str | None = None
+    postal_code: str
+    city: str
+
+
+class QuickIntakeMeldungIn(Schema):
+    subject: str
+    description: str | None = None
+    priority: str = "NORMAL"
+
+
+class QuickIntakeIn(Schema):
+    person: QuickIntakePersonIn
+    contact: QuickIntakeContactIn | None = None
+    property: QuickIntakePropertyIn
+    meldung: QuickIntakeMeldungIn
+
+
+class QuickIntakeOut(Schema):
+    party_id: UUID
+    property_id: UUID
+    service_case: ServiceCaseOut
+
+
+def _ableiten_liegenschaftsname(prop: QuickIntakePropertyIn) -> str:
+    """property.name ist Pflicht; beim EFH fragen wir ihn nicht ab und leiten ihn
+    aus der Adresse ab (Straße Hausnr, Ort)."""
+    if prop.name and prop.name.strip():
+        return prop.name.strip()
+    strasse = " ".join(
+        teil.strip()
+        for teil in (prop.street, prop.house_number)
+        if teil and teil.strip()
+    )
+    stadt = prop.city.strip() if prop.city else ""
+    name = ", ".join(teil for teil in (strasse, stadt) if teil)
+    return name or (prop.street or "").strip()
+
+
+@router.post("/quick-intake", response={201: QuickIntakeOut}, auth=django_auth)
+def quick_intake(request, payload: QuickIntakeIn):
+    """Schnellerfassung: Person + Liegenschaft + Vorgang (ohne Projekt) atomar.
+
+    Der Alltagsfall „Kunde ruft an, Defekt xy" in einem Schritt: Kontakt anlegen,
+    optional den Rückruf-Kontaktweg (Telefon/E-Mail), die Liegenschaft mit
+    Eigentümer-Rolle (PROPERTY_OWNER) und der Vorgang (Initialstatus NEU, kein
+    Projekt). Alles läuft in EINER Transaktion (`run_business_transaction`); die
+    service-internen `business_transaction`-Aufrufe werden zu Savepoints. Schlägt
+    ein Teilschritt fehl, rollt der gesamte Durchstich zurück — es bleiben keine
+    Waisen (Person/Liegenschaft ohne Vorgang), die der No-Delete-Schutz nicht mehr
+    entfernen könnte.
+
+    Vier fail-closed Tore, weil der Durchstich vier Module schreibt (identity,
+    property ×2, workflow) und eine GoBD-Belegnummer verbraucht. Alle Rechte
+    werden VOR der Transaktion geprüft.
+    """
+    actor, _ = require(request, "identity", "ANLEGEN")
+    require(request, "property", "ANLEGEN")
+    require(request, "property", "AENDERN")
+    require(request, "workflow", "ANLEGEN")
+
+    prop_name = _ableiten_liegenschaftsname(payload.property)
+
+    def _durchstich():
+        party = identity_service.create_person(
+            actor,
+            payload.person.first_name,
+            payload.person.last_name,
+            salutation=payload.person.salutation,
+        )
+        if payload.contact:
+            if payload.contact.phone and payload.contact.phone.strip():
+                identity_service.add_contact_point(
+                    actor,
+                    party.id,
+                    contact_type="PHONE",
+                    value=payload.contact.phone,
+                    is_primary=True,
+                )
+            if payload.contact.email and payload.contact.email.strip():
+                identity_service.add_contact_point(
+                    actor,
+                    party.id,
+                    contact_type="EMAIL",
+                    value=payload.contact.email,
+                    is_primary=True,
+                )
+        prop = property_service.create_property(
+            actor,
+            name=prop_name,
+            property_type=payload.property.property_type,
+            street=payload.property.street,
+            house_number=payload.property.house_number,
+            postal_code=payload.property.postal_code,
+            city=payload.property.city,
+        )
+        property_service.add_party_role(
+            actor,
+            property_id=prop.id,
+            party_id=party.id,
+            role="PROPERTY_OWNER",
+            valid_from=date.today(),
+        )
+        case = projekt_service.create_service_case(
+            actor,
+            property_id=prop.id,
+            subject=payload.meldung.subject,
+            project_id=None,
+            description=payload.meldung.description,
+            reported_by_party_id=party.id,
+            priority=payload.meldung.priority,
+        )
+        return party, prop, case
+
+    try:
+        party, prop, case = run_business_transaction(actor, _durchstich)
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+
+    return Status(
+        201,
+        QuickIntakeOut(
+            party_id=party.id,
+            property_id=prop.id,
+            service_case=ServiceCaseOut(
+                id=case.id,
+                case_number=case.case_number,
+                subject=case.subject,
+                status=case.status,
+                priority=case.priority,
+                received_at=case.received_at,
+            ),
+        ),
+    )
+
+
+# --- Vorgang zum Projekt hochstufen ----------------------------------------
+
+class PromoteToProjectIn(Schema):
+    # Optionaler Projektname; ohne Angabe wird der Vorgangsbetreff übernommen.
+    name: str | None = None
+
+
+@router.post(
+    "/service_cases/{case_id}/promote-to-project",
+    response={201: ProjectDetailOut},
+    auth=django_auth,
+)
+def promote_service_case_to_project(request, case_id: UUID, payload: PromoteToProjectIn):
+    """Vorgang zum Projekt hochstufen: ein neues Projekt anlegen und den Vorgang
+    samt seiner Aufträge darunter hängen (die optionale Klammer nachträglich).
+
+    Nur zulässig, solange der Vorgang noch kein Projekt hat (sonst 422). Der Vorgang
+    (404 bei unbekannter id) und alle projektlosen Aufträge werden umgehängt; das
+    Projekt umfasst die Liegenschaften des Vorgangs und der Aufträge.
+
+    Zwei fail-closed Tore: `ANLEGEN` (es entsteht ein neues Projekt mit
+    GoBD-Belegnummer P-JJJJ-NNNNNN) UND `AENDERN` (bestehende Vorgänge/Aufträge
+    werden umgehängt — dieselbe Änderungsschwelle wie beim Statuswechsel).
+    """
+    actor, _ = require(request, "workflow", "ANLEGEN")
+    require(request, "workflow", "AENDERN")
+    if not ServiceCase.objects.filter(id=case_id).exists():
+        raise HttpError(404, "Vorgang nicht gefunden.")
+    try:
+        project = projekt_service.promote_service_case_to_project(
+            actor, service_case_id=case_id, name=payload.name
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return Status(201, _project_detail(project.id))
