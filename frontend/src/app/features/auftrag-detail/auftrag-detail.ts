@@ -17,7 +17,7 @@ import {
   workOrderStatusClass,
   workOrderStatusLabel,
 } from '../../core/auftrag.model';
-import { ServiceJob, serviceJobStatusLabel } from '../../core/einsatz.model';
+import { ServiceJob, ServiceJobStatus, serviceJobStatusLabel } from '../../core/einsatz.model';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { Dateien } from '../../shared/dateien/dateien';
 import { ZielFilter } from '../../core/datei.model';
@@ -100,6 +100,7 @@ export class AuftragDetail {
   protected readonly termine = signal<ServiceJob[]>([]);
   protected readonly historie = signal<Kundenhistorie | null>(null);
   private termineFuer: string | null = null;
+  private termineReqId = 0;
 
   protected readonly daten = computed(() => {
     const s = this.state();
@@ -198,21 +199,30 @@ export class AuftragDetail {
   }
 
   private ladeTermine(id: string): void {
+    // Generations-Guard: eine verspätete Antwort eines zuvor geöffneten Auftrags
+    // darf die aktuellen Signale nicht überschreiben.
+    const rid = ++this.termineReqId;
+    this.termine.set([]);
+    this.historie.set(null);
     this.termineLaden.set(true);
     this.termineFehler.set(false);
     this.einsatzSvc.list({ page: 1, page_size: 100, work_order_id: id }).subscribe({
       next: (p) => {
+        if (rid !== this.termineReqId) return;
         this.termine.set(p.items);
         this.termineLaden.set(false);
       },
       error: () => {
+        if (rid !== this.termineReqId) return;
         this.termineLaden.set(false);
         this.termineFehler.set(true);
       },
     });
     this.svc.kundenhistorie(id).subscribe({
-      next: (h) => this.historie.set(h),
-      error: () => this.historie.set(null),
+      next: (h) => {
+        if (rid === this.termineReqId) this.historie.set(h);
+      },
+      error: () => {},
     });
   }
 
@@ -406,8 +416,8 @@ export class AuftragDetail {
   terminZeit(iso: string | null): string {
     return iso ? this.terminFmt.format(new Date(iso)) : 'ohne Termin';
   }
-  jobStatusLabel(s: string): string {
-    return serviceJobStatusLabel(s as any);
+  jobStatusLabel(s: ServiceJobStatus): string {
+    return serviceJobStatusLabel(s);
   }
 
   statusLabel(s: WorkOrderStatus): string {
