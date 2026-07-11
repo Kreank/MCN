@@ -22,8 +22,8 @@ from db_core.db_context import business_transaction
 from db_core.models import (
     AppointmentCategory, AppUser, Article, ArticleSalePrice, Assembly,
     DunningNotice, Employee, Invoice, MaintenanceContract, Party, Payment,
-    Project, ProjectLog, Property, Quote, Resource, SalePriceGroup, Task,
-    UserRole, WageGroup, WorkOrder,
+    Project, ProjectLog, Property, Quote, Resource, SalePriceGroup,
+    SupplierConnection, Task, UserRole, WageGroup, WorkOrder,
 )
 from db_core.services import artikel as artikel_service
 from db_core.services import aufgabe as aufgabe_service
@@ -31,6 +31,7 @@ from db_core.services import auftrag as auftrag_service
 from db_core.services import beleg as beleg_service
 from db_core.services import buchhaltung as buchhaltung_service
 from db_core.services import einsatz as einsatz_service
+from db_core.services import anbindung as anbindung_service
 from db_core.services import firma as firma_service
 from db_core.services import planung as planung_service
 from db_core.services import wartung as wartung_service
@@ -369,6 +370,25 @@ class Command(BaseCommand):
             party = identity_service.create_organization(actor.id, **org)
             angelegt += 1
             self.stdout.write(f"Organisation angelegt: {party.display_name} ({party.id})")
+
+        # IDS-Connect-Demo-Anbindung: ein Großhändler + eine aktive Anbindung,
+        # damit „Artikel → Anbindungen" out of the box Daten zeigt.
+        if not SupplierConnection.objects.filter(source_namespace="gut").exists():
+            gh = Party.objects.filter(
+                display_name="Sanitär-Großhandel G.U.T. GmbH"
+            ).first()
+            if gh is None:
+                gh = identity_service.create_organization(
+                    actor.id, legal_name="Sanitär-Großhandel G.U.T. GmbH",
+                    organization_type="COMPANY", legal_form="GmbH",
+                )
+            anbindung_service.create_connection(
+                actor.id, supplier_party_id=gh.id, source_namespace="gut",
+                label="G.U.T. Großhandel (IDS-Connect)", source_system="IDS_CONNECT",
+                connection_kind="GROSSHAENDLER",
+                shop_url="https://shop.gut-gruppe.example",
+            )
+            self.stdout.write("IDS-Anbindung angelegt: G.U.T. (gut)")
 
         # Kontaktmappe-Demodaten: ein Ansprechpartner, eine Adresse und zwei
         # Kommunikationswege an einem Demokontakt, damit die Mappe echte Daten

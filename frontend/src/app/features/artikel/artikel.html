@@ -11,16 +11,17 @@
         Bausteine für Angebote.
       </p>
     </div>
-    @if (darfAnlegen()) {
-      <div class="page-head__aktionen">
+    <div class="page-head__aktionen">
+      <a class="btn" routerLink="/artikel/anbindungen">Anbindungen →</a>
+      @if (darfAnlegen()) {
         <button type="button" class="btn btn--primary" (click)="artikelOeffnen()">
           <span aria-hidden="true">＋</span> Neuer Artikel
         </button>
         <button type="button" class="btn" (click)="leistungOeffnen()">
           <span aria-hidden="true">＋</span> Neue Leistung
         </button>
-      </div>
-    }
+      }
+    </div>
   </header>
 
   @if (meldung(); as m) {

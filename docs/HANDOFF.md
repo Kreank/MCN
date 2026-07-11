@@ -16,7 +16,7 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 > und Freigaben laufen aus dem UI durch Rechte, Statusautomaten und DB-Trigger.
 > Dazu **Vier-Augen-Freigaben**, **Belegerfassung** (Eingangsrechnungen) und die
 > **Rechtematrix-Pflege** als UI.
-> **1628 Backend-Tests grün**, db_core-Migrationen bis **0051**, accounts bis **0002**.
+> **1649 Backend-Tests grün**, db_core-Migrationen bis **0051**, accounts bis **0002**.
 > Stand 2026-07-11 (Hero-Paritäts-Ausbau, 20 Slices an einem Tag — Details in
 > `git log`): Artikelstamm nach Hero (Felder/VK-Gruppen/Lieferant/Bild,
 > Suchoperatoren + · | · *, Spaltenwahl, Kopieren), **Marge/Deckungsbeitrag** in
@@ -46,12 +46,17 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 > veröffentlichten Rechnungen, `GET /buchhaltung/datev-export.csv`, Config am
 > Firmenprofil, Migration 0051; Dialog in der Buchhaltung). v1-Grenzen dokumentiert
 > (Sammeldebitor, Automatik = aktuelle Sätze, Steuerberater-Roundtrip offen) —
-> Details Memory `datev-export`.
+> Details Memory `datev-export`. Dazu **IDS-Connect Slice 1: Lieferanten-Anbindungs-
+> Verwaltung** (`pricing.supplier_connection` — Model/Trigger existierten schon;
+> neu Service `anbindung.py` + `GET/POST/PATCH /api/pricing/supplier-connections` +
+> Frontend `features/haendler-anbindungen`, Einstieg aus Artikel). `credential_reference`
+> bleibt reiner Verweis (nie Secret). Details Memory `ids-connect`.
 > **Noch offen — GRUNDSATZENTSCHEIDUNG nötig:** XRechnung/ZUGFeRD (gesetzl. E-Rechnungs-
 > pflicht B2B! Format-/Lib-Wahl), **Lexware-Export** (Format), Skonto (Feld+Modell),
 > Abschlags→Schlussrechnung-Anrechnung, freier Termin ohne Auftrag
 > (`service_job.work_order_id` NOT NULL), OAuth-Absenderkonten (User-App-Registrierung),
-> IDS-Connect-Ablauf.
+> **IDS-Connect Slice 2** (Warenkorb-Roundtrip/Punchout — braucht Secret-Store-Muster
+> + Händler-Endpunkte/Protokoll/Zugangsdaten).
 
 ---
 
@@ -259,7 +264,7 @@ Default `mcn-dev-passwort-2026`):
 **Backend** (`cd backend`, uv):
 ```bash
 uv run python manage.py check
-uv run pytest -p no:cacheprovider -q          # aktuell 1628 grün, 2 skipped
+uv run pytest -p no:cacheprovider -q          # aktuell 1649 grün, 2 skipped
 uv run python manage.py migrate               # Migrationskopf: 0051
 uv run python manage.py runserver 127.0.0.1:8000 --noreload
 uv run python manage.py seed_demo             # idempotenter Demo-Datensatz

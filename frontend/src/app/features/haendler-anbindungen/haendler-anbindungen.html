@@ -1,0 +1,160 @@
+<section class="anbindungen" aria-labelledby="anbindungen-titel">
+  <header class="page-head">
+    <div>
+      <p class="page-head__kicker">
+        <span class="page-head__scale" aria-hidden="true"></span>
+        Artikel · Anbindungen
+      </p>
+      <h1 id="anbindungen-titel" class="page-head__titel">Lieferanten-Anbindungen</h1>
+    </div>
+    <a class="btn" routerLink="/artikel">← Artikel</a>
+  </header>
+
+  <p class="page-hint">
+    Katalog-Anbindungen der Lieferanten (DATANORM-Import und IDS-Connect). An einem
+    Namespace hängen die Artikel- und Preisreferenzen des Händlers — Quellsystem,
+    Namespace und Lieferant sind darum nach dem Anlegen unveränderlich; nicht mehr
+    genutzte Anbindungen werden deaktiviert, nicht gelöscht. Der eigentliche
+    IDS-Connect-Warenkorb (Shop-Roundtrip) folgt als eigener Ausbauschritt.
+  </p>
+
+  @switch (state().kind) {
+    @case ('loading') {
+      <p class="lade-hinweis" role="status">Anbindungen werden geladen.</p>
+    }
+    @case ('forbidden') {
+      <app-kein-zugriff [detail]="$any(state()).detail" />
+    }
+    @case ('error') {
+      <p class="note note--error" role="alert">
+        Die Anbindungen konnten nicht geladen werden. Bitte erneut versuchen.
+      </p>
+    }
+    @case ('ready') {
+      @if (listenFehler(); as f) {
+        <p class="note note--error" role="alert">{{ f }}</p>
+      }
+      @if (darfAnlegen()) {
+        <div class="anbindungen__toolbar">
+          <button type="button" class="btn btn--primary" (click)="neu()">
+            + Neue Anbindung
+          </button>
+        </div>
+      }
+
+      @if (connections().length === 0) {
+        <p class="tab-platzhalter">Noch keine Anbindungen angelegt.</p>
+      } @else {
+        <ul class="karten" role="list">
+          @for (c of connections(); track c.id) {
+            <li class="karte" [class.karte--inaktiv]="c.status === 'INACTIVE'">
+              <div class="karte__kopf">
+                <h2 class="karte__titel">{{ c.label }}</h2>
+                <span class="chip chip--system">{{ systemLabel(c.source_system) }}</span>
+                <span class="chip">{{ kindLabel(c.connection_kind) }}</span>
+                <span
+                  class="chip"
+                  [class.chip--aktiv]="c.status === 'ACTIVE'"
+                  [class.chip--inaktiv]="c.status === 'INACTIVE'"
+                >{{ statusLabel(c.status) }}</span>
+              </div>
+              <dl class="karte__meta">
+                <div><dt>Lieferant</dt><dd>{{ c.supplier_name ?? '—' }}</dd></div>
+                <div><dt>Namespace</dt><dd><code>{{ c.source_namespace }}</code></dd></div>
+                @if (c.shop_url) {
+                  <div><dt>Shop</dt><dd class="karte__url">{{ c.shop_url }}</dd></div>
+                }
+                <div>
+                  <dt>Zugangsdaten</dt>
+                  <dd>{{ c.credential_reference ? ('Verweis: ' + c.credential_reference) : '—' }}</dd>
+                </div>
+              </dl>
+              @if (darfAendern()) {
+                <div class="karte__aktionen">
+                  <button type="button" class="btn" (click)="bearbeiten(c)">Bearbeiten</button>
+                  <button type="button" class="btn" (click)="statusUmschalten(c)">
+                    {{ c.status === 'ACTIVE' ? 'Deaktivieren' : 'Aktivieren' }}
+                  </button>
+                </div>
+              }
+            </li>
+          }
+        </ul>
+      }
+    }
+  }
+
+  <!-- Anlege-/Bearbeiten-Dialog -->
+  <app-dialog
+    [offen]="dialogOffen()"
+    [titel]="bearbeite() ? 'Anbindung bearbeiten' : 'Neue Anbindung'"
+    (schliessen)="schliessen()"
+  >
+    <form class="anbindung-form" [formGroup]="form" (ngSubmit)="speichern()" novalidate>
+      @if (bearbeite(); as c) {
+        <!-- Identität ist unveränderlich → nur Anzeige -->
+        <dl class="fixe-felder">
+          <div><dt>Lieferant</dt><dd>{{ c.supplier_name ?? '—' }}</dd></div>
+          <div><dt>Quellsystem</dt><dd>{{ systemLabel(c.source_system) }}</dd></div>
+          <div><dt>Namespace</dt><dd><code>{{ c.source_namespace }}</code></dd></div>
+        </dl>
+      } @else {
+        <app-referenz-wahl
+          [control]="form.controls.supplier_party_id"
+          label="Lieferant"
+          [pflicht]="true"
+          [suche]="lieferantSuche"
+          hinweis="Kontakt/Organisation aus dem Stamm (Kategorie Lieferant)."
+        />
+        <app-feld
+          [control]="form.controls.source_namespace"
+          label="Namespace"
+          [pflicht]="true"
+          hinweis="Kleinbuchstaben/Ziffern/Bindestrich, z. B. 'gut' — unveränderlich."
+        />
+        <app-feld
+          [control]="form.controls.source_system"
+          label="Quellsystem"
+          typ="select"
+          [optionen]="systemOptionen"
+        />
+      }
+
+      <app-feld [control]="form.controls.label" label="Bezeichnung" [pflicht]="true" />
+      <app-feld
+        [control]="form.controls.connection_kind"
+        label="Art"
+        typ="select"
+        [optionen]="kindOptionen"
+      />
+      <app-feld
+        [control]="form.controls.shop_url"
+        label="Shop-URL"
+        typ="text"
+        hinweis="Optional — Einstiegs-URL des Händler-Shops (für IDS-Connect)."
+      />
+      <app-feld
+        [control]="form.controls.credential_reference"
+        label="Zugangsdaten-Verweis"
+        typ="text"
+        hinweis="Nur ein Verweis auf den Secret-Store (z. B. Schlüsselname) — niemals das Passwort selbst."
+      />
+    </form>
+    @if (dialogFehler(); as f) {
+      <p class="note note--error" role="alert">{{ f }}</p>
+    }
+    <div dialog-aktionen class="dialog__aktionen">
+      <button type="button" class="btn" (click)="schliessen()" [disabled]="dialogBusy()">
+        Abbrechen
+      </button>
+      <button
+        type="button"
+        class="btn btn--primary"
+        (click)="speichern()"
+        [disabled]="dialogBusy()"
+      >
+        {{ dialogBusy() ? 'Speichern …' : (bearbeite() ? 'Speichern' : 'Anlegen') }}
+      </button>
+    </div>
+  </app-dialog>
+</section>

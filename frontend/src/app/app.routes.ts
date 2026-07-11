@@ -364,6 +364,16 @@ export const routes: Routes = [
         loadComponent: () => import('./features/artikel/artikel').then((m) => m.Artikel),
       },
       {
+        // Vor 'artikel/:id', sonst fängt der :id-Parameter 'anbindungen' ab.
+        path: 'artikel/anbindungen',
+        title: 'Lieferanten-Anbindungen — MCN Leitstand',
+        canActivate: [darfGuard('pricing', 'LESEN')],
+        loadComponent: () =>
+          import('./features/haendler-anbindungen/haendler-anbindungen').then(
+            (m) => m.HaendlerAnbindungen,
+          ),
+      },
+      {
         path: 'artikel/:id',
         title: 'Artikel — MCN Leitstand',
         canActivate: [darfGuard('pricing', 'LESEN')],
