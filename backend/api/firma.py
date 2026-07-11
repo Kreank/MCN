@@ -108,6 +108,17 @@ class BranchPatch(Schema):
     active: bool | None = None
 
 
+class OnboardingOut(Schema):
+    firmenprofil: bool
+    logo: bool
+    bankdaten: bool
+    mailkonto: bool
+    kontakt: bool
+    liegenschaft: bool
+    projekt: bool
+    beleg: bool
+
+
 class TradeOut(Schema):
     id: UUID
     code: str
@@ -168,6 +179,14 @@ def get_profile(request):
     """Firmenprofil lesen (LESEN für alle Rollen)."""
     require(request, "company", "LESEN")
     return _profile_out(firma_service.get_company_profile())
+
+
+@router.get("/onboarding", response=OnboardingOut)
+def get_onboarding(request):
+    """Erste-Schritte-Fortschritt (LESEN für alle Rollen). Nur Ja/Nein-Flags je
+    Meilenstein, keine Zahlen und keine fremden Daten."""
+    require(request, "company", "LESEN")
+    return OnboardingOut(**firma_service.onboarding_status())
 
 
 @router.put("/profile", response=CompanyProfileOut, auth=django_auth)

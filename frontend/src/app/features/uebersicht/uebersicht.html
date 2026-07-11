@@ -13,6 +13,33 @@
     </p>
   </header>
 
+  @if (onboardingSichtbar()) {
+    <section class="erste-schritte" aria-labelledby="erste-schritte-titel">
+      <div class="erste-schritte__kopf">
+        <h2 id="erste-schritte-titel" class="erste-schritte__titel">Erste Schritte</h2>
+        <p class="erste-schritte__fortschritt" role="status">
+          {{ erledigt() }} von {{ schritte().length }} erledigt
+        </p>
+      </div>
+      <ol class="schritt-liste">
+        @for (s of schritte(); track s.key) {
+          <li class="schritt" [class.schritt--done]="s.done">
+            <span class="schritt__marke" aria-hidden="true">{{ s.done ? '✓' : '○' }}</span>
+            <span class="schritt__text">
+              <span class="schritt__label">{{ s.label }}</span>
+              <span class="schritt__hinweis">{{ s.hinweis }}</span>
+            </span>
+            @if (s.done) {
+              <span class="schritt__status">Erledigt</span>
+            } @else {
+              <a class="schritt__link" [routerLink]="s.route">Los →</a>
+            }
+          </li>
+        }
+      </ol>
+    </section>
+  }
+
   <div class="kacheln">
     <!-- ------------------------------ Aufgaben ------------------------- -->
     <article class="kachel">

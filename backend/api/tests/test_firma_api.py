@@ -295,3 +295,51 @@ def test_mahnstufe_hoechste_deaktivieren_ok(admin_client):
     )
     assert r.status_code == 200
     assert r.json()["active"] is False
+
+
+# --- Onboarding / Erste Schritte -------------------------------------------
+
+@pytest.mark.django_db
+def test_onboarding_frisch_alles_offen(admin_client):
+    """Frische DB: kein Meilenstein erreicht → alle Flags False."""
+    r = admin_client.get("/api/company/onboarding")
+    assert r.status_code == 200
+    body = r.json()
+    assert set(body) == {
+        "firmenprofil", "logo", "bankdaten", "mailkonto",
+        "kontakt", "liegenschaft", "projekt", "beleg",
+    }
+    assert all(v is False for v in body.values())
+
+
+@pytest.mark.django_db
+def test_onboarding_flags_nach_setup(admin_client, app_user):
+    """Firmenprofil (mit IBAN) + erster Kontakt setzen die passenden Flags."""
+    from db_core.services import identity as identity_service
+    admin_client.put(
+        "/api/company/profile",
+        data={"company_name": "Mitra GmbH", "iban": "DE02701500000000594937"},
+        content_type="application/json",
+    )
+    identity_service.create_person(app_user.id, "Erika", "Muster")
+
+    body = admin_client.get("/api/company/onboarding").json()
+    assert body["firmenprofil"] is True
+    assert body["bankdaten"] is True
+    assert body["kontakt"] is True
+    # Nicht getan → weiterhin offen.
+    assert body["logo"] is False
+    assert body["liegenschaft"] is False
+    assert body["mailkonto"] is False
+
+
+@pytest.mark.django_db
+def test_onboarding_lesen_fuer_nur_lesen(client_with_role):
+    """company/LESEN hat jede Rolle — die Checkliste ist für alle sichtbar."""
+    c = client_with_role("NUR_LESEN")
+    assert c.get("/api/company/onboarding").status_code == 200
+
+
+@pytest.mark.django_db
+def test_onboarding_anonym_401(anonymous_client):
+    assert anonymous_client.get("/api/company/onboarding").status_code == 401

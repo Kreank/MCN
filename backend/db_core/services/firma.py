@@ -19,7 +19,19 @@ from pathlib import PurePosixPath
 
 from db_core import storage as storage_module
 from db_core.db_context import business_transaction
-from db_core.models import Branch, CompanyProfile, DunningLevel, File, Trade
+from db_core.models import (
+    Branch,
+    CompanyProfile,
+    DunningLevel,
+    File,
+    Invoice,
+    MailAccount,
+    Party,
+    Project,
+    Property,
+    Quote,
+    Trade,
+)
 from db_core.services import vier_augen
 
 # --- Firmenprofil (Singleton) ----------------------------------------------
@@ -452,3 +464,26 @@ def update_dunning_level(actor_app_user_id, *, level, label=None,
             row.save(update_fields=changed + ["updated_at"])
         row.refresh_from_db()
     return row
+
+
+# --- Onboarding / Erste Schritte -------------------------------------------
+
+def onboarding_status():
+    """Setup-Fortschritt eines frischen Mandanten als Flags (rein lesend).
+
+    Jedes Flag ist ein „ist mindestens einmal passiert"-Boolean — kein Zählen,
+    keine fremden Daten, nur ob der jeweilige Meilenstein erreicht ist. Dient der
+    Erste-Schritte-Checkliste auf der Übersicht; die eigentliche Rechteprüfung je
+    Zielbereich erfolgt dort beim Navigieren.
+    """
+    profile = get_company_profile()
+    return {
+        "firmenprofil": bool(profile and profile.company_name),
+        "logo": bool(profile and profile.logo_file_id),
+        "bankdaten": bool(profile and profile.iban),
+        "mailkonto": MailAccount.objects.filter(active=True).exists(),
+        "kontakt": Party.objects.exists(),
+        "liegenschaft": Property.objects.exists(),
+        "projekt": Project.objects.exists(),
+        "beleg": Quote.objects.exists() or Invoice.objects.exists(),
+    }

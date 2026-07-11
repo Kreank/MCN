@@ -9,6 +9,7 @@ import {
   CompanyProfileInput,
   DunningLevel,
   DunningLevelPatch,
+  Onboarding,
   Trade,
   TradeInput,
   TradePatch,
@@ -29,6 +30,11 @@ export class FirmaService {
 
   getProfile(): Observable<CompanyProfile> {
     return this.http.get<CompanyProfile>(`${this.base}/profile`);
+  }
+
+  /** Erste-Schritte-Fortschritt für die Übersicht (LESEN für alle Rollen). */
+  getOnboarding(): Observable<Onboarding> {
+    return this.http.get<Onboarding>(`${this.base}/onboarding`);
   }
 
   updateProfile(payload: CompanyProfileInput): Observable<CompanyProfile> {

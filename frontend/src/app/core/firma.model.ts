@@ -98,3 +98,15 @@ export interface DunningLevelPatch {
   days_after_due?: number;
   active?: boolean;
 }
+
+/** Erste-Schritte-Fortschritt (GET /company/onboarding) — Ja/Nein je Meilenstein. */
+export interface Onboarding {
+  firmenprofil: boolean;
+  logo: boolean;
+  bankdaten: boolean;
+  mailkonto: boolean;
+  kontakt: boolean;
+  liegenschaft: boolean;
+  projekt: boolean;
+  beleg: boolean;
+}
