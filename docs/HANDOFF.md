@@ -16,8 +16,7 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 > und Freigaben laufen aus dem UI durch Rechte, Statusautomaten und DB-Trigger.
 > Dazu **Vier-Augen-Freigaben**, **Belegerfassung** (Eingangsrechnungen) und die
 > **Rechtematrix-Pflege** als UI.
-> **~1573 Backend-Tests grün** (Zahl schwankt mit paralleler Arbeit im Baum),
-> db_core-Migrationen bis **0047**, accounts bis **0002**.
+> **1607 Backend-Tests grün**, db_core-Migrationen bis **0050**, accounts bis **0002**.
 > Stand 2026-07-11 (Hero-Paritäts-Ausbau, 20 Slices an einem Tag — Details in
 > `git log`): Artikelstamm nach Hero (Felder/VK-Gruppen/Lieferant/Bild,
 > Suchoperatoren + · | · *, Spaltenwahl, Kopieren), **Marge/Deckungsbeitrag** in
@@ -37,9 +36,12 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 > Stapel, verlinkt aus dem Mahnwesen), **HR-Selbstauskunft** (`GET /hr/self` —
 > eigener Resturlaub/Vertrag/Abwesenheiten, `features/meine-personalakte`, verlinkt
 > aus „Mein Profil"; für normale MA einmalig eine Rolle mit hr/LESEN+EIGENE anlegen).
-> **Noch offen — DERIVIERBAR:** Gewerke-Firmenzuordnung + Akquisekanäle/Quellen
-> (brauchen neue Tabelle/Migration — 2026-07-11 Kollisionsrisiko mit parallelem
-> Agenten an models.py/0048), Wartungs-Anlage-UI.
+> Welle 3 (2026-07-11): **Schnellerfassung + Zum-Projekt-Hochstufen** (Parallel-Agent,
+> von mir eingecheckt), **Erste-Schritte-Checkliste** auf der Übersicht,
+> **Akquisekanäle/Quellen** (`/company/acquisition-sources` + Quelle am Kontakt,
+> Migration 0049/0050).
+> **Noch offen — DERIVIERBAR:** Gewerke-Firmenzuordnung (Link-Tabelle, Semantik
+> klären). **Migrations-Graph ist wieder frei** (0050 ist Kopf).
 > **Noch offen — GRUNDSATZENTSCHEIDUNG nötig:** XRechnung/ZUGFeRD (gesetzl. E-Rechnungs-
 > pflicht B2B! Format-/Lib-Wahl), DATEV/Lexware-Export (Format), Skonto (Feld+Modell),
 > Abschlags→Schlussrechnung-Anrechnung, freier Termin ohne Auftrag
