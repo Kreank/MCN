@@ -90,6 +90,16 @@
                       <span class="tile__status">{{ statusLabel(job.status) }}</span>
                     </a>
                   }
+                  @if (darfPlanen()) {
+                    <button
+                      type="button"
+                      class="cell-add"
+                      (click)="terminOeffnen(lane, day)"
+                      [attr.aria-label]="'Termin am ' + day.label + ' für ' + lane.name + ' anlegen'"
+                    >
+                      + Termin
+                    </button>
+                  }
                 </div>
               }
             }
@@ -98,4 +108,48 @@
       }
     }
   }
+
+  <!-- Termin für einen Auftrag anlegen (Klick in eine Zelle) -->
+  <app-dialog
+    [offen]="neuOffen()"
+    titel="Termin anlegen"
+    (schliessen)="terminSchliessen()"
+  >
+    @if (neuCell(); as c) {
+      <p class="note">
+        Neuer Termin am <strong>{{ c.dayLabel }}</strong>
+        @if (c.lane.kind === 'user') {
+          für <strong>{{ c.lane.name }}</strong>
+        } @else if (c.lane.kind === 'resource') {
+          auf der Ressource <strong>{{ c.lane.name }}</strong> (Mitarbeiter-Zuweisung separat)
+        } @else {
+          (ohne Zuweisung)
+        }. Wähle den Auftrag und die Uhrzeit.
+      </p>
+    }
+    <form class="termin-form" [formGroup]="neuForm" (ngSubmit)="terminAnlegen()" novalidate>
+      <app-referenz-wahl
+        [control]="neuForm.controls.work_order_id"
+        label="Auftrag"
+        [pflicht]="true"
+        [suche]="auftragSuche"
+        hinweis="Suche nach Auftragstitel oder -nummer."
+      />
+      <div class="termin-form__zeiten">
+        <app-feld [control]="neuForm.controls.start" label="Beginn" typ="zeit" [pflicht]="true" />
+        <app-feld [control]="neuForm.controls.end" label="Ende (optional)" typ="zeit" />
+      </div>
+    </form>
+    @if (neuFehler(); as f) {
+      <p class="note note--error" role="alert">{{ f }}</p>
+    }
+    <div dialog-aktionen class="dialog__aktionen">
+      <button type="button" class="btn" (click)="terminSchliessen()" [disabled]="neuBusy()">
+        Abbrechen
+      </button>
+      <button type="button" class="btn btn--primary" (click)="terminAnlegen()" [disabled]="neuBusy()">
+        {{ neuBusy() ? 'Wird angelegt …' : 'Termin anlegen' }}
+      </button>
+    </div>
+  </app-dialog>
 </section>

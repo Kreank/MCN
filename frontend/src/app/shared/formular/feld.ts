@@ -15,6 +15,7 @@ export type FeldTyp =
   | 'textarea'
   | 'zahl'
   | 'datum'
+  | 'zeit'
   | 'select'
   | 'checkbox';
 
@@ -65,6 +66,7 @@ export class Feld {
   protected readonly inputTyp = computed(() => {
     const t = this.typ();
     if (t === 'datum') return 'date';
+    if (t === 'zeit') return 'time';
     if (t === 'zahl') return 'text'; // text statt number: Komma-Eingabe, String-Wert
     return t; // text | email | tel | password
   });

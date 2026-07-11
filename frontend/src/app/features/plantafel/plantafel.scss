@@ -1,6 +1,7 @@
+// Die Plantafel ist der Arbeitsplatz des Disponenten — sie nutzt die volle Breite
+// (keine Lesespalten-Begrenzung) und das Board füllt die Viewport-Höhe.
 .plantafel {
-  max-width: 76rem;
-  margin: 0 auto;
+  width: 100%;
 }
 
 // ============================== Seitenkopf ==================================
@@ -54,7 +55,10 @@
 
 // ============================== Board =======================================
 .board-wrap {
-  overflow-x: auto;
+  // Füllt die verbleibende Viewport-Höhe (Seitenkopf/Subnav/Steuerung abziehen)
+  // und scrollt in beide Richtungen; Tages- und Bahnenköpfe bleiben sichtbar.
+  max-height: calc(100dvh - 15rem);
+  overflow: auto;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   box-shadow: var(--shadow-1);
@@ -62,19 +66,23 @@
 }
 .board {
   display: grid;
-  grid-template-columns: 11rem repeat(var(--days), minmax(8.5rem, 1fr));
+  grid-template-columns: 12rem repeat(var(--days), minmax(9rem, 1fr));
   min-width: max-content;
 }
 
 .board__corner {
   position: sticky;
+  top: 0;
   left: 0;
-  z-index: 3;
+  z-index: 4;
   background: var(--surface-sunken);
   border-bottom: 1.5px solid var(--line-strong);
   border-right: 1.5px solid var(--line-strong);
 }
 .board__dayhead {
+  position: sticky;
+  top: 0;
+  z-index: 3;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -149,6 +157,52 @@
   min-height: 4.5rem;
   border-bottom: 1px solid var(--line);
   border-left: 1px solid var(--line);
+}
+
+// „+ Termin" je Zelle: dezent, wird bei Hover/Fokus deutlich. Immer tastaturbar.
+.cell-add {
+  margin-top: auto;
+  align-self: stretch;
+  padding: 0.2rem;
+  font-size: 0.68rem;
+  font-family: var(--font-mono);
+  color: var(--ink-faint);
+  background: transparent;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.board__cell:hover .cell-add,
+.cell-add:focus-visible {
+  opacity: 1;
+}
+.cell-add:hover,
+.cell-add:focus-visible {
+  color: var(--accent-ink);
+  border-color: var(--accent);
+}
+.cell-add:focus-visible {
+  outline: 2.5px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cell-add {
+    transition: none;
+  }
+}
+
+// Termin-Dialog: Auftrag + zwei Zeitfelder nebeneinander.
+.termin-form {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+.termin-form__zeiten {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
 }
 .board__cell.is-today {
   background: color-mix(in srgb, var(--warn-tint) 45%, transparent);

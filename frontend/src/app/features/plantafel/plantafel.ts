@@ -1,5 +1,7 @@
 import { Component, computed, inject, signal } from '@angular/core';
+import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { RouterLink } from '@angular/router';
+import { map, of, switchMap } from 'rxjs';
 import { EinsatzService } from '../../core/einsatz.service';
 import {
   BoardJob,
@@ -9,9 +11,14 @@ import {
   resourceTypeLabel,
   serviceJobStatusLabel,
 } from '../../core/einsatz.model';
+import { AuftragService } from '../../core/auftrag.service';
+import { AuthService } from '../../core/auth.service';
 import { PlanungNav } from '../planung-nav/planung-nav';
+import { Dialog } from '../../shared/dialog/dialog';
+import { Feld } from '../../shared/formular/feld';
+import { ReferenzWahl, RefSuche } from '../../shared/formular/referenz-wahl';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
-import { VerbotenState, fehlerState } from '../../shared/http-fehler';
+import { VerbotenState, fehlerDetail, fehlerState } from '../../shared/http-fehler';
 
 type ViewState =
   | { kind: 'loading' }
@@ -67,12 +74,17 @@ function localDayIso(iso: string): string {
 
 @Component({
   selector: 'app-plantafel',
-  imports: [RouterLink, PlanungNav, KeinZugriff],
+  imports: [
+    RouterLink, PlanungNav, KeinZugriff, ReactiveFormsModule, Dialog, Feld, ReferenzWahl,
+  ],
   templateUrl: './plantafel.html',
   styleUrl: './plantafel.scss',
 })
 export class Plantafel {
   private readonly svc = inject(EinsatzService);
+  private readonly auftragSvc = inject(AuftragService);
+  private readonly auth = inject(AuthService);
+  private readonly fb = inject(FormBuilder);
 
   protected readonly windowDays = WINDOW_DAYS;
   protected readonly rangeStart = signal(todayIso());
@@ -176,6 +188,93 @@ export class Plantafel {
       }
       return j.assignee_ids.includes(lane.id);
     });
+  }
+
+  // ---- Termin für einen Auftrag setzen (Klick in eine Bahn/Tag-Zelle) -------
+  protected readonly darfPlanen = computed(() => this.auth.darf('workflow', 'ANLEGEN'));
+  protected readonly neuOffen = signal(false);
+  protected readonly neuBusy = signal(false);
+  protected readonly neuFehler = signal<string | null>(null);
+  /** Angeklickte Zelle: Ziel-Bahn (ggf. Mitarbeiter) + Tag. */
+  protected readonly neuCell = signal<{ lane: Lane; dayIso: string; dayLabel: string } | null>(null);
+
+  protected readonly neuForm = this.fb.group({
+    work_order_id: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
+    start: this.fb.control('08:00', { nonNullable: true, validators: [Validators.required] }),
+    end: this.fb.control('', { nonNullable: true }),
+  });
+
+  /** Auftragssuche (Titel/Nummer) für die Termin-Zuordnung. */
+  protected readonly auftragSuche: RefSuche = (q) =>
+    this.auftragSvc
+      .list({ page: 1, page_size: 20, q })
+      .pipe(map((p) => p.items.map((o) => ({ id: o.id, label: o.title, sub: o.order_number }))));
+
+  terminOeffnen(lane: Lane, day: { iso: string; label: string }): void {
+    if (!this.darfPlanen()) return;
+    this.neuCell.set({ lane, dayIso: day.iso, dayLabel: `${day.label}` });
+    this.neuFehler.set(null);
+    this.neuForm.reset({ work_order_id: '', start: '08:00', end: '' });
+    this.neuOffen.set(true);
+  }
+
+  terminSchliessen(): void {
+    if (this.neuBusy()) return;
+    this.neuOffen.set(false);
+  }
+
+  private toIso(dayIso: string, time: string): string {
+    // Lokale Zeit (dayIso + HH:MM) → UTC-ISO für den Server (timestamptz).
+    return new Date(`${dayIso}T${time}:00`).toISOString();
+  }
+
+  terminAnlegen(): void {
+    if (this.neuBusy()) return;
+    const cell = this.neuCell();
+    if (!cell) return;
+    this.neuForm.markAllAsTouched();
+    if (this.neuForm.invalid) return;
+    const v = this.neuForm.getRawValue();
+    const start = this.toIso(cell.dayIso, v.start);
+    const end = v.end ? this.toIso(cell.dayIso, v.end) : null;
+    if (end && end <= start) {
+      this.neuFehler.set('Das Ende muss nach dem Beginn liegen.');
+      return;
+    }
+    this.neuBusy.set(true);
+    this.neuFehler.set(null);
+    // Anlegen (UNGEPLANT mit Zeitraum) → auf GEPLANT setzen → Bahn-Mitarbeiter
+    // zuweisen (nur bei Mitarbeiter-Bahnen).
+    this.svc
+      .create({
+        work_order_id: v.work_order_id,
+        scheduled_start: start,
+        scheduled_end: end,
+        appointment_category_id: null,
+      })
+      .pipe(
+        switchMap((job) =>
+          this.svc.advanceStatus(job.id, { to_status: 'GEPLANT' }).pipe(map(() => job)),
+        ),
+        switchMap((job) =>
+          cell.lane.kind === 'user'
+            ? this.svc
+                .assign(job.id, { assignee_user_id: cell.lane.id, role: 'TECHNICIAN' })
+                .pipe(map(() => job))
+            : of(job),
+        ),
+      )
+      .subscribe({
+        next: () => {
+          this.neuBusy.set(false);
+          this.neuOffen.set(false);
+          this.fetch();
+        },
+        error: (err) => {
+          this.neuBusy.set(false);
+          this.neuFehler.set(fehlerDetail(err) ?? 'Der Termin konnte nicht angelegt werden.');
+        },
+      });
   }
 
   private fetch(): void {
