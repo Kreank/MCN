@@ -66,6 +66,10 @@ export class RechnungDetail {
 
   // --- Beteiligten hinzufügen (nur im Entwurf) ----------------------------
   protected readonly darfAendern = computed(() => this.auth.darf('invoicing', 'AENDERN'));
+  /** Positionen im Beleg-Editor bearbeiten — nur Entwurf + Recht invoicing/AENDERN. */
+  protected readonly darfBearbeiten = computed(
+    () => this.daten()?.status === 'ENTWURF' && this.auth.darf('invoicing', 'AENDERN'),
+  );
   /** Beteiligte lassen sich nur am Entwurf ergänzen (Server erzwingt es). */
   protected readonly kannBeteiligen = computed(() => this.daten()?.status === 'ENTWURF');
   protected readonly beteiligtOffen = signal(false);

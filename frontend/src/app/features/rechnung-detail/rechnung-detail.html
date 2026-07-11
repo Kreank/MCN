@@ -32,6 +32,11 @@
       @if (daten()!.status === 'VEROEFFENTLICHT') {
         <a mappe-kopf class="btn kopf-pdf" [href]="pdfUrl(daten()!.id)" target="_blank" rel="noopener" aria-label="PDF ansehen (öffnet in neuem Tab)">PDF ansehen ↗</a>
       }
+      @if (darfBearbeiten()) {
+        <a mappe-kopf class="btn btn--primary" [routerLink]="['/dokumente/rechnung', daten()!.id]">
+          Bearbeiten
+        </a>
+      }
       @if (darfVersenden() && kannVersenden()) {
         @if (mailKontoVorhanden()) {
           <button mappe-kopf type="button" class="btn btn--primary" (click)="versandOeffnen()">

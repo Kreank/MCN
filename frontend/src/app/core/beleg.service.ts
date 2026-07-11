@@ -3,6 +3,7 @@ import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import {
   InvoiceCreate,
+  InvoiceUpdate,
   InvoiceDetail,
   InvoiceEmailResult,
   InvoicePage,
@@ -106,6 +107,11 @@ export class BelegService {
   /** Neue Rechnung/Gutschrift (Status ENTWURF) mit Positionen anlegen. */
   createInvoice(payload: InvoiceCreate): Observable<InvoiceDetail> {
     return this.http.post<InvoiceDetail>('/api/invoicing/invoices', payload);
+  }
+
+  /** Rechnungsentwurf ändern (Positionen/Abschnitte werden vollständig ersetzt). */
+  updateInvoice(id: string, payload: InvoiceUpdate): Observable<InvoiceDetail> {
+    return this.http.put<InvoiceDetail>(`/api/invoicing/invoices/${id}`, payload);
   }
 
   /** Beteiligten (Schuldner/Empfänger …) am Rechnungsentwurf ergänzen. */

@@ -176,10 +176,20 @@ export const routes: Routes = [
         loadComponent: () => import('./features/dokumente/dokumente').then((m) => m.Dokumente),
       },
       {
-        // Angebotseditor. MUSS vor 'dokumente/:id' stehen, sonst schluckt der
-        // Parameter das statische Segment 'angebot'.
+        // Beleg-Editor (Angebot). MUSS vor 'dokumente/:id' stehen, sonst schluckt
+        // der Parameter das statische Segment 'angebot'.
         path: 'dokumente/angebot/:id',
         title: 'Angebot bearbeiten — MCN Leitstand',
+        data: { belegArt: 'angebot' },
+        canActivate: [darfGuard('invoicing', 'AENDERN')],
+        loadComponent: () =>
+          import('./features/angebot-editor/angebot-editor').then((m) => m.AngebotEditor),
+      },
+      {
+        // Derselbe Editor im Rechnungs-Modus (Artikel-Palette für Rechnungen).
+        path: 'dokumente/rechnung/:id',
+        title: 'Rechnung bearbeiten — MCN Leitstand',
+        data: { belegArt: 'rechnung' },
         canActivate: [darfGuard('invoicing', 'AENDERN')],
         loadComponent: () =>
           import('./features/angebot-editor/angebot-editor').then((m) => m.AngebotEditor),

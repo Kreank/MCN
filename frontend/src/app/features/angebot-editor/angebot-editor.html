@@ -3,16 +3,16 @@
 
 @switch (state().kind) {
   @case ('loading') {
-    <p class="lade-hinweis" role="status">Angebot wird geladen …</p>
+    <p class="lade-hinweis" role="status">{{ belegWort }} wird geladen …</p>
   }
   @case ('forbidden') {
     <app-kein-zugriff [detail]="$any(state()).detail" />
   }
   @case ('error') {
     <div class="note note--error" role="alert">
-      <h2 class="note__titel">Angebot nicht ladbar</h2>
+      <h2 class="note__titel">{{ belegWort }} nicht ladbar</h2>
       <p class="note__text">
-        Das Angebot konnte nicht geladen werden. Bitte erneut versuchen.
+        Der Beleg konnte nicht geladen werden. Bitte erneut versuchen.
       </p>
       <div class="note__aktionen">
         <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
@@ -26,10 +26,10 @@
         <!-- ============================ Kopf ============================ -->
         <header class="ed-head">
           <div class="ed-head__ident">
-            <p class="ed-head__kicker">Angebot bearbeiten</p>
-            <h1 class="ed-head__titel">{{ q.title || 'Ohne Titel' }}</h1>
+            <p class="ed-head__kicker">{{ belegWort }} bearbeiten</p>
+            <h1 class="ed-head__titel">{{ kopfTitel() }}</h1>
             <p class="ed-head__meta">
-              <span class="ed-head__nr">{{ q.quote_number ?? 'Entwurf' }}</span>
+              <span class="ed-head__nr">{{ belegNummer() }}</span>
               <span aria-hidden="true">·</span>
               <span>{{ q.property.name }}</span>
               <span aria-hidden="true">·</span>
@@ -67,9 +67,9 @@
           <div class="ed-ro-hinweis note" role="note">
             <h2 class="note__titel">Nur lesen</h2>
             <p class="note__text">
-              Dieses Angebot ist im Status „{{ statusLabel(q.status) }}" und damit
-              eingefroren. Es kann nicht mehr bearbeitet oder gespeichert werden —
-              GoBD-konform bleibt der versendete Beleg unverändert.
+              Dieser Beleg ist im Status „{{ statusLabel(q.status) }}" und damit
+              eingefroren. Er kann nicht mehr bearbeitet oder gespeichert werden —
+              GoBD-konform bleibt der {{ istRechnung ? 'veröffentlichte' : 'versendete' }} Beleg unverändert.
             </p>
             <div class="note__aktionen">
               <a class="btn" [routerLink]="['/dokumente', q.id]">Zur Beleg-Mappe</a>
@@ -96,10 +96,10 @@
                 type="button"
                 class="btn btn--gefahr"
                 [disabled]="!kannVersenden()"
-                [title]="dirty() ? 'Bitte zuerst speichern' : 'Angebot verbindlich versenden'"
+                [title]="dirty() ? 'Bitte zuerst speichern' : (istRechnung ? 'Rechnung verbindlich veröffentlichen' : 'Angebot verbindlich versenden')"
                 (click)="versendenFragen()"
               >
-                Versenden …
+                {{ istRechnung ? 'Veröffentlichen …' : 'Versenden …' }}
               </button>
             }
           }
@@ -107,22 +107,29 @@
 
         @if (!readonly() && dirty() && darfVersenden()) {
           <p class="ed-hint">
-            Zum Versenden zuerst speichern — versendet wird immer der gespeicherte Stand.
+            Zum {{ istRechnung ? 'Veröffentlichen' : 'Versenden' }} zuerst speichern — {{ istRechnung ? 'veröffentlicht' : 'versendet' }} wird immer der gespeicherte Stand.
           </p>
         }
 
         <!-- ===================== Kopffelder ===================== -->
-        <section class="ed-kopf" [formGroup]="kopfForm" aria-label="Angebotskopf">
-          <app-feld
-            [control]="kopfForm.controls.title"
-            label="Titel"
-            [pflicht]="true"
-            hinweis="Erscheint als Überschrift des Angebots."
-          />
-          <div class="ed-kopf__datum">
-            <app-feld [control]="kopfForm.controls.quote_date" label="Angebotsdatum" typ="datum" />
-            <app-feld [control]="kopfForm.controls.valid_until_date" label="Gültig bis" typ="datum" />
-          </div>
+        <section class="ed-kopf" [formGroup]="kopfForm" [attr.aria-label]="belegWort + 'kopf'">
+          @if (istRechnung) {
+            <div class="ed-kopf__datum">
+              <app-feld [control]="kopfForm.controls.invoice_date" label="Rechnungsdatum" typ="datum" />
+              <app-feld [control]="kopfForm.controls.due_date" label="Fällig bis" typ="datum" />
+            </div>
+          } @else {
+            <app-feld
+              [control]="kopfForm.controls.title"
+              label="Titel"
+              [pflicht]="true"
+              hinweis="Erscheint als Überschrift des Angebots."
+            />
+            <div class="ed-kopf__datum">
+              <app-feld [control]="kopfForm.controls.quote_date" label="Angebotsdatum" typ="datum" />
+              <app-feld [control]="kopfForm.controls.valid_until_date" label="Gültig bis" typ="datum" />
+            </div>
+          }
         </section>
 
         <!-- ===================== Arbeitsbereich ===================== -->
@@ -647,9 +654,11 @@
 <!-- ===================== Versenden (unumkehrbar) ===================== -->
 <app-bestaetigung
   [offen]="versendenOffen()"
-  titel="Angebot verbindlich versenden?"
-  text="Das Angebot wird versendet und dabei eingefroren: Die Datenbank vergibt eine feste Angebotsnummer, Positionen und Preise lassen sich danach nicht mehr ändern. Das kann nicht rückgängig gemacht werden."
-  bestaetigenLabel="Versenden"
+  [titel]="istRechnung ? 'Rechnung verbindlich veröffentlichen?' : 'Angebot verbindlich versenden?'"
+  [text]="istRechnung
+    ? 'Die Rechnung wird veröffentlicht und dabei eingefroren: Die Datenbank vergibt eine feste Rechnungsnummer, Positionen und Preise lassen sich danach nicht mehr ändern (GoBD). Das kann nicht rückgängig gemacht werden.'
+    : 'Das Angebot wird versendet und dabei eingefroren: Die Datenbank vergibt eine feste Angebotsnummer, Positionen und Preise lassen sich danach nicht mehr ändern. Das kann nicht rückgängig gemacht werden.'"
+  [bestaetigenLabel]="istRechnung ? 'Veröffentlichen' : 'Versenden'"
   [gefahr]="true"
   [laedt]="versendenLaedt()"
   (bestaetigen)="versendenBestaetigen()"

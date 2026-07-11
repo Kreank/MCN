@@ -690,6 +690,40 @@ def create_invoice(request, payload: InvoiceIn):
     return Status(201, _invoice_detail(invoice.id))
 
 
+class InvoiceUpdateIn(Schema):
+    """Der Editor schickt immer den ganzen Beleg: Positionen und Abschnitte werden
+    vollständig ersetzt. Weggelassene Kopffelder bleiben unverändert. Eine Rechnung
+    hat keinen Titel (Identität über Typ + Nummer)."""
+    invoice_date: date | None = None
+    due_date: date | None = None
+    rubriken: list[RubrikIn] | None = None
+    lines: list[QuoteLineIn] | None = None
+
+
+@router.put("/invoices/{invoice_id}", response=InvoiceDetailOut, auth=django_auth)
+def update_invoice(request, invoice_id: UUID, payload: InvoiceUpdateIn):
+    """Rechnungsentwurf ändern. Ab VEROEFFENTLICHT friert die DB den Beleg ein (422)."""
+    actor, _ = require(request, "invoicing", "AENDERN")
+    gesetzt = payload.model_dump(exclude_unset=True)
+    try:
+        beleg_service.update_invoice(
+            actor,
+            invoice_id=invoice_id,
+            # Sentinel `...` unterscheidet „leeren" (None) von „nicht ändern".
+            invoice_date=payload.invoice_date if "invoice_date" in gesetzt else ...,
+            due_date=payload.due_date if "due_date" in gesetzt else ...,
+            rubriken=[r.dict() for r in payload.rubriken or []],
+            lines=(
+                [line.dict() for line in payload.lines]
+                if payload.lines is not None
+                else None
+            ),
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _invoice_detail(invoice_id)
+
+
 @router.get("/invoices/{invoice_id}/kalkulation", response=KalkulationOut)
 def invoice_kalkulation(request, invoice_id: UUID):
     """Interne Kalkulationsübersicht je Abschnitt (enthält EK → `pricing/LESEN`)."""

@@ -190,3 +190,34 @@ def test_create_gutschrift_via_create_invoice_verboten(app_user):
         beleg_service.create_invoice(
             app_user.id, property_id=obj.id, invoice_type="GUTSCHRIFT",
         )
+
+
+@pytest.mark.django_db
+def test_update_invoice_ersetzt_positionen(app_user):
+    from datetime import date
+    obj = _property(app_user)
+    inv = beleg_service.create_invoice(
+        app_user.id, property_id=obj.id, invoice_type="RECHNUNG",
+        lines=[{"line_type": "MATERIAL", "description": "Alt", "quantity": 1,
+                "unit_price": 10, "tax_code": "DE_19"}],
+    )
+    updated = beleg_service.update_invoice(
+        app_user.id, invoice_id=inv.id, due_date=date(2026, 8, 1),
+        lines=[
+            {"line_type": "MATERIAL", "description": "Neu A", "quantity": 2,
+             "unit_price": 50, "tax_code": "DE_19"},
+            {"line_type": "ARBEITSZEIT", "description": "Montage", "quantity": 3,
+             "unit_price": 60, "tax_code": "DE_19"},
+        ],
+    )
+    assert updated.due_date == date(2026, 8, 1)
+    assert updated.net_total == Decimal("280.00")   # 100 + 180
+    assert InvoiceLine.objects.filter(invoice_id=inv.id).count() == 2
+    assert not InvoiceLine.objects.filter(invoice_id=inv.id, description="Alt").exists()
+
+
+@pytest.mark.django_db
+def test_update_invoice_nicht_gefunden(app_user):
+    import uuid as _uuid
+    with pytest.raises(ValueError):
+        beleg_service.update_invoice(app_user.id, invoice_id=_uuid.uuid4(), due_date=None)

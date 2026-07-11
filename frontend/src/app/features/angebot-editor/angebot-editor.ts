@@ -9,12 +9,14 @@ import {
   ReactiveFormsModule,
   Validators,
 } from '@angular/forms';
-import { Subject, debounceTime, distinctUntilChanged, map } from 'rxjs';
+import { Observable, Subject, debounceTime, distinctUntilChanged, map } from 'rxjs';
 import { BelegService } from '../../core/beleg.service';
 import { ArtikelService } from '../../core/artikel.service';
 import { StammdatenUebernahmeIn } from '../../core/artikel.model';
 import { AuthService } from '../../core/auth.service';
 import {
+  InvoiceDetail,
+  InvoiceUpdate,
   Kalkulation,
   LineKind,
   LineType,
@@ -25,6 +27,11 @@ import {
   QuoteUpdate,
   RubrikInput,
 } from '../../core/beleg.model';
+
+/** Der Editor bedient Angebote UND Rechnungen — beide teilen die Positions-/
+ * Abschnitts-/Kalkulationslogik; nur Laden/Speichern/Veröffentlichen und die
+ * Kopffelder unterscheiden sich. */
+type BelegDetail = QuoteDetail | InvoiceDetail;
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { VerbotenState, fehlerDetail, fehlerState, istVerboten } from '../../shared/http-fehler';
 import { Dialog } from '../../shared/dialog/dialog';
@@ -168,11 +175,15 @@ export class AngebotEditor {
   protected readonly lineKindOptionen = LINE_KIND_OPTIONEN;
   protected readonly taxCodeOptionen = TAX_CODE_OPTIONEN;
 
-  // --- Geladenes Angebot & Zustand ----------------------------------------
+  // --- Geladener Beleg & Zustand ------------------------------------------
   protected readonly state = signal<ViewState>({ kind: 'loading' });
-  protected readonly quote = signal<QuoteDetail | null>(null);
+  protected readonly quote = signal<BelegDetail | null>(null);
   private reqId = 0;
   private quoteId = '';
+  /** Belegart aus der Route (data.belegArt); steuert Laden/Speichern/Kopf. */
+  protected readonly istRechnung =
+    this.route.snapshot.data['belegArt'] === 'rechnung';
+  protected readonly belegWort = this.istRechnung ? 'Rechnung' : 'Angebot';
 
   // --- Editier-Zustand -----------------------------------------------------
   protected readonly rubriken = signal<EditorRubrik[]>([]);
@@ -182,18 +193,24 @@ export class AngebotEditor {
   /** Screenreader-Ansage für Verschiebe-/Struktur-Aktionen. */
   protected readonly ansage = signal('');
 
-  /** Kopf-Formular (Titel + Datumsfelder). */
+  /** Kopf-Formular. Angebot: Titel + Angebots-/Gültig-bis-Datum. Rechnung: kein
+   * Titel (Identität über Typ+Nummer), stattdessen Rechnungs-/Fälligkeitsdatum.
+   * Titel ist nur beim Angebot Pflicht (Validator in `titelPflichtSetzen`). */
   protected readonly kopfForm = this.fb.group({
-    title: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
+    title: this.fb.control('', { nonNullable: true }),
     quote_date: this.fb.control('', { nonNullable: true }),
     valid_until_date: this.fb.control('', { nonNullable: true }),
+    invoice_date: this.fb.control('', { nonNullable: true }),
+    due_date: this.fb.control('', { nonNullable: true }),
   });
 
   // --- Rechte / read-only --------------------------------------------------
   protected readonly darfVersenden = computed(() => this.auth.darf('invoicing', 'VERSENDEN'));
   protected readonly readonly = computed(() => {
     const q = this.quote();
-    return !q || !EDITIERBAR.includes(q.status);
+    // EDITIERBAR enthält ENTWURF (editierbar für beide Belegarten) und NICHT
+    // VERSENDET/VEROEFFENTLICHT — passt für Angebot und Rechnung gleichermaßen.
+    return !q || !(EDITIERBAR as readonly string[]).includes(q.status);
   });
 
   // --- Kalkulation (Server) ------------------------------------------------
@@ -328,6 +345,11 @@ export class AngebotEditor {
   }
 
   constructor() {
+    // Titel ist nur beim Angebot ein Pflichtfeld (Rechnung hat keinen Titel).
+    if (!this.istRechnung) {
+      this.kopfForm.controls.title.addValidators(Validators.required);
+    }
+
     this.route.paramMap.pipe(takeUntilDestroyed()).subscribe((pm) => {
       const id = pm.get('id');
       if (!id) {
@@ -381,7 +403,10 @@ export class AngebotEditor {
   private load(id: string): void {
     const rid = ++this.reqId;
     this.state.set({ kind: 'loading' });
-    this.svc.get(id).subscribe({
+    const laden$: Observable<BelegDetail> = this.istRechnung
+      ? this.svc.getInvoice(id)
+      : this.svc.get(id);
+    laden$.subscribe({
       next: (data) => {
         if (rid !== this.reqId) return;
         this.uebernehmen(data);
@@ -397,13 +422,24 @@ export class AngebotEditor {
   }
 
   /** Server-Antwort in den Editier-Zustand übertragen (dirty zurücksetzen). */
-  private uebernehmen(data: QuoteDetail): void {
+  private uebernehmen(data: BelegDetail): void {
     this.quote.set(data);
-    this.kopfForm.reset({
-      title: data.title ?? '',
-      quote_date: data.quote_date ?? '',
-      valid_until_date: data.valid_until_date ?? '',
-    });
+    if (this.istRechnung) {
+      const inv = data as InvoiceDetail;
+      this.kopfForm.reset({
+        title: '', quote_date: '', valid_until_date: '',
+        invoice_date: inv.invoice_date ?? '',
+        due_date: inv.due_date ?? '',
+      });
+    } else {
+      const q = data as QuoteDetail;
+      this.kopfForm.reset({
+        title: q.title ?? '',
+        quote_date: q.quote_date ?? '',
+        valid_until_date: q.valid_until_date ?? '',
+        invoice_date: '', due_date: '',
+      });
+    }
     // Abschnitte in Anzeigereihenfolge; Nummer (1-basiert) → lokale uid.
     const rubriken = [...data.rubriken]
       .sort((a, b) => a.position_number - b.position_number)
@@ -426,8 +462,11 @@ export class AngebotEditor {
     this.lines.set(lines);
     this.zielRubrik.set(null);
     // Kopffelder sperren, wenn der Beleg eingefroren ist (read-only).
-    if (EDITIERBAR.includes(data.status)) this.kopfForm.enable({ emitEvent: false });
-    else this.kopfForm.disable({ emitEvent: false });
+    if ((EDITIERBAR as readonly string[]).includes(data.status)) {
+      this.kopfForm.enable({ emitEvent: false });
+    } else {
+      this.kopfForm.disable({ emitEvent: false });
+    }
     this.dirty.set(false);
   }
 
@@ -454,7 +493,10 @@ export class AngebotEditor {
   }
 
   private kalkulationLaden(): void {
-    this.svc.kalkulation(this.quoteId).subscribe({
+    const kalk$ = this.istRechnung
+      ? this.svc.invoiceKalkulation(this.quoteId)
+      : this.svc.kalkulation(this.quoteId);
+    kalk$.subscribe({
       next: (k) => {
         this.kalk.set(k);
         this.kalkVerborgen.set(false);
@@ -988,7 +1030,7 @@ export class AngebotEditor {
   }
 
   // ======================= Speichern ======================================
-  private payloadBauen(): QuoteUpdate {
+  private payloadBauen(): QuoteUpdate | InvoiceUpdate {
     const rubriken: RubrikInput[] = this.rubriken().map((r) => ({
       title: r.title,
       description: r.description,
@@ -1025,6 +1067,14 @@ export class AngebotEditor {
     }
 
     const kopf = this.kopfForm.getRawValue();
+    if (this.istRechnung) {
+      return {
+        invoice_date: kopf.invoice_date || null,
+        due_date: kopf.due_date || null,
+        rubriken,
+        lines,
+      };
+    }
     return {
       title: kopf.title.trim(),
       quote_date: kopf.quote_date || null,
@@ -1044,7 +1094,10 @@ export class AngebotEditor {
     }
     this.saving.set(true);
     this.meldung.set(null);
-    this.svc.updateQuote(this.quoteId, this.payloadBauen()).subscribe({
+    const speichern$: Observable<BelegDetail> = this.istRechnung
+      ? this.svc.updateInvoice(this.quoteId, this.payloadBauen() as InvoiceUpdate)
+      : this.svc.updateQuote(this.quoteId, this.payloadBauen() as QuoteUpdate);
+    speichern$.subscribe({
       next: (data) => {
         this.saving.set(false);
         this.uebernehmen(data);
@@ -1081,14 +1134,23 @@ export class AngebotEditor {
   versendenBestaetigen(): void {
     if (this.versendenLaedt()) return;
     this.versendenLaedt.set(true);
-    this.svc.sendQuote(this.quoteId).subscribe({
+    // Angebot: versenden (→ VERSENDET). Rechnung: veröffentlichen (→ VEROEFFENTLICHT).
+    const aktion$: Observable<BelegDetail> = this.istRechnung
+      ? this.svc.publishInvoice(this.quoteId)
+      : this.svc.sendQuote(this.quoteId);
+    aktion$.subscribe({
       next: (data) => {
         this.versendenLaedt.set(false);
         this.versendenOffen.set(false);
         this.uebernehmen(data);
+        const nummer = this.istRechnung
+          ? (data as InvoiceDetail).invoice_number
+          : (data as QuoteDetail).quote_number;
         this.meldung.set({
           art: 'erfolg',
-          text: `Angebot versendet. Belegnummer ${data.quote_number ?? '—'} wurde vergeben.`,
+          text: this.istRechnung
+            ? `Rechnung veröffentlicht. Belegnummer ${nummer ?? '—'} wurde vergeben.`
+            : `Angebot versendet. Belegnummer ${nummer ?? '—'} wurde vergeben.`,
         });
       },
       error: (err) => {
@@ -1109,6 +1171,22 @@ export class AngebotEditor {
   }
 
   // ======================= Darstellungshelfer =============================
+  /** Kopf-Überschrift: Angebotstitel bzw. „Rechnung" (Rechnungen haben keinen Titel). */
+  kopfTitel(): string {
+    const q = this.quote();
+    if (!q) return '';
+    return this.istRechnung ? this.belegWort : (q as QuoteDetail).title || 'Ohne Titel';
+  }
+  /** Belegnummer (Angebot: quote_number, Rechnung: invoice_number) oder „Entwurf". */
+  belegNummer(): string {
+    const q = this.quote();
+    if (!q) return 'Entwurf';
+    const nr = this.istRechnung
+      ? (q as InvoiceDetail).invoice_number
+      : (q as QuoteDetail).quote_number;
+    return nr ?? 'Entwurf';
+  }
+
   euro(v: string | null): string {
     if (v === null) return '—';
     const n = Number(v);
@@ -1158,8 +1236,8 @@ export class AngebotEditor {
     return Number(v) > 0;
   }
 
-  statusLabel(s: QuoteStatus): string {
-    const map: Record<QuoteStatus, string> = {
+  statusLabel(s: string): string {
+    const map: Record<string, string> = {
       ENTWURF: 'Entwurf',
       INTERN_GEPRUEFT: 'Intern geprüft',
       FREIGEGEBEN: 'Freigegeben',
@@ -1168,12 +1246,13 @@ export class AngebotEditor {
       ABGELEHNT: 'Abgelehnt',
       ABGELAUFEN: 'Abgelaufen',
       ERSETZT: 'Ersetzt',
+      VEROEFFENTLICHT: 'Veröffentlicht',
     };
     return map[s] ?? s;
   }
 
-  statusClass(s: QuoteStatus): string {
-    if (s === 'ANGENOMMEN') return 'stamp--positive';
+  statusClass(s: string): string {
+    if (s === 'ANGENOMMEN' || s === 'VEROEFFENTLICHT') return 'stamp--positive';
     if (s === 'ABGELEHNT' || s === 'ABGELAUFEN' || s === 'ERSETZT') return 'stamp--negativ';
     if (s === 'VERSENDET') return 'stamp--warn';
     return '';

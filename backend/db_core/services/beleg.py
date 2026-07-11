@@ -396,6 +396,67 @@ def update_quote(
     return quote
 
 
+# Eine Rechnung ist nur im Entwurf editierbar; ab VEROEFFENTLICHT eingefroren (B-30).
+INVOICE_EDITIERBAR = ("ENTWURF",)
+
+
+def update_invoice(
+    actor_app_user_id,
+    *,
+    invoice_id,
+    invoice_date=...,
+    due_date=...,
+    lines=None,
+    rubriken=None,
+):
+    """Ändert eine Rechnung, solange sie ENTWURF ist (danach eingefroren, B-30).
+
+    Wie beim Angebot werden Positionen und Abschnitte **vollständig ersetzt**, wenn
+    `lines` übergeben wird (der Editor schickt den ganzen Beleg). Die Rechnung hat
+    keinen Titel (Identität über Typ + Nummer); `invoice_type`/Bezüge bleiben
+    unverändert. `invoice_date`/`due_date` nutzen den Sentinel `...`, damit ein
+    bewusstes Leeren (None) von „nicht ändern" unterscheidbar bleibt.
+    """
+    invoice = Invoice.objects.filter(id=invoice_id).first()
+    if invoice is None:
+        raise ValueError("Rechnung nicht gefunden.")
+    if invoice.status not in INVOICE_EDITIERBAR:
+        raise ValueError(
+            f"Rechnung im Status {invoice.status} ist unveränderlich (veröffentlicht)."
+        )
+
+    kopf = {}
+    if invoice_date is not ...:
+        kopf["invoice_date"] = invoice_date
+    if due_date is not ...:
+        kopf["due_date"] = due_date
+
+    prepared = rubriken_norm = None
+    if lines is not None:
+        prepared, net_total, tax_total, gross_total = _prepare_lines(lines)
+        rubriken_norm = _prepare_rubriken(rubriken, prepared)
+        kopf.update(net_total=net_total, tax_total=tax_total, gross_total=gross_total)
+
+    with as_business_error():
+        with business_transaction(actor_app_user_id):
+            if kopf:
+                for feld, wert in kopf.items():
+                    setattr(invoice, feld, wert)
+                invoice.save(update_fields=list(kopf) + ["updated_at"])
+            if prepared is not None:
+                InvoiceLine.objects.filter(invoice_id=invoice.id).delete()
+                BelegRubrik.objects.filter(invoice_id=invoice.id).delete()
+                rubrik_ids = [
+                    BelegRubrik.objects.create(
+                        id=uuid.uuid4(), invoice_id=invoice.id, **r
+                    ).id
+                    for r in rubriken_norm
+                ]
+                _write_lines(prepared, rubrik_ids, model=InvoiceLine, invoice_id=invoice.id)
+    invoice.refresh_from_db()
+    return invoice
+
+
 def create_invoice(
     actor_app_user_id,
     *,

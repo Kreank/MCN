@@ -279,6 +279,14 @@ export interface InvoiceCreate {
   lines: QuoteLineInput[];
 }
 
+/** Rechnungsentwurf ändern (Positionen/Abschnitte vollständig ersetzt; kein Titel). */
+export interface InvoiceUpdate {
+  invoice_date?: string | null;
+  due_date?: string | null;
+  rubriken?: RubrikInput[];
+  lines?: QuoteLineInput[];
+}
+
 export interface InvoicePartyCreate {
   party_id: string;
   role: string;
