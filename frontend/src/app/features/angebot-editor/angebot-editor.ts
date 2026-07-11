@@ -205,7 +205,13 @@ export class AngebotEditor {
   });
 
   // --- Rechte / read-only --------------------------------------------------
-  protected readonly darfVersenden = computed(() => this.auth.darf('invoicing', 'VERSENDEN'));
+  // Angebot versenden verlangt VERSENDEN; Rechnung veröffentlichen verlangt
+  // FREIGEBEN (so erzwingt es der Server) — der Button spiegelt das jeweils richtige Recht.
+  protected readonly darfVersenden = computed(() =>
+    this.istRechnung
+      ? this.auth.darf('invoicing', 'FREIGEBEN')
+      : this.auth.darf('invoicing', 'VERSENDEN'),
+  );
   protected readonly readonly = computed(() => {
     const q = this.quote();
     // EDITIERBAR enthält ENTWURF (editierbar für beide Belegarten) und NICHT

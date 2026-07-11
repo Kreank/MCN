@@ -424,6 +424,13 @@ def update_invoice(
         raise ValueError(
             f"Rechnung im Status {invoice.status} ist unveränderlich (veröffentlicht)."
         )
+    # Defense-in-depth: Gutschriften/Stornos entstehen ausschließlich als
+    # veröffentlichte Folgebelege (create_cancellation/create_correction) und sind
+    # daher nie ENTWURF — der Editor ändert sie grundsätzlich nicht.
+    if invoice.invoice_type in _CREDIT_TYPES:
+        raise ValueError(
+            "Gutschriften und Stornobelege werden nicht über den Editor geändert."
+        )
 
     kopf = {}
     if invoice_date is not ...:
