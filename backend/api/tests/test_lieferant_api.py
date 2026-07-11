@@ -9,18 +9,26 @@ import uuid
 import pytest
 from django.test import Client
 
-from db_core.models import AppUser
+from db_core.db_context import business_transaction
+from db_core.models import AppUser, ArticleSupplierReference
+from db_core.services import anbindung as anbindung_service
+from db_core.services import artikel as artikel_service
 from db_core.services import identity as identity_service
 from .conftest import make_role_user
 
 _URL = "/api/pricing/supplier-connections"
 
 
-def _lieferant():
-    actor = AppUser.objects.create(
+def _seed_actor():
+    return AppUser.objects.create(
         id=uuid.uuid4(), display_name="Seed", status="ACTIVE", version=1
     )
-    return identity_service.create_person(actor.id, first_name="Liefer", last_name="GH")
+
+
+def _lieferant():
+    return identity_service.create_person(
+        _seed_actor().id, first_name="Liefer", last_name="GH"
+    )
 
 
 @pytest.mark.django_db
@@ -78,3 +86,68 @@ def test_doppelter_namespace_422(admin_client):
     assert admin_client.post(_URL, data=payload, content_type="application/json").status_code == 201
     r = admin_client.post(_URL, data=payload, content_type="application/json")
     assert r.status_code == 422
+
+
+# --- Warenkorb-Preview (IDS-Rückflusskern) ---------------------------------
+
+_CART = (
+    '<Warenkorb xsi:schemaLocation="http://www.itek.de/Shop-Anbindung/Warenkorb/ x.xsd">'
+    "<WarenkorbInfo><Version>2.5</Version></WarenkorbInfo><Order>"
+    "<OrderItem><ArtNo>4711</ArtNo><Qty>50.00</Qty><QU>MTR</QU></OrderItem>"
+    "<OrderItem><ArtNo>9999</ArtNo><Qty>1.00</Qty><QU>PCE</QU></OrderItem>"
+    "</Order></Warenkorb>"
+)
+
+
+def _connection_mit_artikel():
+    actor = _seed_actor()
+    supplier = identity_service.create_person(actor.id, first_name="Gross", last_name="Handel")
+    conn = anbindung_service.create_connection(
+        actor.id, supplier_party_id=supplier.id, source_namespace="gut",
+        label="G.U.T.", source_system="IDS_CONNECT",
+    )
+    art = artikel_service.create_article(
+        actor.id, article_number="A-4711", description="Kabelring", unit="m",
+    )
+    with business_transaction(actor.id):
+        ArticleSupplierReference.objects.create(
+            id=uuid.uuid4(), article_id=art.id, supplier_party_id=supplier.id,
+            source_system="DATANORM", source_namespace="gut",
+            supplier_article_number="4711", valid_from="2020-01-01",
+        )
+    return conn, art
+
+
+@pytest.mark.django_db
+def test_warenkorb_preview_mapped(admin_client):
+    conn, art = _connection_mit_artikel()
+    r = admin_client.post(
+        f"{_URL}/{conn.id}/warenkorb/preview", data=_CART,
+        content_type="application/xml",
+    )
+    assert r.status_code == 200, r.content
+    body = r.json()
+    assert body["total"] == 2 and body["matched"] == 1
+    treffer = next(p for p in body["positions"] if p["art_no"] == "4711")
+    assert treffer["matched"] and treffer["article_number"] == "A-4711"
+    fehl = next(p for p in body["positions"] if p["art_no"] == "9999")
+    assert not fehl["matched"] and fehl["article_id"] is None
+
+
+@pytest.mark.django_db
+def test_warenkorb_preview_ungueltiges_xml_422(admin_client):
+    conn, _ = _connection_mit_artikel()
+    r = admin_client.post(
+        f"{_URL}/{conn.id}/warenkorb/preview", data="<Warenkorb><Order>",
+        content_type="application/xml",
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.django_db
+def test_warenkorb_preview_unbekannte_anbindung_404(admin_client):
+    r = admin_client.post(
+        f"{_URL}/{uuid.uuid4()}/warenkorb/preview", data=_CART,
+        content_type="application/xml",
+    )
+    assert r.status_code == 404

@@ -10,6 +10,7 @@ selbst (CLAUDE.md/0029) — daher als schlichter Text geführt, kein write-only-
 Der eigentliche IDS-Connect-Warenkorb-Roundtrip ist ein späterer Backend-Slice.
 """
 from datetime import datetime
+from decimal import Decimal
 from uuid import UUID
 
 from ninja import Router, Schema
@@ -18,7 +19,9 @@ from ninja.responses import Status
 from ninja.security import django_auth
 
 from api.permissions import require, require_create
+from db_core.models import SupplierConnection
 from db_core.services import anbindung as anbindung_service
+from db_core.services import ids_warenkorb as ids_warenkorb_service
 
 router = Router()
 
@@ -101,3 +104,66 @@ def update_supplier_connection(request, connection_id: UUID, payload: SupplierCo
     except ValueError as exc:
         raise HttpError(422, str(exc))
     return _connection_out(conn)
+
+
+# --- IDS-Connect: Warenkorb-Rückgabe vorschauen ----------------------------
+
+class ResolvedPositionOut(Schema):
+    art_no: str
+    qty: Decimal
+    unit: str | None = None
+    short_text: str | None = None
+    ean: str | None = None
+    article_id: UUID | None = None
+    article_number: str | None = None
+    article_name: str | None = None
+    matched: bool
+    ambiguous: bool
+
+
+class WarenkorbPreviewOut(Schema):
+    connection_id: UUID
+    source_namespace: str
+    total: int
+    matched: int
+    positions: list[ResolvedPositionOut]
+
+
+@router.post(
+    "/supplier-connections/{connection_id}/warenkorb/preview",
+    response=WarenkorbPreviewOut,
+    auth=django_auth,
+)
+def warenkorb_preview(request, connection_id: UUID):
+    """Parst einen IDS-Rückgabe-Warenkorb (XML im Request-Body) und löst seine
+    Positionen gegen den Artikelstamm der Anbindung auf (Vorschau, rein lesend).
+
+    Das ist der Kern des IDS-Connect-Rückflusses: Der Body ist das vom Shop
+    zurückgegebene `<Warenkorb>`-XML; die Antwort zeigt je Position, ob sie einem
+    Stammartikel zugeordnet werden konnte. Recht `pricing/LESEN`. Ungültiges XML →
+    422. Der spätere echte Rückgabe-Endpunkt (Shop-Roundtrip mit Token) nutzt
+    dieselbe Service-Logik.
+    """
+    require(request, "pricing", "LESEN")
+    conn = SupplierConnection.objects.filter(id=connection_id).first()
+    if conn is None:
+        raise HttpError(404, "Anbindung nicht gefunden.")
+    try:
+        positions = ids_warenkorb_service.parse_returned_cart(request.body)
+    except ids_warenkorb_service.WarenkorbError as exc:
+        raise HttpError(422, str(exc))
+    resolved = ids_warenkorb_service.resolve_positions(conn.source_namespace, positions)
+    return WarenkorbPreviewOut(
+        connection_id=conn.id,
+        source_namespace=conn.source_namespace,
+        total=len(resolved),
+        matched=sum(1 for r in resolved if r.matched),
+        positions=[
+            ResolvedPositionOut(
+                art_no=r.art_no, qty=r.qty, unit=r.unit, short_text=r.short_text,
+                ean=r.ean, article_id=r.article_id, article_number=r.article_number,
+                article_name=r.article_name, matched=r.matched, ambiguous=r.ambiguous,
+            )
+            for r in resolved
+        ],
+    )

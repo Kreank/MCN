@@ -16,3 +16,5 @@ Thumbs.db
 # Händlerdaten (DATANORM): Einkaufspreise, gehören nicht ins Repo
 /DATANORM/
 /Hero Wissen/
+# IDS-Connect-Referenzdateien (Händler-Schemas/Beispiele): externe Unterlagen
+/IDS/
