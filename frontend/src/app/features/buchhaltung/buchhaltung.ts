@@ -1,5 +1,6 @@
 import { Component, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { FormControl, FormGroup, ReactiveFormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { Subject, debounceTime, distinctUntilChanged } from 'rxjs';
 import { BuchhaltungService } from '../../core/buchhaltung.service';
@@ -11,8 +12,12 @@ import {
   paymentStatusClass,
   paymentStatusLabel,
 } from '../../core/buchhaltung.model';
+import { csvDownloadAusloesen } from '../../core/auswertungen.service';
+import { AuthService } from '../../core/auth.service';
+import { Dialog } from '../../shared/dialog/dialog';
+import { Feld } from '../../shared/formular/feld';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
-import { VerbotenState, fehlerState } from '../../shared/http-fehler';
+import { VerbotenState, fehlerDetail, fehlerState } from '../../shared/http-fehler';
 
 type ViewState =
   | { kind: 'loading' }
@@ -24,12 +29,13 @@ type Segment = { value: PaymentStatus | null; label: string };
 
 @Component({
   selector: 'app-buchhaltung',
-  imports: [RouterLink, KeinZugriff],
+  imports: [RouterLink, KeinZugriff, ReactiveFormsModule, Dialog, Feld],
   templateUrl: './buchhaltung.html',
   styleUrl: './buchhaltung.scss',
 })
 export class Buchhaltung {
   private readonly svc = inject(BuchhaltungService);
+  private readonly auth = inject(AuthService);
 
   protected readonly pageSize = 20;
   protected readonly segments: Segment[] = [
@@ -107,6 +113,81 @@ export class Buchhaltung {
 
   retry(): void {
     this.fetch();
+  }
+
+  // ---- DATEV-Export -------------------------------------------------------
+  protected readonly datevOffen = signal(false);
+  protected readonly datevBusy = signal(false);
+  protected readonly datevFehler = signal<string | null>(null);
+  protected readonly datevForm = new FormGroup({
+    von: new FormControl<string>('', { nonNullable: true }),
+    bis: new FormControl<string>('', { nonNullable: true }),
+  });
+
+  /** Aktion nur zeigen, wenn das Recht besteht (der Server lehnt sonst mit 403 ab). */
+  protected darfExportieren(): boolean {
+    return this.auth.darf('invoicing', 'LESEN');
+  }
+
+  datevOeffnen(): void {
+    // Vorbelegung: laufendes Kalenderjahr bis heute (Belegdatum-TTMM verlangt
+    // einen Zeitraum innerhalb eines Jahres).
+    const heute = new Date();
+    const iso = (d: Date) => d.toISOString().slice(0, 10);
+    this.datevForm.setValue({
+      von: `${heute.getFullYear()}-01-01`,
+      bis: iso(heute),
+    });
+    this.datevFehler.set(null);
+    this.datevOffen.set(true);
+  }
+
+  datevSchliessen(): void {
+    if (this.datevBusy()) return;
+    this.datevOffen.set(false);
+  }
+
+  datevHerunterladen(): void {
+    if (this.datevBusy()) return;
+    const von = this.datevForm.controls.von.value;
+    const bis = this.datevForm.controls.bis.value;
+    if (!von || !bis) {
+      this.datevFehler.set('Bitte einen Zeitraum (von und bis) wählen.');
+      return;
+    }
+    this.datevBusy.set(true);
+    this.datevFehler.set(null);
+    this.svc.datevExport(von, bis).subscribe({
+      next: (blob) => {
+        csvDownloadAusloesen(blob, `EXTF_Buchungsstapel_${von}_${bis}.csv`);
+        this.datevBusy.set(false);
+        this.datevOffen.set(false);
+      },
+      error: (err) => {
+        this.datevBusy.set(false);
+        void this.datevFehlerAnzeigen(err);
+      },
+    });
+  }
+
+  /** Bei responseType 'blob' ist der 422-Fehlerkörper ein Blob — als Text lesen
+   * und die Servermeldung (detail) herausziehen. */
+  private async datevFehlerAnzeigen(err: unknown): Promise<void> {
+    const blob = (err as { error?: unknown })?.error;
+    if (blob instanceof Blob) {
+      try {
+        const detail = JSON.parse(await blob.text())?.detail;
+        if (typeof detail === 'string') {
+          this.datevFehler.set(detail);
+          return;
+        }
+      } catch {
+        /* kein JSON-Körper → generische Meldung unten */
+      }
+    }
+    this.datevFehler.set(
+      fehlerDetail(err) ?? 'Der DATEV-Export konnte nicht erstellt werden.',
+    );
   }
 
   private fetch(): void {

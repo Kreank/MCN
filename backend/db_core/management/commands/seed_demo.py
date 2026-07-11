@@ -43,6 +43,17 @@ from db_core.services import property as property_service
 DEMO_APP_USER_ID = uuid.UUID("00000000-0000-4000-8000-000000000001")
 DEMO_APP_USER_NAME = "Demo Sachbearbeiter"
 
+# DATEV-Export-Konfiguration des Demo-Mandanten (frei erfundene, aber
+# formgültige Berater-/Mandantennummer; SKR03 wie im Handwerk üblich). Damit
+# funktioniert „Buchhaltung → DATEV-Export" out of the box.
+_DATEV_DEMO_CONFIG = {
+    "datev_consultant_number": "12345",
+    "datev_client_number": "1001",
+    "datev_chart_of_accounts": "SKR03",
+    "datev_account_length": 4,
+    "datev_fiscal_year_start_month": 1,
+}
+
 DEMO_PERSONS = [
     {"salutation": "Herr", "title": "Dr.", "first_name": "Thomas", "last_name": "Bergmann"},
     {"salutation": "Frau", "first_name": "Sabine", "last_name": "Krüger"},
@@ -325,10 +336,18 @@ class Command(BaseCommand):
                 bic="SSKMDEMMXXX",
                 managing_director="Jörg Feldmann",
                 managing_director_title="Geschäftsführer",
+                **_DATEV_DEMO_CONFIG,
             )
             self.stdout.write("Firmenprofil angelegt: Mitra Sanitär GmbH")
         else:
-            self.stdout.write("Firmenprofil vorhanden — übersprungen.")
+            # DATEV-Export-Konfiguration idempotent nachziehen (ältere Profile,
+            # die noch vor Migration 0051 angelegt wurden). Nur setzen, wenn leer.
+            profil = firma_service.get_company_profile()
+            if not profil.datev_consultant_number:
+                firma_service.update_company_profile(actor.id, **_DATEV_DEMO_CONFIG)
+                self.stdout.write("Firmenprofil: DATEV-Konfiguration ergänzt.")
+            else:
+                self.stdout.write("Firmenprofil vorhanden — übersprungen.")
 
         # Idempotenz je Party (nicht am Benutzer-Flag): heilt auch Läufe,
         # die nach Teilerfolg abgebrochen sind.

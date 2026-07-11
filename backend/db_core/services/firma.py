@@ -43,6 +43,20 @@ _PROFILE_FIELDS = (
     "state_code", "phone", "email", "web", "tax_number", "vat_id",
     "commercial_register", "bank_name", "iban", "bic", "managing_director",
     "managing_director_title", "default_language", "logo_file_id",
+    # DATEV-Export-Konfiguration (0051)
+    "datev_consultant_number", "datev_client_number", "datev_chart_of_accounts",
+    "datev_account_length", "datev_fiscal_year_start_month",
+    "datev_debtor_account", "datev_revenue_account_full",
+    "datev_revenue_account_reduced", "datev_revenue_account_free",
+    "datev_revenue_account_reverse",
+)
+
+# Konto-Override-Felder: reine Ziffernfolgen (Sach-/Personenkonten). NULL = der
+# Service verwendet den SKR-Standard.
+_DATEV_ACCOUNT_FIELDS = (
+    "datev_debtor_account", "datev_revenue_account_full",
+    "datev_revenue_account_reduced", "datev_revenue_account_free",
+    "datev_revenue_account_reverse",
 )
 
 # Bankdaten sind Vier-Augen-pflichtig (security.four_eyes_action 'BANKDATEN'):
@@ -64,6 +78,45 @@ def _clean(value):
         value = value.strip()
         return value or None
     return value
+
+
+def _validate_datev(values):
+    """Prüft die DATEV-Konfigurationsfelder (spiegelt die DB-CHECKs + Fachregeln).
+
+    Nur gesetzte Felder werden geprüft; alle sind einzeln nullbar. Ohne diese
+    Vorabprüfung schlüge z. B. ein SKR-Tippfehler oder eine nichtnumerische
+    Beraternummer erst als DataError/500 durch statt als klare 422-Meldung.
+    `values` ist bereits _clean-normalisiert (leer → None). Der Kontenrahmen wird
+    hier großgeschrieben (in place), damit 'skr03' zu 'SKR03' wird.
+    """
+    if values.get("datev_chart_of_accounts"):
+        skr = values["datev_chart_of_accounts"].upper()
+        if skr not in ("SKR03", "SKR04"):
+            raise ValueError("Kontenrahmen muss SKR03 oder SKR04 sein.")
+        values["datev_chart_of_accounts"] = skr
+
+    berater = values.get("datev_consultant_number")
+    if berater is not None:
+        if not re.fullmatch(r"[0-9]{4,7}", berater) or not (1001 <= int(berater) <= 9_999_999):
+            raise ValueError("Beraternummer muss zwischen 1001 und 9999999 liegen.")
+    mandant = values.get("datev_client_number")
+    if mandant is not None:
+        if not re.fullmatch(r"[0-9]{1,5}", mandant) or not (1 <= int(mandant) <= 99_999):
+            raise ValueError("Mandantennummer muss zwischen 1 und 99999 liegen.")
+
+    length = values.get("datev_account_length")
+    if length is not None and not (4 <= int(length) <= 8):
+        raise ValueError("Sachkontenlänge muss zwischen 4 und 8 liegen.")
+    month = values.get("datev_fiscal_year_start_month")
+    if month is not None and not (1 <= int(month) <= 12):
+        raise ValueError("Wirtschaftsjahresbeginn muss ein Monat (1–12) sein.")
+
+    for feld in _DATEV_ACCOUNT_FIELDS:
+        konto = values.get(feld)
+        if konto is not None and not re.fullmatch(r"[0-9]{3,9}", konto):
+            raise ValueError(
+                "Kontonummern dürfen nur aus Ziffern bestehen (3–9 Stellen)."
+            )
 
 
 def update_company_profile(actor_app_user_id, **fields):
@@ -99,6 +152,8 @@ def update_company_profile(actor_app_user_id, **fields):
         raise ValueError("Land muss ein zweistelliges ISO-Kürzel sein (z. B. DE).")
     if values.get("default_language") and not re.fullmatch(r"[a-z]{2}", values["default_language"]):
         raise ValueError("Sprache muss ein zweistelliges Kürzel sein (z. B. de).")
+
+    _validate_datev(values)
 
     profile = get_company_profile()
     if profile is None:

@@ -319,3 +319,17 @@
     transform: translateX(100%);
   }
 }
+
+/* DATEV-Export-Dialog: die beiden Datumsfelder nebeneinander (auf schmalen
+   Viewports untereinander). */
+.datev-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-top: 0.5rem;
+}
+@media (max-width: 30rem) {
+  .datev-form {
+    grid-template-columns: 1fr;
+  }
+}

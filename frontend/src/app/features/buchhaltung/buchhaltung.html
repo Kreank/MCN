@@ -44,8 +44,54 @@
       }
     </div>
 
+    @if (darfExportieren()) {
+      <button type="button" class="btn" (click)="datevOeffnen()">DATEV-Export</button>
+    }
     <a class="btn controls__mahn" routerLink="/buchhaltung/mahnwesen">Mahnwesen →</a>
   </div>
+
+  <app-dialog
+    [offen]="datevOffen()"
+    titel="DATEV-Export (Buchungsstapel)"
+    (schliessen)="datevSchliessen()"
+  >
+    <p class="note">
+      Erzeugt einen EXTF-Buchungsstapel der veröffentlichten Rechnungen im
+      gewählten Zeitraum zum Import beim Steuerberater. Der Zeitraum muss
+      innerhalb eines Kalenderjahres liegen. Debitor an Erlöskonto je Steuersatz
+      nach dem im Firmenprofil hinterlegten Kontenrahmen (SKR03/04).
+    </p>
+    <form class="datev-form" [formGroup]="datevForm" (ngSubmit)="datevHerunterladen()">
+      <app-feld
+        [control]="datevForm.controls.von"
+        label="Von"
+        typ="datum"
+        [pflicht]="true"
+      />
+      <app-feld
+        [control]="datevForm.controls.bis"
+        label="Bis"
+        typ="datum"
+        [pflicht]="true"
+      />
+    </form>
+    @if (datevFehler(); as f) {
+      <p class="note note--error" role="alert">{{ f }}</p>
+    }
+    <div dialog-aktionen class="dialog__aktionen">
+      <button type="button" class="btn" (click)="datevSchliessen()" [disabled]="datevBusy()">
+        Abbrechen
+      </button>
+      <button
+        type="button"
+        class="btn btn--primary"
+        (click)="datevHerunterladen()"
+        [disabled]="datevBusy()"
+      >
+        {{ datevBusy() ? 'Export läuft …' : 'Herunterladen' }}
+      </button>
+    </div>
+  </app-dialog>
 
   <p class="sr-only" role="status">{{ resultSummary() }}</p>
 

@@ -2375,6 +2375,18 @@ class CompanyProfile(models.Model):
     managing_director_title = models.TextField(null=True, blank=True)
     default_language = models.CharField(max_length=2, db_default="de")
     logo_file_id = models.UUIDField(null=True, blank=True)
+    # DATEV-Export-Konfiguration (Migration 0051): Mandanten-Identität beim
+    # Steuerberater + optionale Konto-Overrides (NULL = SKR-Standard aus dem Service).
+    datev_consultant_number = models.TextField(null=True, blank=True)
+    datev_client_number = models.TextField(null=True, blank=True)
+    datev_chart_of_accounts = models.TextField(null=True, blank=True)
+    datev_account_length = models.SmallIntegerField(null=True, blank=True)
+    datev_fiscal_year_start_month = models.SmallIntegerField(null=True, blank=True)
+    datev_debtor_account = models.TextField(null=True, blank=True)
+    datev_revenue_account_full = models.TextField(null=True, blank=True)
+    datev_revenue_account_reduced = models.TextField(null=True, blank=True)
+    datev_revenue_account_free = models.TextField(null=True, blank=True)
+    datev_revenue_account_reverse = models.TextField(null=True, blank=True)
     version = models.IntegerField(db_default=models.Value(1))
     created_at = models.DateTimeField(db_default=Now())
     updated_at = models.DateTimeField(db_default=Now())

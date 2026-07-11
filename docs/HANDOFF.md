@@ -16,7 +16,7 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 > und Freigaben laufen aus dem UI durch Rechte, Statusautomaten und DB-Trigger.
 > Dazu **Vier-Augen-Freigaben**, **Belegerfassung** (Eingangsrechnungen) und die
 > **Rechtematrix-Pflege** als UI.
-> **1607 Backend-Tests grün**, db_core-Migrationen bis **0050**, accounts bis **0002**.
+> **1628 Backend-Tests grün**, db_core-Migrationen bis **0051**, accounts bis **0002**.
 > Stand 2026-07-11 (Hero-Paritäts-Ausbau, 20 Slices an einem Tag — Details in
 > `git log`): Artikelstamm nach Hero (Felder/VK-Gruppen/Lieferant/Bild,
 > Suchoperatoren + · | · *, Spaltenwahl, Kopieren), **Marge/Deckungsbeitrag** in
@@ -42,8 +42,13 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 > Migration 0049/0050).
 > **Noch offen — DERIVIERBAR:** Gewerke-Firmenzuordnung (Link-Tabelle, Semantik
 > klären). **Migrations-Graph ist wieder frei** (0050 ist Kopf).
+> **Neu (2026-07-11, diese Session):** **DATEV-EXTF-Export** (Buchungsstapel aus
+> veröffentlichten Rechnungen, `GET /buchhaltung/datev-export.csv`, Config am
+> Firmenprofil, Migration 0051; Dialog in der Buchhaltung). v1-Grenzen dokumentiert
+> (Sammeldebitor, Automatik = aktuelle Sätze, Steuerberater-Roundtrip offen) —
+> Details Memory `datev-export`.
 > **Noch offen — GRUNDSATZENTSCHEIDUNG nötig:** XRechnung/ZUGFeRD (gesetzl. E-Rechnungs-
-> pflicht B2B! Format-/Lib-Wahl), DATEV/Lexware-Export (Format), Skonto (Feld+Modell),
+> pflicht B2B! Format-/Lib-Wahl), **Lexware-Export** (Format), Skonto (Feld+Modell),
 > Abschlags→Schlussrechnung-Anrechnung, freier Termin ohne Auftrag
 > (`service_job.work_order_id` NOT NULL), OAuth-Absenderkonten (User-App-Registrierung),
 > IDS-Connect-Ablauf.
@@ -152,8 +157,12 @@ Dateien wie `app.routes.ts`).
 - **E-Rechnung (XRechnung/ZUGFeRD)** — gesetzliche B2B-Pflicht, aktuell KEIN Feld/
   Export. Format-/Lib-Wahl (ZUGFeRD-PDF/A-3+XML vs. reine XRechnung-XML), Leitweg-
   ID-Modell. Compliance-Risiko, eigentlich vorrangig.
-- **DATEV/Lexware-Export** (SKR03/04, Berater-/Mandantennummer, EXTF-Buchungsstapel)
-  — migrationsfrei baubar, aber Format/Config vom User nötig.
+- ✔ **DATEV-Export** (EXTF-Buchungsstapel) — **gebaut** (Migration 0051, Config am
+  Firmenprofil, `services/datev.py`, UI in der Buchhaltung). v1: Sammeldebitor,
+  Automatik-Erlöskonten je Steuersatz (SKR03/04), cent-genaue Reconciliation,
+  cp1252. Offen: echter DATEV-Import-Roundtrip beim Steuerberater, Personenkonten
+  (OPOS). Details Memory `datev-export`.
+- **Lexware-Export** (anderes Format) — noch offen, Config/Format vom User nötig.
 - **Skonto** (Feld + Modell an der Rechnung; berührt GoBD-Beleg + PDF).
 
 **Weitere ableitbare Reste (Bestand, noch offen):**
@@ -250,8 +259,8 @@ Default `mcn-dev-passwort-2026`):
 **Backend** (`cd backend`, uv):
 ```bash
 uv run python manage.py check
-uv run pytest -p no:cacheprovider -q          # aktuell 1607 grün, 2 skipped
-uv run python manage.py migrate               # Migrationskopf: 0050
+uv run pytest -p no:cacheprovider -q          # aktuell 1628 grün, 2 skipped
+uv run python manage.py migrate               # Migrationskopf: 0051
 uv run python manage.py runserver 127.0.0.1:8000 --noreload
 uv run python manage.py seed_demo             # idempotenter Demo-Datensatz
 ```

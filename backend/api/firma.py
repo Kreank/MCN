@@ -45,6 +45,17 @@ class CompanyProfileOut(Schema):
     managing_director_title: str | None = None
     default_language: str | None = None
     logo_file_id: UUID | None = None
+    # DATEV-Export-Konfiguration (0051)
+    datev_consultant_number: str | None = None
+    datev_client_number: str | None = None
+    datev_chart_of_accounts: str | None = None
+    datev_account_length: int | None = None
+    datev_fiscal_year_start_month: int | None = None
+    datev_debtor_account: str | None = None
+    datev_revenue_account_full: str | None = None
+    datev_revenue_account_reduced: str | None = None
+    datev_revenue_account_free: str | None = None
+    datev_revenue_account_reverse: str | None = None
     # Additiv: OB ein Firmenlogo hinterlegt ist (die Bytes holt GET /profile/logo).
     has_logo: bool = False
     # Gesetzt, wenn eine Bankdaten-Änderung einen Vier-Augen-Antrag ausgelöst hat
@@ -73,6 +84,16 @@ class CompanyProfileIn(Schema):
     managing_director: str | None = None
     managing_director_title: str | None = None
     default_language: str | None = None
+    datev_consultant_number: str | None = None
+    datev_client_number: str | None = None
+    datev_chart_of_accounts: str | None = None
+    datev_account_length: int | None = None
+    datev_fiscal_year_start_month: int | None = None
+    datev_debtor_account: str | None = None
+    datev_revenue_account_full: str | None = None
+    datev_revenue_account_reduced: str | None = None
+    datev_revenue_account_free: str | None = None
+    datev_revenue_account_reverse: str | None = None
 
 
 class BranchOut(Schema):
@@ -174,6 +195,16 @@ def _profile_out(p, pending_bank_approval=None):
         iban=p.iban, bic=p.bic, managing_director=p.managing_director,
         managing_director_title=p.managing_director_title,
         default_language=p.default_language, logo_file_id=p.logo_file_id,
+        datev_consultant_number=p.datev_consultant_number,
+        datev_client_number=p.datev_client_number,
+        datev_chart_of_accounts=p.datev_chart_of_accounts,
+        datev_account_length=p.datev_account_length,
+        datev_fiscal_year_start_month=p.datev_fiscal_year_start_month,
+        datev_debtor_account=p.datev_debtor_account,
+        datev_revenue_account_full=p.datev_revenue_account_full,
+        datev_revenue_account_reduced=p.datev_revenue_account_reduced,
+        datev_revenue_account_free=p.datev_revenue_account_free,
+        datev_revenue_account_reverse=p.datev_revenue_account_reverse,
         has_logo=p.logo_file_id is not None,
         pending_bank_approval=pending_bank_approval,
     )

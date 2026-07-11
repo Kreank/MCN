@@ -24,6 +24,7 @@ from django.db.models import (
     When,
 )
 from django.db.models.functions import Coalesce
+from django.http import HttpResponse
 from ninja import Query, Router, Schema
 from ninja.errors import HttpError
 from ninja.responses import Status
@@ -36,6 +37,7 @@ from db_core.models import DunningLevel, DunningNotice, Invoice, Payment
 from db_core.services import beleg as beleg_service
 from db_core.services import beleg_versand as beleg_versand_service
 from db_core.services import buchhaltung as buchhaltung_service
+from db_core.services import datev as datev_service
 from db_core.services import firma as firma_service
 from db_core.services import mahnlauf as mahnlauf_service
 from db_core.services import vier_augen
@@ -927,3 +929,31 @@ def mahnlauf_ausfuehren(request, payload: MahnlaufIn):
         send_email=payload.send_email,
     )
     return MahnlaufResultOut(**result)
+
+
+# --- DATEV-Export ----------------------------------------------------------
+
+@router.get("/datev-export.csv")
+def datev_export(request, von: date | None = Query(None), bis: date | None = Query(None)):
+    """EXTF-Buchungsstapel der veröffentlichten Rechnungen im Zeitraum [von, bis]
+    zum Download (DATEV-Import beim Steuerberater).
+
+    Reiner Leseexport (invoicing/LESEN). Der Zeitraum muss in einem Kalenderjahr
+    liegen. Fehlt die DATEV-Konfiguration im Firmenprofil oder ist ein Steuercode
+    nicht zugeordnet, meldet der Service 422 mit klarer Begründung.
+
+    `von`/`bis` sind bewusst als optional deklariert (mit Pflichtprüfung im Rumpf),
+    damit die Rechteprüfung VOR der Parameter-Validierung greift — sonst bekäme ein
+    Nutzer ohne Recht ein 422 (fehlende Parameter) statt des korrekten 403.
+    """
+    require(request, "invoicing", "LESEN")
+    if von is None or bis is None:
+        raise HttpError(422, "Bitte einen Zeitraum (von, bis) angeben.")
+    try:
+        dateiname, inhalt = datev_service.build_datev_export(von, bis)
+    except datev_service.DatevExportError as exc:
+        raise HttpError(422, str(exc))
+    antwort = HttpResponse(inhalt, content_type="text/csv; charset=windows-1252")
+    antwort["Content-Disposition"] = f'attachment; filename="{dateiname}"'
+    antwort["X-Content-Type-Options"] = "nosniff"
+    return antwort

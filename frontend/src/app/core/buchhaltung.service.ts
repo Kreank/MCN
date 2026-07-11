@@ -144,4 +144,21 @@ export class BuchhaltungService {
   mahnlaufAusfuehren(payload: MahnlaufInput): Observable<MahnlaufResult> {
     return this.http.post<MahnlaufResult>(`${this.base}/mahnlauf`, payload);
   }
+
+  // --- DATEV-Export (EXTF-Buchungsstapel) ----------------------------------
+
+  /**
+   * EXTF-Buchungsstapel der veröffentlichten Rechnungen im Zeitraum als Blob
+   * (Download über den Interceptor, nie als Direkt-URL — sonst gehen Session/CSRF
+   * nicht durch). Der Zeitraum (von/bis, ISO-Datum) muss in EINEM Kalenderjahr
+   * liegen; sonst antwortet der Server mit 422 (Fehlerkörper ist dann ein Blob,
+   * den der Aufrufer als Text liest). Der Dateiname wird clientseitig gebildet.
+   */
+  datevExport(von: string, bis: string): Observable<Blob> {
+    const params = new HttpParams().set('von', von).set('bis', bis);
+    return this.http.get(`${this.base}/datev-export.csv`, {
+      params,
+      responseType: 'blob',
+    });
+  }
 }
