@@ -68,6 +68,16 @@ export class BelegDetail {
     return d.status === 'ENTWURF' || d.status === 'INTERN_GEPRUEFT' || d.status === 'FREIGEGEBEN';
   });
 
+  /** Im Editor bearbeitbar (Positionen per Palette/Drag&Drop): dieselben Status
+   * wie im Angebotseditor (EDITIERBAR) + Recht invoicing/AENDERN. Der „Bearbeiten"-
+   * Knopf führt in den Angebotseditor (`/dokumente/angebot/:id`) — bisher war der
+   * Editor aus dem UI gar nicht erreichbar. */
+  protected readonly darfBearbeiten = computed(() => {
+    const d = this.daten();
+    if (!d || !this.auth.darf('invoicing', 'AENDERN')) return false;
+    return d.status === 'ENTWURF' || d.status === 'INTERN_GEPRUEFT' || d.status === 'FREIGEGEBEN';
+  });
+
   // --- Per E-Mail senden (nur versendetes Angebot) ------------------------
   /** Nur versendete Angebote lassen sich per Mail versenden (Server erzwingt es). */
   protected readonly kannPerMailSenden = computed(() => this.daten()?.status === 'VERSENDET');

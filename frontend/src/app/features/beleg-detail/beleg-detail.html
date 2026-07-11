@@ -32,6 +32,11 @@
       @if (kannPdf()) {
         <a mappe-kopf class="btn" [href]="pdfUrl(daten()!.id)" target="_blank" rel="noopener" aria-label="PDF ansehen (öffnet in neuem Tab)">PDF ansehen ↗</a>
       }
+      @if (darfBearbeiten()) {
+        <a mappe-kopf class="btn btn--primary" [routerLink]="['/dokumente/angebot', daten()!.id]">
+          Bearbeiten
+        </a>
+      }
       @if (darfVersenden() && kannPerMailSenden()) {
         @if (mailKontoVorhanden()) {
           <button mappe-kopf type="button" class="btn btn--primary" (click)="versandOeffnen()">
