@@ -16,7 +16,7 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 > und Freigaben laufen aus dem UI durch Rechte, Statusautomaten und DB-Trigger.
 > Dazu **Vier-Augen-Freigaben**, **Belegerfassung** (Eingangsrechnungen) und die
 > **Rechtematrix-Pflege** als UI.
-> **1490 Backend-Tests grün**, db_core-Migrationen bis **0047**, accounts bis **0002**.
+> **1566 Backend-Tests grün**, db_core-Migrationen bis **0047**, accounts bis **0002**.
 > Stand 2026-07-11 (Hero-Paritäts-Ausbau, 20 Slices an einem Tag — Details in
 > `git log`): Artikelstamm nach Hero (Felder/VK-Gruppen/Lieferant/Bild,
 > Suchoperatoren + · | · *, Spaltenwahl, Kopieren), **Marge/Deckungsbeitrag** in
@@ -30,9 +30,14 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 > Beleg-PDF**, **Wartungs-Fälligkeits-Scheduler** (Command `wartung_faellige_ausloesen`,
 > PROJEKT/AUFTRAG erzeugen echte Folgeobjekte). Analyse aller offenen Hero-Bereiche
 > + Mail-Details: Memory `hero-vollsurvey-2026-07`.
-> **Noch offen — DERIVIERBAR:** Auswertungs-Export (CSV/XLSX), Lohngruppen-UI,
-> Gewerke-Firmenzuordnung, Akquisekanäle/Quellen, HR-Selbstauskunft (row_scope
-> EIGENE), semi-automatischer Mahnlauf (Batch), Wartungs-Anlage-UI.
+> Dazu (2026-07-11, Welle 2): **Auswertungs-CSV-Export** je Dashboard,
+> **Lohngruppen-/Maschinengruppen-Verwaltung** (`/pricing/wage-groups`),
+> **semi-automatischer Mahnlauf** (`/buchhaltung/mahnlauf` — Vorschau + bestätigter
+> Stapel, verlinkt aus dem Mahnwesen).
+> **Noch offen — DERIVIERBAR:** HR-Selbstauskunft (row_scope EIGENE, sicherheits-
+> sensibel), Gewerke-Firmenzuordnung + Akquisekanäle/Quellen (brauchen neue Tabelle/
+> Migration — 2026-07-11 Kollisionsrisiko mit parallelem Agenten an models.py/0048),
+> Wartungs-Anlage-UI.
 > **Noch offen — GRUNDSATZENTSCHEIDUNG nötig:** XRechnung/ZUGFeRD (gesetzl. E-Rechnungs-
 > pflicht B2B! Format-/Lib-Wahl), DATEV/Lexware-Export (Format), Skonto (Feld+Modell),
 > Abschlags→Schlussrechnung-Anrechnung, freier Termin ohne Auftrag
