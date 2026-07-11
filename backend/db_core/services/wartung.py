@@ -8,10 +8,17 @@ Statusautomat (AKTIV ↔ INAKTIV, INAKTIV → ARCHIVIERT) wird hier vorab geprü
 erzwungen; Trigger-Verstöße übersetzt as_business_error in 422.
 
 Fälligkeits-Aktion: trigger_action protokolliert die Auslösung append-only in
-maintenance.maintenance_event und rückt next_due_date um ein Intervall vor. Für
-die Aktion AUFGABE wird zusätzlich eine workflow.task erzeugt (konkretes
-Folgeobjekt); die übrigen Aktionen (PROJEKT/AUFTRAG/BENACHRICHTIGUNG) werden
-vorerst nur protokolliert — der automatische Fälligkeits-Scheduler folgt später.
+maintenance.maintenance_event und rückt next_due_date vor. Je nach due_action
+entsteht ein echtes Folgeobjekt, auf das der Event verweist:
+- AUFGABE → workflow.task
+- PROJEKT → workflow.project (an der Liegenschaft des Vertrags)
+- AUFTRAG → workflow.work_order (ENTWURF, an der Liegenschaft, ggf. am Projekt)
+- BENACHRICHTIGUNG → kein Folgeobjekt; es gibt kein Notification-Schema im
+  Backend, der MaintenanceEvent selbst IST der In-System-Vermerk.
+
+Der (per Cron täglich aufgerufene) Fälligkeits-Scheduler ist das Management-
+Command wartung_faellige_ausloesen; es ruft für jeden fälligen Vertrag genau
+diese trigger_action auf.
 """
 import calendar
 import uuid
@@ -21,6 +28,8 @@ from db_core.db_context import business_transaction
 from db_core.gate_errors import as_business_error
 from db_core.models import MaintenanceContract, MaintenanceEvent, Project, Property
 from db_core.services import aufgabe as aufgabe_service
+from db_core.services import auftrag as auftrag_service
+from db_core.services import projekt as projekt_service
 from db_core.services._validation import ensure_exists, ensure_party_usable
 
 INTERVAL_KINDS = ("JAEHRLICH", "MONATLICH", "WOECHENTLICH", "TAGE", "FESTES_DATUM")
@@ -52,9 +61,8 @@ def _initial_due(*, start_date, interval_kind, fixed_date):
     return start_date
 
 
-def _advance_due(contract):
-    """Nächste Fälligkeit nach einer ausgelösten Aktion (None = einmalig, fertig)."""
-    base = contract.next_due_date or contract.start_date
+def _advance_due_from(base, contract):
+    """Nächste Fälligkeit ausgehend von einem konkreten Datum (None = einmalig)."""
     kind = contract.interval_kind
     if kind == "JAEHRLICH":
         return _add_months(base, 12)
@@ -65,6 +73,12 @@ def _advance_due(contract):
     if kind == "TAGE":
         return base + timedelta(days=contract.interval_days)
     return None  # FESTES_DATUM: einmalige Fälligkeit
+
+
+def _advance_due(contract):
+    """Nächste Fälligkeit nach einer ausgelösten Aktion (None = einmalig, fertig)."""
+    base = contract.next_due_date or contract.start_date
+    return _advance_due_from(base, contract)
 
 
 def create_contract(
@@ -152,12 +166,71 @@ def set_status(actor_app_user_id, *, contract_id, to_status):
     return contract
 
 
-def trigger_action(actor_app_user_id, *, contract_id, note=None):
-    """Löst die Fälligkeits-Aktion des Vertrags manuell aus.
+def _follow_up_label(contract):
+    """Sprechender Name/Titel für ein automatisch erzeugtes Folgeobjekt."""
+    return f"Wartung fällig: {contract.name} ({contract.next_due_date:%d.%m.%Y})"
 
-    Protokolliert die Auslösung append-only und rückt next_due_date vor. Nur auf
-    aktiven Verträgen möglich. Für die Aktion AUFGABE wird zusätzlich eine
-    workflow.task erzeugt und als Folgeobjekt am Event vermerkt.
+
+def _create_follow_up(actor_app_user_id, contract):
+    """Erzeugt das zur due_action passende echte Folgeobjekt über die vorhandenen
+    Services und gibt (result_object_type, result_object_id) für den Event zurück.
+
+    - AUFGABE  → workflow.task (an Projekt/Kunde des Vertrags)
+    - PROJEKT  → workflow.project (an der Liegenschaft des Vertrags)
+    - AUFTRAG  → workflow.work_order im Startstatus ENTWURF (an der Liegenschaft,
+                 ggf. am Projekt des Vertrags). ENTWURF ist der einzige gültige
+                 Startstatus (Trigger); die Freigabe-/Abrechnungstore greifen erst
+                 bei späteren Statuswechseln — hier ist keine fachliche Auswahl
+                 nötig, der Auftrag wird als Entwurf zum Weiterbearbeiten angelegt.
+    - BENACHRICHTIGUNG → (None, None): es gibt kein Notification-Schema im Backend;
+                 der MaintenanceEvent selbst ist der In-System-Vermerk.
+    """
+    action = contract.due_action
+    if action == "AUFGABE":
+        task = aufgabe_service.create_task(
+            actor_app_user_id,
+            title=_follow_up_label(contract),
+            due_date=contract.next_due_date,
+            project_id=contract.project_id,
+            party_id=contract.party_id,
+        )
+        return "workflow.task", task.id
+    if action == "PROJEKT":
+        project = projekt_service.create_project(
+            actor_app_user_id,
+            name=_follow_up_label(contract),
+            property_ids=[contract.property_id],
+        )
+        return "workflow.project", project.id
+    if action == "AUFTRAG":
+        order = auftrag_service.create_work_order(
+            actor_app_user_id,
+            property_id=contract.property_id,
+            title=_follow_up_label(contract),
+            project_id=contract.project_id,
+            description=(
+                f"Automatisch aus Wartungsvertrag {contract.contract_number} "
+                f"erzeugt (Fälligkeit {contract.next_due_date:%d.%m.%Y})."
+            ),
+        )
+        return "workflow.work_order", order.id
+    return None, None
+
+
+def trigger_action(actor_app_user_id, *, contract_id, note=None, catch_up_until=None):
+    """Löst die Fälligkeits-Aktion des Vertrags aus.
+
+    Protokolliert die Auslösung append-only, erzeugt je nach due_action ein echtes
+    Folgeobjekt (siehe _create_follow_up) und rückt next_due_date vor. Nur auf
+    aktiven Verträgen mit offener Fälligkeit möglich.
+
+    catch_up_until (Scheduler): Liegt die Fälligkeit mehrere Intervalle in der
+    Vergangenheit, wird der Vertrag TROTZDEM nur EINMAL ausgelöst (ein Event, kein
+    Nachhol-Sturm), der Fälligkeitsplan aber bis über den Stichtag hinaus auf den
+    nächsten künftigen Termin vorgerückt. Dadurch ist der Vertrag nach dem Lauf
+    nicht mehr fällig — ein zweiter Lauf am selben Stichtag löst ihn nicht erneut
+    aus (Idempotenz). None (Default, manuelle Auslösung) rückt genau ein Intervall
+    vor — das bisherige Verhalten.
     """
     contract = MaintenanceContract.objects.filter(id=contract_id).first()
     if contract is None:
@@ -169,18 +242,16 @@ def trigger_action(actor_app_user_id, *, contract_id, note=None):
     if contract.next_due_date is None:
         raise ValueError("Der Vertrag hat keine offene Fälligkeit.")
 
+    new_due = _advance_due(contract)
+    # Verpasste Intervalle überspringen: bis über den Stichtag hinaus vorrücken,
+    # ohne weitere Events zu erzeugen (einmalige Auslösung je Lauf).
+    if catch_up_until is not None:
+        while new_due is not None and new_due <= catch_up_until:
+            new_due = _advance_due_from(new_due, contract)
+
     with as_business_error():
         with business_transaction(actor_app_user_id):
-            result_type = result_id = None
-            if contract.due_action == "AUFGABE":
-                task = aufgabe_service.create_task(
-                    actor_app_user_id,
-                    title=f"Wartung fällig: {contract.name}",
-                    due_date=contract.next_due_date,
-                    project_id=contract.project_id,
-                    party_id=contract.party_id,
-                )
-                result_type, result_id = "workflow.task", task.id
+            result_type, result_id = _create_follow_up(actor_app_user_id, contract)
             event = MaintenanceEvent.objects.create(
                 id=uuid.uuid4(),
                 contract_id=contract.id,
@@ -192,7 +263,7 @@ def trigger_action(actor_app_user_id, *, contract_id, note=None):
                 triggered_by_id=actor_app_user_id,
             )
             MaintenanceContract.objects.filter(id=contract_id).update(
-                next_due_date=_advance_due(contract)
+                next_due_date=new_due
             )
     contract.refresh_from_db()
     return event, contract

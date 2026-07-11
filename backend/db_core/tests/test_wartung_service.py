@@ -5,11 +5,17 @@ Der Statusautomat (AKTIV↔INAKTIV, INAKTIV→ARCHIVIERT) wird sowohl im Service
 auch per maintenance-eigenem Trigger erzwungen. Fälligkeits-Auslösung
 protokolliert append-only in maintenance_event und rückt next_due_date vor.
 """
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
-from db_core.models import MaintenanceContract, MaintenanceEvent, Task
+from db_core.models import (
+    MaintenanceContract,
+    MaintenanceEvent,
+    Project,
+    Task,
+    WorkOrder,
+)
 from db_core.services import identity as identity_service
 from db_core.services import property as property_service
 from db_core.services import wartung as wartung_service
@@ -178,3 +184,72 @@ def test_monatlich_rueckt_einen_monat_vor(app_user):
     _, contract = wartung_service.trigger_action(app_user.id, contract_id=c.id)
     # 31.01. + 1 Monat → 28.02. (Tages-Clamping).
     assert contract.next_due_date == date(2026, 2, 28)
+
+
+# --- Echte Folgeobjekte PROJEKT/AUFTRAG ------------------------------------
+
+@pytest.mark.django_db
+def test_trigger_projekt_erzeugt_projekt(app_user):
+    obj = _property(app_user)
+    c = _contract(app_user, obj, due_action="PROJEKT")
+    event, _ = wartung_service.trigger_action(app_user.id, contract_id=c.id)
+    assert event.result_object_type == "workflow.project"
+    assert Project.objects.filter(id=event.result_object_id).exists()
+
+
+@pytest.mark.django_db
+def test_trigger_auftrag_erzeugt_work_order_entwurf(app_user):
+    obj = _property(app_user)
+    c = _contract(app_user, obj, due_action="AUFTRAG")
+    event, _ = wartung_service.trigger_action(app_user.id, contract_id=c.id)
+    assert event.result_object_type == "workflow.work_order"
+    order = WorkOrder.objects.filter(id=event.result_object_id).first()
+    assert order is not None
+    # Auftrag entsteht als Entwurf an der Liegenschaft des Vertrags.
+    assert order.status == "ENTWURF"
+    assert order.property_id == obj.id
+
+
+@pytest.mark.django_db
+def test_trigger_benachrichtigung_ohne_folgeobjekt(app_user):
+    obj = _property(app_user)
+    c = _contract(app_user, obj, due_action="BENACHRICHTIGUNG")
+    event, _ = wartung_service.trigger_action(app_user.id, contract_id=c.id)
+    assert event.result_object_type is None
+    assert event.result_object_id is None
+
+
+# --- Nachhol-/Idempotenz-Logik des Schedulers (catch_up_until) --------------
+
+@pytest.mark.django_db
+def test_catch_up_rueckt_ueber_stichtag_und_erzeugt_ein_event(app_user):
+    """Mehrere verpasste Wochen: EINE Auslösung, Plan bis über den Stichtag vor."""
+    obj = _property(app_user)
+    stichtag = date(2026, 7, 11)
+    c = _contract(
+        app_user, obj, interval_kind="WOECHENTLICH",
+        start_date=stichtag - timedelta(weeks=3),  # 3 Wochen überfällig
+        due_action="BENACHRICHTIGUNG",
+    )
+    assert c.next_due_date == stichtag - timedelta(weeks=3)
+    event, contract = wartung_service.trigger_action(
+        app_user.id, contract_id=c.id, catch_up_until=stichtag
+    )
+    # Genau ein Event, dessen due_date die ursprüngliche (älteste) Fälligkeit ist.
+    assert MaintenanceEvent.objects.filter(contract_id=c.id).count() == 1
+    assert event.due_date == stichtag - timedelta(weeks=3)
+    # Plan steht jetzt hinter dem Stichtag → nicht mehr fällig.
+    assert contract.next_due_date > stichtag
+
+
+@pytest.mark.django_db
+def test_ohne_catch_up_rueckt_nur_ein_intervall(app_user):
+    """Default (manuelle Auslösung): genau ein Intervall, kein catch_up."""
+    obj = _property(app_user)
+    start = date(2026, 6, 1)
+    c = _contract(
+        app_user, obj, interval_kind="WOECHENTLICH", start_date=start,
+        due_action="BENACHRICHTIGUNG",
+    )
+    _, contract = wartung_service.trigger_action(app_user.id, contract_id=c.id)
+    assert contract.next_due_date == start + timedelta(weeks=1)
