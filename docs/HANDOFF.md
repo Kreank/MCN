@@ -126,25 +126,46 @@ Artikelstamm übernehmen"** im Positionsdetail des Angebotseditors:
 Vier Tests sichern das ab (u. a. ein statischer, der einen Schreibpfad von
 `beleg.py` in den Artikelstamm verhindert).
 
-### Ableitbare Reste (kein Entscheidungsbedarf, einfach bauen)
+### Stand 2026-07-11 & was als Nächstes ansteht (AKTUELL)
 
-- **Vier-Augen auf weitere Aktionen ausrollen**: der Flow steht, angeschlossen
-  sind bislang nur BANKDATEN (Applier) und RECHNUNGSKORREKTUR (Tor). Die
-  Stammdaten `security.four_eyes_action` kennen außerdem Dubletten-Merge,
-  Massenexport und KI-Massenaktionen. **Muster:** liegt die ganze Änderung im
-  `payload` → Applier in `_APPLIERS`; ist die Durchführung ein eigener Ablauf →
-  `claim()` in derselben Transaktion wie die Aktion.
-- **Marge** braucht die EK-Ebene und ist aus Belegzeilen nicht
-  ableitbar (ggf. über den `billing_snapshot`). Die Dashboards Projekte, Artikel
-  und Mitarbeitende sind gebaut.
-- **Plantafel Drag & Drop** (Umplanen ruft `POST /planung/einsaetze/{id}/schedule`,
-  der Endpunkt existiert).
-- **DATANORM-Import** (Artikelstamm) und **DATEV/Lexware-Export**.
-- **Wartungs-Fälligkeits-Scheduler** (Cron/Worker; heute nur manuell auslösbar).
-- **„Passwort vergessen"**: braucht Mailversand. Hero-Fakt: Einmal-Passwort
-  12 Stunden gültig. Passwort **ändern** existiert bereits unter `/profil`.
-- **Mailversand** insgesamt — dazu gehört auch der Mailserver-OAuth aus
-  `docs/roadmap/14`. Das ist **Mailversand, nicht Login** (siehe Abschnitt 2b).
+**In dieser Sessionswelle gebaut (alle reviewed + Browser-E2E + committet):**
+Lohngruppen (`e9bfe06`), Mahnlauf (`e6ac0c4`), HR-Selbstauskunft (`6fd4f80`),
+Onboarding-Checkliste (`468ddd4`), Akquisekanäle/Quellen (`a346fa8`). Dazu die
+fertige Parallel-Agent-Arbeit **Schnellerfassung + Zum-Projekt-Hochstufen**
+konsolidiert eingecheckt (`f681efd`). **1607 Tests grün, Migrationen bis 0050.**
+
+**⚠️ Gotcha Parallel-Agent:** Ein zweiter Agent baut manchmal mit, committet seine
+Arbeit aber NICHT selbst — sie liegt fertig+getestet im Arbeitsbaum. Vor eigenen
+Migrationen/`models.py`-Änderungen prüfen: liegt Fremdarbeit uncommittet herum?
+Dann erst einchecken (nach `makemigrations --check` sauber + Suite grün), sonst
+kollidiert der Migrations-Graph (zwei Blätter auf demselben Parent). Beim Commit
+sonst **nur eigene Slice-Dateien** stagen (selektives Hunk-Staging bei geteilten
+Dateien wie `app.routes.ts`).
+
+**Nächster ableitbarer Rest:**
+- **Gewerke-Firmenzuordnung** (S, braucht Migration/Link-Tabelle). **Semantik erst
+  klären:** „welche Gewerke bietet die Firma" (fast redundant zum `company.trade`-
+  Katalog) vs. „welche Gewerke je Niederlassung" (`branch_trade`-Link) vs. je
+  Auftrag/Projekt. Wahrscheinlichste sinnvolle Auslegung: je Niederlassung.
+
+**Große, wertvolle Brocken — brauchen eine User-Entscheidung vor dem Bau:**
+- **E-Rechnung (XRechnung/ZUGFeRD)** — gesetzliche B2B-Pflicht, aktuell KEIN Feld/
+  Export. Format-/Lib-Wahl (ZUGFeRD-PDF/A-3+XML vs. reine XRechnung-XML), Leitweg-
+  ID-Modell. Compliance-Risiko, eigentlich vorrangig.
+- **DATEV/Lexware-Export** (SKR03/04, Berater-/Mandantennummer, EXTF-Buchungsstapel)
+  — migrationsfrei baubar, aber Format/Config vom User nötig.
+- **Skonto** (Feld + Modell an der Rechnung; berührt GoBD-Beleg + PDF).
+
+**Weitere ableitbare Reste (Bestand, noch offen):**
+- **Vier-Augen auf weitere Aktionen ausrollen** (Dubletten-Merge, Massenexport,
+  KI-Massenaktionen): Applier in `_APPLIERS` bzw. `claim()` — Flow steht.
+- **Plantafel Drag & Drop** (`POST /planung/einsaetze/{id}/schedule` existiert).
+- **Mailversand-Reste:** OAuth-Absenderkonten (braucht App-Registrierung des Users),
+  persönliche Absenderkonten, E-Mail-Templates-Verwaltung.
+
+**Dev-Notiz:** Der Demo-Login `admin@` ist testweise auch Mitarbeiter (MA-00004,
+30 Urlaubstage) — damit „Mein Profil → Personalakte" live etwas zeigt. Reine
+Scratch-Daten; bei Bedarf auf INAKTIV setzen.
 
 ### Bewusst offene Invarianten (nicht versehentlich „reparieren")
 
@@ -200,9 +221,14 @@ verschlüsselt in `company.mail_account` (Migration 0046). Der Schlüssel kommt 
 Speichern noch Versenden möglich. Der Wert wird NICHT eingecheckt; den Dev-Key aus
 dem Slice-Report übernehmen bzw. neu erzeugen:
 ```bash
-export MCN_MAIL_KEY="<base64-fernet-key>"   # NICHT ins Repo; Dev-Wert im Slice-Report
+export MCN_MAIL_KEY="<base64-fernet-key>"   # NICHT ins Repo; Dev-Wert in der Memory `hero-vollsurvey-2026-07`
 # neuen erzeugen: uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
+Ohne `MCN_MAIL_KEY` startet das Backend normal — nur Mailversand/-konfiguration ist
+gesperrt. **Wichtig:** Ein NEUER Schlüssel kann das gespeicherte SMTP-Passwort nicht
+mehr entschlüsseln → dann das Mailkonto unter Einstellungen → Mailversand einmal neu
+speichern. Für Verifikation dient der lokale SMTP-Fänger `scratchpad/smtp_sink.py`
+(Port 1025).
 
 **`MCN_DEBUG=1` ist seit dem Auth-Slice Pflicht für die Entwicklung.** Der Default
 steht bewusst auf `0` (fail-safe: Produktion muss DEBUG nicht ausschalten, die
@@ -224,8 +250,9 @@ Default `mcn-dev-passwort-2026`):
 **Backend** (`cd backend`, uv):
 ```bash
 uv run python manage.py check
-uv run pytest -p no:cacheprovider -q          # aktuell 109 grün
-uv run python manage.py runserver 127.0.0.1:8000
+uv run pytest -p no:cacheprovider -q          # aktuell 1607 grün, 2 skipped
+uv run python manage.py migrate               # Migrationskopf: 0050
+uv run python manage.py runserver 127.0.0.1:8000 --noreload
 uv run python manage.py seed_demo             # idempotenter Demo-Datensatz
 ```
 
