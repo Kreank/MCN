@@ -1677,9 +1677,15 @@ class ServiceJob(models.Model):
     (PAUSIERT ↔ VOR_ORT) → ABGESCHLOSSEN → NACHARBEIT; jederzeit AUSGEFALLEN
     (Sackgasse). Übergänge validiert workflow.validate_status_change; Ausführung
     ab UNTERWEGS setzt einen freigegebenen Auftrag voraus (DB-Gate). Einsatznummer
-    (E-…) vergibt die DB über workflow.next_number (db_default). Kein Titel-Feld —
-    der Titel kommt vom zugehörigen work_order. Kein physisches Löschen
-    (Schutzstandard 0015); „Storno" = Status AUSGEFALLEN.
+    (E-…) vergibt die DB über workflow.next_number (db_default). Kein physisches
+    Löschen (Schutzstandard 0015); „Storno" = Status AUSGEFALLEN.
+
+    Freier Termin (Migration 0062): work_order ist NULL-fähig — eine Begehung/
+    Besichtigung/Beratung findet vor der Beauftragung statt. Dann ist `title`
+    Pflicht (DB-CHECK) und `property` optional. Bei einem auftragsgebundenen
+    Einsatz ist `title` optional (Fallback: Auftragstitel) und `property` muss,
+    falls gesetzt, die Liegenschaft des Auftrags sein (zusammengesetzter FK).
+    Der Auftragsbezug ist nach der Anlage unveränderlich (Trigger).
     """
 
     id = models.UUIDField(primary_key=True)
@@ -1688,6 +1694,18 @@ class ServiceJob(models.Model):
         WorkOrder,
         models.DO_NOTHING,
         db_column="work_order_id",
+        null=True,
+        blank=True,
+        related_name="service_jobs",
+    )
+    # Pflicht beim freien Termin (ohne Auftrag), sonst optional.
+    title = models.TextField(null=True, blank=True)
+    property = models.ForeignKey(
+        Property,
+        models.DO_NOTHING,
+        db_column="property_id",
+        null=True,
+        blank=True,
         related_name="service_jobs",
     )
     # UNGEPLANT|GEPLANT|BESTAETIGT|UNTERWEGS|VOR_ORT|PAUSIERT|ABGESCHLOSSEN|

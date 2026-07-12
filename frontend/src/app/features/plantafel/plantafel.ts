@@ -12,6 +12,7 @@ import {
   serviceJobStatusLabel,
 } from '../../core/einsatz.model';
 import { AuftragService } from '../../core/auftrag.service';
+import { PropertyService } from '../../core/property.service';
 import { AuthService } from '../../core/auth.service';
 import { PlanungNav } from '../planung-nav/planung-nav';
 import { Dialog } from '../../shared/dialog/dialog';
@@ -33,6 +34,9 @@ type Lane = {
   kind: 'user' | 'resource' | 'unassigned';
   sub?: string;
 };
+
+/** Terminart im Anlage-Dialog: an einem Auftrag oder frei (ohne Auftrag). */
+type TerminArt = 'auftrag' | 'frei';
 
 const WINDOW_DAYS = 7;
 
@@ -83,6 +87,7 @@ function localDayIso(iso: string): string {
 export class Plantafel {
   private readonly svc = inject(EinsatzService);
   private readonly auftragSvc = inject(AuftragService);
+  private readonly propertySvc = inject(PropertyService);
   private readonly auth = inject(AuthService);
   private readonly fb = inject(FormBuilder);
 
@@ -202,11 +207,35 @@ export class Plantafel {
   /** Angeklickte Zelle: Ziel-Bahn (ggf. Mitarbeiter) + Tag. */
   protected readonly neuCell = signal<{ lane: Lane; dayIso: string; dayLabel: string } | null>(null);
 
+  /** Terminart: an einem Auftrag (Regelfall) oder frei (Begehung o. Ä.). */
+  protected readonly art = signal<TerminArt>('auftrag');
   protected readonly neuForm = this.fb.group({
     work_order_id: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
+    title: this.fb.control('', { nonNullable: true }),
+    property_id: this.fb.control('', { nonNullable: true }),
     start: this.fb.control('08:00', { nonNullable: true, validators: [Validators.required] }),
     end: this.fb.control('', { nonNullable: true }),
   });
+
+  /** Umschalten: die Pflichtfelder wandern mit der Terminart. */
+  artWaehlen(art: TerminArt): void {
+    if (this.art() === art) return;
+    this.art.set(art);
+    const auftrag = this.neuForm.controls.work_order_id;
+    const titel = this.neuForm.controls.title;
+    if (art === 'auftrag') {
+      auftrag.setValidators([Validators.required]);
+      titel.clearValidators();
+      titel.setValue('');
+      this.neuForm.controls.property_id.setValue('');
+    } else {
+      auftrag.clearValidators();
+      auftrag.setValue('');
+      titel.setValidators([Validators.required]);
+    }
+    auftrag.updateValueAndValidity();
+    titel.updateValueAndValidity();
+  }
 
   /** Auftragssuche (Titel/Nummer) für die Termin-Zuordnung. */
   protected readonly auftragSuche: RefSuche = (q) =>
@@ -214,11 +243,23 @@ export class Plantafel {
       .list({ page: 1, page_size: 20, q })
       .pipe(map((p) => p.items.map((o) => ({ id: o.id, label: o.title, sub: o.order_number }))));
 
+  /** Liegenschaftssuche (nur beim freien Termin — sonst kommt sie vom Auftrag). */
+  protected readonly liegenschaftSuche: RefSuche = (q) =>
+    this.propertySvc.list({ page: 1, page_size: 20, q }).pipe(
+      map((p) =>
+        p.items.map((x) => ({ id: x.id, label: x.name, sub: `${x.property_number} · ${x.city}` })),
+      ),
+    );
+
   terminOeffnen(lane: Lane, day: { iso: string; label: string }): void {
     if (!this.darfPlanen()) return;
     this.neuCell.set({ lane, dayIso: day.iso, dayLabel: `${day.label}` });
     this.neuFehler.set(null);
-    this.neuForm.reset({ work_order_id: '', start: '08:00', end: '' });
+    this.neuForm.reset({
+      work_order_id: '', title: '', property_id: '', start: '08:00', end: '',
+    });
+    this.art.set('frei');
+    this.artWaehlen('auftrag');
     this.neuOffen.set(true);
   }
 
@@ -247,11 +288,14 @@ export class Plantafel {
     }
     this.neuBusy.set(true);
     this.neuFehler.set(null);
+    const frei = this.art() === 'frei';
     // Anlegen (UNGEPLANT mit Zeitraum) → auf GEPLANT setzen → Bahn-Mitarbeiter
     // zuweisen (nur bei Mitarbeiter-Bahnen).
     this.svc
       .create({
-        work_order_id: v.work_order_id,
+        work_order_id: frei ? null : v.work_order_id,
+        title: frei ? v.title.trim() : null,
+        property_id: frei ? v.property_id || null : null,
         scheduled_start: start,
         scheduled_end: end,
         appointment_category_id: null,

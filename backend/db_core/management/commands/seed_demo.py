@@ -23,7 +23,7 @@ from db_core.models import (
     AppointmentCategory, AppUser, Article, ArticleSalePrice, Assembly,
     DunningNotice, Employee, Invoice, MaintenanceContract, Party, Payment,
     Project, ProjectLog, Property, Quote, Resource, SalePriceGroup,
-    SupplierConnection, Task, UserRole, WageGroup, WorkOrder,
+    ServiceJob, SupplierConnection, Task, UserRole, WageGroup, WorkOrder,
 )
 from db_core.services import artikel as artikel_service
 from db_core.services import aufgabe as aufgabe_service
@@ -785,6 +785,8 @@ class Command(BaseCommand):
         _std_categories = [
             ("Umsetzung", "NAVY"),
             ("Vor-Ort-Termin", "ORANGE"),
+            # Typische Kategorie des freien Termins (ohne Auftrag).
+            ("Begehung", "PLUM"),
             ("Schlechtwetter", "SLATE"),
             ("Büro", "AMBER"),
             ("Besprechung", "TEAL"),
@@ -921,6 +923,42 @@ class Command(BaseCommand):
                 planung_service.assign_resource(
                     actor.id, service_job_id=job2.id, resource_id=crafter.id
                 )
+
+        # Freier Termin ohne Auftrag (Migration 0062): eine Begehung, die noch zu
+        # keinem Auftrag gehört — und deren Kontakt bewusst NOCH NICHT gesetzt ist
+        # (der Interessent ist noch kein Kontakt; er wird im Einsatz-Detail
+        # nachgetragen). Damit zeigt die Plantafel beide Spielarten nebeneinander.
+        # Idempotent über den Titel (Einsätze tragen sonst nur eine E-Nummer).
+        BEGEHUNG_TITEL = "Begehung Kellerabdichtung (Interessent)"
+        if not ServiceJob.objects.filter(title=BEGEHUNG_TITEL).exists():
+            frei_obj = Property.objects.filter(
+                name="Geschäftshaus Rheinpassage"
+            ).first()
+            frei = einsatz_service.create_service_job(
+                actor.id,
+                title=BEGEHUNG_TITEL,
+                property_id=frei_obj.id if frei_obj is not None else None,
+                scheduled_start=datetime(2026, 7, 15, 10, 0, tzinfo=dt_timezone.utc),
+                scheduled_end=datetime(2026, 7, 15, 11, 30, tzinfo=dt_timezone.utc),
+                access_instructions="Ortstermin mit dem Interessenten am Kellereingang.",
+            )
+            einsatz_service.advance_status(
+                actor.id, service_job_id=frei.id, to_status="GEPLANT"
+            )
+            einsatz_service.assign_user(
+                actor.id, service_job_id=frei.id,
+                assignee_user_id=actor.id, role="LEAD",
+            )
+            begehung = AppointmentCategory.objects.filter(name="Begehung").first()
+            if begehung is not None:
+                planung_service.set_job_category(
+                    actor.id, service_job_id=frei.id, category_id=begehung.id
+                )
+            frei.refresh_from_db()
+            angelegt += 1
+            self.stdout.write(
+                f"Freier Termin angelegt: {frei.job_number} ({frei.title})"
+            )
 
         # Buchhaltung: Teilzahlung + erste Mahnstufe auf der veröffentlichten
         # Rechnung. Idempotent je Rechnung. Die Zahlung braucht kein due_date;

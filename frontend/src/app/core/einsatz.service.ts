@@ -15,6 +15,7 @@ import {
   ServiceJobDetail,
   ServiceJobPage,
   ServiceJobQuery,
+  ServiceJobUpdate,
   TimeEntry,
   TimeLogInput,
 } from './einsatz.model';
@@ -64,6 +65,17 @@ export class EinsatzService {
   /** Neuen Einsatz anlegen (Status UNGEPLANT; Recht workflow.ANLEGEN, ALLE). */
   create(payload: ServiceJobCreate): Observable<ServiceJob> {
     return this.http.post<ServiceJob>(this.base, payload);
+  }
+
+  /**
+   * Angaben am Einsatz nachtragen — vor allem den Ansprechpartner vor Ort
+   * (bei einer Begehung ist der Kontakt oft erst nach dem Termin bekannt).
+   * Nur gesetzte Felder werden geändert; `null` löscht das Feld.
+   * Recht workflow.AENDERN; ein Monteur darf auf seinem eigenen Einsatz nur
+   * Kontakt und Zutrittshinweise nachtragen (Titel/Liegenschaft → 403).
+   */
+  update(id: string, payload: ServiceJobUpdate): Observable<ServiceJobDetail> {
+    return this.http.patch<ServiceJobDetail>(`${this.base}/${id}`, payload);
   }
 
   /** Planzeitraum setzen (Recht workflow.AENDERN, Disposition). */

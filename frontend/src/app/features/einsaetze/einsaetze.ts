@@ -6,6 +6,7 @@ import { Subject, debounceTime, distinctUntilChanged, map } from 'rxjs';
 import { EinsatzService } from '../../core/einsatz.service';
 import { AuftragService } from '../../core/auftrag.service';
 import { PartyService } from '../../core/party.service';
+import { PropertyService } from '../../core/property.service';
 import { AuthService } from '../../core/auth.service';
 import {
   ServiceJobCreate,
@@ -34,6 +35,8 @@ type ViewState =
 
 type Segment = { value: ServiceJobStatus | null; label: string };
 type Meldung = { art: 'erfolg' | 'fehler'; text: string };
+/** Terminart im Anlage-Dialog: an einem Auftrag oder frei (ohne Auftrag). */
+type TerminArt = 'auftrag' | 'frei';
 
 @Component({
   selector: 'app-einsaetze',
@@ -45,6 +48,7 @@ export class Einsaetze {
   private readonly svc = inject(EinsatzService);
   private readonly auftragSvc = inject(AuftragService);
   private readonly partySvc = inject(PartyService);
+  private readonly propertySvc = inject(PropertyService);
   private readonly auth = inject(AuthService);
   private readonly fb = inject(FormBuilder);
 
@@ -62,13 +66,42 @@ export class Einsaetze {
   protected readonly neuOffen = signal(false);
   protected readonly neuLaedt = signal(false);
   protected readonly formularMeldung = signal<string | null>(null);
+  /**
+   * Terminart: „Zu einem Auftrag" (Regelfall) oder „Freier Termin" (Begehung/
+   * Besichtigung/Beratung ohne Auftrag). Steuert, welche Felder Pflicht sind:
+   * beim Auftrag der Auftrag, beim freien Termin der Titel.
+   */
+  protected readonly art = signal<TerminArt>('auftrag');
   protected readonly neuForm = this.fb.group({
     work_order_id: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
+    title: this.fb.control('', { nonNullable: true }),
+    property_id: this.fb.control('', { nonNullable: true }),
     scheduled_start: this.fb.control('', { nonNullable: true }),
     scheduled_end: this.fb.control('', { nonNullable: true }),
     on_site_contact_party_id: this.fb.control('', { nonNullable: true }),
     access_instructions: this.fb.control('', { nonNullable: true }),
   });
+
+  /** Umschalten: die Pflichtfelder wandern mit der Terminart. */
+  artWaehlen(art: TerminArt): void {
+    if (this.art() === art) return;
+    this.art.set(art);
+    const auftrag = this.neuForm.controls.work_order_id;
+    const titel = this.neuForm.controls.title;
+    if (art === 'auftrag') {
+      auftrag.setValidators([Validators.required]);
+      titel.clearValidators();
+      titel.setValue('');
+      // Die Liegenschaft kommt beim auftragsgebundenen Termin vom Auftrag.
+      this.neuForm.controls.property_id.setValue('');
+    } else {
+      auftrag.clearValidators();
+      auftrag.setValue('');
+      titel.setValidators([Validators.required]);
+    }
+    auftrag.updateValueAndValidity();
+    titel.updateValueAndValidity();
+  }
 
   protected readonly auftragSuche: RefSuche = (q) =>
     this.auftragSvc.list({ page: 1, page_size: 20, q }).pipe(
@@ -77,6 +110,12 @@ export class Einsaetze {
   protected readonly partySuche: RefSuche = (q) =>
     this.partySvc.list({ page: 1, page_size: 20, q }).pipe(
       map((p) => p.items.map((x) => ({ id: x.id, label: x.display_name }))),
+    );
+  protected readonly liegenschaftSuche: RefSuche = (q) =>
+    this.propertySvc.list({ page: 1, page_size: 20, q }).pipe(
+      map((p) =>
+        p.items.map((x) => ({ id: x.id, label: x.name, sub: `${x.property_number} · ${x.city}` })),
+      ),
     );
 
   protected readonly pageSize = 20;
@@ -183,11 +222,16 @@ export class Einsaetze {
   neuOeffnen(): void {
     this.neuForm.reset({
       work_order_id: '',
+      title: '',
+      property_id: '',
       scheduled_start: '',
       scheduled_end: '',
       on_site_contact_party_id: '',
       access_instructions: '',
     });
+    // Regelfall zurücksetzen: Termin zu einem Auftrag.
+    this.art.set('frei');
+    this.artWaehlen('auftrag');
     this.formularMeldung.set(null);
     this.neuOffen.set(true);
   }
@@ -205,8 +249,13 @@ export class Einsaetze {
     if (this.neuForm.invalid) return;
 
     const v = this.neuForm.getRawValue();
+    const frei = this.art() === 'frei';
     const payload: ServiceJobCreate = {
-      work_order_id: v.work_order_id,
+      // Freier Termin: kein Auftrag, dafür Titel (Pflicht) und optional eine
+      // Liegenschaft. Auftragstermin: Auftrag; Titel/Ort kommen von dort.
+      work_order_id: frei ? null : v.work_order_id,
+      title: frei ? v.title.trim() : null,
+      property_id: frei ? v.property_id || null : null,
       scheduled_start: v.scheduled_start || null,
       scheduled_end: v.scheduled_end || null,
       on_site_contact_party_id: v.on_site_contact_party_id || null,
@@ -218,7 +267,10 @@ export class Einsaetze {
       next: () => {
         this.neuLaedt.set(false);
         this.neuOffen.set(false);
-        this.meldung.set({ art: 'erfolg', text: 'Einsatz angelegt.' });
+        this.meldung.set({
+          art: 'erfolg',
+          text: frei ? 'Freier Termin angelegt.' : 'Einsatz angelegt.',
+        });
         this.page.set(1);
         this.fetch();
       },

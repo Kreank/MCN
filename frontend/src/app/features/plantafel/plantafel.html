@@ -76,11 +76,16 @@
                       [attr.aria-label]="
                         job.title + ', ' + time(job.scheduled_start) + ', ' +
                         statusLabel(job.status) +
+                        (job.is_free ? ', freier Termin ohne Auftrag' : '') +
                         (job.category ? ', Kategorie ' + job.category.name : '')
                       "
                     >
                       <span class="tile__time">{{ time(job.scheduled_start) }}</span>
                       <span class="tile__title">{{ job.title }}</span>
+                      @if (job.is_free) {
+                        <!-- Kennzeichnung als TEXT (nicht nur Farbe) — WCAG 1.4.1. -->
+                        <span class="tile__frei">Freier Termin</span>
+                      }
                       @if (job.category) {
                         <span class="kat-chip tile__kat {{ categoryClass(job) }}">
                           <span class="kat-dot" aria-hidden="true"></span>
@@ -124,17 +129,66 @@
           auf der Ressource <strong>{{ c.lane.name }}</strong> (Mitarbeiter-Zuweisung separat)
         } @else {
           (ohne Zuweisung)
-        }. Wähle den Auftrag und die Uhrzeit.
+        }. Wähle die Terminart und die Uhrzeit.
       </p>
     }
     <form class="termin-form" [formGroup]="neuForm" (ngSubmit)="terminAnlegen()" novalidate>
-      <app-referenz-wahl
-        [control]="neuForm.controls.work_order_id"
-        label="Auftrag"
-        [pflicht]="true"
-        [suche]="auftragSuche"
-        hinweis="Suche nach Auftragstitel oder -nummer."
-      />
+      <fieldset class="terminart">
+        <legend class="terminart__legend">Terminart</legend>
+        <div class="terminart__optionen">
+          <label class="terminart__opt">
+            <input
+              type="radio"
+              name="terminart"
+              value="auftrag"
+              [checked]="art() === 'auftrag'"
+              (change)="artWaehlen('auftrag')"
+            />
+            <span class="terminart__text">
+              <span class="terminart__titel">Termin zu einem Auftrag</span>
+              <span class="terminart__hint">Titel und Liegenschaft kommen vom Auftrag.</span>
+            </span>
+          </label>
+          <label class="terminart__opt">
+            <input
+              type="radio"
+              name="terminart"
+              value="frei"
+              [checked]="art() === 'frei'"
+              (change)="artWaehlen('frei')"
+            />
+            <span class="terminart__text">
+              <span class="terminart__titel">Freier Termin</span>
+              <span class="terminart__hint">
+                Begehung, Besichtigung oder Beratung — noch ohne Auftrag.
+              </span>
+            </span>
+          </label>
+        </div>
+      </fieldset>
+
+      @if (art() === 'auftrag') {
+        <app-referenz-wahl
+          [control]="neuForm.controls.work_order_id"
+          label="Auftrag"
+          [pflicht]="true"
+          [suche]="auftragSuche"
+          hinweis="Suche nach Auftragstitel oder -nummer."
+        />
+      } @else {
+        <app-feld
+          [control]="neuForm.controls.title"
+          label="Titel"
+          [pflicht]="true"
+          hinweis="Pflicht — z. B. „Begehung Dachgeschoss“."
+        />
+        <app-referenz-wahl
+          [control]="neuForm.controls.property_id"
+          label="Liegenschaft"
+          [suche]="liegenschaftSuche"
+          hinweis="Optional — falls das Objekt schon angelegt ist."
+        />
+      }
       <div class="termin-form__zeiten">
         <app-feld [control]="neuForm.controls.start" label="Beginn" typ="zeit" [pflicht]="true" />
         <app-feld [control]="neuForm.controls.end" label="Ende (optional)" typ="zeit" />

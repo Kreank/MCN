@@ -34,22 +34,43 @@
       </div>
     }
     <app-mappe
-      kicker="Einsatz {{ daten()!.job_number }}"
-      [titel]="daten()!.work_order.title"
+      kicker="{{ daten()!.is_free ? 'Freier Termin' : 'Einsatz' }} {{ daten()!.job_number }}"
+      [titel]="daten()!.title"
       backLink="/planung"
       backLabel="Einsätze"
       [tabs]="tabs"
       [(aktiv)]="tab"
     >
+      @if (daten()!.is_free) {
+        <!-- Kennzeichnung als TEXT (nicht nur Farbe) — WCAG 1.4.1. -->
+        <span mappe-kopf class="stamp stamp--type">Ohne Auftrag</span>
+      }
       <span mappe-kopf class="stamp {{ statusClass(daten()!.status) }}">{{ statusLabel(daten()!.status) }}</span>
 
       @if (tab() === 'uebersicht') {
-        @if (darfDispo()) {
-          <div class="tab-toolbar">
+        <div class="tab-toolbar">
+          @if (darfDispo()) {
             <button type="button" class="btn" (click)="dialogOeffnen('termin')">Termin setzen</button>
             <button type="button" class="btn" (click)="dialogOeffnen('status')">Status ändern</button>
             <button type="button" class="btn" (click)="dialogOeffnen('kategorie')">Kategorie</button>
-          </div>
+          }
+          @if (darfKontaktPflegen()) {
+            <!-- Bei einer Begehung ist der Kontakt oft erst nach dem Termin
+                 bekannt. Am FREIEN Termin darf ihn auch der Monteur nachtragen;
+                 am auftragsgebundenen Einsatz ist er Dispositionsdatum. -->
+            <button type="button" class="btn" (click)="dialogOeffnen('kontakt')">
+              Kontakt nachtragen
+            </button>
+          }
+        </div>
+
+        @if (daten()!.is_free) {
+          <p class="note">
+            <strong>Freier Termin:</strong> Dieser Termin gehört zu keinem Auftrag
+            (Begehung/Besichtigung/Beratung). Der Auftragsbezug lässt sich nachträglich
+            nicht setzen — entsteht daraus ein Auftrag, wird dafür ein eigener Einsatz
+            angelegt.
+          </p>
         }
         <dl class="feld-raster">
           <div class="feld">
@@ -79,16 +100,29 @@
         }
 
         <div class="bezug">
-          <a class="bezug__item" [routerLink]="['/auftraege', daten()!.work_order.id]">
-            <span class="bezug__label">Auftrag</span>
-            <span class="bezug__wert">{{ daten()!.work_order.order_number }} · {{ daten()!.work_order.title }}</span>
-            <span class="bezug__zusatz">{{ orderStatusLabel(daten()!.work_order.status) }}</span>
-          </a>
+          @if (daten()!.work_order; as o) {
+            <a class="bezug__item" [routerLink]="['/auftraege', o.id]">
+              <span class="bezug__label">Auftrag</span>
+              <span class="bezug__wert">{{ o.order_number }} · {{ o.title }}</span>
+              <span class="bezug__zusatz">{{ orderStatusLabel(o.status) }}</span>
+            </a>
+          } @else {
+            <!-- Kein toter Link: der freie Termin hat keinen Auftrag. -->
+            <div class="bezug__item bezug__item--leer">
+              <span class="bezug__label">Auftrag</span>
+              <span class="bezug__wert">Kein Auftrag (freier Termin)</span>
+            </div>
+          }
           @if (daten()!.property; as p) {
             <a class="bezug__item" [routerLink]="['/liegenschaften', p.id]">
               <span class="bezug__label">Liegenschaft</span>
               <span class="bezug__wert">{{ p.name }} · {{ p.city }}</span>
             </a>
+          } @else if (daten()!.is_free) {
+            <div class="bezug__item bezug__item--leer">
+              <span class="bezug__label">Liegenschaft</span>
+              <span class="bezug__wert">Keine Liegenschaft hinterlegt</span>
+            </div>
           }
         </div>
       }
@@ -254,6 +288,69 @@
         <button type="button" class="btn" [disabled]="dialogLaedt()" (click)="dialogSchliessen()">Abbrechen</button>
         <button type="submit" form="termin-form" class="btn btn--primary" [disabled]="dialogLaedt()" [attr.aria-busy]="dialogLaedt()">
           {{ dialogLaedt() ? 'Wird gespeichert …' : 'Termin setzen' }}
+        </button>
+      </div>
+    </app-dialog>
+
+    <!-- --------------------------- Kontakt-Dialog ------------------------- -->
+    <!-- Begehung: der Ansprechpartner ist beim Anlegen oft noch kein Kontakt im
+         System. Hier wird er nachgetragen (oder wieder entfernt). -->
+    <app-dialog
+      [offen]="dialogOffen() === 'kontakt'"
+      titel="Ansprechpartner vor Ort"
+      (schliessen)="dialogSchliessen()"
+    >
+      <form
+        id="kontakt-form"
+        class="dialog-form"
+        (submit)="$event.preventDefault(); kontaktAbsenden()"
+        novalidate
+      >
+        @if (formularMeldung(); as fm) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+          </div>
+        }
+        <p class="note">
+          Aktuell:
+          <strong>{{ daten()!.on_site_contact || 'kein Ansprechpartner hinterlegt' }}</strong>.
+          Ein neu gewählter Kontakt ersetzt den bisherigen; ein leeres Feld ändert nichts.
+        </p>
+        <app-referenz-wahl
+          [control]="kontaktForm.controls.on_site_contact_party_id"
+          label="Ansprechpartner vor Ort"
+          hinweis="Nur bereits angelegte Kontakte — neue Personen zuerst unter Kontakte anlegen."
+          platzhalter="Kontakt suchen"
+          [suche]="partySuche"
+        />
+        <app-feld
+          [control]="kontaktForm.controls.access_instructions"
+          label="Zutritt"
+          typ="textarea"
+          hinweis="Optional — Hinweise zum Zutritt."
+        />
+      </form>
+      <div dialog-aktionen class="dialog__aktionen">
+        @if (daten()!.on_site_contact) {
+          <button
+            type="button"
+            class="btn btn--gefahr"
+            [disabled]="dialogLaedt()"
+            (click)="kontaktEntfernen()"
+          >
+            Kontakt entfernen
+          </button>
+        }
+        <button type="button" class="btn" [disabled]="dialogLaedt()" (click)="dialogSchliessen()">Abbrechen</button>
+        <button
+          type="submit"
+          form="kontakt-form"
+          class="btn btn--primary"
+          [disabled]="dialogLaedt()"
+          [attr.aria-busy]="dialogLaedt()"
+        >
+          {{ dialogLaedt() ? 'Wird gespeichert …' : 'Speichern' }}
         </button>
       </div>
     </app-dialog>

@@ -49,11 +49,15 @@ export interface ServiceJob {
   id: string;
   job_number: string;
   status: ServiceJobStatus;
+  /** Anzeigetitel — der Server löst ihn auf (eigener Titel, sonst Auftragstitel). */
+  title: string;
+  /** Freier Termin (Begehung/Besichtigung/Beratung ohne Auftrag): work_order ist null. */
+  is_free: boolean;
   scheduled_start: string | null;
   scheduled_end: string | null;
   actual_start: string | null;
   actual_end: string | null;
-  work_order: WorkOrderRef;
+  work_order: WorkOrderRef | null;
   property: PropertyRef | null;
   category: CategoryRef | null;
   assignee_count: number;
@@ -109,13 +113,28 @@ export interface MaterialEntry {
 
 // --- Schreib-Payloads ------------------------------------------------------
 // POST /api/planung/einsaetze
+// Ohne work_order_id entsteht ein FREIER TERMIN; dann ist `title` Pflicht.
+// Mit work_order_id ist `title` optional (Fallback: Auftragstitel) und
+// `property_id` muss die Liegenschaft des Auftrags sein (der Server prüft).
 export interface ServiceJobCreate {
-  work_order_id: string;
+  work_order_id?: string | null;
+  title?: string | null;
+  property_id?: string | null;
   scheduled_start?: string | null;
   scheduled_end?: string | null;
   on_site_contact_party_id?: string | null;
   access_instructions?: string | null;
   appointment_category_id?: string | null;
+}
+
+// PATCH /api/planung/einsaetze/{id} — Teil-Update: nur gesetzte Felder werden
+// geändert, ein ausdrückliches null löscht das Feld (Kontakt entfernen). Der
+// Auftragsbezug ist bewusst nicht änderbar (in der DB unveränderlich).
+export interface ServiceJobUpdate {
+  on_site_contact_party_id?: string | null;
+  title?: string | null;
+  property_id?: string | null;
+  access_instructions?: string | null;
 }
 
 // POST /api/planung/einsaetze/{id}/schedule
@@ -171,6 +190,8 @@ export interface BoardJob {
   job_number: string;
   title: string;
   status: ServiceJobStatus;
+  /** Freier Termin ohne Auftrag — die Kachel kennzeichnet ihn als Text. */
+  is_free: boolean;
   scheduled_start: string;
   scheduled_end: string | null;
   property_name: string | null;

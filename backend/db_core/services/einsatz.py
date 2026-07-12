@@ -7,6 +7,11 @@ app.current_user_id für Audit/Statusprotokoll; bei begründungspflichtigen
 über workflow.next_number; das Model lässt die Spalte ungesetzt (db_default) und
 lädt frisch nach.
 
+Seit Migration 0062 gibt es zwei Spielarten: den auftragsgebundenen Einsatz und
+den **freien Termin** (work_order_id IS NULL — Begehung/Besichtigung/Beratung vor
+der Beauftragung). Der freie Termin braucht einen eigenen Titel, darf optional an
+einer Liegenschaft hängen und läuft ohne das Auftrags-Ausführungstor.
+
 Der Einsatz hat einen Trigger-gestützten Statusautomaten (Migration 0014). Die
 erlaubten Übergänge und die Begründungspflicht spiegeln workflow.status_transition
 (0010) — sie werden hier vorab geprüft, damit Eingabefehler als klarer ValueError
@@ -27,11 +32,16 @@ from db_core.models import (
     AppUser,
     JobAssignment,
     MaterialEntry,
+    Property,
     ServiceJob,
     TimeEntry,
     WorkOrder,
 )
 from db_core.services._validation import ensure_exists, ensure_party_usable
+
+# Sentinel für Teil-Updates: „Feld nicht mitgeschickt" ist etwas anderes als
+# „Feld ausdrücklich auf NULL setzen" (z. B. Kontakt wieder entfernen).
+_UNSET = object()
 
 ASSIGNMENT_ROLES = ("TECHNICIAN", "LEAD")
 TIME_TYPES = (
@@ -58,10 +68,52 @@ SERVICE_JOB_TRANSITIONS = {
 }
 
 
+def _check_category(appointment_category_id):
+    if appointment_category_id is None:
+        return
+    category = AppointmentCategory.objects.filter(id=appointment_category_id).first()
+    if category is None:
+        raise ValueError(f"Terminkategorie {appointment_category_id} existiert nicht")
+    if category.status != "AKTIV":
+        raise ValueError("Nur aktive Kategorien können zugewiesen werden.")
+
+
+def _check_property_matches_order(work_order_id, property_id):
+    """Liegenschaft am Einsatz muss zum Auftrag passen (DB: zusammengesetzter FK).
+
+    Vorabprüfung, damit der Verstoß als klarer 422 statt als IntegrityError (500)
+    endet. Ohne Auftrag (freier Termin) ist jede existierende Liegenschaft ok.
+    """
+    if property_id is None:
+        return
+    ensure_exists(Property, property_id, "Liegenschaft")
+    if work_order_id is None:
+        return
+    order_property_id = (
+        WorkOrder.objects.filter(id=work_order_id)
+        .values_list("property_id", flat=True)
+        .first()
+    )
+    if order_property_id != property_id:
+        raise ValueError(
+            "Die Liegenschaft des Einsatzes muss die Liegenschaft des Auftrags sein."
+        )
+
+
+def _clean_title(title):
+    """Leerstring/Whitespace → None (der DB-CHECK verbietet leere Titel)."""
+    if title is None:
+        return None
+    cleaned = title.strip()
+    return cleaned or None
+
+
 def create_service_job(
     actor_app_user_id,
     *,
-    work_order_id,
+    work_order_id=None,
+    title=None,
+    property_id=None,
     scheduled_start=None,
     scheduled_end=None,
     on_site_contact_party_id=None,
@@ -70,28 +122,35 @@ def create_service_job(
 ):
     """Legt einen workflow.service_job (Einsatz) im Initialstatus UNGEPLANT an.
 
-    work_order_id ist Pflicht. Der Trigger erzwingt UNGEPLANT als Startstatus und
-    verhindert die Anlage auf abgerechnete/stornierte Aufträge (B-03/B-06). Ein
-    Planungszeitraum darf gleich mitgegeben werden (für den späteren Wechsel nach
-    GEPLANT ist scheduled_start ohnehin Pflicht). appointment_category_id ist
-    optional; nur AKTIVE Kategorien sind zuweisbar (Migration 0025)."""
+    Zwei Spielarten (Migration 0062):
+
+    * **auftragsgebunden** (work_order_id gesetzt): wie bisher. Der Trigger
+      verhindert die Anlage auf abgerechnete/stornierte Aufträge (B-03/B-06).
+      `title` ist optional (Fallback: Auftragstitel); `property_id` ist optional
+      und muss, wenn gesetzt, die Liegenschaft des Auftrags sein.
+    * **freier Termin** (work_order_id=None): Begehung/Besichtigung/Beratung ohne
+      Auftrag. `title` ist dann **Pflicht**; `property_id` und der Kontakt
+      (on_site_contact_party_id) bleiben optional — bei einer Begehung ist der
+      Kunde oft noch gar nicht angelegt und wird über update_service_job
+      nachgetragen.
+
+    Der Trigger erzwingt UNGEPLANT als Startstatus. appointment_category_id ist
+    optional; nur AKTIVE Kategorien sind zuweisbar (Migration 0025).
+    """
+    title = _clean_title(title)
+    if work_order_id is None and title is None:
+        raise ValueError("Ein freier Termin ohne Auftrag braucht einen Titel.")
     ensure_exists(WorkOrder, work_order_id, "Auftrag")
+    _check_property_matches_order(work_order_id, property_id)
     ensure_party_usable(on_site_contact_party_id, "Ansprechpartner vor Ort")
-    if appointment_category_id is not None:
-        category = AppointmentCategory.objects.filter(
-            id=appointment_category_id
-        ).first()
-        if category is None:
-            raise ValueError(
-                f"Terminkategorie {appointment_category_id} existiert nicht"
-            )
-        if category.status != "AKTIV":
-            raise ValueError("Nur aktive Kategorien können zugewiesen werden.")
+    _check_category(appointment_category_id)
     with as_business_error():
         with business_transaction(actor_app_user_id):
             job = ServiceJob.objects.create(
                 id=uuid.uuid4(),
                 work_order_id=work_order_id,
+                title=title,
+                property_id=property_id,
                 status="UNGEPLANT",
                 scheduled_start=scheduled_start,
                 scheduled_end=scheduled_end,
@@ -100,6 +159,63 @@ def create_service_job(
                 appointment_category_id=appointment_category_id,
             )
             job.refresh_from_db()
+    return job
+
+
+def update_service_job(
+    actor_app_user_id,
+    *,
+    service_job_id,
+    on_site_contact_party_id=_UNSET,
+    title=_UNSET,
+    property_id=_UNSET,
+    access_instructions=_UNSET,
+):
+    """Trägt Stammangaben eines Einsatzes nach (Teil-Update, Sentinel-basiert).
+
+    Hauptzweck: den **Ansprechpartner vor Ort nachtragen**. Bei einer Begehung
+    steht der Kontakt oft erst nach dem Termin fest (oder existiert im System
+    noch gar nicht) — deshalb muss er nachträglich setzbar sein. Zusätzlich
+    lassen sich Titel, Liegenschaft und Zutrittshinweise korrigieren.
+
+    Nicht mitgegebene Felder bleiben unangetastet; ausdrückliches ``None`` löscht
+    das Feld (Kontakt entfernen). Der Auftragsbezug ist NICHT änderbar (DB-Trigger
+    WF-01): ein freier Termin bleibt frei.
+
+    Regeln (→ ValueError = 422):
+    * Ein freier Termin darf seinen Titel nicht verlieren.
+    * Eine Liegenschaft muss bei auftragsgebundenen Einsätzen die des Auftrags
+      sein.
+    """
+    job = ServiceJob.objects.filter(id=service_job_id).first()
+    if job is None:
+        raise ValueError("Einsatz nicht gefunden.")
+
+    felder = {}
+    if title is not _UNSET:
+        neuer_titel = _clean_title(title)
+        if neuer_titel is None and job.work_order_id is None:
+            raise ValueError("Ein freier Termin ohne Auftrag braucht einen Titel.")
+        felder["title"] = neuer_titel
+    if property_id is not _UNSET:
+        _check_property_matches_order(job.work_order_id, property_id)
+        felder["property_id"] = property_id
+    if on_site_contact_party_id is not _UNSET:
+        ensure_party_usable(on_site_contact_party_id, "Ansprechpartner vor Ort")
+        felder["on_site_contact_party_id"] = on_site_contact_party_id
+    if access_instructions is not _UNSET:
+        felder["access_instructions"] = (
+            access_instructions.strip() or None
+            if isinstance(access_instructions, str)
+            else access_instructions
+        )
+    if not felder:
+        return job
+
+    with as_business_error():
+        with business_transaction(actor_app_user_id):
+            ServiceJob.objects.filter(id=service_job_id).update(**felder)
+    job.refresh_from_db()
     return job
 
 

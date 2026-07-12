@@ -9,6 +9,7 @@ import { ZielFilter } from '../../core/datei.model';
 import { VerbotenState, fehlerDetail, fehlerState, istVerboten } from '../../shared/http-fehler';
 import { AuthService } from '../../core/auth.service';
 import { EinsatzService } from '../../core/einsatz.service';
+import { PartyService } from '../../core/party.service';
 import { PlanungStammdatenService } from '../../core/planung-stammdaten.service';
 import {
   ASSIGNMENT_ROLES,
@@ -16,6 +17,7 @@ import {
   MaterialLogInput,
   ServiceJobDetail,
   ServiceJobStatus,
+  ServiceJobUpdate,
   TimeLogInput,
   assignmentRoleLabel,
   categoryColorClass,
@@ -53,7 +55,8 @@ type DialogArt =
   | 'material'
   | 'zuweisung'
   | 'kategorie'
-  | 'ressource';
+  | 'ressource'
+  | 'kontakt';
 
 const JOB_STATUSES: ServiceJobStatus[] = [
   'UNGEPLANT',
@@ -77,6 +80,7 @@ export class EinsatzDetail {
   private readonly route = inject(ActivatedRoute);
   private readonly svc = inject(EinsatzService);
   private readonly stammSvc = inject(PlanungStammdatenService);
+  private readonly partySvc = inject(PartyService);
   private readonly auth = inject(AuthService);
   private readonly fb = inject(FormBuilder);
 
@@ -91,6 +95,14 @@ export class EinsatzDetail {
   });
   /** Erfassung (Zeit/Material): AENDERN in beliebigem Scope (auch Monteur). */
   protected readonly darfErfassen = computed(() => this.auth.darf('workflow', 'AENDERN'));
+  /**
+   * Kontakt/Zutritt nachtragen: die Disposition immer; ein Monteur (Scope
+   * EIGENE) nur am FREIEN Termin — genau dort entsteht der Kontakt erst vor Ort.
+   * Am auftragsgebundenen Einsatz ist er Dispositionsdatum (Server: 403).
+   */
+  protected readonly darfKontaktPflegen = computed(
+    () => this.darfDispo() || (this.darfErfassen() && (this.daten()?.is_free ?? false)),
+  );
 
   protected readonly tab = signal('uebersicht');
   protected readonly state = signal<ViewState>({ kind: 'loading' });
@@ -192,6 +204,17 @@ export class EinsatzDetail {
   protected readonly ressourceForm = this.fb.group({
     resource_id: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
   });
+  /** Kontakt/Zutritt nachtragen — beides darf auch der Monteur am eigenen Einsatz. */
+  protected readonly kontaktForm = this.fb.group({
+    on_site_contact_party_id: this.fb.control('', { nonNullable: true }),
+    access_instructions: this.fb.control('', { nonNullable: true }),
+  });
+
+  /** Kontaktsuche (identity.party) für den Ansprechpartner vor Ort. */
+  protected readonly partySuche: RefSuche = (q) =>
+    this.partySvc.list({ page: 1, page_size: 20, q }).pipe(
+      map((p) => p.items.map((x) => ({ id: x.id, label: x.display_name }))),
+    );
 
   // Auswahllisten (aktive Stammdaten), erst beim Öffnen des Dialogs geladen.
   protected readonly kategorieOpt = signal<FeldOption[]>([]);
@@ -258,6 +281,16 @@ export class EinsatzDetail {
       case 'ressource':
         this.ressourceForm.reset({ resource_id: '' });
         this.ladeRessourceOpt();
+        break;
+      case 'kontakt':
+        // Die Referenz-Wahl kann einen bestehenden Wert nicht als Chip anzeigen
+        // (sie kennt nur die Treffer ihrer Suche). Deshalb startet sie leer; der
+        // aktuelle Kontakt steht als Text im Dialog, und das Entfernen ist eine
+        // eigene, ausdrückliche Aktion statt „Feld leer lassen".
+        this.kontaktForm.reset({
+          on_site_contact_party_id: '',
+          access_instructions: d?.access_instructions ?? '',
+        });
         break;
     }
     this.dialogOffen.set(art);
@@ -425,6 +458,48 @@ export class EinsatzDetail {
       error: (err) => {
         this.dialogLaedt.set(false);
         this.formularMeldung.set(apiFehlerZuweisen(err, this.ressourceForm).formular);
+      },
+    });
+  }
+
+  /** Kontakt/Zutritt nachtragen. Es werden nur tatsächlich gefüllte bzw.
+   * geänderte Felder geschickt — ein leeres Kontaktfeld löscht nichts. */
+  kontaktAbsenden(): void {
+    const d = this.daten();
+    if (!d || this.nichtBereit(this.kontaktForm)) return;
+    const v = this.kontaktForm.getRawValue();
+    const payload: ServiceJobUpdate = {};
+    if (v.on_site_contact_party_id) {
+      payload.on_site_contact_party_id = v.on_site_contact_party_id;
+    }
+    if (this.kontaktForm.controls.access_instructions.dirty) {
+      payload.access_instructions = v.access_instructions.trim() || null;
+    }
+    if (Object.keys(payload).length === 0) {
+      this.dialogOffen.set(null);
+      return;
+    }
+    this.dialogLaedt.set(true);
+    this.svc.update(d.id, payload).subscribe({
+      next: () => this.nachSchreiben('Angaben gespeichert.'),
+      error: (err) => {
+        this.dialogLaedt.set(false);
+        this.formularMeldung.set(apiFehlerZuweisen(err, this.kontaktForm).formular);
+      },
+    });
+  }
+
+  /** Ausdrückliches Entfernen des Ansprechpartners (null statt „leer"). */
+  kontaktEntfernen(): void {
+    const d = this.daten();
+    if (!d || this.dialogLaedt()) return;
+    this.formularMeldung.set(null);
+    this.dialogLaedt.set(true);
+    this.svc.update(d.id, { on_site_contact_party_id: null }).subscribe({
+      next: () => this.nachSchreiben('Ansprechpartner entfernt.'),
+      error: (err) => {
+        this.dialogLaedt.set(false);
+        this.formularMeldung.set(apiFehlerZuweisen(err, this.kontaktForm).formular);
       },
     });
   }

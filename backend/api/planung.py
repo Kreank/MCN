@@ -5,9 +5,13 @@ Read-only in der Dev-Phase (kein Anlegen/Umplanen ohne Auth — bewusste
 Entscheidung; die Schreib-Endpunkte kommen mit dem Auth-Slice). Wie die übrigen
 APIs bleiben die Views dünn; Model-Instanzen verlassen die API nicht.
 
-Der Einsatz trägt keinen eigenen Titel — er kommt vom zugehörigen Auftrag
-(work_order); dessen Liegenschaft liefert den Ort. Zugewiesene sind interne
-security.app_user, der Vor-Ort-Ansprechpartner ist eine identity.party.
+Titel und Ort: Der auftragsgebundene Einsatz erbt beides vom Auftrag (work_order
+→ property). Der **freie Termin** (Migration 0062, work_order_id IS NULL — eine
+Begehung/Besichtigung/Beratung vor der Beauftragung) trägt einen eigenen Titel
+(Pflicht) und optional eine eigene Liegenschaft. `_job_title`/`_job_property`
+lösen beides auf; das UI muss nicht selbst mischen. Zugewiesene sind interne
+security.app_user, der Vor-Ort-Ansprechpartner ist eine identity.party (bei
+Begehungen oft erst nachträglich bekannt → PATCH /einsaetze/{id}).
 """
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -86,11 +90,18 @@ class ServiceJobOut(Schema):
     id: UUID
     job_number: str
     status: str
+    # Anzeigetitel — beim freien Termin der eigene Titel, sonst der Auftragstitel
+    # (bzw. ein eigener Titel, falls gesetzt). Das UI muss nie selbst mischen.
+    title: str
+    # Freier Termin (Begehung/Besichtigung/Beratung ohne Auftrag): work_order ist
+    # dann None. `is_free` ist redundant, aber ausdrücklich — das UI kennzeichnet
+    # den freien Termin als TEXT (WCAG: nie nur über Farbe).
+    is_free: bool = False
     scheduled_start: datetime | None = None
     scheduled_end: datetime | None = None
     actual_start: datetime | None = None
     actual_end: datetime | None = None
-    work_order: WorkOrderRefOut
+    work_order: WorkOrderRefOut | None = None
     property: PropertyRefOut | None = None
     category: CategoryRefOut | None = None
     assignee_count: int = 0
@@ -153,12 +164,32 @@ class ServiceJobFilter(Schema):
 
 
 class ServiceJobCreateIn(Schema):
-    work_order_id: UUID
+    # Ohne work_order_id entsteht ein FREIER TERMIN; dann ist `title` Pflicht
+    # (der Service prüft das, 422). Mit work_order_id ist `title` optional
+    # (Fallback: Auftragstitel) und `property_id` muss zum Auftrag passen.
+    work_order_id: UUID | None = None
+    title: str | None = None
+    property_id: UUID | None = None
     scheduled_start: datetime | None = None
     scheduled_end: datetime | None = None
     on_site_contact_party_id: UUID | None = None
     access_instructions: str | None = None
     appointment_category_id: UUID | None = None
+
+
+class ServiceJobUpdateIn(Schema):
+    """Teil-Update: nur mitgeschickte Felder werden geändert.
+
+    Ein ausdrückliches ``null`` löscht das Feld (z. B. Kontakt entfernen) —
+    deshalb müssen die Felder von „nicht mitgeschickt" unterscheidbar sein
+    (Pydantic: ``model_fields_set``). Der Auftragsbezug fehlt hier bewusst: er ist
+    in der DB unveränderlich (WF-01).
+    """
+
+    on_site_contact_party_id: UUID | None = None
+    title: str | None = None
+    property_id: UUID | None = None
+    access_instructions: str | None = None
 
 
 class ScheduleIn(Schema):
@@ -195,9 +226,21 @@ class MaterialLogIn(Schema):
 
 # --- Mapper ----------------------------------------------------------------
 
-def _property_ref(job):
+def _job_property(job):
+    """Liegenschaft des Einsatzes: die eigene, sonst die des Auftrags.
+
+    Der freie Termin hat keinen Auftrag — seine Liegenschaft (falls gepflegt)
+    steht direkt am Einsatz. Beide Wege sind vorab per select_related geladen
+    (kein N+1); wenn sie gesetzt sind, sind sie laut DB-FK identisch.
+    """
+    if job.property_id is not None:
+        return job.property
     order = job.work_order
-    p = getattr(order, "property", None)
+    return getattr(order, "property", None) if order is not None else None
+
+
+def _property_ref(job):
+    p = _job_property(job)
     if p is None:
         return None
     return PropertyRefOut(
@@ -205,8 +248,19 @@ def _property_ref(job):
     )
 
 
+def _job_title(job):
+    """Anzeigetitel: eigener Titel, sonst Auftragstitel. Beim freien Termin ist
+    der eigene Titel per DB-CHECK immer vorhanden."""
+    if job.title:
+        return job.title
+    order = job.work_order
+    return order.title if order is not None else ""
+
+
 def _work_order_ref(job):
     order = job.work_order
+    if order is None:
+        return None
     return WorkOrderRefOut(
         id=order.id,
         order_number=order.order_number,
@@ -227,6 +281,8 @@ def _service_job_out(job, assignee_count=0):
         id=job.id,
         job_number=job.job_number,
         status=job.status,
+        title=_job_title(job),
+        is_free=job.work_order_id is None,
         scheduled_start=job.scheduled_start,
         scheduled_end=job.scheduled_end,
         actual_start=job.actual_start,
@@ -247,26 +303,33 @@ def list_einsaetze(
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=100),
 ):
-    """Einsätze auflisten: Suche (Einsatz-/Auftragsnummer, Auftragstitel),
-    Status-/Auftrags-/Zeitraumfilter. Sortiert nach Planbeginn (geplante zuerst,
-    ungeplante ans Ende), dann Anlegedatum.
+    """Einsätze auflisten: Suche (Einsatz-/Auftragsnummer, Titel des Einsatzes
+    oder des Auftrags), Status-/Auftrags-/Zeitraumfilter. Sortiert nach Planbeginn
+    (geplante zuerst, ungeplante ans Ende), dann Anlegedatum.
 
     Zeilenbegrenzung: Wer nur 'EIGENE' sehen darf (Monteur), bekommt
     ausschließlich Einsätze, denen er über workflow.job_assignment zugewiesen
-    ist."""
+    ist. Das gilt unverändert auch für **freie Termine** (ohne Auftrag): Die
+    Sichtbarkeit hängt allein an der Zuweisung, nie an Auftrag/Liegenschaft — ein
+    freier Termin ohne Zuweisung ist für einen 'EIGENE'-Nutzer damit gar nicht
+    sichtbar (fail-closed), er wird durch den fehlenden Auftrag nicht plötzlich
+    öffentlich."""
     actor, scope = require_scoped(request, "workflow", "LESEN")
     if filters.status and filters.status not in JOB_STATUSES:
         raise HttpError(422, f"Unbekannter Status '{filters.status}'.")
 
     qs = ServiceJob.objects.select_related(
-        "work_order__property__address", "appointment_category"
+        "work_order__property__address", "property__address", "appointment_category"
     )
     if scope == "EIGENE":
         qs = qs.filter(assignments__assignee_id=actor).distinct()
     if filters.q:
         needle = filters.q.strip()
+        # work_order ist NULL-fähig → Django joint LEFT OUTER; freie Termine
+        # fallen dadurch nicht aus der Suche heraus.
         qs = qs.filter(
             Q(job_number__icontains=needle)
+            | Q(title__icontains=needle)
             | Q(work_order__order_number__icontains=needle)
             | Q(work_order__title__icontains=needle)
         )
@@ -300,19 +363,20 @@ def _assignee_counts(job_ids):
     return {sid: n for sid, n in rows}
 
 
-@router.get("/einsaetze/{job_id}", response=ServiceJobDetailOut)
-def get_einsatz(request, job_id: UUID):
-    """Detail eines Einsatzes inkl. Zuweisungen, Statusverlauf, erfasster Zeiten
-    und Materialien.
+def _einsatz_detail(job_id):
+    """Baut die Detailantwort eines Einsatzes — OHNE jede Rechteprüfung.
 
-    Zeilenbegrenzung: Bei Scope 'EIGENE' (Monteur) ist ein Einsatz, dem der
-    Akteur nicht zugewiesen ist, mit 404 abgeriegelt — die Existenz fremder
-    Einsätze wird nicht verraten."""
-    actor, scope = require_scoped(request, "workflow", "LESEN")
+    Reiner Mapper. Die Torfunktionen laufen beim Aufrufer (get_einsatz prüft
+    LESEN, update_einsatz hat AENDERN samt Scope-Guard schon geprüft). Deshalb
+    darf der Schreibpfad NICHT get_einsatz aufrufen: das löste eine zweite,
+    andere Prüfung (LESEN) aus und beantwortete einen bereits geschriebenen
+    Vorgang mit 403/404 — der Nutzer sähe einen Fehler, obwohl gespeichert wurde.
+    """
     job = (
         ServiceJob.objects.filter(id=job_id)
         .select_related(
             "work_order__property__address",
+            "property__address",
             "on_site_contact_party",
             "appointment_category",
         )
@@ -320,10 +384,6 @@ def get_einsatz(request, job_id: UUID):
         .first()
     )
     if job is None:
-        raise HttpError(404, "Einsatz nicht gefunden.")
-    if scope == "EIGENE" and not JobAssignment.objects.filter(
-        service_job_id=job_id, assignee_id=actor
-    ).exists():
         raise HttpError(404, "Einsatz nicht gefunden.")
 
     assignments = [
@@ -404,6 +464,20 @@ def get_einsatz(request, job_id: UUID):
     )
 
 
+@router.get("/einsaetze/{job_id}", response=ServiceJobDetailOut)
+def get_einsatz(request, job_id: UUID):
+    """Detail eines Einsatzes inkl. Zuweisungen, Statusverlauf, erfasster Zeiten
+    und Materialien.
+
+    Zeilenbegrenzung: Bei Scope 'EIGENE' (Monteur) ist ein Einsatz, dem der
+    Akteur nicht zugewiesen ist, mit 404 abgeriegelt — die Existenz fremder
+    Einsätze wird nicht verraten."""
+    actor, scope = require_scoped(request, "workflow", "LESEN")
+    _load_job_or_404(job_id)
+    _guard_own_job(job_id, actor, scope)
+    return _einsatz_detail(job_id)
+
+
 # --- Benutzer-Auswahlliste (Zuweisung) -------------------------------------
 
 class AssignableUserOut(Schema):
@@ -444,7 +518,11 @@ def list_assignable_users(request, q: str | None = Query(None)):
 def _reload_job(job_id):
     job = (
         ServiceJob.objects.filter(id=job_id)
-        .select_related("work_order__property__address", "appointment_category")
+        .select_related(
+            "work_order__property__address",
+            "property__address",
+            "appointment_category",
+        )
         .first()
     )
     if job is None:
@@ -476,16 +554,26 @@ def _guard_own_job(job_id, actor, scope):
 def create_einsatz(request, payload: ServiceJobCreateIn):
     """Legt einen Einsatz (workflow.service_job) im Initialstatus UNGEPLANT an.
 
+    Zwei Spielarten: **auftragsgebunden** (work_order_id gesetzt) oder **freier
+    Termin** (work_order_id fehlt → Begehung/Besichtigung/Beratung; `title` ist
+    dann Pflicht, Liegenschaft und Kontakt bleiben optional).
+
     `require` (fail-closed): der Einsatz trägt kein Owner-/Zuweisungsfeld im
     Payload (Zuweisungen laufen separat über /assignments). Einsätze legt die
-    Disposition/Leitung an — ein Monteur mit 'EIGENE'-Scope bekommt 403. Die
-    DB-Tore (Startstatus UNGEPLANT, keine Anlage auf abgerechnete/stornierte
+    Disposition/Leitung an — ein Monteur mit 'EIGENE'-Scope bekommt 403. Das gilt
+    für den freien Termin genauso: er wäre sonst eine Zeile, die der Monteur zwar
+    anlegen, aber selbst nicht sehen könnte (die 'EIGENE'-Sicht hängt an der
+    Zuweisung, die er nicht setzen darf).
+
+    Die DB-Tore (Startstatus UNGEPLANT, keine Anlage auf abgerechnete/stornierte
     Aufträge B-03/B-06) kommen als 422 zurück."""
     actor, _ = require(request, "workflow", "ANLEGEN")
     try:
         job = einsatz_service.create_service_job(
             actor,
             work_order_id=payload.work_order_id,
+            title=payload.title,
+            property_id=payload.property_id,
             scheduled_start=payload.scheduled_start,
             scheduled_end=payload.scheduled_end,
             on_site_contact_party_id=payload.on_site_contact_party_id,
@@ -495,6 +583,63 @@ def create_einsatz(request, payload: ServiceJobCreateIn):
     except ValueError as exc:
         raise HttpError(422, str(exc))
     return Status(201, _reload_job(job.id))
+
+
+# Felder, die ein Nutzer mit Scope 'EIGENE' (Monteur) an einem FREIEN Termin
+# nachtragen darf: was er vor Ort erfährt. Titel und Liegenschaft sind
+# Dispositionsdaten und bleiben ihm verwehrt (403) — sonst könnte er einen fremd
+# geplanten Termin umwidmen oder ihn einer beliebigen Liegenschaft zuordnen.
+_EIGENE_UPDATE_FELDER = {"on_site_contact_party_id", "access_instructions"}
+
+
+@router.patch("/einsaetze/{job_id}", response=ServiceJobDetailOut, auth=django_auth)
+def update_einsatz(request, job_id: UUID, payload: ServiceJobUpdateIn):
+    """Trägt Angaben am Einsatz nach — vor allem den **Ansprechpartner vor Ort**.
+
+    Bei einer Begehung ist der Kontakt oft noch nicht angelegt; er wird nach dem
+    Termin nachgetragen. Nur mitgeschickte Felder werden geändert; ein
+    ausdrückliches ``null`` löscht das Feld (Kontakt entfernen).
+
+    `require_scoped` (Muster wie Zeit-/Materialbuchung): Ein Monteur (Scope
+    'EIGENE') MUSS auf seinem eigenen **freien Termin** den Kontakt und die
+    Zutrittshinweise nachtragen können — genau dort entsteht der Kontakt ja erst
+    vor Ort. Ein nicht zugewiesener Einsatz ist für ihn mit 404 abgeriegelt.
+
+    Alles andere ist für ihn gesperrt (403):
+    * Titel und Liegenschaft sind **immer** Dispositionsdaten,
+    * an einem **auftragsgebundenen** Einsatz ist auch der Vor-Ort-Kontakt ein
+      Dispositionsdatum (die Disposition hat ihn mit dem Auftrag gesetzt) — der
+      Monteur soll ihn dort nicht durch eine beliebige Party ersetzen oder
+      löschen können.
+
+    Der Auftragsbezug ist gar nicht änderbar (DB-Trigger WF-01)."""
+    actor, scope = require_scoped(request, "workflow", "AENDERN")
+    job = ServiceJob.objects.filter(id=job_id).only("id", "work_order_id").first()
+    if job is None:
+        raise HttpError(404, "Einsatz nicht gefunden.")
+    _guard_own_job(job_id, actor, scope)
+    gesetzt = payload.model_fields_set
+    if scope == "EIGENE":
+        if job.work_order_id is not None:
+            raise HttpError(
+                403,
+                "Angaben eines auftragsgebundenen Einsatzes pflegt die "
+                "Disposition.",
+            )
+        if gesetzt - _EIGENE_UPDATE_FELDER:
+            raise HttpError(
+                403,
+                "Ihre Rolle erlaubt am Termin nur das Nachtragen von "
+                "Ansprechpartner und Zutrittshinweisen.",
+            )
+    felder = {name: getattr(payload, name) for name in gesetzt}
+    try:
+        einsatz_service.update_service_job(actor, service_job_id=job_id, **felder)
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    # Bewusst der reine Mapper, NICHT get_einsatz: der löste eine zweite Prüfung
+    # (LESEN) aus und meldete nach erfolgreichem Schreiben 403/404.
+    return _einsatz_detail(job_id)
 
 
 @router.post("/einsaetze/{job_id}/schedule", response=ServiceJobOut, auth=django_auth)
@@ -672,6 +817,8 @@ class BoardJobOut(Schema):
     job_number: str
     title: str
     status: str
+    # Freier Termin ohne Auftrag: die Kachel kennzeichnet ihn als TEXT.
+    is_free: bool = False
     scheduled_start: datetime
     scheduled_end: datetime | None = None
     property_name: str | None = None
@@ -716,7 +863,7 @@ def plantafel(
         ServiceJob.objects.filter(
             scheduled_start__date__gte=start, scheduled_start__date__lte=end
         )
-        .select_related("work_order__property", "appointment_category")
+        .select_related("work_order__property", "property", "appointment_category")
         .prefetch_related("assignments__assignee", "resource_links__resource")
         .order_by("scheduled_start", "id")
     )
@@ -737,15 +884,18 @@ def plantafel(
             resource_ids.append(r.id)
         if not assignee_ids and not resource_ids:
             unassigned += 1
+        # Freier Termin: eigener Titel, Liegenschaft optional (kann fehlen).
+        board_property = _job_property(j)
         out_jobs.append(
             BoardJobOut(
                 id=j.id,
                 job_number=j.job_number,
-                title=j.work_order.title,
+                title=_job_title(j),
                 status=j.status,
+                is_free=j.work_order_id is None,
                 scheduled_start=j.scheduled_start,
                 scheduled_end=j.scheduled_end,
-                property_name=j.work_order.property.name,
+                property_name=board_property.name if board_property else None,
                 category=_category_ref(j),
                 assignee_ids=assignee_ids,
                 resource_ids=resource_ids,
