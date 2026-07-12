@@ -12,6 +12,8 @@ Zeiten sind Personendaten (DSGVO). **Kein Monteur sieht fremde Zeiten.**
 | `/zeiterfassung` (Verwaltung) | `require` | **403** (fail-closed) |
 | `/tage/{id}/bestaetigen|ablehnen` | `require` + `hr/FREIGEBEN` | 403; zusätzlich Vier-Augen im DB-Trigger |
 | `/eintraege` (CRUD) | `require_scoped` | nur eigene Einträge; `user_id` wird auf den Akteur gezwungen |
+| `/ausgleich` (lesen) | `require_scoped` | nur der eigene Personalsatz; fremder → 404 |
+| `/ausgleich` (buchen/stornieren) | `require` + `hr/AENDERN` | **403**; zusätzlich verbietet der Service das EIGENE Konto (Führungsaufgabe) |
 | `/stundenliste.csv` | `require` + `hr/EXPORTIEREN` | 403 |
 | `/hr/zeitkategorien` (Pflege) | `require` | 403 |
 
@@ -36,7 +38,7 @@ from ninja.errors import HttpError
 from ninja.responses import Status
 
 from api.permissions import require, require_scoped
-from db_core.models import Employee, TimeEntry, WorkDay
+from db_core.models import Employee, TimeAdjustment, TimeEntry, WorkDay
 from db_core.services import zeiterfassung as zeit_service
 
 router = Router()
@@ -188,11 +190,44 @@ class StundenkontoOut(Schema):
     ist: Decimal
     pause: Decimal
     abwesend: Decimal
+    # Σ der wirksamen Ausgleichsbuchungen im Zeitraum (vorzeichenbehaftet).
+    ausgleich: Decimal
     saldo: Decimal
     tage_gesamt: int
     tage_offen: int
     tage_eingereicht: int
     tage_bestaetigt: int
+
+
+class AusgleichOut(Schema):
+    id: UUID
+    employee_id: UUID
+    mitarbeiter: str
+    adjustment_type: str
+    effective_on: date
+    minutes: int
+    stunden: Decimal
+    reason: str
+    status: str
+    reversal_of_id: UUID | None
+    ist_storno: bool
+    gebucht_von: str | None
+    created_at: datetime
+
+
+class AusgleichIn(Schema):
+    employee_id: UUID
+    adjustment_type: str
+    effective_on: date
+    # Vorzeichenbehaftet, in Minuten. Das UI setzt sie aus Stunden + Minuten +
+    # Vorzeichen zusammen; die Wahrheit bleibt ganzzahlig (20 min sind keine
+    # 0,33 h).
+    minutes: int
+    reason: str
+
+
+class StornoIn(Schema):
+    reason: str
 
 
 class MeldungOut(Schema):
@@ -683,6 +718,101 @@ def stundenkonto(
         return zeit_service.stundenkonto(employee_id, v, b)
     except ValueError as exc:
         raise HttpError(404, str(exc))
+
+
+# ---------------------------------------------------------------------------
+# Stundenausgleich (hr.time_adjustment, Migration 0072)
+# ---------------------------------------------------------------------------
+
+def _ausgleich_out(a):
+    return AusgleichOut(
+        id=a.id,
+        employee_id=a.employee_id,
+        mitarbeiter=f"{a.employee.party.first_name} {a.employee.party.last_name}".strip(),
+        adjustment_type=a.adjustment_type,
+        effective_on=a.effective_on,
+        minutes=a.minutes,
+        stunden=(Decimal(a.minutes) / Decimal(60)).quantize(Decimal("0.01")),
+        reason=a.reason,
+        status=a.status,
+        reversal_of_id=a.reversal_of_id,
+        ist_storno=a.reversal_of_id is not None,
+        gebucht_von=a.created_by.display_name if a.created_by_id else None,
+        created_at=a.created_at,
+    )
+
+
+@router.get("/ausgleich", response=list[AusgleichOut])
+def ausgleich_liste(
+    request,
+    employee_id: UUID | None = Query(None),
+    von: date | None = Query(None),
+    bis: date | None = Query(None),
+):
+    """Die Ausgleichsbuchungen eines Mitarbeiters (oder aller).
+
+    `require_scoped`: Der Beschäftigte darf die Buchungen auf **seinem eigenen**
+    Konto sehen — es ist sein Arbeitszeitkonto, und eine Bewegung darauf, die er
+    nicht nachlesen kann, wäre nicht nachvollziehbar (das ist der Sinn der
+    Pflichtbegründung). Bei row_scope EIGENE wird hart auf den eigenen
+    Personalsatz gefiltert; ein fremder `employee_id` ist 404.
+    """
+    actor, scope = require_scoped(request, "hr", "LESEN")
+    if scope == "EIGENE":
+        eigener = Employee.objects.filter(app_user_id=actor).first()
+        if eigener is None:
+            raise HttpError(404, "Zu diesem Konto gibt es keinen Personalsatz.")
+        if employee_id is not None and employee_id != eigener.id:
+            raise HttpError(404, "Mitarbeiter nicht gefunden.")
+        employee_id = eigener.id
+    return [
+        _ausgleich_out(a) for a in zeit_service.ausgleiche(employee_id, von, bis)
+    ]
+
+
+@router.post("/ausgleich", response={201: AusgleichOut})
+def ausgleich_buchen(request, payload: AusgleichIn):
+    """Stundenausgleich buchen — Führungsaufgabe, nie für sich selbst.
+
+    `require` (fail-closed) auf `hr/AENDERN`: row_scope EIGENE → **403**. Der
+    Monteur kann sein Konto also nicht selbst ausgleichen. Zusätzlich lehnt der
+    Service das eigene Konto auch dann ab, wenn der Akteur ALLE darf (der
+    Geschäftsführer ist zugleich Mitarbeiter) — Vier-Augen, wie beim Arbeitstag.
+
+    Ohne Begründung: **422** (Pflichtfeld, Service + DB-CHECK).
+    """
+    actor, _ = require(request, "hr", "AENDERN")
+    try:
+        eintrag = zeit_service.ausgleich_buchen(
+            actor,
+            employee_id=payload.employee_id,
+            adjustment_type=payload.adjustment_type,
+            effective_on=payload.effective_on,
+            minutes=payload.minutes,
+            reason=payload.reason,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return Status(201, _ausgleich_out(eintrag))
+
+
+@router.post("/ausgleich/{adjustment_id}/stornieren", response={201: AusgleichOut})
+def ausgleich_stornieren(request, adjustment_id: UUID, payload: StornoIn):
+    """Storniert eine Ausgleichsbuchung (append-only: es entsteht eine Gegenbuchung).
+
+    Kein Löschen — die Ursprungsbuchung bleibt sichtbar und geht auf STORNIERT;
+    beide Zeilen fallen aus der Saldo-Summe.
+    """
+    actor, _ = require(request, "hr", "AENDERN")
+    if not TimeAdjustment.objects.filter(id=adjustment_id).exists():
+        raise HttpError(404, "Ausgleichsbuchung nicht gefunden.")
+    try:
+        storno = zeit_service.ausgleich_stornieren(
+            actor, adjustment_id=adjustment_id, reason=payload.reason
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return Status(201, _ausgleich_out(storno))
 
 
 @router.get("/stundenliste.csv")

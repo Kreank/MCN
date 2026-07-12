@@ -1,0 +1,188 @@
+<div class="rechner">
+  <form class="rechner__eingabe" [formGroup]="form" (submit)="$event.preventDefault()">
+    <fieldset class="rechner__satz">
+      <legend class="rechner__legende">Aufmaß</legend>
+
+      <app-feld
+        [control]="form.controls.bezeichnung"
+        label="Bezeichnung"
+        hinweis="Wird zur ersten Zeile der Position, z. B. Fliesen Bad OG"
+      />
+
+      <app-feld
+        [control]="form.controls.art"
+        label="Was wird gemessen?"
+        typ="select"
+        [optionen]="artOptionen"
+        [hinweis]="art().zweck"
+      />
+    </fieldset>
+
+    <fieldset class="rechner__satz aufmass__teile" formArrayName="teile">
+      <legend class="rechner__legende">Teilmaße</legend>
+
+      @for (teil of teile.controls; track teil; let i = $index) {
+        <div class="aufmass__teil" [formGroupName]="i" data-teil>
+          <p class="aufmass__teil-kopf">Teilmaß {{ i + 1 }}</p>
+
+          <app-feld
+            [control]="teil.controls.bezeichnung"
+            label="Bezeichnung"
+            hinweis="z. B. Wand Nord, Fenster, Aussparung"
+          />
+
+          <div class="aufmass__masse">
+            <app-feld
+              [control]="teil.controls.anzahl"
+              [label]="art().wert === 'STUECK' ? 'Anzahl (Stk)' : 'Anzahl'"
+              typ="zahl"
+              [hinweis]="art().wert === 'STUECK' ? 'Stückzahl dieses Teilmaßes' : 'leer = 1'"
+            />
+            @if (zeigtMass('laenge')) {
+              <app-feld
+                [control]="teil.controls.laenge"
+                [label]="massLabel.laenge + ' (m)'"
+                typ="zahl"
+              />
+            }
+            @if (zeigtMass('breite')) {
+              <app-feld
+                [control]="teil.controls.breite"
+                [label]="massLabel.breite + ' (m)'"
+                typ="zahl"
+              />
+            }
+            @if (zeigtMass('hoehe')) {
+              <app-feld
+                [control]="teil.controls.hoehe"
+                [label]="massLabel.hoehe + ' (m)'"
+                typ="zahl"
+              />
+            }
+          </div>
+
+          <div class="aufmass__teil-fuss">
+            <app-feld
+              [control]="teil.controls.abzug"
+              typ="checkbox"
+              label="Abzug (Fenster, Tür, Aussparung)"
+            />
+            <button
+              type="button"
+              class="aufmass__weg"
+              (click)="teilEntfernen(i)"
+              [attr.aria-label]="'Teilmaß ' + (i + 1) + ' entfernen'"
+            >
+              Entfernen
+            </button>
+          </div>
+        </div>
+      }
+
+      <button type="button" class="aufmass__plus" (click)="teilHinzufuegen()">
+        + Teilmaß hinzufügen
+      </button>
+    </fieldset>
+
+    <fieldset class="rechner__satz">
+      <legend class="rechner__legende">Zuschlag &amp; Gebinde</legend>
+
+      <div class="rechner__paar">
+        <app-feld
+          [control]="form.controls.verschnitt"
+          label="Verschnitt (%)"
+          typ="zahl"
+          hinweis="leer = 0 %"
+        />
+        <app-feld
+          [control]="form.controls.gebinde"
+          [label]="'Gebinde / VE (' + art().einheit + ')'"
+          typ="zahl"
+          hinweis="z. B. 1,44 für Fliesenkartons — leer = keine Aufrundung"
+        />
+      </div>
+    </fieldset>
+  </form>
+
+  <div class="rechner__ergebnis">
+    <p class="rechner__ergebnis-label" id="aufmass-label">Bestellmenge</p>
+    <output
+      class="rechner__wert"
+      [class.rechner__wert--leer]="!ergebnis()"
+      aria-labelledby="aufmass-label"
+      aria-live="polite"
+      >{{ mengeText() }}</output
+    >
+
+    @if (verschnittText()) {
+      <p class="rechner__zweitwert">{{ verschnittText() }}</p>
+    }
+    @if (gebindeText()) {
+      <p class="rechner__zweitwert">{{ gebindeText() }}</p>
+    }
+
+    @if (zeilen().length) {
+      <dl class="rechner__liste">
+        @for (t of zeilen(); track $index) {
+          <div class="rechner__zeile">
+            <dt>
+              {{ t.bezeichnung || 'Teilmaß ' + ($index + 1) }}
+              @if (t.abzug) {
+                <span class="rechner__quelle-mark">Abzug</span>
+              }
+            </dt>
+            <dd>
+              @if (t.status === 'OK') {
+                {{ t.abzug ? '−' : '+' }} {{ t.rechenweg }}
+              } @else {
+                unvollständig
+              }
+            </dd>
+          </div>
+        }
+      </dl>
+    }
+
+    @if (gebindeFehler()) {
+      <p class="rechner__formel" role="alert">{{ gebindeFehler() }}</p>
+    }
+
+    @if (blockiert()) {
+      <p class="rechner__formel" role="alert">
+        Ein angefangenes Teilmaß ist unvollständig. Es wird NICHT mitgerechnet — bitte ergänzen oder
+        entfernen, sonst geht eine falsche Menge in den Beleg.
+      </p>
+    } @else if (!ergebnis() && !gebindeFehler()) {
+      <p class="rechner__formel">
+        Mindestens ein vollständiges Teilmaß eingeben — die Nettomenge muss größer als 0 sein
+        (Abzüge dürfen die Menge nicht aufzehren).
+      </p>
+    }
+
+    <div class="rechner__aktionen">
+      <button type="button" class="rechner__btn" [disabled]="!uebernehmbar()" (click)="kopieren()">
+        Aufstellung kopieren
+      </button>
+      @if (uebernahme()) {
+        <button
+          type="button"
+          class="rechner__btn rechner__btn--primary"
+          [disabled]="!uebernehmbar()"
+          (click)="uebernehmenPositionKlick()"
+        >
+          Als Position übernehmen
+        </button>
+      }
+    </div>
+
+    @if (rueckmeldung()) {
+      <p class="rechner__rueckmeldung" role="status">{{ rueckmeldung() }}</p>
+    }
+  </div>
+</div>
+
+<p class="rechner__hinweis">
+  Die Menge geht mit der Rechenaufstellung in die Position — so bleibt nachvollziehbar, wie sie
+  zustande kam. Der <strong>Einzelpreis wird nicht gesetzt</strong>: den trägt der Anwender im
+  Positionsdialog nach oder er kommt aus dem Artikelstamm. Summen rechnet ausschließlich der Server.
+</p>

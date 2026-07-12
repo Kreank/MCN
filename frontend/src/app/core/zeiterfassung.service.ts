@@ -4,6 +4,8 @@ import { Observable } from 'rxjs';
 import {
   Arbeitstag,
   ArbeitstagDetail,
+  Ausgleich,
+  AusgleichCreate,
   EintragCreate,
   EintragUpdate,
   Feiertag,
@@ -173,6 +175,31 @@ export class ZeiterfassungService {
     return this.http.get(`${this.base}/stundenliste.csv`, {
       params,
       responseType: 'blob',
+    });
+  }
+
+  // --- Stundenausgleich ---------------------------------------------------
+
+  /**
+   * Die Ausgleichsbuchungen. Ohne `employeeId` alle (Verwaltung); der
+   * Beschäftigte selbst sieht immer nur sein eigenes Konto (der Server filtert).
+   */
+  ausgleiche(employeeId?: string, von?: string, bis?: string): Observable<Ausgleich[]> {
+    let params = new HttpParams();
+    if (employeeId) params = params.set('employee_id', employeeId);
+    if (von) params = params.set('von', von);
+    if (bis) params = params.set('bis', bis);
+    return this.http.get<Ausgleich[]>(`${this.base}/ausgleich`, { params });
+  }
+
+  ausgleichBuchen(payload: AusgleichCreate): Observable<Ausgleich> {
+    return this.http.post<Ausgleich>(`${this.base}/ausgleich`, payload);
+  }
+
+  /** Storno statt Löschen (GoBD): es entsteht eine Gegenbuchung. */
+  ausgleichStornieren(id: string, reason: string): Observable<Ausgleich> {
+    return this.http.post<Ausgleich>(`${this.base}/ausgleich/${id}/stornieren`, {
+      reason,
     });
   }
 

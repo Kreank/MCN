@@ -24,10 +24,12 @@ Wochentag ein Soll ausweist. Ebenso ist der unterjährige Vertragsbeginn nicht
 automatisch in den Urlaubsanspruch eingerechnet (Hero verhält sich genauso; die
 manuelle Anpassung am Urlaubskonto ist dafür vorgesehen).
 """
+import calendar
 import uuid
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 
+from django.db import transaction
 from django.db.models import Q
 
 from db_core.db_context import business_transaction
@@ -35,6 +37,7 @@ from db_core.gate_errors import as_business_error
 from db_core.models import (
     Absence,
     AppUser,
+    CompanyProfile,
     Employee,
     EmploymentContract,
     Person,
@@ -525,13 +528,83 @@ def set_vacation_budget(
     return budget
 
 
-def vacation_account(employee_id, year):
-    """Urlaubskonto eines Jahres inklusive abgeleitetem Verbrauch und Rest.
+def carryover_expiry_date(year, profile=None):
+    """Verfallstag des Übertrags IM Jahr `year` — oder None („kein Verfall").
+
+    Die Regel ist eine **Firmeneinstellung** (`company.company_profile`,
+    Migration 0072) und steht per Default auf NULL: **Ohne ausdrückliche
+    Einstellung verfällt nichts.** Das ist bewusst so herum:
+
+    * § 7 Abs. 3 BUrlG *erlaubt* die Übertragung mit Verfall zum 31.03., er
+      ordnet sie nicht an — sie setzt betriebliche oder personenbezogene Gründe
+      voraus und ist Sache der Vereinbarung.
+    * Nach BAG/EuGH verfällt der Urlaub ohnehin nur, wenn der Arbeitgeber den
+      Beschäftigten rechtzeitig aufgefordert und belehrt hat.
+
+    Eine Software, die von sich aus Ansprüche wegrechnet, träfe damit eine
+    rechtliche Entscheidung, die ihr nicht zusteht. Also: erst einstellen, dann
+    rechnen.
+
+    Ein 29./30./31. in einem zu kurzen Monat wird auf den Monatsletzten gekappt
+    (der Betrieb meint „Monatsende", nicht „gar nicht").
+    """
+    profile = profile if profile is not None else CompanyProfile.objects.first()
+    if profile is None:
+        return None
+    month = profile.vacation_carryover_expiry_month
+    day = profile.vacation_carryover_expiry_day
+    if not month or not day:
+        return None
+    letzter = calendar.monthrange(year, month)[1]
+    return date(year, month, min(day, letzter))
+
+
+def _verbrauch_bis(absence, stichtag):
+    """Die Urlaubstage einer Abwesenheit, die **bis zum Stichtag** liegen.
+
+    Review-Befund A3: Vorher wurde `days_count` VOLLSTÄNDIG dem Zeitraum vor dem
+    Verfallstag zugerechnet, sobald der Urlaub davor begann. Ein Urlaub vom
+    30.03. bis 10.04. hätte damit 12 Tage „bis zum 31.03." verbraucht — es
+    verfiele zu wenig. Der Fehler wirkte zugunsten des Beschäftigten, war aber
+    trotzdem eine falsche Zahl.
+
+    Liegt die Abwesenheit ganz vor dem Stichtag, bleibt es bei `days_count` (kein
+    Neurechnen — der gespeicherte Wert ist die Wahrheit). Ragt sie darüber
+    hinaus, wird der Teil bis zum Stichtag mit derselben Funktion gerechnet, die
+    ihn ursprünglich ermittelt hat (`compute_absence_days`, Sollstunden-Raster) —
+    der halbe **End**tag zählt dabei nicht mehr, denn er liegt jenseits des
+    Stichtags.
+    """
+    if absence.end_date <= stichtag:
+        return absence.days_count
+    return compute_absence_days(
+        absence.employee_id,
+        absence.start_date,
+        stichtag,
+        absence.half_day_start,
+        False,
+    )
+
+
+def vacation_account(employee_id, year, today=None, profile=None):
+    """Urlaubskonto eines Jahres inklusive abgeleitetem Verbrauch, Verfall, Rest.
 
     Verbrauch = Summe der days_count aller GENEHMIGTEN URLAUB-Abwesenheiten,
     die im Jahr *beginnen*. (Jahresübergreifende Anträge werden dem Startjahr
     zugerechnet — eine tagegenaue Aufteilung wäre erst mit Feiertagskalender
     sinnvoll.)
+
+    **Verfall (nur wenn eingestellt).** Ist im Firmenprofil ein Verfallstag
+    gepflegt (z. B. 31.03.), verfällt der **Übertrag** aus dem Vorjahr, soweit er
+    bis dahin nicht verbraucht ist — und erst, wenn der Tag vorbei ist. Der
+    Übertrag wird dabei **zuerst** verbraucht (er verfällt als Erstes; den
+    laufenden Anspruch trifft der Verfall nicht). Rechnung:
+
+        verfallen = max(0, Übertrag − Verbrauch bis zum Verfallstag)   [nur nach dem Tag]
+        Rest      = Anspruch + Übertrag + Anpassung − Verbrauch − verfallen
+
+    Ohne Einstellung ist `expired_days` immer 0 und die Rechnung exakt die
+    bisherige. **Der Verbrauch bleibt abgeleitet, nichts wird gespeichert.**
     """
     budget = VacationBudget.objects.filter(employee_id=employee_id, year=year).first()
     entitlement = budget.entitlement_days if budget else Decimal("0")
@@ -539,6 +612,8 @@ def vacation_account(employee_id, year):
     adjustment = budget.adjustment_days if budget else Decimal("0")
 
     used = Decimal("0")
+    used_bis_verfall = Decimal("0")
+    verfallstag = carryover_expiry_date(year, profile=profile)
     absences = Absence.objects.filter(
         employee_id=employee_id,
         absence_type="URLAUB",
@@ -547,6 +622,13 @@ def vacation_account(employee_id, year):
     )
     for absence in absences:
         used += absence.days_count
+        if verfallstag is not None and absence.start_date <= verfallstag:
+            used_bis_verfall += _verbrauch_bis(absence, verfallstag)
+
+    heute = today or date.today()
+    expired = Decimal("0")
+    if verfallstag is not None and heute > verfallstag and carryover > 0:
+        expired = max(Decimal("0"), carryover - used_bis_verfall)
 
     total = entitlement + carryover + adjustment
     return {
@@ -557,5 +639,187 @@ def vacation_account(employee_id, year):
         "adjustment_reason": budget.adjustment_reason if budget else None,
         "total_days": total,
         "used_days": used,
-        "remaining_days": total - used,
+        "expiry_date": verfallstag,
+        "expired_days": expired,
+        "remaining_days": total - used - expired,
     }
+
+
+# --- Resturlaubs-Übertrag ins Folgejahr -----------------------------------
+
+
+def _uebertrag_kandidaten():
+    """Wer bekommt einen Übertrag? Alle, die noch da sind.
+
+    AUSGETRETENE bleiben außen vor: ihr Resturlaub wird nach § 7 Abs. 4 BUrlG
+    **abgegolten** (ausgezahlt), nicht übertragen — ein Übertrag ins Folgejahr
+    wäre für sie eine Falschaussage. INAKTIVE (z. B. Elternzeit) bleiben drin:
+    ihr Anspruch besteht fort.
+    """
+    return (
+        Employee.objects.exclude(status="AUSGETRETEN")
+        .select_related("party")
+        .order_by("party__last_name", "party__first_name")
+    )
+
+
+def _naechster_anspruch(employee_id, ziel_jahr):
+    """Urlaubsanspruch für `ziel_jahr` aus dem am 1.1. gültigen Vertrag (oder 0)."""
+    stichtag = date(ziel_jahr, 1, 1)
+    contracts = list(
+        EmploymentContract.objects.filter(
+            employee_id=employee_id, valid_from__lte=date(ziel_jahr, 12, 31)
+        ).filter(Q(valid_to__isnull=True) | Q(valid_to__gte=stichtag))
+    )
+    # Der am 1.1. gültige Vertrag; sonst der erste, der im Zieljahr beginnt.
+    contract = _contract_on(contracts, stichtag)
+    if contract is None and contracts:
+        contract = sorted(contracts, key=lambda c: c.valid_from)[0]
+    return contract.vacation_days_per_year if contract else Decimal("0")
+
+
+def carryover_vorschau(year, employee_ids=None):
+    """Vorschau „Resturlaub aus `year` → Übertrag in `year+1`", je Mitarbeiter.
+
+    **Der Übertrag SETZT den Wert, er addiert nicht** (`carryover_days` des
+    Folgejahres := Rest aus `year`). Genau das macht die Übernahme **idempotent**:
+    Zweimal drücken schreibt zweimal denselben Wert. Ein Addieren wäre die
+    typische Doppelbuchungsfalle — der Übertrag verdoppelte sich beim
+    versehentlichen zweiten Klick, und niemand könnte hinterher sagen, welcher
+    Wert der richtige war.
+
+    Ein negativer Rest (Minusurlaub durch Anpassung) wird auf 0 gekappt: die DB
+    verbietet einen negativen Übertrag, und „Minusurlaub ins nächste Jahr
+    schleppen" ist keine Praxis, die wir stillschweigend einführen.
+    """
+    if not 2000 <= year <= 2099:
+        raise ValueError("Jahr muss zwischen 2000 und 2099 liegen")
+    ziel = year + 1
+    profile = CompanyProfile.objects.first()
+    qs = _uebertrag_kandidaten()
+    if employee_ids:
+        qs = qs.filter(id__in=list(employee_ids))
+
+    zeilen = []
+    for emp in qs:
+        konto = vacation_account(emp.id, year, profile=profile)
+        rest = _tage(konto["remaining_days"])
+        neu = max(Decimal("0.00"), rest)
+        ziel_budget = VacationBudget.objects.filter(
+            employee_id=emp.id, year=ziel
+        ).first()
+        aktuell = _tage(
+            ziel_budget.carryover_days if ziel_budget else Decimal("0")
+        )
+        anspruch = _tage(
+            ziel_budget.entitlement_days
+            if ziel_budget
+            else _naechster_anspruch(emp.id, ziel)
+        )
+        zeilen.append(
+            {
+                "employee_id": emp.id,
+                "employee_number": emp.employee_number,
+                "name": f"{emp.party.first_name} {emp.party.last_name}".strip(),
+                "year": year,
+                "target_year": ziel,
+                "entitlement_days": _tage(konto["entitlement_days"]),
+                "used_days": _tage(konto["used_days"]),
+                "expired_days": _tage(konto["expired_days"]),
+                "remaining_days": rest,
+                "carryover_current": aktuell,
+                "carryover_new": neu,
+                "target_entitlement_days": anspruch,
+                "changes": neu != aktuell,
+            }
+        )
+    return zeilen
+
+
+def _tage(wert):
+    """Urlaubstage auf die DB-Skala quantisieren (numeric(5,2)) — damit die API
+    „0.00" liefert und nicht mal „0", mal „0.00"."""
+    return Decimal(wert).quantize(Decimal("0.01"))
+
+
+def carryover_uebertragen(actor_app_user_id, *, year, employee_ids=None):
+    """Führt den Übertrag aus (idempotent: er SETZT `carryover_days` im Folgejahr).
+
+    Der Anspruch des Folgejahres bleibt unangetastet, wenn dort schon ein
+    Urlaubskonto steht; existiert keins, wird es aus dem gültigen Vertrag
+    angelegt (`vacation_days_per_year`). Eine bestehende Anpassung samt Grund
+    wird unverändert mitgeschrieben — sie ist eine eigene, begründete
+    Entscheidung und darf vom Übertrag nicht verschluckt werden.
+    """
+    zeilen = carryover_vorschau(year, employee_ids)
+    ziel = year + 1
+    ergebnisse = []
+    # Ein Lauf, eine Transaktion (Review-Befund A4): Scheitert der Übertrag beim
+    # siebten von zwanzig Mitarbeitenden, darf nicht die halbe Belegschaft
+    # übertragen sein und die andere nicht. `set_vacation_budget` öffnet intern
+    # seine eigene `business_transaction` — die wird hier zum Savepoint und rollt
+    # mit zurück.
+    with transaction.atomic():
+        for zeile in zeilen:
+            budget = VacationBudget.objects.filter(
+                employee_id=zeile["employee_id"], year=ziel
+            ).first()
+            set_vacation_budget(
+                actor_app_user_id,
+                employee_id=zeile["employee_id"],
+                year=ziel,
+                entitlement_days=(
+                    budget.entitlement_days
+                    if budget
+                    else zeile["target_entitlement_days"]
+                ),
+                carryover_days=zeile["carryover_new"],
+                adjustment_days=budget.adjustment_days if budget else Decimal("0"),
+                adjustment_reason=budget.adjustment_reason if budget else None,
+            )
+            # Nach dem Schreiben IST der neue Wert der aktuelle — und es steht
+            # nichts mehr aus (`changes=False`). Sonst zeigte die Tabelle
+            # „30 → 30" und der Knopf böte einen Übertrag an, der schon
+            # geschrieben ist.
+            ergebnisse.append(
+                {**zeile, "carryover_current": zeile["carryover_new"], "changes": False}
+            )
+    return ergebnisse
+
+
+# --- Abwesenheiten: Übersicht und Export ----------------------------------
+
+
+def abwesenheits_zeilen(von, bis, employee_id=None, status=None):
+    """Zeilen für den Abwesenheits-CSV-Export — **mit** Abwesenheitsart.
+
+    DSGVO Art. 9: Die Art unterscheidet Urlaub von Krankheit und ist damit ein
+    Gesundheitsdatum. Dieser Export gehört deshalb hinter das `hr`-Tor (siehe
+    `api/mitarbeiter.py`) und ausdrücklich NICHT in die Planungssicht — die
+    bekommt „abwesend, von–bis" ohne Art (`services/planung.py`).
+    """
+    qs = (
+        Absence.objects.select_related("employee", "employee__party", "decided_by")
+        .filter(start_date__lte=bis, end_date__gte=von)
+        .order_by("start_date", "employee__party__last_name")
+    )
+    if employee_id is not None:
+        qs = qs.filter(employee_id=employee_id)
+    if status:
+        qs = qs.filter(status=status)
+    return [
+        {
+            "employee_number": a.employee.employee_number,
+            "name": f"{a.employee.party.first_name} {a.employee.party.last_name}".strip(),
+            "absence_type": a.absence_type,
+            "start_date": a.start_date,
+            "end_date": a.end_date,
+            "half_day_start": a.half_day_start,
+            "half_day_end": a.half_day_end,
+            "days_count": a.days_count,
+            "status": a.status,
+            "reason": a.reason or "",
+            "decided_by": a.decided_by.display_name if a.decided_by_id else "",
+        }
+        for a in qs
+    ]

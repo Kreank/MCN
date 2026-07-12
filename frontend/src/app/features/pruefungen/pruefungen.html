@@ -1,0 +1,276 @@
+<section class="pruefungen" aria-labelledby="pruefungen-titel">
+  <header class="page-head">
+    <div class="page-head__text">
+      <p class="page-head__kicker">
+        <span class="page-head__scale" aria-hidden="true"></span>
+        Wartung · Prüffristen
+      </p>
+      <h1 id="pruefungen-titel" class="page-head__titel">Prüffristen</h1>
+      <p class="page-head__hint">
+        Wiederkehrende Prüfungen an einer Liegenschaft oder Anlage — ganz ohne
+        Wartungsvertrag. Sie erzeugen im Vorlauf eine Fälligkeit unter
+        <a routerLink="/wartung">Was steht an?</a>
+      </p>
+    </div>
+    @if (darfAnlegen()) {
+      <div class="page-head__aktionen">
+        <button type="button" class="btn" (click)="artenOeffnen()">Prüfart anlegen</button>
+        <button type="button" class="btn btn--primary" (click)="neuOeffnen()">
+          <span aria-hidden="true">＋</span> Neue Prüffrist
+        </button>
+      </div>
+    }
+  </header>
+
+  <app-wartung-nav />
+
+  @if (state().kind === 'forbidden') {
+    <app-kein-zugriff />
+  } @else {
+    <p class="rechtshinweis">
+      <span class="rechtshinweis__icon" aria-hidden="true">§</span>
+      <span>
+        <strong>Kein Rechtsrat.</strong> Welche Prüfung an welcher Anlage fällig
+        ist, in welchem Turnus und durch wen, ergibt sich aus Recht, Norm und
+        Einzelfall — nicht aus diesem Programm. Die mitgelieferten Prüfarten sind
+        <em>Vorschläge</em>. Prüfen und pflegen Sie sie selbst.
+      </span>
+    </p>
+
+    @if (meldung(); as m) {
+      <p class="meldung" [class.meldung--fehler]="m.art === 'fehler'" role="status">
+        <span aria-hidden="true">{{ m.art === 'fehler' ? '⚠' : '✓' }}</span>
+        {{ m.text }}
+        <button type="button" class="meldung__zu" (click)="meldung.set(null)" aria-label="Meldung schließen">
+          ✕
+        </button>
+      </p>
+    }
+
+    @switch (state().kind) {
+      @case ('loading') {
+        <p class="lade-hinweis" role="status">Prüffristen werden geladen …</p>
+      }
+      @case ('error') {
+        <p class="note note--fehler" role="alert">
+          Die Prüffristen konnten nicht geladen werden.
+          <button type="button" class="btn" (click)="laden()">Erneut versuchen</button>
+        </p>
+      }
+      @case ('ready') {
+        @if ($any(state()).data; as data) {
+          @if (data.items.length === 0) {
+            <p class="note">
+              Noch keine Prüffrist angelegt. Legen Sie eine an — z. B. die
+              Trinkwasserprüfung an einer Wohnanlage.
+            </p>
+          } @else {
+            <table class="tabelle">
+              <caption class="visually-hidden">
+                Prüffristen mit Prüfart, Objekt, Intervall und nächster Fälligkeit
+              </caption>
+              <thead>
+                <tr>
+                  <th scope="col">Prüfung</th>
+                  <th scope="col">Liegenschaft</th>
+                  <th scope="col">Intervall</th>
+                  <th scope="col">Vorlauf</th>
+                  <th scope="col">Nächste Fälligkeit</th>
+                  <th scope="col">Status</th>
+                  <th scope="col"><span class="visually-hidden">Aktionen</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (p of data.items; track p.id) {
+                  <tr>
+                    <td>
+                      <strong>{{ p.name }}</strong>
+                      <span class="dezent">{{ p.inspection_type_name }}</span>
+                      @if (p.responsibility) {
+                        <span class="dezent">Zuständig: {{ p.responsibility }}</span>
+                      }
+                    </td>
+                    <td>
+                      <a [routerLink]="['/liegenschaften', p.property.id]">
+                        {{ p.property.name }}
+                      </a>
+                      <span class="dezent">{{ p.property.city }}</span>
+                    </td>
+                    <td>{{ intervallLabel(p.interval_kind, p.interval_days) }}</td>
+                    <td>{{ p.lead_time_days }} Tage</td>
+                    <td>
+                      {{ p.next_due_date ?? '—' }}
+                      @if (p.is_due) {
+                        <span class="stamp stamp--warn">Fällig</span>
+                      }
+                    </td>
+                    <td>
+                      <span class="stamp" [class.stamp--positive]="p.status === 'AKTIV'">
+                        {{ p.status }}
+                      </span>
+                    </td>
+                    <td>
+                      @if (darfAendern() && p.status === 'AKTIV') {
+                        <button type="button" class="btn btn--klein" (click)="deaktivierenOeffnen(p)">
+                          Deaktivieren
+                        </button>
+                      }
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          }
+
+          <!-- Prüfarten-Übersicht: transparent machen, was mitgeliefert wurde. -->
+          <h2 class="abschnitt">Prüfarten (Stammdaten)</h2>
+          <p class="dezent abschnitt__hint">
+            Vorschläge sind als solche gekennzeichnet. Sie lassen sich ändern und
+            deaktivieren — löschen kann sie niemand (Audit).
+          </p>
+          <ul class="arten">
+            @for (a of arten(); track a.id) {
+              <li class="arten__item">
+                <div class="arten__kopf">
+                  <strong>{{ a.name }}</strong>
+                  @if (a.is_suggestion) {
+                    <span class="stamp stamp--vorschlag">Vorschlag</span>
+                  }
+                </div>
+                <p class="dezent">
+                  {{ intervallLabel(a.interval_kind, a.interval_days) }} · Vorlauf
+                  {{ a.lead_time_days }} Tage
+                  @if (a.responsibility) {
+                    · {{ a.responsibility }}
+                  }
+                </p>
+                @if (a.notes) {
+                  <p class="arten__notiz">{{ a.notes }}</p>
+                }
+              </li>
+            }
+          </ul>
+        }
+      }
+    }
+  }
+</section>
+
+<!-- ========================= Prüffrist anlegen ========================= -->
+<app-dialog [offen]="neuOffen()" titel="Neue Prüffrist" (schliessen)="neuOffen.set(false)">
+  <form [formGroup]="form" (ngSubmit)="anlegen()" class="dialog-form">
+    <app-feld
+      [control]="form.controls.inspection_type_id"
+      label="Prüfart"
+      typ="select"
+      platzhalter="Bitte wählen"
+      [optionen]="artOptionen()"
+      [pflicht]="true"
+      hinweis="Intervall, Vorlauf und Zuständigkeit werden aus der Prüfart übernommen — und dabei kopiert: eine spätere Änderung der Prüfart verschiebt diese Prüfung nicht rückwirkend."
+    />
+
+    @if (gewaehlteArt(); as a) {
+      <p class="note note--klein">
+        Übernommen: {{ intervallLabel(a.interval_kind, a.interval_days) }}, Vorlauf
+        {{ a.lead_time_days }} Tage@if (a.responsibility) {, Zuständigkeit „{{ a.responsibility }}“}.
+        @if (a.is_suggestion) {
+          <strong> Achtung: ausgelieferter Vorschlag — bitte selbst prüfen.</strong>
+        }
+      </p>
+    }
+
+    <app-referenz-wahl
+      [control]="form.controls.property_id"
+      label="Liegenschaft"
+      [pflicht]="true"
+      platzhalter="Name oder Objektnummer suchen"
+      [suche]="liegenschaftSuche"
+    />
+
+    <app-feld
+      [control]="form.controls.start_date"
+      label="Erste Fälligkeit"
+      typ="datum"
+      [pflicht]="true"
+    />
+
+    <app-feld
+      [control]="form.controls.name"
+      label="Bezeichnung"
+      hinweis="Optional. Ohne Angabe wird der Name der Prüfart verwendet."
+    />
+
+    <app-feld [control]="form.controls.notes" label="Notizen" typ="textarea" [zeilen]="2" />
+
+    @if (formFehler(); as f) {
+      <p class="note note--fehler" role="alert">{{ f }}</p>
+    }
+
+    <div class="dialog-form__aktionen">
+      <button type="button" class="btn" (click)="neuOffen.set(false)">Abbrechen</button>
+      <button type="submit" class="btn btn--primary" [disabled]="laeuft()">
+        {{ laeuft() ? 'Wird angelegt …' : 'Anlegen' }}
+      </button>
+    </div>
+  </form>
+</app-dialog>
+
+<!-- ========================= Prüfart anlegen ========================= -->
+<app-dialog [offen]="artenOffen()" titel="Neue Prüfart" (schliessen)="artenOffen.set(false)">
+  <form [formGroup]="artForm" (ngSubmit)="artAnlegen()" class="dialog-form">
+    <p class="dialog-form__intro dezent">
+      Eine Prüfart ist ein Baustein Ihres Betriebs — Name, Intervall, Vorlauf und
+      Zuständigkeit. Das Programm kennt keine gesetzlichen Fristen und gibt keine
+      Rechtsauskunft.
+    </p>
+
+    <app-feld [control]="artForm.controls.name" label="Name" [pflicht]="true" />
+    <app-feld
+      [control]="artForm.controls.interval_kind"
+      label="Intervall"
+      typ="select"
+      [optionen]="intervalle"
+      [pflicht]="true"
+    />
+    <app-feld
+      [control]="artForm.controls.interval_days"
+      label="Tage (nur bei „Alle N Tage“)"
+      typ="zahl"
+      inputmode="numeric"
+    />
+    <app-feld
+      [control]="artForm.controls.lead_time_days"
+      label="Vorlauf in Tagen"
+      typ="zahl"
+      inputmode="numeric"
+      hinweis="So viele Tage vor der Fälligkeit erscheint sie unter „Was steht an?“."
+    />
+    <app-feld
+      [control]="artForm.controls.responsibility"
+      label="Zuständigkeit"
+      hinweis="Freitext, z. B. „Fachbetrieb“, „Bezirksschornsteinfeger“, „Zugelassene Überwachungsstelle“."
+    />
+    <app-feld [control]="artForm.controls.notes" label="Notizen" typ="textarea" [zeilen]="2" />
+
+    @if (formFehler(); as f) {
+      <p class="note note--fehler" role="alert">{{ f }}</p>
+    }
+
+    <div class="dialog-form__aktionen">
+      <button type="button" class="btn" (click)="artenOffen.set(false)">Abbrechen</button>
+      <button type="submit" class="btn btn--primary" [disabled]="laeuft()">
+        {{ laeuft() ? 'Wird angelegt …' : 'Anlegen' }}
+      </button>
+    </div>
+  </form>
+</app-dialog>
+
+<app-bestaetigung
+  [offen]="deaktivierenFuer() !== null"
+  titel="Prüffrist deaktivieren?"
+  text="Die Prüffrist erzeugt danach keine neuen Fälligkeiten mehr. Sie wird nicht gelöscht und lässt sich wieder aktivieren."
+  bestaetigenLabel="Deaktivieren"
+  [laedt]="laeuft()"
+  (bestaetigen)="deaktivieren()"
+  (abbrechen)="deaktivierenFuer.set(null)"
+/>

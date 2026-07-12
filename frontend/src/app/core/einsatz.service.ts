@@ -2,6 +2,7 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import {
+  Abwesend,
   AssignableUser,
   JobAssignmentInput,
   JobAssignmentResult,
@@ -75,6 +76,18 @@ export class EinsatzService {
     const bq = query.backlog_q?.trim();
     if (bq) params = params.set('backlog_q', bq);
     return this.http.get<Plantafel>('/api/planung/plantafel', { params });
+  }
+
+  /**
+   * „Wer ist gerade nicht da?" — genehmigte Abwesenheiten im Zeitraum
+   * (Default: heute). **Ohne Abwesenheitsart** (DSGVO Art. 9, siehe `Abwesend`).
+   * Recht: `workflow/LESEN` — die Disposition darf das, ohne `hr` zu haben.
+   */
+  abwesend(von?: string, bis?: string): Observable<Abwesend[]> {
+    let params = new HttpParams();
+    if (von) params = params.set('von', von);
+    if (bis) params = params.set('bis', bis);
+    return this.http.get<Abwesend[]>('/api/planung/abwesend', { params });
   }
 
   /**

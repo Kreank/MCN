@@ -518,6 +518,40 @@ def _feiertage(von, bis):
     return dict(rows)
 
 
+def abwesend_im_zeitraum(von, bis):
+    """„Wer ist gerade nicht da?" — genehmigte Abwesenheiten im Zeitraum.
+
+    **OHNE Abwesenheitsart.** Das ist keine Nachlässigkeit, sondern die Grenze
+    dieses Moduls (siehe Abschnitts-Docstring oben): Die Art unterscheidet Urlaub
+    von Krankheit und ist damit ein Gesundheitsdatum — besondere Kategorie nach
+    DSGVO Art. 9. Diese Ansicht hängt an `workflow/LESEN`, das die Disposition
+    hat; sie darf deshalb nur beantworten, WER wann fehlt, nie WARUM. Wer die Art
+    braucht, holt sie über das `hr`-Tor (`api/mitarbeiter.py`).
+
+    Nur GENEHMIGTE Abwesenheiten: ein eingereichter Antrag ist keine Tatsache,
+    und ihn hier zu zeigen, gäbe die Krankmeldung preis, bevor sie beschieden ist.
+    """
+    rows = (
+        Absence.objects.filter(
+            status="GENEHMIGT", start_date__lte=bis, end_date__gte=von
+        )
+        .select_related("employee", "employee__app_user")
+        .order_by("start_date", "employee__app_user__display_name")
+    )
+    return [
+        {
+            "id": a.id,
+            "app_user_id": a.employee.app_user_id,
+            "name": a.employee.app_user.display_name,
+            "start_date": a.start_date,
+            "end_date": a.end_date,
+            "half_day_start": a.half_day_start,
+            "half_day_end": a.half_day_end,
+        }
+        for a in rows
+    ]
+
+
 def assign_resource(actor_app_user_id, *, service_job_id, resource_id):
     """Ordnet einem Einsatz eine Ressource zu (resource.job_resource).
 

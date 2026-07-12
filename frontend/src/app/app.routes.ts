@@ -190,6 +190,17 @@ export const routes: Routes = [
           import('./features/planung-kalender/planung-kalender').then((m) => m.PlanungKalender),
       },
       {
+        // „Wer ist gerade nicht da" — ohne Abwesenheitsart (DSGVO Art. 9).
+        // Bewusst am workflow-Recht: die Disposition darf das ohne `hr`.
+        path: 'planung/abwesend',
+        title: 'Wer fehlt? — MCN Leitstand',
+        canActivate: [darfGuard('workflow', 'LESEN')],
+        loadComponent: () =>
+          import('./features/planung-abwesend/planung-abwesend').then(
+            (m) => m.PlanungAbwesend,
+          ),
+      },
+      {
         path: 'planung/einstellungen',
         title: 'Kategorien & Ressourcen — MCN Leitstand',
         canActivate: [darfGuard('workflow', 'LESEN')],
@@ -275,17 +286,49 @@ export const routes: Routes = [
             (m) => m.MitarbeiterDetail,
           ),
       },
+      // Wartung: Einstieg ist die Fälligkeiten-Ansicht („Was steht an?"),
+      // nicht mehr die Vertragsliste — die Frage des Alltags ist „was ist zu
+      // tun?", nicht „welche Verträge gibt es?". Rechtemodul ist seit Migration
+      // 0071 `maintenance` (vorher lief die Wartung auf `workflow` mit).
+      // WICHTIG: Die literalen Unterrouten stehen VOR 'wartung/:id', sonst
+      // schluckte der Parameter-Match sie.
       {
         path: 'wartung',
         pathMatch: 'full',
-        title: 'Wartung — MCN Leitstand',
-        canActivate: [darfGuard('workflow', 'LESEN')],
+        title: 'Fälligkeiten — MCN Leitstand',
+        canActivate: [darfGuard('maintenance', 'LESEN')],
+        loadComponent: () =>
+          import('./features/faelligkeiten/faelligkeiten').then((m) => m.Faelligkeiten),
+      },
+      {
+        path: 'wartung/vertraege',
+        pathMatch: 'full',
+        title: 'Wartungsverträge — MCN Leitstand',
+        canActivate: [darfGuard('maintenance', 'LESEN')],
         loadComponent: () => import('./features/wartung/wartung').then((m) => m.Wartung),
+      },
+      {
+        path: 'wartung/pruefungen',
+        pathMatch: 'full',
+        title: 'Prüffristen — MCN Leitstand',
+        canActivate: [darfGuard('maintenance', 'LESEN')],
+        loadComponent: () =>
+          import('./features/pruefungen/pruefungen').then((m) => m.Pruefungen),
+      },
+      {
+        path: 'wartung/gewaehrleistung',
+        pathMatch: 'full',
+        title: 'Gewährleistung — MCN Leitstand',
+        canActivate: [darfGuard('maintenance', 'LESEN')],
+        loadComponent: () =>
+          import('./features/gewaehrleistung/gewaehrleistung').then(
+            (m) => m.Gewaehrleistung,
+          ),
       },
       {
         path: 'wartung/:id',
         title: 'Wartungsvertrag — MCN Leitstand',
-        canActivate: [darfGuard('workflow', 'LESEN')],
+        canActivate: [darfGuard('maintenance', 'LESEN')],
         loadComponent: () =>
           import('./features/wartung-detail/wartung-detail').then((m) => m.WartungDetail),
       },
@@ -417,6 +460,16 @@ export const routes: Routes = [
         loadComponent: () =>
           import('./features/haendler-anbindungen/haendler-anbindungen').then(
             (m) => m.HaendlerAnbindungen,
+          ),
+      },
+      {
+        // Vor 'artikel/:id', sonst fängt der :id-Parameter 'aufschlagsmatrix' ab.
+        path: 'artikel/aufschlagsmatrix',
+        title: 'EK→VK-Aufschlagsmatrix — MCN Leitstand',
+        canActivate: [darfGuard('pricing', 'LESEN')],
+        loadComponent: () =>
+          import('./features/aufschlagsmatrix/aufschlagsmatrix').then(
+            (m) => m.Aufschlagsmatrix,
           ),
       },
       {

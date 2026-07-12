@@ -149,11 +149,89 @@ export interface Stundenkonto {
   ist: string;
   pause: string;
   abwesend: string;
+  /** Σ der wirksamen Ausgleichsbuchungen im Zeitraum (vorzeichenbehaftet). */
+  ausgleich: string;
   saldo: string;
   tage_gesamt: number;
   tage_offen: number;
   tage_eingereicht: number;
   tage_bestaetigt: number;
+}
+
+// ---------------------------------------------------------------------------
+// Stundenausgleich (hr.time_adjustment)
+// ---------------------------------------------------------------------------
+
+/**
+ * Der Saldo bleibt **abgeleitet**: `Saldo = Ist − Soll + Σ Ausgleich`. Eine
+ * Ausgleichsbuchung überschreibt keinen Saldo (es gibt keinen gespeicherten),
+ * sie ist die dritte Größe der Formel.
+ *
+ * `minutes` ist **vorzeichenbehaftet und ganzzahlig**: positiv = Gutschrift aufs
+ * Konto, negativ = Belastung. Minuten statt Stunden, weil 20 Minuten in einer
+ * Dezimalstunde nicht verlustfrei darstellbar sind.
+ */
+export type Ausgleichsart = 'EINBEHALT' | 'AUSZAHLUNG' | 'FREIZEITAUSGLEICH' | 'KORREKTUR';
+
+export interface Ausgleich {
+  id: string;
+  employee_id: string;
+  mitarbeiter: string;
+  adjustment_type: Ausgleichsart;
+  effective_on: string;
+  minutes: number;
+  stunden: string;
+  reason: string;
+  status: 'GEBUCHT' | 'STORNIERT';
+  reversal_of_id: string | null;
+  ist_storno: boolean;
+  gebucht_von: string | null;
+  created_at: string;
+}
+
+export interface AusgleichCreate {
+  employee_id: string;
+  adjustment_type: Ausgleichsart;
+  effective_on: string;
+  minutes: number;
+  reason: string;
+}
+
+export const AUSGLEICHSARTEN: { wert: Ausgleichsart; label: string; hinweis: string }[] = [
+  {
+    wert: 'EINBEHALT',
+    label: 'Einbehalten',
+    hinweis: 'Minusstunden werden einbehalten — das Konto steigt (positives Vorzeichen).',
+  },
+  {
+    wert: 'AUSZAHLUNG',
+    label: 'Auszahlung',
+    hinweis: 'Mehrstunden werden ausgezahlt — das Konto sinkt (negatives Vorzeichen).',
+  },
+  {
+    wert: 'FREIZEITAUSGLEICH',
+    label: 'Freizeitausgleich',
+    hinweis: 'Mehrstunden werden in Freizeit abgegolten — das Konto sinkt.',
+  },
+  {
+    wert: 'KORREKTUR',
+    label: 'Korrektur',
+    hinweis: 'Begründete Berichtigung des Kontos (beide Vorzeichen möglich).',
+  },
+];
+
+export const AUSGLEICHSART_LABEL: Record<Ausgleichsart, string> = {
+  EINBEHALT: 'Einbehalten',
+  AUSZAHLUNG: 'Auszahlung',
+  FREIZEITAUSGLEICH: 'Freizeitausgleich',
+  KORREKTUR: 'Korrektur',
+};
+
+/** Minuten → „+4:00 h" / „−1:30 h" (Vorzeichen sichtbar, nie nur über Farbe). */
+export function ausgleichText(minuten: number): string {
+  const vz = minuten < 0 ? '−' : '+';
+  const abs = Math.abs(minuten);
+  return `${vz}${Math.floor(abs / 60)}:${String(abs % 60).padStart(2, '0')} h`;
 }
 
 export type Zeitraum = 'heute' | 'woche' | 'monat' | 'jahr';

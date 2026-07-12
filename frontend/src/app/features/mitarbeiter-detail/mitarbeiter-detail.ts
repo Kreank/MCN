@@ -7,6 +7,7 @@ import { Mappe, MappeTab } from '../../shared/mappe/mappe';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { Dialog } from '../../shared/dialog/dialog';
 import { Bestaetigung } from '../../shared/bestaetigung/bestaetigung';
+import { Attest } from '../../shared/attest/attest';
 import { Feld } from '../../shared/formular/feld';
 import { apiFehlerZuweisen } from '../../shared/formular/api-fehler';
 import {
@@ -54,6 +55,7 @@ type Meldung = { art: 'erfolg' | 'fehler'; text: string };
     Dialog,
     Bestaetigung,
     Feld,
+    Attest,
     ReactiveFormsModule,
   ],
   templateUrl: './mitarbeiter-detail.html',
@@ -431,6 +433,17 @@ export class MitarbeiterDetail {
   }
 
   // ---- Abwesenheits-Workflow ----------------------------------------------
+
+  /**
+   * Nimmt diese Abwesenheit noch eine Arbeitsunfähigkeitsbescheinigung an?
+   * Eine verworfene (abgelehnt/zurückgezogen) nicht: Der Antrag ist
+   * gegenstandslos, ein Gesundheitsdatum daran wäre eine Verarbeitung ohne
+   * Zweck — die DB verbietet den Anhang (Migration 0072).
+   */
+  attestOffen(a: Absence): boolean {
+    return a.status !== 'ABGELEHNT' && a.status !== 'ZURUECKGEZOGEN';
+  }
+
   einreichen(a: Absence): void {
     this.absenceAktion(a.id, this.svc.submitAbsence(a.id), 'Antrag eingereicht.');
   }

@@ -184,6 +184,12 @@
                     }
                   </div>
                 }
+
+                <!-- Attest: NUR an Krankmeldungen. DSGVO Art. 9 — der Server
+                     lässt nur den Betroffenen und die Personalverwaltung heran. -->
+                @if (a.absence_type === 'KRANKHEIT' && attestOffen(a)) {
+                  <app-attest [absenceId]="a.id" [darfHochladen]="true" />
+                }
               </li>
             }
           </ul>
@@ -205,8 +211,21 @@
           <div class="feld"><dt class="feld__label">Anpassung</dt><dd class="feld__wert">{{ num(konto.adjustment_days) }} Tage</dd></div>
           <div class="feld feld--stark"><dt class="feld__label">Summe</dt><dd class="feld__wert">{{ num(konto.total_days) }} Tage</dd></div>
           <div class="feld"><dt class="feld__label">Verbraucht</dt><dd class="feld__wert">{{ num(konto.used_days) }} Tage</dd></div>
+          @if (konto.expiry_date) {
+            <div class="feld">
+              <dt class="feld__label">Verfallen zum {{ d(konto.expiry_date) }}</dt>
+              <dd class="feld__wert">{{ num(konto.expired_days) }} Tage</dd>
+            </div>
+          }
           <div class="feld feld--stark"><dt class="feld__label">Rest</dt><dd class="feld__wert">{{ num(konto.remaining_days) }} Tage</dd></div>
         </dl>
+        @if (konto.expiry_date) {
+          <p class="urlaub__hinweis">
+            Der Übertrag aus dem Vorjahr verfällt laut Firmeneinstellung zum
+            {{ d(konto.expiry_date) }}, soweit er bis dahin nicht genommen wurde.
+            Er wird vor dem laufenden Anspruch verbraucht.
+          </p>
+        }
         @if (konto.adjustment_reason) {
           <p class="urlaub__anpassung"><span class="urlaub__anpassung-label">Grund der Anpassung:</span> {{ konto.adjustment_reason }}</p>
         }

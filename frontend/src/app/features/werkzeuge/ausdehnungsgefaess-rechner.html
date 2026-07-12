@@ -1,0 +1,112 @@
+<div class="rechner">
+  <form class="rechner__eingabe" [formGroup]="form" (submit)="$event.preventDefault()">
+    <fieldset class="rechner__satz">
+      <legend class="rechner__legende">Anlage</legend>
+
+      <app-feld
+        [control]="form.controls.inhalt"
+        label="Anlagenwasserinhalt (l)"
+        typ="zahl"
+        hinweis="Aus dem Werkzeug Wasserinhalt oder aus den Anlagendaten"
+      />
+
+      <app-feld
+        [control]="form.controls.temp"
+        label="Max. Vorlauftemperatur"
+        typ="select"
+        [optionen]="tempOptionen"
+        hinweis="Bestimmt den Ausdehnungskoeffizienten des Wassers"
+      />
+
+      <app-feld
+        [control]="form.controls.hoehe"
+        label="Statische Höhe der Anlage (m)"
+        typ="zahl"
+        hinweis="Höhendifferenz MAG bis höchster Punkt; bestimmt den Vordruck p₀"
+      />
+
+      <app-feld
+        [control]="form.controls.sv"
+        label="Ansprechdruck Sicherheitsventil"
+        typ="select"
+        [optionen]="svOptionen"
+      />
+    </fieldset>
+  </form>
+
+  <div class="rechner__ergebnis">
+    <p class="rechner__ergebnis-label" id="mag-label">Empfohlenes Nenngefäß</p>
+    <output
+      class="rechner__wert"
+      [class.rechner__wert--leer]="!ergebnis()"
+      aria-labelledby="mag-label"
+      aria-live="polite"
+      >{{ groesseText() }}</output
+    >
+
+    @if (ergebnis(); as e) {
+      <p class="rechner__zweitwert">{{ detailText() }}</p>
+
+      <dl class="rechner__kennzahlen">
+        <div class="rechner__kennzahl">
+          <dt>Ausdehnung V_e</dt>
+          <dd>{{ z(e.ve) }} l</dd>
+        </div>
+        <div class="rechner__kennzahl">
+          <dt>Wasservorlage V_wv</dt>
+          <dd>{{ z(e.vwv) }} l</dd>
+        </div>
+        <div class="rechner__kennzahl">
+          <dt>Vordruck p₀</dt>
+          <dd>{{ z(e.p0) }} bar</dd>
+        </div>
+        <div class="rechner__kennzahl">
+          <dt>Enddruck p_e</dt>
+          <dd>{{ z(e.pe) }} bar</dd>
+        </div>
+      </dl>
+
+      <p class="rechner__formel">V_n = (V_e + V_wv) · (p_e + 1) / (p_e − p₀) = {{ z(e.vn) }} l</p>
+
+      @if (istSonderfall()) {
+        <p class="rechner__rueckmeldung" role="status">
+          Über der größten handelsüblichen Nenngröße — Sonderauslegung bzw. mehrere Gefäße prüfen.
+        </p>
+      }
+    } @else if (fehler()) {
+      <p class="rechner__formel" role="alert">{{ fehler() }}</p>
+    } @else {
+      <p class="rechner__formel">Anlagenwasserinhalt eingeben (größer als 0).</p>
+    }
+
+    <div class="rechner__aktionen">
+      <button type="button" class="rechner__btn" [disabled]="!ergebnis()" (click)="kopieren()">
+        Ergebnis kopieren
+      </button>
+      @if (uebernahme()) {
+        <button
+          type="button"
+          class="rechner__btn rechner__btn--primary"
+          [disabled]="!ergebnis()"
+          (click)="uebernehmenKlick()"
+        >
+          Als Textposition übernehmen
+        </button>
+      }
+    </div>
+
+    @if (rueckmeldung()) {
+      <p class="rechner__rueckmeldung" role="status">{{ rueckmeldung() }}</p>
+    }
+  </div>
+</div>
+
+<p class="rechner__haftung">
+  <span class="rechner__haftung-mark" aria-hidden="true">!</span>
+  <span>
+    <strong>Auslegungshilfe — kein Nachweis.</strong>
+    {{ haftung }} Ein zu klein gewähltes Gefäß führt zu Druckschwankungen, Wasserverlust über das
+    Sicherheitsventil und Nachspeisebedarf — mit Korrosionsfolgen. Im Zweifel das Datenblatt des
+    Herstellers heranziehen.
+  </span>
+</p>

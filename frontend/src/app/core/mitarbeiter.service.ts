@@ -5,6 +5,7 @@ import {
   Absence,
   AbsenceCreate,
   AbsenceDecision,
+  CarryoverRow,
   Contract,
   ContractCreate,
   ContractTerminate,
@@ -102,5 +103,38 @@ export class MitarbeiterService {
       `${this.base}/${employeeId}/vacation-budget`,
       payload,
     );
+  }
+
+  // --- Resturlaubs-Übertrag ins Folgejahr ---------------------------------
+
+  /** Vorschau je Mitarbeiter: „Rest aus `year` → Übertrag in `year+1`". */
+  carryoverVorschau(year: number): Observable<CarryoverRow[]> {
+    return this.http.get<CarryoverRow[]>('/api/hr/urlaubsuebertrag/vorschau', {
+      params: new HttpParams().set('year', year),
+    });
+  }
+
+  /**
+   * Führt den Übertrag aus — **idempotent**: er SETZT den Übertrag des
+   * Folgejahres auf den Rest, er addiert nicht. Zweimal gedrückt ändert nichts.
+   */
+  carryoverUebertragen(year: number, employeeIds?: string[]): Observable<CarryoverRow[]> {
+    return this.http.post<CarryoverRow[]>('/api/hr/urlaubsuebertrag', {
+      year,
+      employee_ids: employeeIds ?? null,
+    });
+  }
+
+  /**
+   * Abwesenheiten als CSV. **Enthält die Abwesenheitsart** (Gesundheitsdatum,
+   * DSGVO Art. 9) und verlangt deshalb `hr/EXPORTIEREN`. Download über Blob, wie
+   * alle Exporte (Auth-Cookie + CSRF müssen mit).
+   */
+  abwesenheitenCsv(von?: string, bis?: string, employeeId?: string): Observable<Blob> {
+    let params = new HttpParams();
+    if (von) params = params.set('von', von);
+    if (bis) params = params.set('bis', bis);
+    if (employeeId) params = params.set('employee_id', employeeId);
+    return this.http.get('/api/hr/abwesenheiten.csv', { params, responseType: 'blob' });
   }
 }

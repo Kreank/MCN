@@ -98,6 +98,11 @@ const MODUL_LABELS: Record<string, string> = {
   hr: 'Personal',
   company: 'Firma',
   accounting: 'Belegerfassung',
+  // Wartungsverträge, Prüffristen, Gewährleistung und die Fälligkeiten-Ansicht.
+  // STORNIEREN ist hier das Tor fürs Verwerfen einer Fälligkeit — eine Frist
+  // bewusst verstreichen zu lassen ist eine andere Entscheidung als sie zu
+  // erledigen (AENDERN).
+  maintenance: 'Wartung & Fristen',
 };
 
 const AKTION_LABELS: Record<string, string> = {

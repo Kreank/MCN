@@ -338,6 +338,35 @@ class Property(models.Model):
         return f"{self.property_number} {self.name}"
 
 
+class TechnicalAsset(models.Model):
+    """property.technical_asset — technische Anlage (Therme, Aufzug, Hebeanlage …).
+
+    Existiert seit db/migrations/0004; bis zur Fälligkeiten-Engine (0071) gab es
+    dafür kein Model. Wird für den Anlagenbezug einer Prüfung gebraucht.
+    `building_id`/`unit_id` sind zusammengesetzte FKs (Composite-Ziel) und
+    deshalb hier als reine UUIDs geführt.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    property = models.ForeignKey(
+        Property, models.DO_NOTHING, db_column="property_id", related_name="assets"
+    )
+    building_id = models.UUIDField(null=True, blank=True)
+    unit_id = models.UUIDField(null=True, blank=True)
+    name = models.TextField()
+    asset_type = models.TextField(null=True, blank=True)
+    attributes = models.JSONField(db_default={})
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'property"."technical_asset'
+
+    def __str__(self):
+        return self.name
+
+
 class Building(models.Model):
     """property.building — Gebäude einer Liegenschaft."""
 
@@ -1406,6 +1435,204 @@ class MaintenanceEvent(models.Model):
         return f"{self.action} @ {self.contract_id}"
 
 
+# ---------------------------------------------------------------------------
+# maintenance.* — Fälligkeiten-Engine (Migration 0071)
+#
+# Drei Fristenarten, ein Fälligkeitsmodell: WARTUNG (Vertrag, 0016), PRUEFUNG
+# (Prüfart + Prüfung an Objekt/Anlage) und GEWAEHRLEISTUNG (je Auftrag).
+# ---------------------------------------------------------------------------
+
+
+class InspectionType(models.Model):
+    """maintenance.inspection_type — Prüfart (Stammdaten, vom Betrieb gepflegt).
+
+    `is_suggestion=True` markiert die mitgelieferten Vorschläge. Sie sind
+    ausdrücklich KEINE Normtabelle und keine Rechtsauskunft — Intervall und
+    Zuständigkeit muss der Betrieb selbst prüfen und anpassen.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    name = models.TextField()
+    interval_kind = models.TextField()  # JAEHRLICH|MONATLICH|WOECHENTLICH|TAGE
+    interval_days = models.IntegerField(null=True, blank=True)
+    lead_time_days = models.IntegerField(db_default=models.Value(30))
+    responsibility = models.TextField(null=True, blank=True)
+    notes = models.TextField(null=True, blank=True)
+    is_suggestion = models.BooleanField(db_default=False)
+    is_active = models.BooleanField(db_default=True)
+    created_by = models.ForeignKey(
+        AppUser, models.DO_NOTHING, db_column="created_by", null=True, blank=True,
+        related_name="inspection_types",
+    )
+    version = models.IntegerField(db_default=models.Value(1))
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'maintenance"."inspection_type'
+
+    def __str__(self):
+        return self.name
+
+
+class Inspection(models.Model):
+    """maintenance.inspection — wiederkehrende Prüfung an Liegenschaft/Anlage.
+
+    Die Intervall-/Vorlauffelder sind bei der Anlage aus der Prüfart KOPIERT
+    (nicht referenziert): eine spätere Änderung der Prüfart verschiebt den Plan
+    einer laufenden Prüfung nicht rückwirkend. `asset_id` ist ein
+    zusammengesetzter FK (asset_id, property_id) auf property.technical_asset —
+    hier als reine UUID geführt (Composite-Ziel, kein ORM-FK).
+    """
+
+    id = models.UUIDField(primary_key=True)
+    inspection_type = models.ForeignKey(
+        InspectionType, models.DO_NOTHING, db_column="inspection_type_id",
+        related_name="inspections",
+    )
+    property = models.ForeignKey(
+        Property, models.DO_NOTHING, db_column="property_id",
+        related_name="inspections",
+    )
+    asset_id = models.UUIDField(null=True, blank=True)
+    name = models.TextField()
+    status = models.TextField()  # AKTIV | INAKTIV | ARCHIVIERT
+    start_date = models.DateField()
+    interval_kind = models.TextField()
+    interval_days = models.IntegerField(null=True, blank=True)
+    lead_time_days = models.IntegerField(db_default=models.Value(30))
+    next_due_date = models.DateField(null=True, blank=True)
+    responsibility = models.TextField(null=True, blank=True)
+    party = models.ForeignKey(
+        Party, models.DO_NOTHING, db_column="party_id", null=True, blank=True,
+        related_name="inspections",
+    )
+    notes = models.TextField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        AppUser, models.DO_NOTHING, db_column="created_by",
+        related_name="inspections",
+    )
+    version = models.IntegerField(db_default=models.Value(1))
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'maintenance"."inspection'
+
+    def __str__(self):
+        return self.name
+
+
+class Warranty(models.Model):
+    """maintenance.warranty — Gewährleistungsfrist eines Auftrags (genau eine).
+
+    `basis` (BGB|VOB|INDIVIDUELL) ist ein LABEL, keine Rechtsfolge: das Produkt
+    leitet daraus keine Frist ab, es merkt sich, was der Betrieb vereinbart hat.
+    Maßgeblich ist `duration_months` — je Auftrag einstellbar, Default aus dem
+    Firmenprofil. `is_machinery` ist ein reiner Hinweis-Schalter (wartungs-
+    bedürftige maschinelle Anlage) und verkürzt NICHTS automatisch.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    # WorkOrder ist erst weiter unten definiert → Lazy-Referenz als String.
+    work_order = models.OneToOneField(
+        "WorkOrder", models.DO_NOTHING, db_column="work_order_id",
+        related_name="warranty",
+    )
+    property = models.ForeignKey(
+        Property, models.DO_NOTHING, db_column="property_id",
+        related_name="warranties",
+    )
+    party = models.ForeignKey(
+        Party, models.DO_NOTHING, db_column="party_id", null=True, blank=True,
+        related_name="warranties",
+    )
+    basis = models.TextField(db_default="BGB")
+    start_date = models.DateField()
+    duration_months = models.IntegerField()
+    end_date = models.DateField()
+    lead_time_days = models.IntegerField(db_default=models.Value(90))
+    is_machinery = models.BooleanField(db_default=False)
+    status = models.TextField(db_default="AKTIV")  # AKTIV | ARCHIVIERT
+    notes = models.TextField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        AppUser, models.DO_NOTHING, db_column="created_by",
+        related_name="warranties",
+    )
+    version = models.IntegerField(db_default=models.Value(1))
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'maintenance"."warranty'
+
+    def __str__(self):
+        return f"Gewährleistung bis {self.end_date}"
+
+
+class DueItem(models.Model):
+    """maintenance.due_item — EINE Fälligkeit, egal welcher Art.
+
+    Genau ein Anker (contract | inspection | warranty), passend zur `kind`
+    (DB-CHECK). Statusautomat OFFEN → ERLEDIGT | VERWORFEN, beide final
+    (Trigger); Verwerfen ist begründungspflichtig (CHECK). Art, Bezug und
+    due_date sind nach dem INSERT unveränderlich (Trigger) — sonst wären die
+    Idempotenz-Indizes wertlos.
+
+    IDEMPOTENZ: partielle UNIQUE-Indizes über (anker_id, due_date),
+    **statusunabhängig**. Ein zweiter Scheduler-Lauf erzeugt keine Dublette, und
+    ein VERWORFENER Eintrag kann nicht wieder auferstehen.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    kind = models.TextField()  # WARTUNG | PRUEFUNG | GEWAEHRLEISTUNG
+    contract = models.ForeignKey(
+        MaintenanceContract, models.DO_NOTHING, db_column="contract_id",
+        null=True, blank=True, related_name="due_items",
+    )
+    inspection = models.ForeignKey(
+        Inspection, models.DO_NOTHING, db_column="inspection_id",
+        null=True, blank=True, related_name="due_items",
+    )
+    warranty = models.ForeignKey(
+        Warranty, models.DO_NOTHING, db_column="warranty_id",
+        null=True, blank=True, related_name="due_items",
+    )
+    property = models.ForeignKey(
+        Property, models.DO_NOTHING, db_column="property_id",
+        null=True, blank=True, related_name="due_items",
+    )
+    title = models.TextField()
+    due_date = models.DateField()
+    lead_time_days = models.IntegerField(db_default=models.Value(0))
+    status = models.TextField(db_default="OFFEN")
+    result_object_type = models.TextField(null=True, blank=True)
+    result_object_id = models.UUIDField(null=True, blank=True)
+    resolution_note = models.TextField(null=True, blank=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    resolved_by = models.ForeignKey(
+        AppUser, models.DO_NOTHING, db_column="resolved_by", null=True, blank=True,
+        related_name="due_items_resolved",
+    )
+    created_by = models.ForeignKey(
+        AppUser, models.DO_NOTHING, db_column="created_by", null=True, blank=True,
+        related_name="due_items_created",
+    )
+    version = models.IntegerField(db_default=models.Value(1))
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'maintenance"."due_item'
+
+    def __str__(self):
+        return f"{self.kind} {self.due_date}: {self.title}"
+
+
 class Article(models.Model):
     """pricing.article — Artikel/Material (Migration 0028, list_price aus 0033).
 
@@ -2114,6 +2341,10 @@ class ArticleSalePrice(models.Model):
         max_digits=12, decimal_places=2, null=True, blank=True
     )
     is_standard = models.BooleanField(db_default=models.Value(False))
+    # MANUELL | MATRIX (Migration 0069): Herkunft eines gespeicherten fixed_price.
+    # Die Massenpflege der Aufschlagsmatrix schreibt nur MATRIX-Zeilen fort und
+    # fasst von Hand gesetzte Preise nie an.
+    price_origin = models.TextField(db_default=models.Value("MANUELL"))
     created_at = models.DateTimeField(db_default=Now())
     updated_at = models.DateTimeField(db_default=Now())
 
@@ -2123,6 +2354,75 @@ class ArticleSalePrice(models.Model):
 
     def __str__(self):
         return f"{self.label} @ {self.article_id}"
+
+
+class MarkupRule(models.Model):
+    """pricing.markup_rule — EK→VK-Aufschlagsmatrix (Migration 0069).
+
+    Regel-Ebene UNTER der Artikelkalkulation: greift, wo ein Artikel keine eigene
+    `article_sale_price`-Zeile hat. Geltungsbereich als Kaskade über nullbare
+    Selektoren (Artikel > Warengruppe+Lieferant > Warengruppe > Lieferant >
+    Standardregel = alles NULL); je Bereich höchstens eine AKTIVE Regel
+    (partieller Unique-Index, NULLS NOT DISTINCT). Der Geltungsbereich ist nach
+    dem INSERT unveränderlich (Trigger).
+    """
+
+    id = models.UUIDField(primary_key=True)
+    name = models.TextField()
+    article = models.ForeignKey(
+        Article, models.DO_NOTHING, db_column="article_id",
+        null=True, blank=True, related_name="markup_rules",
+    )
+    product_group = models.TextField(null=True, blank=True)
+    supplier_party = models.ForeignKey(
+        Party, models.DO_NOTHING, db_column="supplier_party_id",
+        null=True, blank=True, related_name="markup_rules",
+    )
+    calc_basis = models.TextField()  # EK | LISTENPREIS
+    # Vorzeichenbehaftet: negativ = Abschlag (> -100).
+    markup_percent = models.DecimalField(max_digits=9, decimal_places=3)
+    # Handelsspanne auf den VK: (VK-EK)/VK >= min_margin_percent/100.
+    min_margin_percent = models.DecimalField(
+        max_digits=9, decimal_places=3, null=True, blank=True
+    )
+    status = models.TextField()  # AKTIV | INAKTIV
+    version = models.IntegerField()
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'pricing"."markup_rule'
+
+    def __str__(self):
+        return self.name
+
+
+class MarkupRuleTier(models.Model):
+    """pricing.markup_rule_tier — Rabattstaffel einer Aufschlagsregel (0069).
+
+    Ab `min_quantity` gilt `markup_percent`. Es zählt die höchste AKTIVE Stufe mit
+    `min_quantity <= Menge`. Die Mindestmarge der Regel bleibt auch für Staffeln
+    die Untergrenze. Kein Löschen — Stufen werden auf INAKTIV gesetzt.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    markup_rule = models.ForeignKey(
+        MarkupRule, models.DO_NOTHING, db_column="markup_rule_id",
+        related_name="tiers",
+    )
+    min_quantity = models.DecimalField(max_digits=15, decimal_places=3)
+    markup_percent = models.DecimalField(max_digits=9, decimal_places=3)
+    status = models.TextField()  # AKTIV | INAKTIV
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'pricing"."markup_rule_tier'
+
+    def __str__(self):
+        return f"ab {self.min_quantity}: {self.markup_percent}%"
 
 
 class ArticleSupplierReference(models.Model):
@@ -2387,6 +2687,60 @@ class VacationBudget(models.Model):
         return f"Urlaubskonto {self.year} ({self.employee_id})"
 
 
+class TimeAdjustment(models.Model):
+    """hr.time_adjustment — Ausgleichsbuchung auf dem Arbeitszeitkonto (0072).
+
+    Der Saldo bleibt **abgeleitet**: `Saldo = Ist − Soll + Σ Ausgleich`. Diese
+    Zeile ist die dritte Größe der Formel, nicht ein gespeicherter Saldo.
+
+    `minutes` ist vorzeichenbehaftet und in **Minuten** (exakt; 20 min sind in
+    einer Stunden-Dezimalspalte nicht darstellbar): positiv = Gutschrift aufs
+    Konto, negativ = Belastung. Append-only: eine Fehlbuchung wird **storniert**
+    (Storno-Zeile mit `reversal_of` + negierten Minuten, Ursprung → STORNIERT),
+    nie gelöscht oder umgeschrieben (Trigger).
+
+    In die Summe gehen nur Zeilen mit `status='GEBUCHT' AND reversal_of IS NULL`.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    employee = models.ForeignKey(
+        Employee,
+        models.DO_NOTHING,
+        db_column="employee_id",
+        related_name="time_adjustments",
+    )
+    # EINBEHALT | AUSZAHLUNG | FREIZEITAUSGLEICH | KORREKTUR
+    adjustment_type = models.TextField()
+    effective_on = models.DateField()
+    minutes = models.IntegerField()
+    reason = models.TextField()
+    status = models.TextField(db_default=models.Value("GEBUCHT"))  # GEBUCHT|STORNIERT
+    reversal_of = models.ForeignKey(
+        "self",
+        models.DO_NOTHING,
+        db_column="reversal_of_id",
+        null=True,
+        blank=True,
+        related_name="reversals",
+    )
+    created_by = models.ForeignKey(
+        "AppUser",
+        models.DO_NOTHING,
+        db_column="created_by",
+        related_name="created_time_adjustments",
+    )
+    version = models.IntegerField(db_default=models.Value(1))
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'hr"."time_adjustment'
+
+    def __str__(self):
+        return f"{self.adjustment_type} {self.minutes} min ({self.effective_on})"
+
+
 class BreakRule(models.Model):
     """hr.break_rule — Pausenregel des Betriebs, Singleton (Migration 0068).
 
@@ -2619,6 +2973,17 @@ class CompanyProfile(models.Model):
     datev_advance_account_reduced = models.TextField(null=True, blank=True)
     datev_advance_account_free = models.TextField(null=True, blank=True)
     datev_advance_account_reverse = models.TextField(null=True, blank=True)
+    # Gewährleistung (Migration 0071): Voreinstellung für neue Gewährleistungen.
+    # Je Auftrag überschreibbar — eine betriebliche Einstellung, keine Rechtsauskunft.
+    warranty_default_months = models.IntegerField(db_default=models.Value(60))
+    warranty_default_lead_days = models.IntegerField(db_default=models.Value(90))
+    # Verfall des Resturlaubs-Übertrags im Folgejahr (Migration 0072).
+    # NULL/NULL = KEIN Verfall (Default). Nur was der Betrieb ausdrücklich
+    # einstellt, wird weggerechnet — § 7 Abs. 3 BUrlG ist eine Möglichkeit,
+    # keine Automatik, und BAG/EuGH knüpfen den Verfall an die Hinweis- und
+    # Aufforderungsobliegenheit des Arbeitgebers.
+    vacation_carryover_expiry_month = models.SmallIntegerField(null=True, blank=True)
+    vacation_carryover_expiry_day = models.SmallIntegerField(null=True, blank=True)
     version = models.IntegerField(db_default=models.Value(1))
     created_at = models.DateTimeField(db_default=Now())
     updated_at = models.DateTimeField(db_default=Now())
@@ -3019,6 +3384,13 @@ class FileLink(models.Model):
     )
     site_report = models.ForeignKey(
         "SiteReport", models.DO_NOTHING, db_column="site_report_id",
+        null=True, blank=True, related_name="file_links",
+    )
+    # Attest (Arbeitsunfähigkeitsbescheinigung) an einer Abwesenheit, Migration
+    # 0072. Gesundheitsdatum — besondere Kategorie nach DSGVO Art. 9. Der Zugriff
+    # hängt NICHT am content-Recht allein: siehe Ziel-Guard in api/dateien.py.
+    absence = models.ForeignKey(
+        "Absence", models.DO_NOTHING, db_column="absence_id",
         null=True, blank=True, related_name="file_links",
     )
     asset_id = models.UUIDField(null=True, blank=True)

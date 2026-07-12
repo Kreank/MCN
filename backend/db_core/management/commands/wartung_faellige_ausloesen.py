@@ -1,30 +1,48 @@
-"""Wartungs-Fälligkeits-Scheduler: löst alle fälligen Wartungsverträge aus.
+"""Fälligkeiten-Scheduler — erzeugt Fälligkeiten und löst fällige Wartungen aus.
 
-Das Kernversprechen des Wartungsmoduls: fällige Verträge lösen ihre konfigurierte
-Aktion (AUFGABE/PROJEKT/AUFTRAG/BENACHRICHTIGUNG) automatisch aus. Dieses Command
-IST der Scheduler — es wird extern per Cron täglich aufgerufen (kein eigener
-Worker im Repo). Es findet alle AKTIVEN Verträge mit next_due_date <= Stichtag
-und ruft für jeden wartung.trigger_action auf.
+Das Command hieß ursprünglich nur „Wartungs-Fälligkeits-Scheduler" und löste
+fällige Wartungsverträge aus. Es ist jetzt der Scheduler der gesamten
+**Fälligkeiten-Engine** (Migration 0071) und läuft in zwei Phasen. Der Name
+bleibt, damit bestehende Cron-Einträge weiter greifen.
 
-Aufruf:
+## Phase 1 — Fälligkeiten erzeugen (alle drei Arten)
 
-    # Trockenlauf (zeigt nur, schreibt nichts):
+Legt `maintenance.due_item`-Einträge **im Voraus** an, sobald der Vorlauf
+beginnt (`heute >= due_date - lead_time_days`):
+
+  WARTUNG          aus aktiven Wartungsverträgen
+  PRUEFUNG         aus aktiven Prüfungen (Prüffristen an Objekt/Anlage)
+  GEWAEHRLEISTUNG  aus laufenden Gewährleistungen (Fristablauf)
+
+**Idempotent.** Zweimal laufen erzeugt nichts doppelt — nicht weil dieser Code
+aufpasst, sondern weil drei partielle UNIQUE-Indizes über (Anker, Fälligkeits-
+datum) das physisch verbieten. Die Indizes sind statusunabhängig, deshalb kann
+auch ein **verworfener** Eintrag nicht wieder auferstehen.
+
+## Phase 2 — Vollautomatik für Wartungsverträge (Bestandsverhalten)
+
+Löst wie bisher jeden AKTIVEN Vertrag mit `next_due_date <= Stichtag` aus:
+`wartung.trigger_action` erzeugt das konfigurierte Folgeobjekt (AUFGABE →
+workflow.task, PROJEKT → workflow.project, AUFTRAG → workflow.work_order),
+protokolliert append-only, rückt die Fälligkeit vor **und schließt die zugehörige
+due_item mit** — es gibt nur eine Wahrheit.
+
+Prüfungen und Gewährleistungen werden **bewusst NICHT automatisch ausgelöst**:
+ob aus einer ablaufenden Gewährleistung ein Termin, ein Angebot oder gar nichts
+wird, ist eine Entscheidung, keine Mechanik. Sie erscheinen in der Fälligkeiten-
+Ansicht („Was steht an?"), und ein Mensch entscheidet dort.
+
+Mit `--nur-erzeugen` bleibt auch die Wartung beim Menschen.
+
+## Aufruf
+
     uv run python manage.py wartung_faellige_ausloesen --dry-run
-
-    # Echter Lauf für heute:
     uv run python manage.py wartung_faellige_ausloesen
-
-    # Für einen bestimmten Stichtag (z. B. Nacharbeiten):
     uv run python manage.py wartung_faellige_ausloesen --stichtag 2026-07-11
+    uv run python manage.py wartung_faellige_ausloesen --nur-erzeugen
 
-Cron-Eintrag (täglich 06:00), den ein Admin einträgt — siehe Slice-Report.
-
-Robustheit: Ein Fehler bei einem Vertrag bricht den Lauf NICHT ab; er wird gezählt
-und gemeldet, der Rest läuft weiter (jeder Vertrag in eigener Transaktion über
-trigger_action). Idempotenz: trigger_action rückt next_due_date über den Stichtag
-hinaus vor (catch_up), sodass ein zweiter Lauf am selben Stichtag denselben Vertrag
-nicht erneut auslöst. Mehrfach verpasste Intervalle werden EINMAL ausgelöst (kein
-Nachhol-Sturm) und der Plan auf den nächsten künftigen Termin gesetzt.
+Robustheit: Ein Fehler bei einem Vertrag bricht den Lauf NICHT ab; er wird
+gezählt und gemeldet, der Rest läuft weiter.
 """
 from datetime import date
 
@@ -32,22 +50,41 @@ from django.core.management.base import BaseCommand, CommandError
 from django.utils.dateparse import parse_date
 
 from db_core.models import AppUser, MaintenanceContract
+from db_core.services import faelligkeit as faelligkeit_service
 from db_core.services import wartung as wartung_service
+
+ART_LABELS = {
+    "WARTUNG": "Wartung",
+    "PRUEFUNG": "Prüfung",
+    "GEWAEHRLEISTUNG": "Gewährleistung",
+}
 
 
 class Command(BaseCommand):
-    help = "Löst fällige Wartungsverträge aus (Scheduler; täglich per Cron)."
+    help = (
+        "Fälligkeiten-Scheduler: erzeugt Fälligkeiten (Wartung/Prüfung/"
+        "Gewährleistung) im Vorlauf und löst fällige Wartungsverträge aus."
+    )
 
     def add_arguments(self, parser):
         parser.add_argument(
             "--stichtag",
             help="Stichtag YYYY-MM-DD (Default: heute). Verträge mit "
-            "next_due_date <= Stichtag gelten als fällig.",
+            "next_due_date <= Stichtag gelten als fällig; Fälligkeiten entstehen, "
+            "sobald ihr Vorlauf am Stichtag begonnen hat.",
         )
         parser.add_argument(
             "--dry-run",
             action="store_true",
-            help="Nur anzeigen, was ausgelöst würde — schreibt nichts.",
+            help="Nur anzeigen, was geschähe — schreibt nichts.",
+        )
+        parser.add_argument(
+            "--nur-erzeugen",
+            action="store_true",
+            dest="nur_erzeugen",
+            help="Phase 2 überspringen: Fälligkeiten nur erzeugen, keine "
+            "Wartungsverträge automatisch auslösen (der Mensch entscheidet in "
+            "der Fälligkeiten-Ansicht).",
         )
         parser.add_argument(
             "--actor",
@@ -58,7 +95,85 @@ class Command(BaseCommand):
     def handle(self, *args, **opts):
         stichtag = self._stichtag(opts.get("stichtag"))
         dry_run = opts["dry_run"]
+        nur_erzeugen = opts.get("nur_erzeugen", False)
 
+        modus = "TROCKENLAUF" if dry_run else "LAUF"
+        self.stdout.write(
+            self.style.MIGRATE_HEADING(
+                f"Fälligkeiten-Scheduler [{modus}] - Stichtag {stichtag:%d.%m.%Y}"
+            )
+        )
+
+        actor = None
+        if not dry_run:
+            actor = self._actor(opts.get("actor"))
+            self.stdout.write(f"  Auslöser: {actor.display_name} ({actor.id})")
+        self.stdout.write("")
+
+        erzeugt = self._phase_erzeugen(actor, stichtag, dry_run)
+        ausgeloest = fehler = faellig = 0
+        if not nur_erzeugen:
+            ausgeloest, fehler, faellig = self._phase_ausloesen(
+                actor, stichtag, dry_run
+            )
+
+        self.stdout.write("")
+        teile = [f"{erzeugt} Fälligkeit(en) erzeugt"]
+        if nur_erzeugen:
+            teile.append("Auslösung übersprungen (--nur-erzeugen)")
+        else:
+            teile.append(
+                f"{ausgeloest} Wartung(en) ausgelöst, {fehler} Fehler "
+                f"(von {faellig} fällig)"
+            )
+        self.stdout.write(self.style.MIGRATE_HEADING("Summe: " + "; ".join(teile)))
+        if dry_run:
+            self.stdout.write(
+                self.style.WARNING("  Trockenlauf — es wurde nichts geschrieben.")
+            )
+
+    # ------------------------------------------------------------------
+    # Phase 1 — erzeugen
+    # ------------------------------------------------------------------
+
+    def _phase_erzeugen(self, actor, stichtag, dry_run):
+        self.stdout.write(
+            self.style.MIGRATE_LABEL("  Phase 1: Fälligkeiten erzeugen (Vorlauf)")
+        )
+        if dry_run:
+            self.stdout.write(
+                "    (Trockenlauf: es wird nichts angelegt. Der Lauf ist "
+                "idempotent — ein zweiter Lauf erzeugt keine Dubletten.)"
+            )
+            self.stdout.write("")
+            return 0
+
+        ergebnis = faelligkeit_service.generiere(actor.id, stichtag=stichtag)
+        gesamt = 0
+        for art, items in ergebnis.items():
+            gesamt += len(items)
+            self.stdout.write(f"    {ART_LABELS.get(art, art):16s} {len(items):3d} neu")
+            for item in items:
+                self.stdout.write(
+                    f"      + {item.due_date:%d.%m.%Y}  {item.title}"
+                )
+        if gesamt == 0:
+            self.stdout.write(
+                "    Nichts Neues (bereits erzeugt oder noch außerhalb des Vorlaufs)."
+            )
+        self.stdout.write("")
+        return gesamt
+
+    # ------------------------------------------------------------------
+    # Phase 2 — Wartungsverträge auslösen (Bestandsverhalten)
+    # ------------------------------------------------------------------
+
+    def _phase_ausloesen(self, actor, stichtag, dry_run):
+        self.stdout.write(
+            self.style.MIGRATE_LABEL(
+                "  Phase 2: fällige Wartungsverträge auslösen"
+            )
+        )
         faellige = list(
             MaintenanceContract.objects.filter(
                 status="AKTIV",
@@ -66,30 +181,15 @@ class Command(BaseCommand):
                 next_due_date__lte=stichtag,
             ).order_by("next_due_date", "contract_number")
         )
-
-        modus = "TROCKENLAUF" if dry_run else "LAUF"
-        self.stdout.write(
-            self.style.MIGRATE_HEADING(
-                f"Wartungs-Scheduler [{modus}] - Stichtag {stichtag:%d.%m.%Y}"
-            )
-        )
-        self.stdout.write(f"  Fällige aktive Verträge: {len(faellige)}")
-        self.stdout.write("")
-
+        self.stdout.write(f"    Fällige aktive Verträge: {len(faellige)}")
         if not faellige:
-            self.stdout.write(self.style.SUCCESS("  Nichts fällig — nichts zu tun."))
-            return
-
-        actor = None
-        if not dry_run:
-            actor = self._actor(opts.get("actor"))
-            self.stdout.write(f"  Auslöser: {actor.display_name} ({actor.id})")
-            self.stdout.write("")
+            self.stdout.write(self.style.SUCCESS("    Nichts fällig — nichts zu tun."))
+            return 0, 0, 0
 
         ausgeloest = fehler = 0
         for contract in faellige:
             kopf = (
-                f"  {contract.contract_number} | {contract.name} | "
+                f"    {contract.contract_number} | {contract.name} | "
                 f"fällig {contract.next_due_date:%d.%m.%Y} | {contract.due_action}"
             )
             if dry_run:
@@ -119,18 +219,7 @@ class Command(BaseCommand):
                         f"{kopf}  -> FEHLER: {exc.__class__.__name__}: {exc}"
                     )
                 )
-
-        self.stdout.write("")
-        self.stdout.write(
-            self.style.MIGRATE_HEADING(
-                f"Summe: {ausgeloest} ausgelöst, {fehler} Fehler "
-                f"(von {len(faellige)} fällig)"
-            )
-        )
-        if dry_run:
-            self.stdout.write(
-                self.style.WARNING("  Trockenlauf — es wurde nichts geschrieben.")
-            )
+        return ausgeloest, fehler, len(faellige)
 
     # ------------------------------------------------------------------
 
@@ -139,7 +228,9 @@ class Command(BaseCommand):
             return date.today()
         stichtag = parse_date(roh)
         if stichtag is None:
-            raise CommandError(f"--stichtag '{roh}' ist kein gültiges Datum (YYYY-MM-DD).")
+            raise CommandError(
+                f"--stichtag '{roh}' ist kein gültiges Datum (YYYY-MM-DD)."
+            )
         return stichtag
 
     def _actor(self, roh):
@@ -156,7 +247,10 @@ class Command(BaseCommand):
     def _folge(self, event):
         """Textbaustein, welches Folgeobjekt entstand."""
         if event.result_object_type:
-            return f"{event.action} -> {event.result_object_type} {event.result_object_id}"
+            return (
+                f"{event.action} -> {event.result_object_type} "
+                f"{event.result_object_id}"
+            )
         return f"{event.action} -> protokolliert (kein Folgeobjekt)"
 
     def _datum(self, d):

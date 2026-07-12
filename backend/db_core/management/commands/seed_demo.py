@@ -22,6 +22,7 @@ from django.db.models import Q
 from db_core.db_context import business_transaction
 from db_core.models import (
     Absence, AppointmentCategory, AppUser, Article, ArticleSalePrice, Assembly,
+    Inspection, InspectionType, Warranty,
     DunningNotice, Employee, Invoice, MaintenanceContract, Party, Payment,
     Project, ProjectLog, Property, Quote, Resource, SalePriceGroup,
     ServiceJob, SiteReport, SupplierConnection, Task, TimeCategory, TimeEntry,
@@ -33,6 +34,9 @@ from db_core.services import auftrag as auftrag_service
 from db_core.services import beleg as beleg_service
 from db_core.services import buchhaltung as buchhaltung_service
 from db_core.services import einsatz as einsatz_service
+from db_core.services import faelligkeit as faelligkeit_service
+from db_core.services import gewaehrleistung as gewaehrleistung_service
+from db_core.services import pruefung as pruefung_service
 from db_core.services import anbindung as anbindung_service
 from db_core.services import firma as firma_service
 from db_core.services import planung as planung_service
@@ -1085,6 +1089,8 @@ class Command(BaseCommand):
                 f"(nächste Fälligkeit {contract.next_due_date})"
             )
 
+        angelegt += self._seed_faelligkeiten(actor)
+
         # Personal (hr.*): Mitarbeiter mit Login-Konto, Personalsatz, Vertrag,
         # Urlaubskonto und Abwesenheiten. Idempotent je Person (existiert bereits
         # ein Personalsatz zur Person, wird der Mitarbeiter übersprungen). Das
@@ -1454,6 +1460,116 @@ class Command(BaseCommand):
                 )
             )
         return True
+
+    def _seed_faelligkeiten(self, actor):
+        """Fälligkeiten-Engine (Migration 0071): Prüffristen + Gewährleistung +
+        ein Scheduler-Lauf, damit „Was steht an?" nicht leer ist.
+
+        Idempotent: die Prüfungen werden je (Liegenschaft, Prüfart) nur einmal
+        angelegt, die Gewährleistung je Auftrag nur einmal (DB-UNIQUE), und der
+        Generierungslauf ist von Haus aus idempotent (UNIQUE-Indizes auf
+        maintenance.due_item).
+        """
+        angelegt = 0
+        heute = date.today()
+
+        # --- Ein zweiter Wartungsvertrag, dessen Fälligkeit NOCH offen ist ----
+        # Der erste (oben) wird im Seed sofort ausgelöst und steht damit ein Jahr
+        # in der Zukunft. Damit „Was steht an?" auch eine WARTUNG zeigt, kommt
+        # hier ein Vertrag dazu, der in 10 Tagen fällig ist (Vorlauf 30 → jetzt
+        # sichtbar) und NICHT ausgelöst wird — der Mensch entscheidet.
+        lh_obj = Property.objects.filter(name="Wohnanlage Lindenhöfe").first()
+        if lh_obj is not None and not MaintenanceContract.objects.filter(
+            property_id=lh_obj.id
+        ).exists():
+            c2 = wartung_service.create_contract(
+                actor.id, property_id=lh_obj.id,
+                name="Heizungsanlage Jahreswartung",
+                start_date=heute + timedelta(days=10),
+                interval_kind="JAEHRLICH",
+                due_action="AUFTRAG",
+                lead_time_days=30,
+                notes="Demo: fällig in 10 Tagen, Vorlauf 30 Tage.",
+            )
+            angelegt += 1
+            self.stdout.write(
+                f"Wartungsvertrag angelegt: {c2.contract_number} "
+                f"(offene Fälligkeit {c2.next_due_date})"
+            )
+
+        # --- Prüffristen an zwei Objekten (OHNE Wartungsvertrag) --------------
+        # Bewusst mit den ausgelieferten Prüfart-VORSCHLÄGEN — sie sind ein
+        # Startpunkt, kein Normkatalog und keine Rechtsauskunft.
+        pruef_plan = [
+            ("Wohnanlage Lindenhöfe", "Trinkwasser: Legionellenprüfung", -5),
+            ("Wohnanlage Lindenhöfe", "Rauchwarnmelder prüfen", 40),
+            ("Geschäftshaus Rheinpassage", "Schornsteinfeger / Feuerstättenschau", 12),
+        ]
+        for obj_name, art_name, tage in pruef_plan:
+            obj = Property.objects.filter(name=obj_name).first()
+            art = InspectionType.objects.filter(name=art_name).first()
+            if obj is None or art is None:
+                continue
+            if Inspection.objects.filter(
+                property_id=obj.id, inspection_type_id=art.id
+            ).exists():
+                continue
+            p = pruefung_service.create_inspection(
+                actor.id,
+                inspection_type_id=art.id,
+                property_id=obj.id,
+                start_date=heute + timedelta(days=tage),
+                notes="Demo-Prüffrist. Intervall und Zuständigkeit prüft der "
+                      "Betrieb selbst — keine Rechtsauskunft.",
+            )
+            angelegt += 1
+            self.stdout.write(
+                f"Prüffrist angelegt: {p.name} @ {obj_name} "
+                f"(fällig {p.next_due_date})"
+            )
+
+        # --- Gewährleistung am durchgeschalteten Auftrag ----------------------
+        order = (
+            WorkOrder.objects.filter(
+                status__in=gewaehrleistung_service.ABGESCHLOSSEN
+            )
+            .order_by("created_at")
+            .first()
+        )
+        if order is not None and not Warranty.objects.filter(
+            work_order_id=order.id
+        ).exists():
+            # Frist läuft in 45 Tagen ab, Vorlauf 90 → JETZT im Vorlauf sichtbar.
+            # is_machinery=True → der Vertriebshinweis („Anlage ohne
+            # Wartungsvertrag") greift, sofern kein aktiver Vertrag am Objekt hängt.
+            start = heute - timedelta(days=45) - timedelta(days=365 * 5)
+            w = gewaehrleistung_service.create_warranty(
+                actor.id,
+                work_order_id=order.id,
+                start_date=start,
+                duration_months=60,
+                lead_time_days=90,
+                basis="BGB",
+                is_machinery=True,
+                notes="Demo-Gewährleistung. Die Frist ist je Auftrag einstellbar; "
+                      "das Produkt gibt keine Rechtsauskunft.",
+            )
+            angelegt += 1
+            self.stdout.write(
+                f"Gewährleistung angelegt: Auftrag {order.order_number}, "
+                f"läuft ab {w.end_date}"
+            )
+
+        # --- Ein Scheduler-Lauf: Fälligkeiten erzeugen ------------------------
+        ergebnis = faelligkeit_service.generiere(actor.id, stichtag=heute)
+        neu = sum(len(v) for v in ergebnis.values())
+        if neu:
+            angelegt += neu
+            self.stdout.write(
+                "Fälligkeiten erzeugt: "
+                + ", ".join(f"{k} {len(v)}" for k, v in ergebnis.items() if v)
+            )
+        return angelegt
 
     def _ensure_role(self, actor, *, app_user_id, role_code):
         """Weist einem app_user eine Rolle über security.user_role zu (idempotent).

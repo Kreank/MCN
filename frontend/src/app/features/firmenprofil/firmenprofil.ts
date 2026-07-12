@@ -148,7 +148,25 @@ export class Firmenprofil {
       nonNullable: true,
       validators: [Validators.pattern(/^\d{3,9}$/)],
     }),
+    // Resturlaubs-Verfall (0072). Ein Select statt zweier Zahlenfelder: der
+    // Verfallstag ist in der Praxis der 31.03. oder das Jahresende — freie
+    // Tag/Monat-Eingabe lädt nur zu unmöglichen Daten (30.02.) ein.
+    vacation_carryover_expiry: this.fb.control('', { nonNullable: true }),
   });
+
+  /**
+   * „Kein Verfall" ist der **Default** und steht bewusst an erster Stelle. Es
+   * wird nichts weggerechnet, was der Betrieb nicht ausdrücklich einstellt:
+   * § 7 Abs. 3 BUrlG *erlaubt* den Verfall zum 31.03., er ordnet ihn nicht an,
+   * und nach BAG/EuGH verfällt Urlaub nur, wenn der Arbeitgeber rechtzeitig
+   * aufgefordert und belehrt hat.
+   */
+  protected readonly verfallOptionen: FeldOption[] = [
+    { wert: '', label: 'Kein Verfall (Standard)' },
+    { wert: '3-31', label: 'Verfall zum 31.03. des Folgejahres' },
+    { wert: '6-30', label: 'Verfall zum 30.06. des Folgejahres' },
+    { wert: '12-31', label: 'Verfall zum 31.12. des Folgejahres' },
+  ];
 
   protected readonly skrOptionen: FeldOption[] = [
     { wert: 'SKR03', label: 'SKR03' },
@@ -308,6 +326,10 @@ export class Firmenprofil {
       datev_advance_account_reduced: p.datev_advance_account_reduced ?? '',
       datev_advance_account_free: p.datev_advance_account_free ?? '',
       datev_advance_account_reverse: p.datev_advance_account_reverse ?? '',
+      vacation_carryover_expiry:
+        p.vacation_carryover_expiry_month && p.vacation_carryover_expiry_day
+          ? `${p.vacation_carryover_expiry_month}-${p.vacation_carryover_expiry_day}`
+          : '',
     });
     this.anzahlungAktiv.set((p.datev_advance_mode ?? 'ERLOES') === 'ANZAHLUNG');
   }
@@ -321,14 +343,23 @@ export class Firmenprofil {
     if (this.form.invalid) return;
 
     const roh = this.form.getRawValue();
+    const { vacation_carryover_expiry, ...rest } = roh;
+    // „3-31" → Monat 3, Tag 31. Leer → beide null („kein Verfall"). Der Server
+    // verlangt Tag UND Monat oder keins von beidem (DB-CHECK) — deshalb werden
+    // sie hier immer als PAAR gesendet, nie einzeln.
+    const [monat, tag] = vacation_carryover_expiry
+      ? vacation_carryover_expiry.split('-').map(Number)
+      : [null, null];
     const payload: CompanyProfileInput = {
-      ...roh,
+      ...rest,
       // Zahlenfelder: leer → null (Feld löschen), sonst Ganzzahl. Der Server
       // erwartet hier int|null, kein Leerstring.
       datev_account_length: ganzzahlOderNull(roh.datev_account_length),
       datev_fiscal_year_start_month: ganzzahlOderNull(
         roh.datev_fiscal_year_start_month,
       ),
+      vacation_carryover_expiry_month: monat,
+      vacation_carryover_expiry_day: tag,
     };
     this.laedt.set(true);
     this.svc.updateProfile(payload).subscribe({

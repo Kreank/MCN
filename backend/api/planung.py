@@ -1066,6 +1066,53 @@ def plantafel(
     )
 
 
+class AbwesendOut(Schema):
+    """„Wer ist gerade nicht da" — für die Disposition.
+
+    **Ohne Abwesenheitsart, mit voller Absicht.** Die Art (Urlaub? Krankheit?)
+    ist ein Gesundheitsdatum und damit eine besondere Kategorie nach DSGVO
+    Art. 9. Diese Ansicht hängt an `workflow/LESEN` — das Recht der Disposition,
+    die kein `hr` hat. Sie beantwortet deshalb genau eine Frage: **wer fehlt,
+    von wann bis wann**. Der Grund geht die Planung nichts an; wer ihn kennen
+    darf, holt ihn über das hr-Tor (`/api/hr/absences`, `/hr/abwesenheiten.csv`).
+
+    Genau dieser Fehler — die Art in einer Planungssicht mitzuliefern — wurde in
+    der Plantafel schon einmal gefunden und behoben (`BoardAbsenceOut`). Er wird
+    hier nicht wiederholt.
+    """
+
+    id: UUID
+    app_user_id: UUID
+    name: str
+    start_date: date
+    end_date: date
+    half_day_start: bool
+    half_day_end: bool
+
+
+@router.get("/abwesend", response=list[AbwesendOut])
+def abwesend(
+    request,
+    von: date | None = Query(None),
+    bis: date | None = Query(None),
+):
+    """Genehmigte Abwesenheiten im Zeitraum (Default: heute).
+
+    Nur GENEHMIGTE: ein eingereichter Antrag ist noch keine Tatsache — und ihn
+    hier zu zeigen, verriete eine Krankmeldung, bevor sie überhaupt beschieden
+    ist.
+    """
+    require(request, "workflow", "LESEN")
+    heute = date.today()
+    v = von or heute
+    b = bis or v
+    if b < v:
+        raise HttpError(422, "Das Ende des Zeitraums liegt vor dem Beginn.")
+    if (b - v).days > 366:
+        raise HttpError(422, "Der Zeitraum darf höchstens ein Jahr umfassen.")
+    return [AbwesendOut(**a) for a in planung_service.abwesend_im_zeitraum(v, b)]
+
+
 # --- Termin anlegen/ändern aus dem Board (ein Vorgang) ----------------------
 
 class TerminCreateIn(Schema):

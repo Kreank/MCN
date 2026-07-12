@@ -1,0 +1,78 @@
+.kopf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+
+  h1 {
+    margin: 0;
+    font-family: var(--font-display);
+  }
+}
+
+.kicker {
+  margin: 0 0 var(--space-1);
+  font-size: var(--step--1);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.hinweis {
+  margin: 0 0 var(--space-5);
+  max-width: 70ch;
+  color: var(--ink-muted);
+  font-size: var(--step--1);
+  border-left: 3px solid var(--line-strong);
+  padding-left: var(--space-3);
+  line-height: 1.6;
+}
+
+.segment {
+  display: flex;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  padding: 0;
+  margin: 0;
+  overflow: hidden;
+  background: var(--surface-sunken);
+}
+
+.segment__knopf {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: var(--space-2) var(--space-4);
+  font: inherit;
+  font-size: var(--step--1);
+  font-weight: 600;
+  color: var(--ink-muted);
+  cursor: pointer;
+
+  & + & {
+    border-left: 1px solid var(--line);
+  }
+
+  &:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: -2px;
+  }
+
+  &.is-active {
+    background: var(--surface);
+    color: var(--ink);
+  }
+}
+
+.abwesend__name {
+  font-weight: 600;
+  margin-right: var(--space-2);
+}
+
+.abwesend__halb {
+  font-family: var(--font-mono);
+  color: var(--ink-muted);
+  margin-left: var(--space-1);
+}

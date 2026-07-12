@@ -1,3 +1,5 @@
+import { zahlAus } from './eingabe';
+
 /**
  * Rechenkern der Werkzeuge — reine Funktionen, kein Angular, kein State.
  *
@@ -43,6 +45,10 @@ export const zahlEine = (n: number): string => fmt(n, 1, 1, false);
 export const zahlZwei = (n: number): string => fmt(n, 2, 2, false);
 /** C# `"#,##0.####"` — Tausenderpunkt, bis zu 4 Nachkommastellen (Umrechner). */
 export const zahlListe = (n: number): string => fmt(n, 0, 4, true);
+/** C# `"#,##0.#"` — Tausenderpunkt, bis zu 1 Nachkommastelle (Liter). */
+export const zahlLiter = (n: number): string => fmt(n, 0, 1, true);
+/** Aufmaß-Mengen: Tausenderpunkt, bis zu 3 Nachkommastellen (DB: numeric(15,3)). */
+export const zahlMenge = (n: number): string => fmt(n, 0, 3, true);
 
 // ============================================================================
 // Haftung — steht im UI UND auf jeder Ausgabe (Kopieren, Angebotsposition).
@@ -280,7 +286,8 @@ export function umrechnen(kat: Kategorie, vonIndex: number, wert: number): Umrec
   if (!von) return [];
 
   if (kat.istTemperatur) {
-    const celsius = von.name === 'K' ? wert - 273.15 : von.name === '°F' ? ((wert - 32) * 5) / 9 : wert;
+    const celsius =
+      von.name === 'K' ? wert - 273.15 : von.name === '°F' ? ((wert - 32) * 5) / 9 : wert;
     return kat.einheiten.map((eh) => {
       const aus =
         eh.name === 'K' ? celsius + 273.15 : eh.name === '°F' ? (celsius * 9) / 5 + 32 : celsius;
@@ -333,11 +340,7 @@ export const BAUARTEN: readonly HeizkoerperBauart[] = [
   { wert: 'FBH', label: 'Fußbodenheizung', exponent: '1,10' },
 ];
 
-export type HeizkoerperFehler =
-  | 'VL_UNTER_RAUM'
-  | 'RL_UNTER_RAUM'
-  | 'VL_KLEINER_RL'
-  | 'EINGABE';
+export type HeizkoerperFehler = 'VL_UNTER_RAUM' | 'RL_UNTER_RAUM' | 'VL_KLEINER_RL' | 'EINGABE';
 
 export interface HeizkoerperErgebnis {
   /** Logarithmische Übertemperatur des neuen Betriebspunkts in K. */
@@ -401,4 +404,441 @@ export function heizkoerperFehlerText(f: HeizkoerperFehler): string {
     case 'EINGABE':
       return 'Bitte Normleistung und Exponent als positive Zahlen eingeben.';
   }
+}
+
+// ============================================================================
+// 5) Anlagenwasserinhalt — NotizApp `WasserinhaltRechner`
+//    Summe = Rohr(L × l/m) + FBH(L × l/m) + HK(Anzahl × Inhalt) + Erzeuger + Puffer
+//    Die l/m-Werte sind die vom Anwender in der NotizApp gepflegten Kennwerte
+//    (lichter Querschnitt gängiger Dimensionen) — 1:1 übernommen, keine
+//    Normtabelle, nichts ergänzt und nichts geändert.
+// ============================================================================
+
+/**
+ * Ein Feldwert wie in der NotizApp (`static double Wert(TextBox)`): leer,
+ * unlesbar oder **nicht positiv** zählt als 0 — nicht als Fehler. Ein negativer
+ * Eintrag zieht also nichts ab, er wird ignoriert.
+ */
+export const positivOderNull = (n: number | null): number => (n != null && n > 0 ? n : 0);
+
+export interface RohrTyp {
+  readonly wert: string;
+  readonly label: string;
+  /** Wasserinhalt je Meter in Litern. */
+  readonly lProM: number;
+}
+
+/** 1:1 die ComboBox `RohrTyp` der NotizApp (Vorauswahl: Kupfer 22×1). */
+export const ROHR_TYPEN: readonly RohrTyp[] = [
+  { wert: 'CU_15', label: 'Kupfer 15×1 (0,13 l/m)', lProM: 0.133 },
+  { wert: 'CU_18', label: 'Kupfer 18×1 (0,20 l/m)', lProM: 0.201 },
+  { wert: 'CU_22', label: 'Kupfer 22×1 (0,31 l/m)', lProM: 0.314 },
+  { wert: 'CU_28', label: 'Kupfer 28×1,5 (0,49 l/m)', lProM: 0.491 },
+  { wert: 'CU_35', label: 'Kupfer 35×1,5 (0,80 l/m)', lProM: 0.804 },
+  { wert: 'VB_16', label: 'Verbund 16×2 (0,11 l/m)', lProM: 0.113 },
+  { wert: 'VB_20', label: 'Verbund 20×2 (0,20 l/m)', lProM: 0.201 },
+  { wert: 'VB_26', label: 'Verbund 26×3 (0,31 l/m)', lProM: 0.314 },
+  { wert: 'ST_15', label: 'Stahl DN15 ½″ (0,20 l/m)', lProM: 0.201 },
+  { wert: 'ST_20', label: 'Stahl DN20 ¾″ (0,37 l/m)', lProM: 0.366 },
+  { wert: 'ST_25', label: 'Stahl DN25 1″ (0,58 l/m)', lProM: 0.581 },
+];
+export const ROHR_STANDARD = 'CU_22';
+
+/** 1:1 die ComboBox `FbhTyp` der NotizApp (Vorauswahl: 16×2). */
+export const FBH_TYPEN: readonly RohrTyp[] = [
+  { wert: 'FBH_16', label: '16×2 (0,11 l/m)', lProM: 0.113 },
+  { wert: 'FBH_17', label: '17×2 (0,13 l/m)', lProM: 0.133 },
+  { wert: 'FBH_20', label: '20×2 (0,20 l/m)', lProM: 0.201 },
+];
+export const FBH_STANDARD = 'FBH_16';
+
+/** Vorbelegung „Inhalt je Heizkörper" der NotizApp (`HkInhalt.Text = "5"`). */
+export const HK_INHALT_STANDARD = '5';
+
+export interface WasserinhaltEingabe {
+  readonly rohrLaenge: number | null;
+  readonly rohrLProM: number;
+  readonly fbhLaenge: number | null;
+  readonly fbhLProM: number;
+  readonly hkAnzahl: number | null;
+  readonly hkInhalt: number | null;
+  readonly erzeuger: number | null;
+  readonly puffer: number | null;
+}
+
+export interface WasserinhaltTeil {
+  readonly label: string;
+  readonly liter: number;
+}
+
+export interface WasserinhaltErgebnis {
+  readonly summe: number;
+  /** Nur die Komponenten > 0 — wie die Aufschlüsselung der NotizApp. */
+  readonly teile: readonly WasserinhaltTeil[];
+}
+
+/** Summe ≤ 0 → kein Ergebnis (NotizApp zeigt dann „—"). */
+export function wasserinhalt(e: WasserinhaltEingabe): WasserinhaltErgebnis | null {
+  const rohr = positivOderNull(e.rohrLaenge) * e.rohrLProM;
+  const fbh = positivOderNull(e.fbhLaenge) * e.fbhLProM;
+  const hk = positivOderNull(e.hkAnzahl) * positivOderNull(e.hkInhalt);
+  const erz = positivOderNull(e.erzeuger);
+  const puf = positivOderNull(e.puffer);
+  const summe = rohr + fbh + hk + erz + puf;
+  if (summe <= 0) return null;
+
+  const teile: WasserinhaltTeil[] = [];
+  if (rohr > 0) teile.push({ label: 'Rohr', liter: rohr });
+  if (fbh > 0) teile.push({ label: 'FBH', liter: fbh });
+  if (hk > 0) teile.push({ label: 'Heizkörper', liter: hk });
+  if (erz > 0) teile.push({ label: 'Erzeuger', liter: erz });
+  if (puf > 0) teile.push({ label: 'Puffer', liter: puf });
+  return { summe, teile };
+}
+
+// ============================================================================
+// 6) Membran-Ausdehnungsgefäß (MAG) — NotizApp `AusdehnungsgefaessRechner`
+//
+//    V_n = (V_e + V_wv) · (p_e + 1) / (p_e − p_0)
+//      V_e  = Anlageninhalt · Ausdehnungskoeffizient (max. Vorlauftemperatur)
+//      V_wv = Wasservorlage = max(0,5 % · Anlageninhalt; 3 l)
+//      p_0  = Vordruck  = statische Höhe / 10 + 0,3 bar
+//      p_e  = Enddruck  = Ansprechdruck SV − 0,5 bar
+//
+//    Rechenvorschrift und Konventionen 1:1 aus der NotizApp. Die
+//    Ausdehnungskoeffizienten und die Nenngrößenliste sind die dort vom
+//    Anwender gepflegten Werte — es ist KEINE Normtabelle abgedruckt.
+// ============================================================================
+
+/** Handelsübliche Nenngrößen in Litern — Liste der NotizApp, unverändert. */
+export const MAG_NENNGROESSEN: readonly number[] = [
+  8, 12, 18, 25, 35, 50, 80, 100, 140, 200, 250, 300, 400, 500, 600, 800, 1000,
+];
+
+export interface MagTemperatur {
+  readonly wert: string;
+  readonly label: string;
+  /** Ausdehnungskoeffizient (Füllung bei ~10 °C). */
+  readonly beta: number;
+}
+
+/** ComboBox `TempBox` der NotizApp (Vorauswahl 70 °C). */
+export const MAG_TEMPERATUREN: readonly MagTemperatur[] = [
+  { wert: '50', label: '50 °C', beta: 0.0121 },
+  { wert: '60', label: '60 °C', beta: 0.0171 },
+  { wert: '70', label: '70 °C', beta: 0.0228 },
+  { wert: '80', label: '80 °C', beta: 0.0289 },
+  { wert: '90', label: '90 °C', beta: 0.0359 },
+];
+export const MAG_TEMP_STANDARD = '70';
+
+/** ComboBox `SvBox` der NotizApp (Vorauswahl 3,0 bar). */
+export const MAG_SICHERHEITSVENTILE: readonly { readonly wert: string; readonly label: string }[] =
+  [
+    { wert: '2.5', label: '2,5 bar' },
+    { wert: '3.0', label: '3,0 bar' },
+  ];
+export const MAG_SV_STANDARD = '3.0';
+
+/** Vorbelegung „statische Höhe" der NotizApp (`HoeheBox.Text = "5"`). */
+export const MAG_HOEHE_STANDARD = '5';
+
+/** Pflichthinweis auf jeder MAG-Ausgabe. Fehldimensionierung = Anlagenschaden. */
+export const MAG_HAFTUNG =
+  'Auslegungshilfe zur Plausibilisierung, KEIN Nachweis. Maßgeblich sind die ' +
+  'Anlagendaten und die Herstellerangaben (DIN EN 12828 / DIN 4807-2); ' +
+  'Wasservorlage, Vordruck und Enddruck sind hier als gängige Konvention ' +
+  'angesetzt und im Einzelfall zu prüfen.';
+
+export type MagFehler = 'INHALT' | 'DRUCK';
+
+export interface MagErgebnis {
+  /** Ausdehnungsvolumen V_e in Litern. */
+  readonly ve: number;
+  /** Wasservorlage V_wv in Litern. */
+  readonly vwv: number;
+  /** Vordruck p_0 in bar. */
+  readonly p0: number;
+  /** Enddruck p_e in bar. */
+  readonly pe: number;
+  /** Rechnerisch nötiges Nennvolumen in Litern. */
+  readonly vn: number;
+  /** Kleinste Nenngröße ≥ V_n, oder null (dann Sonderauslegung). */
+  readonly empfohlen: number | null;
+}
+
+/**
+ * MAG-Nennvolumen. `hoehe` darf leer sein (dann 0 — wie in der NotizApp, wo ein
+ * unlesbares Höhenfeld als 0 gilt). Anlageninhalt ≤ 0 → kein Ergebnis.
+ */
+export function ausdehnungsgefaess(
+  inhalt: number | null,
+  beta: number,
+  pSv: number,
+  hoehe: number | null,
+): { ok: true; ergebnis: MagErgebnis } | { ok: false; fehler: MagFehler } {
+  if (inhalt == null || !(inhalt > 0)) return { ok: false, fehler: 'INHALT' };
+  const h = hoehe ?? 0;
+
+  const ve = inhalt * beta;
+  const vwv = Math.max(0.005 * inhalt, 3);
+  const p0 = h / 10 + 0.3;
+  const pe = pSv - 0.5;
+
+  // Zu kleine Druckdifferenz: die Formel liefert sonst absurd große Gefäße
+  // (oder ein negatives Volumen). Grenze 0,1 bar — wie in der NotizApp.
+  if (pe - p0 <= 0.1) return { ok: false, fehler: 'DRUCK' };
+
+  const vn = ((ve + vwv) * (pe + 1)) / (pe - p0);
+  const empfohlen = MAG_NENNGROESSEN.find((g) => g >= vn) ?? null;
+  return { ok: true, ergebnis: { ve, vwv, p0, pe, vn, empfohlen } };
+}
+
+export function magFehlerText(f: MagFehler): string {
+  switch (f) {
+    case 'INHALT':
+      return 'Bitte den Anlagenwasserinhalt in Litern eingeben (größer als 0).';
+    case 'DRUCK':
+      return (
+        'Enddruck ≤ Vordruck: größeres Sicherheitsventil oder geringere statische Höhe ' +
+        'nötig (p_e muss deutlich über p_0 liegen).'
+      );
+  }
+}
+
+// ============================================================================
+// 7) Aufmaß / Mengenermittlung mit Verschnitt (NEU — nicht in der NotizApp)
+//
+//    Teilmaße (mit Bezeichnung, addierend oder abziehend)
+//      → Nettomenge
+//      → + Verschnitt %
+//      → aufgerundet auf die Gebinde-/Verpackungseinheit
+//      → Bestellmenge
+//
+//    ABGRENZUNG ZU GELD: Hier wird eine **Menge** ermittelt, kein Betrag. Sie
+//    geht als Punkt-String (`mengeApi`) in die Belegposition — genau so, wie
+//    ein Mensch sie eintippen würde. Der Server rechnet daraus (und nur dort)
+//    Positionsnetto und Summen. Es wird KEIN Geldwert im Browser gerechnet.
+// ============================================================================
+
+/** Kaufmännisch auf `stellen` Nachkommastellen runden (DB-Skala: 3). */
+export function runde(n: number, stellen = 3): number {
+  const f = 10 ** stellen;
+  return Math.round((n + Number.EPSILON * Math.abs(n)) * f) / f;
+}
+
+/**
+ * Menge als API-Dezimalstring (Punkt, max. 3 Nachkommastellen, ohne
+ * Tausendertrenner) — die Form, die `QuoteLineInput.quantity` erwartet.
+ * Niemals `number` ins Datenmodell: die Zahl wird hier zum String und bleibt es.
+ */
+export function mengeApi(n: number): string {
+  const s = runde(n, 3).toFixed(3); // enthält immer einen Punkt
+  return s.replace(/0+$/, '').replace(/\.$/, '');
+}
+
+/**
+ * Gebinde-/VE-Eingabe auswerten.
+ *
+ * **Leer** heißt „keine Gebindegröße" (gültig, es wird nicht aufgerundet).
+ * Eine **ausgefüllte, aber unlesbare, mehrdeutige („1.500") oder nicht positive**
+ * Eingabe ist ein FEHLER und darf nicht still als „keine Gebindegröße" gelten:
+ * sonst bliebe die Aufrundung auf volle Kartons aus und der Anwender bestellte
+ * zu wenig, ohne es zu merken.
+ */
+export function gebindeAus(roh: string | null | undefined): {
+  readonly gebinde: number | null;
+  readonly ungueltig: boolean;
+} {
+  const s = (roh ?? '').trim();
+  if (s === '') return { gebinde: null, ungueltig: false };
+  const n = zahlAus(s);
+  return n != null && n > 0 ? { gebinde: n, ungueltig: false } : { gebinde: null, ungueltig: true };
+}
+
+/** Aufrundung mit Toleranz gegen Fließkomma-Artefakte (3 × 1,44 = 4,32 …0001). */
+function aufrunden(n: number): number {
+  return Math.ceil(n - 1e-9);
+}
+
+export type MessArt = 'FLAECHE' | 'LAENGE' | 'STUECK' | 'VOLUMEN';
+export type MassFeld = 'laenge' | 'breite' | 'hoehe';
+
+export interface MessArtDef {
+  readonly wert: MessArt;
+  readonly label: string;
+  /** Einheit der Menge — geht als `unit` in die Belegposition. */
+  readonly einheit: string;
+  /** Welche Maßfelder das Teilmaß braucht (alle in Metern). */
+  readonly masse: readonly MassFeld[];
+  readonly zweck: string;
+}
+
+export const MESS_ARTEN: readonly MessArtDef[] = [
+  {
+    wert: 'FLAECHE',
+    label: 'Fläche',
+    einheit: 'm²',
+    masse: ['laenge', 'breite'],
+    zweck: 'Wand, Boden, Decke — Länge × Höhe bzw. Breite. Fenster/Türen als Abzug erfassen.',
+  },
+  {
+    wert: 'LAENGE',
+    label: 'Länge',
+    einheit: 'm',
+    masse: ['laenge'],
+    zweck: 'Rohrleitung, Sockelleiste, Kabelkanal — Länge je Strang.',
+  },
+  {
+    wert: 'STUECK',
+    label: 'Stückzahl',
+    einheit: 'Stk',
+    masse: [],
+    zweck: 'Auslässe, Ventile, Heizkörper — nur die Anzahl je Teilmaß.',
+  },
+  {
+    wert: 'VOLUMEN',
+    label: 'Volumen',
+    einheit: 'm³',
+    masse: ['laenge', 'breite', 'hoehe'],
+    zweck: 'Estrich, Aushub, Schüttung — Länge × Breite × Höhe.',
+  },
+];
+
+export const MESS_ART_STANDARD: MessArt = 'FLAECHE';
+
+/** Bezeichnung eines Maßfelds (für Label und Rechenweg). */
+export const MASS_LABEL: Record<MassFeld, string> = {
+  laenge: 'Länge',
+  breite: 'Breite / Höhe',
+  hoehe: 'Höhe / Dicke',
+};
+
+export interface TeilmassEingabe {
+  readonly bezeichnung: string;
+  /** Faktor bzw. — bei STUECK — die Menge selbst. Leer = 1 (nicht bei STUECK). */
+  readonly anzahl: number | null;
+  readonly laenge: number | null;
+  readonly breite: number | null;
+  readonly hoehe: number | null;
+  /** true = die Menge wird abgezogen (Fenster, Tür, Aussparung). */
+  readonly abzug: boolean;
+}
+
+export type TeilmassStatus = 'OK' | 'LEER' | 'UNVOLLSTAENDIG';
+
+export interface TeilmassErgebnis {
+  readonly status: TeilmassStatus;
+  readonly bezeichnung: string;
+  readonly abzug: boolean;
+  /** Immer positiv; das Vorzeichen trägt `abzug`. 0, wenn nicht `OK`. */
+  readonly menge: number;
+  /** „3 × 2,5 m × 2,6 m = 19,5 m²" — nur bei `OK`. */
+  readonly rechenweg: string;
+}
+
+/**
+ * Ein Teilmaß auswerten.
+ *  - `LEER`: nichts eingetragen → wird stillschweigend übergangen.
+ *  - `UNVOLLSTAENDIG`: etwas eingetragen, aber ein Maß fehlt oder ist ≤ 0 →
+ *    das Teilmaß zählt NICHT und der Rechner blockiert die Übernahme. Ein still
+ *    verschlucktes Teilmaß wäre eine falsche Menge im Angebot.
+ */
+export function teilmass(art: MessArtDef, t: TeilmassEingabe): TeilmassErgebnis {
+  const werte: Record<MassFeld, number | null> = {
+    laenge: t.laenge,
+    breite: t.breite,
+    hoehe: t.hoehe,
+  };
+  const leer =
+    t.bezeichnung.trim() === '' &&
+    t.anzahl == null &&
+    art.masse.every((m) => werte[m] == null) &&
+    !t.abzug;
+  const basis = { bezeichnung: t.bezeichnung.trim(), abzug: t.abzug, menge: 0, rechenweg: '' };
+  if (leer) return { ...basis, status: 'LEER' };
+
+  // Anzahl: leer = 1 (ein Teilmaß ohne Zählangabe ist eines). Bei STUECK ist die
+  // Anzahl das Maß selbst — dort ist sie Pflicht.
+  const anzahl = t.anzahl ?? (art.wert === 'STUECK' ? null : 1);
+  if (anzahl == null || !(anzahl > 0)) return { ...basis, status: 'UNVOLLSTAENDIG' };
+  if (art.masse.some((m) => werte[m] == null || !(werte[m]! > 0))) {
+    return { ...basis, status: 'UNVOLLSTAENDIG' };
+  }
+
+  const faktoren = art.masse.map((m) => werte[m]!);
+  const menge = runde(
+    faktoren.reduce((a, b) => a * b, anzahl),
+    3,
+  );
+  if (!(menge > 0)) return { ...basis, status: 'UNVOLLSTAENDIG' };
+
+  // Bei STUECK ist die Anzahl schon das Ergebnis — kein „12 Stk = 12 Stk".
+  const rechenweg =
+    art.wert === 'STUECK'
+      ? `${zahlMenge(menge)} ${art.einheit}`
+      : [
+          ...(t.anzahl != null ? [`${zahlKurz(anzahl)} ×`] : []),
+          faktoren.map((f) => `${zahlKurz(f)} m`).join(' × '),
+          `= ${zahlMenge(menge)} ${art.einheit}`,
+        ].join(' ');
+  return { ...basis, status: 'OK', menge, rechenweg };
+}
+
+export interface AufmassErgebnis {
+  readonly einheit: string;
+  readonly teile: readonly TeilmassErgebnis[];
+  /** Anzahl angefangener, aber unvollständiger Teilmaße (blockiert die Übernahme). */
+  readonly unvollstaendig: number;
+  /** Summe der Teilmaße (Zugänge minus Abzüge), auf 3 Stellen gerundet. */
+  readonly netto: number;
+  readonly verschnittProzent: number;
+  /** `brutto − netto` — passt damit immer exakt zur Anzeige. */
+  readonly verschnittMenge: number;
+  readonly brutto: number;
+  /** Gebinde-/Verpackungsgröße in der Einheit der Menge, oder null. */
+  readonly gebinde: number | null;
+  /** Zahl der Gebinde (aufgerundet), oder null. */
+  readonly gebindeAnzahl: number | null;
+  /** Was bestellt wird: brutto, bzw. auf volle Gebinde aufgerundet. */
+  readonly bestellmenge: number;
+}
+
+/**
+ * Aufmaß rechnen. Ergebnis nur, wenn die Nettomenge **positiv** ist — eine
+ * Menge ≤ 0 (nur Abzüge, oder Abzüge größer als die Fläche) ist keine
+ * Bestellmenge und darf nicht in einen Beleg (die DB verlangt `quantity > 0`).
+ */
+export function aufmass(
+  art: MessArtDef,
+  eingaben: readonly TeilmassEingabe[],
+  verschnittProzent: number,
+  gebinde: number | null,
+): AufmassErgebnis | null {
+  const teile = eingaben.map((t) => teilmass(art, t));
+  const unvollstaendig = teile.filter((t) => t.status === 'UNVOLLSTAENDIG').length;
+  const netto = runde(
+    teile.filter((t) => t.status === 'OK').reduce((s, t) => s + (t.abzug ? -t.menge : t.menge), 0),
+    3,
+  );
+  if (!(netto > 0) || !(verschnittProzent >= 0)) return null;
+
+  const brutto = runde(netto * (1 + verschnittProzent / 100), 3);
+  const verschnittMenge = runde(brutto - netto, 3);
+  const ve = gebinde != null && gebinde > 0 ? gebinde : null;
+  const gebindeAnzahl = ve ? aufrunden(brutto / ve) : null;
+  const bestellmenge = ve && gebindeAnzahl ? runde(gebindeAnzahl * ve, 3) : brutto;
+
+  return {
+    einheit: art.einheit,
+    teile,
+    unvollstaendig,
+    netto,
+    verschnittProzent,
+    verschnittMenge,
+    brutto,
+    gebinde: ve,
+    gebindeAnzahl,
+    bestellmenge,
+  };
 }

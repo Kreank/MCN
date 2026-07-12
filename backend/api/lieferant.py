@@ -24,6 +24,7 @@ from ninja.security import django_auth
 from api.permissions import require, require_create
 from db_core.models import PunchoutSession, SupplierConnection
 from db_core.services import anbindung as anbindung_service
+from db_core.services import aufschlagsmatrix as matrix_service
 from db_core.services import datanorm_import as datanorm_import_service
 from db_core.services import ids_warenkorb as ids_warenkorb_service
 from db_core.services import punchout_session as punchout_service
@@ -130,15 +131,48 @@ class ResolvedPositionOut(Schema):
     article_name: str | None = None
     matched: bool
     ambiguous: bool
+    # VK-Vorschlag aus der Aufschlagsmatrix (0069) — nur für zugeordnete Artikel.
+    # `net_price` ist der EINKAUFSpreis des Händlers; ohne Vorschlag bleibt der
+    # Verkaufspreis leer („unbekannt"), er wird NIE mit dem EK gleichgesetzt.
+    sale_price: str | None = None
+    sale_price_hinweis: str | None = None
 
 
-def _resolved_out(r):
+def _resolved_out(r, regelwerk=None):
+    """Eine aufgelöste Warenkorbposition + VK-Vorschlag.
+
+    Der VK wird aus dem **EK DES WARENKORBS** (`net_price`) gerechnet, nicht aus
+    dem gespeicherten `last_purchase_price`: der Händler gibt hier seinen aktuellen
+    Preis zurück, der Stamm-EK kann veraltet oder gar nicht vorhanden sein. Ohne
+    diesen Override trüge die Belegposition den neuen EK und einen VK aus dem alten
+    — eine still falsche (womöglich negative) Marge. Der Warenkorb-EK wird NICHT in
+    den Artikelstamm geschrieben (dafür gibt es den DATANORM-Import).
+
+    `regelwerk` wird EINMAL je Warenkorb geladen (sonst zöge jede Position die
+    gesamte Regeltabelle samt Staffeln erneut).
+    """
+    vk = None
+    hinweis = None
+    if r.article_id:
+        vorschlag = matrix_service.vk_vorschlag(
+            r.article_id, menge=r.qty,
+            ek_override=r.net_price, regelwerk=regelwerk,
+        )
+        if vorschlag:
+            vk = vorschlag["sale_price"]
+            hinweis = vorschlag["hinweis"]
     return ResolvedPositionOut(
         art_no=r.art_no, qty=r.qty, unit=r.unit, short_text=r.short_text,
         ean=r.ean, net_price=r.net_price, vat=r.vat, article_id=r.article_id,
         article_number=r.article_number, article_name=r.article_name,
         matched=r.matched, ambiguous=r.ambiguous,
+        sale_price=vk, sale_price_hinweis=hinweis,
     )
+
+
+def _resolved_liste(resolved):
+    regelwerk = matrix_service.lade_regelwerk()
+    return [_resolved_out(r, regelwerk) for r in resolved]
 
 
 class WarenkorbPreviewOut(Schema):
@@ -178,7 +212,7 @@ def warenkorb_preview(request, connection_id: UUID):
         source_namespace=conn.source_namespace,
         total=len(resolved),
         matched=sum(1 for r in resolved if r.matched),
-        positions=[_resolved_out(r) for r in resolved],
+        positions=_resolved_liste(resolved),
     )
 
 
@@ -361,7 +395,7 @@ def get_punchout_session(request, session_id: UUID):
         redeemed_at=session.redeemed_at,
         total=len(resolved),
         matched=sum(1 for r in resolved if r.matched),
-        positions=[_resolved_out(r) for r in resolved],
+        positions=_resolved_liste(resolved),
     )
 
 

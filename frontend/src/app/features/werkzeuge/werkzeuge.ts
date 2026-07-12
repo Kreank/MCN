@@ -5,6 +5,9 @@ import { HeizlastRechner } from './heizlast-rechner';
 import { EinheitenUmrechner } from './einheiten-umrechner';
 import { VolumenstromRechner } from './volumenstrom-rechner';
 import { HeizkoerperRechner } from './heizkoerper-rechner';
+import { AufmassRechner } from './aufmass-rechner';
+import { WasserinhaltRechner } from './wasserinhalt-rechner';
+import { AusdehnungsgefaessRechner } from './ausdehnungsgefaess-rechner';
 
 export interface WerkzeugTab {
   readonly id: string;
@@ -14,6 +17,13 @@ export interface WerkzeugTab {
 }
 
 export const WERKZEUGE: readonly WerkzeugTab[] = [
+  {
+    id: 'aufmass',
+    label: 'Aufmaß / Menge',
+    zweck:
+      'Teilmaße addieren, Abzüge, Verschnitt, Gebinde — und die Menge direkt als ' +
+      'Angebotsposition übernehmen.',
+  },
   {
     id: 'heizlast',
     label: 'Heizlast (überschlägig)',
@@ -30,13 +40,23 @@ export const WERKZEUGE: readonly WerkzeugTab[] = [
     zweck: 'Volumenstrom aus Heizleistung und Spreizung (Wasser).',
   },
   {
+    id: 'wasserinhalt',
+    label: 'Wasserinhalt',
+    zweck: 'Anlagenwasserinhalt aus Rohrnetz und Komponenten (Befüllmenge, VDI 2035).',
+  },
+  {
+    id: 'mag',
+    label: 'Ausdehnungsgefäß',
+    zweck: 'Nennvolumen des MAG überschlägig — Auslegungshilfe, kein Nachweis.',
+  },
+  {
     id: 'einheiten',
     label: 'Einheiten-Umrechner',
     zweck: 'kW, bar, °C, l/min, kWh, Zoll, °dH — alle Einheiten einer Größe auf einmal.',
   },
 ];
 
-const STANDARD = 'heizlast';
+const STANDARD = 'aufmass';
 
 /**
  * Werkzeuge — kleine Helfer für den SHK-Büroalltag. Rein rechnende Werkzeuge:
@@ -48,7 +68,15 @@ const STANDARD = 'heizlast';
  */
 @Component({
   selector: 'app-werkzeuge',
-  imports: [HeizlastRechner, EinheitenUmrechner, VolumenstromRechner, HeizkoerperRechner],
+  imports: [
+    AufmassRechner,
+    HeizlastRechner,
+    EinheitenUmrechner,
+    VolumenstromRechner,
+    HeizkoerperRechner,
+    WasserinhaltRechner,
+    AusdehnungsgefaessRechner,
+  ],
   templateUrl: './werkzeuge.html',
   styleUrl: './werkzeuge.scss',
 })

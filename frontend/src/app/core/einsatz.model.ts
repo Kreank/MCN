@@ -538,3 +538,25 @@ const RESOURCE_STATUS_LABELS: Record<ResourceStatus, string> = {
 export function resourceStatusLabel(s: ResourceStatus): string {
   return RESOURCE_STATUS_LABELS[s] ?? s;
 }
+
+/**
+ * „Wer ist gerade nicht da" — die Abwesenheitsuebersicht der Disposition.
+ *
+ * **Ohne Abwesenheitsart, mit voller Absicht** (wie `BoardAbsence`). Die Art
+ * unterscheidet Urlaub von Krankheit und ist ein Gesundheitsdatum, besondere
+ * Kategorie nach DSGVO Art. 9. Diese Ansicht haengt an `workflow/LESEN` — dem
+ * Recht der Disposition, die kein `hr` hat. Sie beantwortet: **wer fehlt, von
+ * wann bis wann**. Nicht: warum.
+ *
+ * Der Server liefert die Art hier gar nicht erst — es gibt also nichts, was ein
+ * Client versehentlich anzeigen koennte.
+ */
+export interface Abwesend {
+  id: string;
+  app_user_id: string;
+  name: string;
+  start_date: string;
+  end_date: string;
+  half_day_start: boolean;
+  half_day_end: boolean;
+}

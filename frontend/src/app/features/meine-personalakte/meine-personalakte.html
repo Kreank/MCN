@@ -129,6 +129,32 @@
           </div>
         }
       </section>
+
+      <!-- Krankmeldungen: eigene Arbeitsunfähigkeitsbescheinigung -->
+      @if (krankmeldungen(data).length > 0) {
+        <section class="block" aria-labelledby="attest-titel">
+          <h2 id="attest-titel" class="block__titel">Meine Bescheinigungen</h2>
+          <p class="block__hinweis">
+            Zu jeder Krankmeldung können Sie Ihre Arbeitsunfähigkeitsbescheinigung
+            hinterlegen (§ 5 EFZG). Sie ist ausschließlich für Sie selbst und die
+            Personalverwaltung sichtbar — nicht für Kollegen, nicht für die
+            Disposition.
+          </p>
+          <div class="atteste">
+            @for (a of krankmeldungen(data); track a.id) {
+              <article class="atteste__karte">
+                <p class="atteste__zeitraum">
+                  <strong>{{ datum(a.start_date) }} – {{ datum(a.end_date) }}</strong>
+                  <span class="status {{ absenceStatusClass(a.status) }}">
+                    {{ absenceStatusLabel(a.status) }}
+                  </span>
+                </p>
+                <app-attest [absenceId]="a.id" [darfHochladen]="attestOffen(a)" />
+              </article>
+            }
+          </div>
+        </section>
+      }
     }
   }
 </section>

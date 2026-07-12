@@ -15,6 +15,7 @@ import { RouterLink, RouterLinkActive } from '@angular/router';
       >
       <a routerLink="/planung/plantafel" routerLinkActive="is-active">Plantafel</a>
       <a routerLink="/planung/kalender" routerLinkActive="is-active">Kalender</a>
+      <a routerLink="/planung/abwesend" routerLinkActive="is-active">Wer fehlt?</a>
       <a routerLink="/planung/einstellungen" routerLinkActive="is-active"
         >Kategorien &amp; Ressourcen</a
       >

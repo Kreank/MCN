@@ -11,7 +11,10 @@ export const BEREICH_RECHT: Record<string, readonly [string, string]> = {
   vorgaenge: ['workflow', 'LESEN'],
   auftraege: ['workflow', 'LESEN'],
   planung: ['workflow', 'LESEN'],
-  wartung: ['workflow', 'LESEN'],
+  // Wartung/Fälligkeiten hat seit Migration 0071 ein eigenes Rechtemodul
+  // (`maintenance`): Wartungsverträge, Prüffristen und Gewährleistung sind ein
+  // eigener Verantwortungsbereich. Verwerfen einer Frist gatet STORNIEREN.
+  wartung: ['maintenance', 'LESEN'],
   aufgaben: ['workflow', 'LESEN'],
   mitarbeiter: ['hr', 'LESEN'],
   dokumente: ['invoicing', 'LESEN'],

@@ -1,0 +1,378 @@
+<section class="matrix" aria-labelledby="matrix-titel">
+  <header class="page-head">
+    <div>
+      <p class="page-head__kicker">
+        <span class="page-head__scale" aria-hidden="true"></span>
+        Artikel &amp; Leistungen
+      </p>
+      <h1 id="matrix-titel" class="page-head__titel">EK&nbsp;→&nbsp;VK-Aufschlagsmatrix</h1>
+    </div>
+    @if (darfAnlegen() && modus() === null) {
+      <button type="button" class="btn btn--primary" (click)="neu()">+ Regel</button>
+    }
+  </header>
+
+  <p class="intro note" role="note">
+    Die Matrix macht aus dem <strong>Einkaufspreis</strong> (aus DATANORM/IDS-Connect)
+    einen Verkaufspreis — je Warengruppe, wahlweise je Lieferant, mit
+    <strong>Standardregel</strong> als Auffangnetz. Die spezifischste Regel gewinnt.
+    <br />
+    Ein am Artikel <strong>von Hand gesetzter Festpreis</strong> oder eine dort
+    zugewiesene VK-Gruppe schlägt jede Regel — die Matrix greift nur, wo der Artikel
+    keine eigene Kalkulation trägt. Ist der Einkaufspreis unbekannt, bleibt der
+    Verkaufspreis <strong>unbekannt</strong> (nie 0).
+  </p>
+
+  @if (meldung(); as m) {
+    <p class="note note--error" role="alert">{{ m }}</p>
+  }
+
+  @if (modus() !== null) {
+    <form class="edit-form" [formGroup]="form" (ngSubmit)="speichern()" novalidate>
+      <h2 class="edit-form__titel">
+        {{ modus() === 'neu' ? 'Neue Aufschlagsregel' : 'Regel bearbeiten' }}
+      </h2>
+
+      <div class="edit-grid">
+        <app-feld [control]="form.controls.name" label="Bezeichnung" [pflicht]="true" />
+        @if (modus() === 'neu') {
+          <app-feld
+            [control]="form.controls.scope"
+            label="Geltungsbereich"
+            typ="select"
+            [optionen]="scopeOptionen"
+            hinweis="Artikel > Warengruppe + Lieferant > Warengruppe > Lieferant > Standard."
+          />
+        } @else {
+          <p class="feld">
+            <span class="feld__label">Geltungsbereich</span>
+            <span class="feld__wert">
+              {{ form.controls.product_group.value || 'Standardregel' }}
+              <span class="hinweis-inline">
+                — unveränderlich. Zum Umzielen eine neue Regel anlegen und diese
+                deaktivieren.
+              </span>
+            </span>
+          </p>
+        }
+
+        @if (modus() === 'neu' && zeigtWarengruppe()) {
+          <app-feld
+            [control]="form.controls.product_group"
+            label="Warengruppe"
+            typ="select"
+            [optionen]="warengruppenOptionen()"
+            hinweis="Aus dem Artikelstamm (DATANORM-Warengruppe)."
+          />
+        }
+        @if (modus() === 'neu' && zeigtLieferant()) {
+          <app-referenz-wahl
+            [control]="form.controls.supplier_party_id"
+            label="Lieferant"
+            platzhalter="Lieferant suchen …"
+            [suche]="lieferantSuche"
+          />
+        }
+
+        <app-feld
+          [control]="form.controls.calc_basis"
+          label="Basis"
+          typ="select"
+          [optionen]="basisOptionen"
+          hinweis="Worauf der Aufschlag rechnet."
+        />
+        <app-feld
+          [control]="form.controls.markup_percent"
+          label="Aufschlag (%)"
+          typ="zahl"
+          [pflicht]="true"
+          hinweis="z. B. 45. Negativ = Abschlag."
+        />
+        <app-feld
+          [control]="form.controls.min_margin_percent"
+          label="Mindestmarge (%)"
+          typ="zahl"
+          hinweis="Handelsspanne auf den VK. Untergrenze — auch eine Staffel unterbietet sie nicht. Leer = keine."
+        />
+      </div>
+
+      <fieldset class="staffel">
+        <legend class="legende">Rabattstaffel (optional)</legend>
+        <p class="hinweis-inline">
+          Ab einer Menge gilt ein anderer Aufschlag. Es zählt die höchste Stufe,
+          deren Menge erreicht ist.
+        </p>
+        @if (staffel().length === 0) {
+          <p class="note" role="note">Keine Staffel — es gilt immer der Basisaufschlag.</p>
+        } @else {
+          <table class="staffel-tabelle">
+            <caption class="sr-only">Staffelstufen der Regel</caption>
+            <thead>
+              <tr>
+                <th scope="col">ab Menge</th>
+                <th scope="col">Aufschlag (%)</th>
+                <th scope="col"><span class="sr-only">Aktionen</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (z of staffel(); track $index) {
+                <tr>
+                  <td>
+                    <label class="sr-only" [attr.for]="'st-m-' + $index">
+                      Mengenschwelle Stufe {{ $index + 1 }}
+                    </label>
+                    <input
+                      class="eingabe"
+                      [id]="'st-m-' + $index"
+                      type="text"
+                      inputmode="decimal"
+                      [value]="z.min_quantity"
+                      (input)="staffelAendern($index, 'min_quantity', $event)"
+                    />
+                  </td>
+                  <td>
+                    <label class="sr-only" [attr.for]="'st-a-' + $index">
+                      Aufschlag Stufe {{ $index + 1 }}
+                    </label>
+                    <input
+                      class="eingabe"
+                      [id]="'st-a-' + $index"
+                      type="text"
+                      inputmode="decimal"
+                      [value]="z.markup_percent"
+                      (input)="staffelAendern($index, 'markup_percent', $event)"
+                    />
+                  </td>
+                  <td>
+                    <button type="button" class="btn" (click)="staffelEntfernen($index)">
+                      Entfernen
+                    </button>
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        }
+        <button type="button" class="btn" (click)="staffelZeile()">+ Stufe</button>
+      </fieldset>
+
+      <div class="edit-aktionen">
+        <button type="submit" class="btn btn--primary" [disabled]="laedt()">
+          {{ laedt() ? 'Speichern …' : 'Speichern' }}
+        </button>
+        <button type="button" class="btn" [disabled]="laedt()" (click)="abbrechen()">
+          Abbrechen
+        </button>
+      </div>
+    </form>
+  }
+
+  @switch (state().kind) {
+    @case ('loading') {
+      <p class="lade-hinweis" role="status">Regeln werden geladen.</p>
+    }
+    @case ('forbidden') {
+      <app-kein-zugriff [detail]="$any(state()).detail" />
+    }
+    @case ('error') {
+      <p class="note note--error" role="alert">
+        Die Regeln konnten nicht geladen werden. Bitte erneut versuchen.
+      </p>
+    }
+    @case ('ready') {
+      @if ($any(state()).data.length === 0) {
+        <p class="note" role="note">
+          Noch keine Regel. Ohne Regel bleibt der Verkaufspreis eines Katalogartikels
+          unbekannt — legen Sie mindestens eine Standardregel an.
+        </p>
+      } @else {
+        <div class="tabelle-rahmen">
+          <table class="regel-tabelle">
+            <caption class="sr-only">
+              Aufschlagsregeln, spezifischste zuerst
+            </caption>
+            <thead>
+              <tr>
+                <th scope="col">Regel</th>
+                <th scope="col">Geltungsbereich</th>
+                <th scope="col">Basis</th>
+                <th scope="col" class="num">Aufschlag</th>
+                <th scope="col" class="num">Mindestmarge</th>
+                <th scope="col">Staffel</th>
+                <th scope="col">Status</th>
+                @if (darfAendern()) {
+                  <th scope="col"><span class="sr-only">Aktionen</span></th>
+                }
+              </tr>
+            </thead>
+            <tbody>
+              @for (r of $any(state()).data; track r.id) {
+                <tr [class.zeile--inaktiv]="r.status !== 'AKTIV'">
+                  <th scope="row">{{ r.name }}</th>
+                  <td>{{ r.scope_text }}</td>
+                  <td>{{ basisLabel(r.calc_basis) }}</td>
+                  <td class="num">{{ prozent(r.markup_percent) }}</td>
+                  <td class="num">{{ prozent(r.min_margin_percent) }}</td>
+                  <td>
+                    @if (r.tiers.length === 0) {
+                      —
+                    } @else {
+                      <ul class="staffel-liste">
+                        @for (t of r.tiers; track t.id) {
+                          <li>ab {{ menge(t.min_quantity) }}: {{ prozent(t.markup_percent) }}</li>
+                        }
+                      </ul>
+                    }
+                  </td>
+                  <td>
+                    <span
+                      class="status"
+                      [class.status--aktiv]="r.status === 'AKTIV'"
+                      [class.status--inaktiv]="r.status !== 'AKTIV'"
+                    >
+                      <span aria-hidden="true">{{ r.status === 'AKTIV' ? '●' : '○' }}</span>
+                      {{ r.status === 'AKTIV' ? 'Aktiv' : 'Inaktiv' }}
+                    </span>
+                  </td>
+                  @if (darfAendern()) {
+                    <td class="aktionen-zelle">
+                      <div class="zeilen-aktionen">
+                        <button type="button" class="btn" (click)="starteBearbeiten(r)">
+                          Bearbeiten
+                        </button>
+                        <button
+                          type="button"
+                          class="btn"
+                          [disabled]="laedt()"
+                          (click)="umschalten(r)"
+                        >
+                          {{ r.status === 'AKTIV' ? 'Deaktivieren' : 'Aktivieren' }}
+                        </button>
+                      </div>
+                    </td>
+                  }
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    }
+  }
+
+  <!-- ===================== Massenpflege ===================== -->
+  @if (darfAendern()) {
+    <section class="mp" aria-labelledby="mp-titel">
+      <h2 id="mp-titel" class="mp__titel">Verkaufspreise neu rechnen</h2>
+      <p class="note" role="note">
+        Nach einem DATANORM-Import: die Verkaufspreise einer Warengruppe aus der Matrix
+        neu schreiben. Erst die <strong>Vorschau</strong>, dann bestätigen.
+        <strong>Von Hand gesetzte Preise bleiben unangetastet</strong>, ebenso Artikel
+        mit eigener VK-Gruppe; ein unbekannter Einkaufspreis führt nie zu einem Preis 0.
+        <strong>Bereits geschriebene Angebote und Rechnungen ändern sich nicht</strong> —
+        eine Belegposition ist eine eingefrorene Kopie.
+      </p>
+
+      @if (mpMeldung(); as m) {
+        <p class="note note--error" role="alert">{{ m }}</p>
+      }
+      @if (mpErfolg(); as m) {
+        <p class="note note--ok" role="status">{{ m }}</p>
+      }
+
+      <form class="mp-form" [formGroup]="mpForm" (ngSubmit)="vorschauLaden()" novalidate>
+        <app-feld
+          [control]="mpForm.controls.product_group"
+          label="Warengruppe"
+          typ="select"
+          [optionen]="warengruppenOptionen()"
+          hinweis="Leer = alle Artikel (nur bei kleinen Beständen sinnvoll)."
+        />
+        <button type="submit" class="btn btn--primary" [disabled]="mpLaedt()">
+          {{ mpLaedt() ? 'Rechne …' : 'Vorschau' }}
+        </button>
+      </form>
+
+      @if (vorschau(); as v) {
+        <div class="mp-ergebnis">
+          <p class="mp-zahlen" role="status">
+            <strong>{{ v.verarbeitet }}</strong> von {{ v.artikel_gesamt }} Artikeln
+            geprüft ·
+            <strong>{{ v.angelegt }}</strong> neu ·
+            <strong>{{ v.aktualisiert }}</strong> geändert ·
+            {{ v.unveraendert }} unverändert · {{ v.uebersprungen }} übersprungen
+          </p>
+          @if (v.weiter) {
+            <p class="note" role="note">
+              Die Auswahl ist größer als ein Abschnitt. Die Vorschau zeigt den
+              ersten Abschnitt; beim Übernehmen werden alle Abschnitte nacheinander
+              abgearbeitet.
+            </p>
+          }
+          @if (mpLaedt() && mpAbschnitte() > 0) {
+            <p class="note" role="status">
+              Abschnitt {{ mpAbschnitte() }} verarbeitet — es geht weiter …
+            </p>
+          }
+
+          @if (v.zeilen.length > 0) {
+            <div class="tabelle-rahmen">
+              <table class="mp-tabelle">
+                <caption class="sr-only">
+                  Vorschau der neuen Verkaufspreise
+                </caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Artikel</th>
+                    <th scope="col">Bezeichnung</th>
+                    <th scope="col" class="num">Preis bisher</th>
+                    <th scope="col" class="num">Preis neu</th>
+                    <th scope="col">Was passiert</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (z of v.zeilen; track z.article_id) {
+                    <tr [class.zeile--inaktiv]="z.aktion === 'UEBERSPRUNGEN'">
+                      <th scope="row">{{ z.article_number }}</th>
+                      <td>{{ z.description }}</td>
+                      <td class="num">{{ z.alt === null ? '—' : euro(z.alt) }}</td>
+                      <td class="num">{{ z.neu === null ? '—' : euro(z.neu) }}</td>
+                      <td>
+                        <span class="aktion">{{ aktionLabel(z.aktion) }}</span>
+                        @if (z.grund) {
+                          <span class="hinweis-inline"> — {{ z.grund }}</span>
+                        } @else if (z.regel_name) {
+                          <span class="hinweis-inline"> — Regel „{{ z.regel_name }}“</span>
+                        }
+                      </td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          }
+
+          @if (!v.dry_run) {
+            <p class="note note--ok" role="status">Angewendet.</p>
+          } @else if (mpBetroffen() > 0) {
+            <button type="button" class="btn btn--primary" (click)="anwendenFragen()">
+              {{ mpBetroffen() }} Preis(e) übernehmen
+            </button>
+          } @else {
+            <p class="note" role="note">Es gibt nichts zu übernehmen.</p>
+          }
+        </div>
+      }
+    </section>
+  }
+
+  <app-bestaetigung
+    [offen]="mpFragen()"
+    titel="Verkaufspreise übernehmen?"
+    [text]="mpText()"
+    bestaetigenLabel="Übernehmen"
+    [laedt]="mpLaedt()"
+    (bestaetigen)="anwenden()"
+    (abbrechen)="mpFragen.set(false)"
+  />
+</section>

@@ -12,6 +12,7 @@ ist eine Konfig-Ebene. Damit die Konfiguration immer ausführbar bleibt, erzwing
 bilden — eine mittlere Stufe zu deaktivieren, während eine höhere aktiv bleibt,
 wird verboten (sonst wäre ein Sprung 1 -> 3 nötig, den der Trigger nie zulässt).
 """
+import calendar
 import hashlib
 import re
 import uuid
@@ -53,6 +54,8 @@ _PROFILE_FIELDS = (
     "datev_advance_mode", "datev_advance_account_full",
     "datev_advance_account_reduced", "datev_advance_account_free",
     "datev_advance_account_reverse",
+    # Resturlaubs-Verfall (0072). NULL/NULL = kein Verfall (Default).
+    "vacation_carryover_expiry_month", "vacation_carryover_expiry_day",
 )
 
 # Konto-Override-Felder: reine Ziffernfolgen (Sach-/Personenkonten). NULL = der
@@ -142,6 +145,46 @@ def _validate_datev(values):
             )
 
 
+def _validate_urlaubsverfall(values, profile):
+    """Verfallstag des Resturlaubs-Übertrags: beide Felder oder keins (DB-CHECK).
+
+    Geprüft wird der **Ergebniszustand** (Bestand + Änderung), nicht nur das, was
+    gesendet wurde: Wer allein den Monat leert, hinterließe sonst einen Tag ohne
+    Monat — der DB-CHECK schlüge als 500 durch statt als klare 422.
+
+    NULL/NULL ist der Default und heißt **kein Verfall**. Das ist kein Versäumnis,
+    sondern die Entscheidung: Es wird nichts weggerechnet, was der Betrieb nicht
+    ausdrücklich eingestellt hat (Begründung im Kopf von Migration 0072).
+    """
+    monat_key = "vacation_carryover_expiry_month"
+    tag_key = "vacation_carryover_expiry_day"
+    if monat_key not in values and tag_key not in values:
+        return
+    monat = values[monat_key] if monat_key in values else (
+        getattr(profile, monat_key, None) if profile else None
+    )
+    tag = values[tag_key] if tag_key in values else (
+        getattr(profile, tag_key, None) if profile else None
+    )
+    if (monat is None) != (tag is None):
+        raise ValueError(
+            "Der Verfallstag des Resturlaubs braucht Tag UND Monat — oder keins "
+            "von beidem (kein Verfall)."
+        )
+    if monat is None:
+        return
+    monat, tag = int(monat), int(tag)
+    if not 1 <= monat <= 12:
+        raise ValueError("Der Verfallsmonat muss zwischen 1 und 12 liegen.")
+    letzter = calendar.monthrange(2024, monat)[1]  # Schaltjahr: 29.02. erlaubt
+    if not 1 <= tag <= letzter:
+        raise ValueError(
+            f"Der Verfallstag muss zwischen 1 und {letzter} liegen (Monat {monat})."
+        )
+    values[monat_key] = monat
+    values[tag_key] = tag
+
+
 def _abschlagsmodus_wechsel_pruefen(profile, neuer_modus):
     """Der DATEV-Abschlagsmodus darf nur an einem SAUBEREN SCHNITT wechseln.
 
@@ -215,6 +258,7 @@ def update_company_profile(actor_app_user_id, **fields):
     _validate_datev(values)
 
     profile = get_company_profile()
+    _validate_urlaubsverfall(values, profile)
     if profile is None:
         if not values.get("company_name"):
             raise ValueError("Firmenname ist erforderlich.")

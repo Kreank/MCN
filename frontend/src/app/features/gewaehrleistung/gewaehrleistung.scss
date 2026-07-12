@@ -1,0 +1,177 @@
+.gewaehrleistung {
+  max-width: 72rem;
+}
+
+.rechtshinweis {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-4);
+  border-left: 3px solid var(--line-strong, var(--line));
+  border-radius: var(--radius-1);
+  background: var(--surface-2);
+  color: var(--ink-muted);
+  font-size: var(--step--1);
+  line-height: 1.55;
+
+  &__icon {
+    flex: none;
+    font-size: 1.25em;
+    font-weight: 700;
+  }
+
+  strong {
+    color: var(--ink);
+  }
+}
+
+.meldung {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-4);
+  border-radius: var(--radius-1);
+  background: color-mix(in srgb, var(--positive) 18%, var(--surface-1));
+  border: 1.5px solid color-mix(in srgb, var(--positive) 45%, transparent);
+  font-size: var(--step--1);
+
+  &--fehler {
+    background: color-mix(in srgb, var(--danger, #b3261e) 12%, var(--surface-1));
+    border-color: color-mix(in srgb, var(--danger, #b3261e) 40%, transparent);
+  }
+
+  &__zu {
+    margin-left: auto;
+    border: 0;
+    background: none;
+    cursor: pointer;
+    color: inherit;
+    padding: var(--space-1);
+
+    &:focus-visible {
+      outline: 2.5px solid var(--focus-ring);
+    }
+  }
+}
+
+.voreinstellung {
+  margin: 0 0 var(--space-4);
+}
+
+.liste {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-3);
+}
+
+.karte {
+  padding: var(--space-4);
+  border: 1.5px solid var(--line);
+  border-left: 4px solid var(--positive);
+  border-radius: var(--radius-2);
+  background: var(--surface-1);
+
+  &--ablauf {
+    border-left-color: var(--warn);
+  }
+
+  &--weg {
+    border-left-color: var(--line);
+    opacity: 0.75;
+  }
+
+  &__kopf {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    margin-bottom: var(--space-3);
+  }
+
+  &__titel {
+    margin: 0;
+    font-size: var(--step-0);
+    font-weight: 650;
+  }
+
+  &__daten {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+    gap: var(--space-3);
+    margin: 0 0 var(--space-3);
+
+    dt {
+      font-size: var(--step--2);
+      color: var(--ink-muted);
+      margin-bottom: 2px;
+    }
+
+    dd {
+      margin: 0;
+      font-size: var(--step--1);
+    }
+  }
+
+  &__aktionen {
+    display: flex;
+    gap: var(--space-2);
+  }
+}
+
+.stamp--warn {
+  background: color-mix(in srgb, var(--warn) 20%, var(--surface-1));
+  border-color: color-mix(in srgb, var(--warn) 50%, transparent);
+}
+
+/* Verkaufsargument — Hinweis, keine Rechtsbehauptung. */
+.tipp {
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  margin: 0 0 var(--space-3);
+  border-radius: var(--radius-1);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-1));
+  border: 1.5px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  font-size: var(--step--1);
+  line-height: 1.5;
+
+  &__icon {
+    flex: none;
+  }
+
+  &__link {
+    display: inline-block;
+    margin-top: var(--space-1);
+    font-weight: 650;
+  }
+}
+
+.dezent {
+  color: var(--ink-muted);
+  font-size: var(--step--2);
+}
+
+.dialog-form {
+  display: grid;
+  gap: var(--space-4);
+
+  &__intro {
+    margin: 0;
+    padding-bottom: var(--space-3);
+    border-bottom: 1.5px solid var(--line);
+  }
+
+  &__aktionen {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-2);
+  }
+}
+
+.note--klein {
+  font-size: var(--step--2);
+}

@@ -1,0 +1,91 @@
+<app-planung-nav />
+
+@switch (state().kind) {
+  @case ('loading') {
+    <p class="lade-hinweis">Abwesenheiten werden geladen …</p>
+  }
+  @case ('forbidden') {
+    <app-kein-zugriff />
+  }
+  @case ('error') {
+    <div class="note note--error" role="alert">
+      <p>{{ fehler() ?? 'Die Abwesenheiten konnten nicht geladen werden.' }}</p>
+      <button type="button" class="btn" (click)="laden()">Erneut versuchen</button>
+    </div>
+  }
+  @case ('ready') {
+    <header class="kopf">
+      <div>
+        <p class="kicker">Planung · Verfügbarkeit</p>
+        <h1>Wer fehlt?</h1>
+      </div>
+      <fieldset class="segment">
+        <legend class="sr-only">Zeitraum</legend>
+        @for (s of spannen; track s.wert) {
+          <button
+            type="button"
+            class="segment__knopf"
+            [class.is-active]="spanne() === s.wert"
+            [attr.aria-pressed]="spanne() === s.wert"
+            (click)="spanneWaehlen(s.wert)"
+          >
+            {{ s.label }}
+          </button>
+        }
+      </fieldset>
+    </header>
+
+    <p class="hinweis">
+      Genehmigte Abwesenheiten im gewählten Zeitraum — <strong>wer</strong> fehlt und
+      <strong>von wann bis wann</strong>. Der <strong>Grund wird bewusst nicht
+      angezeigt</strong>: Ob jemand Urlaub hat oder krank ist, ist ein Gesundheitsdatum
+      (DSGVO Art. 9) und gehört in die Personalverwaltung, nicht in die Disposition.
+      Für die Planung genügt: Der Termin ist nicht besetzbar.
+    </p>
+
+    @if (anzahl() === 0) {
+      <p class="tab-platzhalter">
+        Im gewählten Zeitraum ist niemand abwesend.
+      </p>
+    } @else {
+      <table class="tabelle">
+        <caption class="sr-only">
+          Abwesende Mitarbeitende im gewählten Zeitraum (ohne Angabe des Grundes)
+        </caption>
+        <thead>
+          <tr>
+            <th scope="col">Mitarbeiter</th>
+            <th scope="col">Von</th>
+            <th scope="col">Bis</th>
+            <th scope="col">Dauer</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (a of zeilen(); track a.id) {
+            <tr>
+              <td>
+                <span class="abwesend__name">{{ a.name }}</span>
+                <span class="stamp stamp--warn">
+                  <span aria-hidden="true">✕</span> abwesend
+                </span>
+              </td>
+              <td>
+                {{ datum(a.start_date) }}
+                @if (a.half_day_start) {
+                  <span class="abwesend__halb" title="halber Tag">½</span>
+                }
+              </td>
+              <td>
+                {{ datum(a.end_date) }}
+                @if (a.half_day_end) {
+                  <span class="abwesend__halb" title="halber Tag">½</span>
+                }
+              </td>
+              <td class="num">{{ dauer(a) }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    }
+  }
+}

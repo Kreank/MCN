@@ -6,9 +6,9 @@
     </p>
     <h1 class="wz__titel">Rechner für den Alltag</h1>
     <p class="wz__lead">
-      Schnell mal einen Raum überschlagen, eine Einheit umrechnen, prüfen ob der alte Heizkörper
-      bei 55 °C Vorlauf noch reicht. Kein Serverzugriff, keine gespeicherten Daten — Ergebnisse
-      lassen sich kopieren.
+      Schnell mal einen Raum überschlagen, eine Einheit umrechnen, prüfen ob der alte Heizkörper bei
+      55 °C Vorlauf noch reicht. Kein Serverzugriff, keine gespeicherten Daten — Ergebnisse lassen
+      sich kopieren.
     </p>
     @if (kontext(); as k) {
       <p class="wz__kontext">
@@ -47,6 +47,9 @@
     <p class="wz__zweck">{{ aktiverTab().zweck }}</p>
 
     @switch (aktiv()) {
+      @case ('aufmass') {
+        <app-aufmass-rechner [kontext]="kontext()" />
+      }
       @case ('heizlast') {
         <app-heizlast-rechner [kontext]="kontext()" />
       }
@@ -55,6 +58,12 @@
       }
       @case ('volumenstrom') {
         <app-volumenstrom-rechner [kontext]="kontext()" />
+      }
+      @case ('wasserinhalt') {
+        <app-wasserinhalt-rechner [kontext]="kontext()" />
+      }
+      @case ('mag') {
+        <app-ausdehnungsgefaess-rechner [kontext]="kontext()" />
       }
       @case ('einheiten') {
         <app-einheiten-umrechner [kontext]="kontext()" />

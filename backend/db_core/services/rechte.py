@@ -36,13 +36,15 @@ MODULES = (
     "security",
     "ai",
     # Nachgezogene Module: der CHECK auf security.role_permission.module wurde
-    # je Migration erweitert (hr=0021, company=0024, accounting=0032). Fehlt ein
-    # Modul hier, führt die Matrix zwar Zellen dafür und `effective_permissions`
-    # setzt sie durch, aber die Pflege lehnt sie mit „Unbekanntes Modul" ab und
-    # `GET /security/permissions` liefert eine unvollständige Spaltenliste.
+    # je Migration erweitert (hr=0021, company=0024, accounting=0032,
+    # maintenance=0071). Fehlt ein Modul hier, führt die Matrix zwar Zellen dafür
+    # und `effective_permissions` setzt sie durch, aber die Pflege lehnt sie mit
+    # „Unbekanntes Modul" ab und `GET /security/permissions` liefert eine
+    # unvollständige Spaltenliste.
     "hr",
     "company",
     "accounting",
+    "maintenance",
 )
 
 ACTIONS = (

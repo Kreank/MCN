@@ -62,6 +62,9 @@ class CompanyProfileOut(Schema):
     datev_advance_account_reduced: str | None = None
     datev_advance_account_free: str | None = None
     datev_advance_account_reverse: str | None = None
+    # Resturlaubs-Verfall (0072). NULL/NULL = kein Verfall — der Default.
+    vacation_carryover_expiry_month: int | None = None
+    vacation_carryover_expiry_day: int | None = None
     # Additiv: OB ein Firmenlogo hinterlegt ist (die Bytes holt GET /profile/logo).
     has_logo: bool = False
     # Gesetzt, wenn eine Bankdaten-Änderung einen Vier-Augen-Antrag ausgelöst hat
@@ -105,6 +108,10 @@ class CompanyProfileIn(Schema):
     datev_advance_account_reduced: str | None = None
     datev_advance_account_free: str | None = None
     datev_advance_account_reverse: str | None = None
+    # Resturlaubs-Verfall (0072): Tag UND Monat — oder beides leer („kein
+    # Verfall", Default). Der Service prueft den Ergebniszustand (422 statt 500).
+    vacation_carryover_expiry_month: int | None = None
+    vacation_carryover_expiry_day: int | None = None
 
 
 class BranchOut(Schema):
@@ -221,6 +228,8 @@ def _profile_out(p, pending_bank_approval=None):
         datev_advance_account_reduced=p.datev_advance_account_reduced,
         datev_advance_account_free=p.datev_advance_account_free,
         datev_advance_account_reverse=p.datev_advance_account_reverse,
+        vacation_carryover_expiry_month=p.vacation_carryover_expiry_month,
+        vacation_carryover_expiry_day=p.vacation_carryover_expiry_day,
         has_logo=p.logo_file_id is not None,
         pending_bank_approval=pending_bank_approval,
     )

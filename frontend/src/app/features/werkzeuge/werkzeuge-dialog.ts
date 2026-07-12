@@ -4,16 +4,33 @@ import { HeizlastRechner } from './heizlast-rechner';
 import { EinheitenUmrechner } from './einheiten-umrechner';
 import { VolumenstromRechner } from './volumenstrom-rechner';
 import { HeizkoerperRechner } from './heizkoerper-rechner';
+import { AufmassRechner } from './aufmass-rechner';
+import { WasserinhaltRechner } from './wasserinhalt-rechner';
+import { AusdehnungsgefaessRechner } from './ausdehnungsgefaess-rechner';
+import { RechnerPosition } from './rechner-basis';
 import { WERKZEUGE } from './werkzeuge';
 
 /**
- * Die Werkzeuge als Dialog — für den Beleg-Editor. Das Ergebnis wird als
- * **Textzeile** zurückgegeben (`uebernehmen`), nie als Menge oder Preis: der
- * Editor rechnet keine Summen, der Server bleibt die verbindliche Rechenstelle.
+ * Die Werkzeuge als Dialog — für den Beleg-Editor. Zwei Rückgabewege:
+ *
+ *  - `uebernehmen` (**Text**): Überschlagswerte (Heizlast, Volumenstrom, MAG …)
+ *    werden zur Textzeile — sie dokumentieren eine Annahme, sie setzen keinen
+ *    Preis und keine Menge.
+ *  - `uebernehmenPosition` (**Menge**): nur das Aufmaß. Menge + Einheit +
+ *    Rechenaufstellung; der Preis bleibt offen und die Summe rechnet der Server.
  */
 @Component({
   selector: 'app-werkzeuge-dialog',
-  imports: [Dialog, HeizlastRechner, EinheitenUmrechner, VolumenstromRechner, HeizkoerperRechner],
+  imports: [
+    Dialog,
+    AufmassRechner,
+    HeizlastRechner,
+    EinheitenUmrechner,
+    VolumenstromRechner,
+    HeizkoerperRechner,
+    WasserinhaltRechner,
+    AusdehnungsgefaessRechner,
+  ],
   templateUrl: './werkzeuge-dialog.html',
   styleUrl: './werkzeuge-dialog.scss',
 })
@@ -24,6 +41,8 @@ export class WerkzeugeDialog {
   readonly kontext = model('');
   /** Einzeiliger Ergebnistext für eine Textposition. */
   readonly uebernehmen = output<string>();
+  /** Aufmaß: Menge + Einheit + Rechenaufstellung für eine bepreisbare Position. */
+  readonly uebernehmenPosition = output<RechnerPosition>();
 
   protected readonly tabs = WERKZEUGE;
   protected readonly aktiv = signal(WERKZEUGE[0].id);
@@ -48,6 +67,12 @@ export class WerkzeugeDialog {
   /** Ergebnis weiterreichen und den Dialog schließen. */
   protected weitergeben(text: string): void {
     this.uebernehmen.emit(text);
+    this.offen.set(false);
+  }
+
+  /** Aufmaß-Position weiterreichen und den Dialog schließen. */
+  protected positionWeitergeben(p: RechnerPosition): void {
+    this.uebernehmenPosition.emit(p);
     this.offen.set(false);
   }
 }

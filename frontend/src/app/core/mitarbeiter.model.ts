@@ -93,6 +93,10 @@ export interface VacationAccount {
   adjustment_reason: string | null;
   total_days: string;
   used_days: string;
+  /** Verfallstag des Übertrags — null = kein Verfall eingestellt (Default). */
+  expiry_date: string | null;
+  /** Verfallener Übertrag. Ohne Verfallsregel immer „0.00". */
+  expired_days: string;
   remaining_days: string;
 }
 
@@ -261,4 +265,28 @@ const ABSENCE_TYPE_LABELS: Record<AbsenceType, string> = {
 
 export function absenceTypeLabel(t: AbsenceType): string {
   return ABSENCE_TYPE_LABELS[t] ?? t;
+}
+
+// --- Resturlaubs-Übertrag ins Folgejahr (Migration 0072) --------------------
+
+/**
+ * Eine Zeile der Übertrags-Vorschau. Der Übertrag **setzt** `carryover_days` des
+ * Folgejahres auf den Rest des Vorjahres — er addiert nicht. Genau das macht ihn
+ * idempotent: zweimal ausgeführt steht derselbe Wert.
+ */
+export interface CarryoverRow {
+  employee_id: string;
+  employee_number: string;
+  name: string;
+  year: number;
+  target_year: number;
+  entitlement_days: string;
+  used_days: string;
+  /** Verfallen (nur wenn im Firmenprofil ein Verfallstag eingestellt ist). */
+  expired_days: string;
+  remaining_days: string;
+  carryover_current: string;
+  carryover_new: string;
+  target_entitlement_days: string;
+  changes: boolean;
 }

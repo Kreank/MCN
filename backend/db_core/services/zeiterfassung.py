@@ -70,6 +70,7 @@ from db_core.models import (
     EmploymentContract,
     Holiday,
     ServiceJob,
+    TimeAdjustment,
     TimeCategory,
     TimeEntry,
     WorkDay,
@@ -83,6 +84,10 @@ BETRIEBS_TZ = ZoneInfo("Europe/Berlin")
 
 WORK_DAY_STATUS = ("ENTWURF", "EINGEREICHT", "BESTAETIGT", "ABGELEHNT")
 BREAK_MODES = ("KEINE", "GESETZLICH", "FESTE_ZEITEN")
+
+# Ausgleichsarten (Codeliste, Migration 0072). Sie klassifizieren nur — das
+# Vorzeichen steht in `minutes`, nicht in der Art.
+ADJUSTMENT_TYPES = ("EINBEHALT", "AUSZAHLUNG", "FREIZEITAUSGLEICH", "KORREKTUR")
 
 # ArbZG § 4: mehr als 6 h → 30 min, mehr als 9 h → 45 min Ruhepause.
 _ARBZG_STUFEN = ((timedelta(hours=9), timedelta(minutes=45)),
@@ -968,6 +973,175 @@ def pausen_regel_anwenden(actor_app_user_id, *, work_day_id, correction_reason=N
 
 
 # ---------------------------------------------------------------------------
+# Stundenausgleich (hr.time_adjustment, Migration 0072)
+# ---------------------------------------------------------------------------
+# Der Saldo bleibt ABGELEITET. Ein Ausgleich ist kein „Saldo überschreiben"
+# (es gibt keinen gespeicherten Saldo, den man überschreiben könnte), sondern
+# die dritte Größe der Formel:
+#
+#     Saldo = Ist − Soll + Σ Ausgleich
+#
+# Deshalb steht hier nur die Buchung; gerechnet wird weiterhin in
+# `stundenkonto()`.
+
+
+def _ausgleich_qs(employee_id=None, von=None, bis=None, nur_wirksam=False):
+    qs = TimeAdjustment.objects.select_related(
+        "employee", "employee__party", "created_by", "reversal_of"
+    )
+    if employee_id is not None:
+        qs = qs.filter(employee_id=employee_id)
+    if von is not None:
+        qs = qs.filter(effective_on__gte=von)
+    if bis is not None:
+        qs = qs.filter(effective_on__lte=bis)
+    if nur_wirksam:
+        # Die Summe läuft NUR über die wirksamen Buchungen: nicht storniert und
+        # selbst kein Storno. Beide Zeilen eines Storno-Vorgangs bleiben stehen
+        # (GoBD), aber keine von beiden zählt noch.
+        qs = qs.filter(status="GEBUCHT", reversal_of__isnull=True)
+    return qs
+
+
+def ausgleiche(employee_id=None, von=None, bis=None):
+    return list(_ausgleich_qs(employee_id, von, bis).order_by("-effective_on", "-created_at"))
+
+
+def ausgleich_minuten(employee_id, von, bis):
+    """Σ der wirksamen Ausgleichsminuten im Zeitraum (vorzeichenbehaftet)."""
+    summe = (
+        _ausgleich_qs(employee_id, von, bis, nur_wirksam=True)
+        .values_list("minutes", flat=True)
+    )
+    return sum(summe)
+
+
+def _minuten_zu_stunden(minuten):
+    return (Decimal(minuten) / Decimal(60)).quantize(Decimal("0.01"))
+
+
+def _kein_eigenes_konto(actor_app_user_id, employee_id):
+    """Niemand bewegt sein EIGENES Arbeitszeitkonto — auch nicht per Storno.
+
+    Ein Storno **ist** eine Ausgleichsbuchung: eigene Zeile in derselben Tabelle,
+    negierte Minuten, wirkt auf denselben abgeleiteten Saldo. Ohne diese Prüfung
+    im Storno-Pfad war das Tor der Buchung wertlos: Der Geschäftsführer bucht sich
+    −30 h (422 — geht nicht) … aber er storniert die Buchung eines Kollegen auf
+    SEINEM Konto und schreibt sich damit +30 h gut (Review-Befund A1,
+    per HTTP reproduziert).
+
+    Deshalb liegt die Regel an EINER Stelle und gilt für JEDEN Schreibpfad — und
+    zusätzlich physisch im Trigger `hr.enforce_time_adjustment` (Migration 0075),
+    damit sie auch an der Service-Schicht vorbei nicht umgehbar ist.
+    """
+    eigener = Employee.objects.filter(app_user_id=actor_app_user_id).values_list(
+        "id", flat=True
+    ).first()
+    if eigener is not None and eigener == employee_id:
+        raise ValueError(
+            "Das eigene Arbeitszeitkonto kann nicht selbst ausgeglichen werden — "
+            "der Stundenausgleich ist eine Führungsentscheidung (Vier-Augen-Prinzip). "
+            "Das gilt auch für das Stornieren einer Buchung auf dem eigenen Konto."
+        )
+
+
+def ausgleich_buchen(
+    actor_app_user_id, *, employee_id, adjustment_type, effective_on, minutes, reason
+):
+    """Bucht einen Stundenausgleich auf das Arbeitszeitkonto.
+
+    Vier Tore, alle auch physisch in der DB (Migration 0072):
+
+    * **Begründung ist Pflicht.** Eine Kontobewegung ohne Grund ist für den
+      Beschäftigten nicht nachvollziehbar und für die Prüfung wertlos.
+    * **0 Minuten ist keine Buchung** (Rauschen in der Aufzeichnung).
+    * **Niemand gleicht sein eigenes Konto aus.** Der Ausgleich ist eine
+      Führungsentscheidung des Arbeitgebers — sonst schriebe sich der
+      Beschäftigte seine Minusstunden selbst weg. (Das Recht `hr/AENDERN` mit
+      row_scope ALLE hält den Monteur ohnehin draußen; dieses Tor greift auch
+      gegen den Geschäftsführer, der zugleich Mitarbeiter ist.)
+    * **Der Mitarbeiter muss existieren** (sonst IntegrityError → 500).
+    """
+    if adjustment_type not in ADJUSTMENT_TYPES:
+        raise ValueError(
+            f"Unbekannte Ausgleichsart. Erlaubt: {', '.join(ADJUSTMENT_TYPES)}."
+        )
+    if not (reason or "").strip():
+        raise ValueError("Eine Ausgleichsbuchung ist begründungspflichtig.")
+    minutes = int(minutes)
+    if minutes == 0:
+        raise ValueError("Der Ausgleich muss von null verschieden sein.")
+    if abs(minutes) > 600_000:
+        raise ValueError("Der Ausgleich ist unplausibel groß (max. 10.000 Stunden).")
+
+    emp = Employee.objects.filter(id=employee_id).first()
+    if emp is None:
+        raise ValueError("Unbekannter Mitarbeiter.")
+    _kein_eigenes_konto(actor_app_user_id, emp.id)
+
+    with as_business_error():
+        with business_transaction(actor_app_user_id):
+            eintrag = TimeAdjustment.objects.create(
+                id=uuid.uuid4(),
+                employee_id=emp.id,
+                adjustment_type=adjustment_type,
+                effective_on=effective_on,
+                minutes=minutes,
+                reason=reason.strip(),
+                status="GEBUCHT",
+                reversal_of_id=None,
+                created_by_id=actor_app_user_id,
+            )
+    return _ausgleich_reload(eintrag.id)
+
+
+def ausgleich_stornieren(actor_app_user_id, *, adjustment_id, reason):
+    """Storniert eine Ausgleichsbuchung — append-only, kein Löschen (GoBD).
+
+    Es entsteht eine **zweite Zeile** mit den negierten Minuten und einem Verweis
+    auf die Ursprungsbuchung; die Ursprungsbuchung geht auf STORNIERT. Beide
+    bleiben sichtbar, beide fallen aus der Summe. Der Trigger erzwingt das
+    Vorzeichen, den Mitarbeiter und die Einmaligkeit.
+
+    **Das Vier-Augen-Tor gilt hier genauso** (`_kein_eigenes_konto`): Ein Storno
+    ist eine Kontobewegung wie jede andere — wer sein Konto nicht selbst
+    ausgleichen darf, darf es auch nicht durch Stornieren einer fremden Buchung
+    tun.
+    """
+    if not (reason or "").strip():
+        raise ValueError("Ein Storno ist begründungspflichtig.")
+    original = TimeAdjustment.objects.filter(id=adjustment_id).first()
+    if original is None:
+        raise ValueError("Unbekannte Ausgleichsbuchung.")
+    if original.reversal_of_id is not None:
+        raise ValueError("Eine Storno-Buchung kann nicht storniert werden.")
+    if original.status != "GEBUCHT":
+        raise ValueError("Die Buchung ist bereits storniert.")
+    _kein_eigenes_konto(actor_app_user_id, original.employee_id)
+
+    with as_business_error():
+        with business_transaction(actor_app_user_id):
+            storno = TimeAdjustment.objects.create(
+                id=uuid.uuid4(),
+                employee_id=original.employee_id,
+                adjustment_type=original.adjustment_type,
+                effective_on=original.effective_on,
+                minutes=-original.minutes,
+                reason=reason.strip(),
+                status="GEBUCHT",
+                reversal_of_id=original.id,
+                created_by_id=actor_app_user_id,
+            )
+    return _ausgleich_reload(storno.id)
+
+
+def _ausgleich_reload(adjustment_id):
+    return TimeAdjustment.objects.select_related(
+        "employee", "employee__party", "created_by", "reversal_of"
+    ).get(id=adjustment_id)
+
+
+# ---------------------------------------------------------------------------
 # Stundenkonto — abgeleitet, nie gespeichert
 # ---------------------------------------------------------------------------
 
@@ -985,18 +1159,22 @@ def _soll_stunden(contract, day):
 
 
 def stundenkonto(employee_id, von, bis):
-    """Soll/Ist/Saldo für einen Mitarbeiter und Zeitraum.
+    """Soll/Ist/Ausgleich/Saldo für einen Mitarbeiter und Zeitraum.
 
-    Soll  = Vertragsraster je Kalendertag
-            − Feiertage (bundesweit + Bundesland des Firmenprofils)
-            − genehmigte Abwesenheiten (halbe Randtage zählen 0,5)
-    Ist   = Summe aller Buchungen mit `category.is_work_time` (also Arbeit,
-            Fahrt, Bereitschaft, Nacharbeit, Werkstatt … — NICHT nur
-            'ARBEITSZEIT', wie es die alte Auswertung tat)
-    Saldo = Ist + Abwesenheitsstunden − Soll
+    Soll      = Vertragsraster je Kalendertag
+                − Feiertage (bundesweit + Bundesland des Firmenprofils)
+                − genehmigte Abwesenheiten (halbe Randtage zählen 0,5)
+    Ist       = Summe aller Buchungen mit `category.is_work_time` (also Arbeit,
+                Fahrt, Bereitschaft, Nacharbeit, Werkstatt … — NICHT nur
+                'ARBEITSZEIT', wie es die alte Auswertung tat)
+    Ausgleich = Σ der wirksamen Ausgleichsbuchungen (hr.time_adjustment, 0072),
+                deren Verbuchungszeitpunkt im Zeitraum liegt — vorzeichenbehaftet
+    Saldo     = Ist + Abwesenheitsstunden − Soll + Ausgleich
 
-    Nichts davon ist gespeichert. Gleiche Konvention wie offener Rechnungsbetrag
-    und Urlaubsverbrauch.
+    Nichts davon ist gespeichert — auch der Saldo nicht. Die Ausgleichsbuchung
+    ist eine **Buchung**, kein gespeicherter Saldo: Sie ändert die Formel, nicht
+    die Konvention. Gleiche Linie wie offener Rechnungsbetrag und
+    Urlaubsverbrauch.
     """
     emp = Employee.objects.select_related("app_user").filter(id=employee_id).first()
     if emp is None:
@@ -1047,9 +1225,12 @@ def stundenkonto(employee_id, von, bis):
     tage = list(arbeitstage(user_id=emp.app_user_id, von=von, bis=bis))
     offen = sum(1 for t in tage if t.status in ("ENTWURF", "ABGELEHNT"))
 
+    ausgleich_min = ausgleich_minuten(employee_id, von, bis)
+    ausgleich = _minuten_zu_stunden(ausgleich_min)
+
     soll = soll.quantize(Decimal("0.01"))
     abwesend = abwesend.quantize(Decimal("0.01"))
-    saldo = (ist + abwesend - soll).quantize(Decimal("0.01"))
+    saldo = (ist + abwesend - soll + ausgleich).quantize(Decimal("0.01"))
     return {
         "employee_id": emp.id,
         "von": von,
@@ -1058,6 +1239,7 @@ def stundenkonto(employee_id, von, bis):
         "ist": ist,
         "pause": pause,
         "abwesend": abwesend,
+        "ausgleich": ausgleich,
         "saldo": saldo,
         "tage_gesamt": len(tage),
         "tage_offen": offen,

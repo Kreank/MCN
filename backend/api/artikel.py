@@ -23,6 +23,7 @@ from db_core.models import (
     WageGroup,
 )
 from db_core.services import artikel as artikel_service
+from db_core.services import aufschlagsmatrix as matrix_service
 from db_core.services import kalkulation as kalkulation_service
 
 router = Router()
@@ -966,3 +967,305 @@ def set_lieferant(request, article_id: UUID, payload: LieferantIn):
     return _article_detail_out(
         Article.objects.select_related("cost_center", "tax_code").get(id=article_id)
     )
+
+
+# ===========================================================================
+# EK→VK-Aufschlagsmatrix (Migration 0069)
+# ===========================================================================
+# Die Matrix regelt den Aufschlag je Warengruppe/Lieferant mit Fallback auf eine
+# Standardregel; der Einzelfall (Regel je Artikel) gewinnt. Sie steht UNTER der
+# Artikelkalkulation: ein von Hand gesetzter Festpreis bzw. eine zugewiesene
+# VK-Gruppe am Artikel schlägt die Regel. Gerechnet wird ausschließlich im Service
+# (`services/aufschlagsmatrix.py`) — eine einzige Rechenstelle für Artikel-Detail,
+# Angebots-Editor, DATANORM-Import und IDS-Warenkorb.
+
+class MarkupTierOut(Schema):
+    id: UUID
+    min_quantity: str
+    markup_percent: str
+    status: str
+
+
+class MarkupRuleOut(Schema):
+    id: UUID
+    name: str
+    scope: str  # ARTIKEL | WARENGRUPPE_LIEFERANT | WARENGRUPPE | LIEFERANT | STANDARD
+    scope_text: str
+    article_id: UUID | None = None
+    article_number: str | None = None
+    product_group: str | None = None
+    supplier_party_id: UUID | None = None
+    supplier_name: str | None = None
+    calc_basis: str  # EK | LISTENPREIS
+    markup_percent: str
+    min_margin_percent: str | None = None
+    status: str
+    tiers: list[MarkupTierOut] = []
+
+
+class MarkupRuleIn(Schema):
+    name: str
+    calc_basis: str = "EK"
+    markup_percent: Decimal
+    min_margin_percent: Decimal | None = None
+    article_id: UUID | None = None
+    product_group: str | None = None
+    supplier_party_id: UUID | None = None
+
+
+class MarkupRuleUpdateIn(Schema):
+    """Der Geltungsbereich fehlt absichtlich: er ist per DB-Trigger unveränderlich
+    (Umzielen = neue Regel anlegen, alte deaktivieren)."""
+    name: str | None = None
+    calc_basis: str | None = None
+    markup_percent: Decimal | None = None
+    min_margin_percent: Decimal | None = None
+
+
+class MarkupTierIn(Schema):
+    min_quantity: Decimal
+    markup_percent: Decimal
+
+
+class MarkupTiersIn(Schema):
+    tiers: list[MarkupTierIn] = []
+
+
+class MarkupStatusIn(Schema):
+    status: str  # AKTIV | INAKTIV
+
+
+class WarengruppeOut(Schema):
+    product_group: str
+    anzahl: int
+
+
+def _markup_rule_out(rule_id):
+    """EINE Regel nachladen (nicht die ganze Tabelle durchziehen)."""
+    eintrag = matrix_service.markup_rule_out(rule_id)
+    if eintrag is None:
+        raise HttpError(404, "Regel nicht gefunden.")
+    return eintrag
+
+
+@router.get("/markup-rules", response=list[MarkupRuleOut])
+def list_markup_rules(request, status: str | None = Query(None)):
+    """Alle Aufschlagsregeln (mit Staffeln), spezifischste zuerst."""
+    require(request, "pricing", "LESEN")
+    return matrix_service.list_markup_rules(status=status)
+
+
+@router.get("/markup-rules/warengruppen", response=list[WarengruppeOut])
+def list_warengruppen(request):
+    """Im Artikelstamm vorkommende Warengruppen mit Artikelzahl (Auswahlliste der
+    Regelpflege). Quelle ist `pricing.article.product_group` — das Feld, das der
+    DATANORM-Import aus dem B-Satz (Warengruppe) füllt."""
+    require(request, "pricing", "LESEN")
+    return matrix_service.warengruppen()
+
+
+@router.post("/markup-rules", response={201: MarkupRuleOut}, auth=django_auth)
+def create_markup_rule(request, payload: MarkupRuleIn):
+    """Aufschlagsregel anlegen. Je Geltungsbereich nur EINE aktive Regel."""
+    # Bewusst `require` (nicht `require_create`): die Regel verweist mit
+    # article_id/supplier_party_id auf fremde Zeilen und wirkt auf den gesamten
+    # Artikelstamm — bei row_scope EIGENE ist das fail-closed abzulehnen.
+    actor, _ = require(request, "pricing", "ANLEGEN")
+    try:
+        regel = matrix_service.create_markup_rule(
+            actor,
+            name=payload.name,
+            calc_basis=payload.calc_basis,
+            markup_percent=_quantize(payload.markup_percent, 3),
+            min_margin_percent=_quantize(payload.min_margin_percent, 3),
+            article_id=payload.article_id,
+            product_group=payload.product_group,
+            supplier_party_id=payload.supplier_party_id,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return Status(201, _markup_rule_out(regel.id))
+
+
+class MassenpflegeIn(Schema):
+    product_group: str | None = None
+    supplier_party_id: UUID | None = None
+    # dry_run=True ist die Vorschau. Das Anwenden ist ein ausdrücklicher,
+    # bestätigungspflichtiger Vorgang — nie ein stiller Automatismus.
+    dry_run: bool = True
+    # Fortsetzungspunkt: die `weiter`-Artikelnummer der vorigen Antwort. Große
+    # Warengruppen werden in Abschnitten abgearbeitet, statt an einer harten
+    # Obergrenze zu scheitern.
+    ab_artikelnummer: str | None = None
+
+
+class MassenpflegeZeileOut(Schema):
+    article_id: UUID
+    article_number: str
+    description: str
+    product_group: str | None = None
+    alt: str | None = None
+    neu: str | None = None
+    aktion: str  # ANLEGEN | AKTUALISIEREN | UNVERAENDERT | UEBERSPRUNGEN
+    grund: str | None = None
+    regel_name: str | None = None
+
+
+class MassenpflegeOut(Schema):
+    product_group: str | None = None
+    supplier_party_id: UUID | None = None
+    dry_run: bool
+    #: Umfang der gesamten Auswahl
+    artikel_gesamt: int
+    #: in DIESEM Abschnitt betrachtet
+    verarbeitet: int
+    angelegt: int
+    aktualisiert: int
+    unveraendert: int
+    uebersprungen: int
+    zeilen: list[MassenpflegeZeileOut] = []
+    #: gesetzt, wenn noch Artikel folgen — als `ab_artikelnummer` erneut senden
+    weiter: str | None = None
+
+
+# MUSS vor den „/markup-rules/{rule_id}"-Routen stehen: die Pfadauflösung ist
+# reihenfolgeabhängig, sonst schluckt {rule_id} das Wort „massenpflege".
+@router.post("/markup-rules/massenpflege", response=MassenpflegeOut, auth=django_auth)
+def massenpflege(request, payload: MassenpflegeIn):
+    """Rechnet die Verkaufspreise der gewählten Artikel aus der Matrix neu.
+
+    `dry_run=true` liefert die Vorschau („X Artikel, Preis von … auf …"),
+    `dry_run=false` wendet sie an — derselbe Code, die Vorschau kann also nicht
+    vom Ergebnis abweichen. Geschrieben werden ausschließlich
+    `article_sale_price`-Zeilen mit `price_origin='MATRIX'`; von Hand gesetzte
+    Preise und am Artikel zugewiesene VK-Gruppen bleiben unangetastet, ein
+    unbekannter EK führt NIE zu einem Preis 0. Recht `pricing/AENDERN` — auch für
+    die Vorschau: sie ist der erste Schritt eines Schreibvorgangs.
+
+    Große Auswahlen laufen in Abschnitten: ist `weiter` gesetzt, folgen weitere
+    Artikel — mit `ab_artikelnummer=weiter` erneut aufrufen.
+    """
+    actor, _ = require(request, "pricing", "AENDERN")
+    try:
+        return matrix_service.massenpflege(
+            actor,
+            product_group=payload.product_group,
+            supplier_party_id=payload.supplier_party_id,
+            dry_run=payload.dry_run,
+            ab_artikelnummer=payload.ab_artikelnummer,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+
+
+@router.patch("/markup-rules/{rule_id}", response=MarkupRuleOut, auth=django_auth)
+def update_markup_rule(request, rule_id: UUID, payload: MarkupRuleUpdateIn):
+    """Ändert Name/Basis/Aufschlag/Mindestmarge einer Regel."""
+    actor, _ = require(request, "pricing", "AENDERN")
+    daten = payload.model_dump(exclude_unset=True)
+    try:
+        matrix_service.update_markup_rule(
+            actor,
+            rule_id=rule_id,
+            name=daten.get("name"),
+            calc_basis=daten.get("calc_basis"),
+            markup_percent=_quantize(daten.get("markup_percent"), 3),
+            # `...` heißt „nicht mitgeschickt" — nur so lässt sich die
+            # Mindestmarge ausdrücklich auf NULL zurücksetzen.
+            min_margin_percent=(
+                _quantize(daten["min_margin_percent"], 3)
+                if "min_margin_percent" in daten
+                else ...
+            ),
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _markup_rule_out(rule_id)
+
+
+@router.post("/markup-rules/{rule_id}/status", response=MarkupRuleOut, auth=django_auth)
+def set_markup_rule_status(request, rule_id: UUID, payload: MarkupStatusIn):
+    """AKTIV ↔ INAKTIV. Kein Löschen (Schutzstandard)."""
+    actor, _ = require(request, "pricing", "AENDERN")
+    try:
+        matrix_service.set_markup_rule_status(
+            actor, rule_id=rule_id, status=payload.status
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _markup_rule_out(rule_id)
+
+
+@router.put("/markup-rules/{rule_id}/tiers", response=MarkupRuleOut, auth=django_auth)
+def set_markup_rule_tiers(request, rule_id: UUID, payload: MarkupTiersIn):
+    """Setzt die Rabattstaffel einer Regel (ganze Liste auf einmal). Nicht mehr
+    genannte Stufen werden deaktiviert (kein Löschen). Die Mindestmarge bleibt
+    auch für Staffeln die Untergrenze."""
+    actor, _ = require(request, "pricing", "AENDERN")
+    try:
+        matrix_service.set_tiers(
+            actor,
+            rule_id=rule_id,
+            tiers=[
+                {
+                    "min_quantity": _quantize(t.min_quantity, 3),
+                    "markup_percent": _quantize(t.markup_percent, 3),
+                }
+                for t in payload.tiers
+            ],
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _markup_rule_out(rule_id)
+
+
+class VkVorschlagRegelOut(Schema):
+    id: UUID
+    name: str
+    scope: str
+    scope_text: str
+    calc_basis: str
+    markup_percent: str
+    min_margin_percent: str | None = None
+    tiers: list[MarkupTierOut] = []
+
+
+class VkVorschlagOut(Schema):
+    """Der Rechenweg, nicht nur die Zahl — der Anwender muss sehen, WARUM der
+    Preis so ist. `sale_price = null` heißt „unbekannt", nie 0."""
+    article_id: UUID
+    article_number: str
+    description: str
+    unit: str
+    price_unit: int
+    product_group: str | None = None
+    menge: str
+    ek: str | None = None
+    list_price: str | None = None
+    quelle: str  # ARTIKEL_FESTPREIS | ARTIKEL_VK_GRUPPE | MATRIX | UNBEKANNT
+    regel: VkVorschlagRegelOut | None = None
+    basis_kind: str | None = None
+    basis_amount: str | None = None
+    markup_percent: str | None = None
+    tier_min_quantity: str | None = None
+    min_margin_percent: str | None = None
+    min_margin_applied: bool = False
+    sale_price: str | None = None
+    hinweis: str
+
+
+@router.get("/articles/{article_id}/vk-vorschlag", response=VkVorschlagOut)
+def vk_vorschlag(request, article_id: UUID, menge: Decimal = Query(Decimal(1))):
+    """VK-Vorschlag für einen Artikel (Artikel-Detail, Angebots-Editor).
+
+    Reines Lesen/Ableiten: es wird nichts geschrieben — weder in `pricing.article`
+    noch in eine bestehende Belegposition. Der Vorschlag ist im Editor
+    überschreibbar; die Kalkulation eines konkreten Angebots bleibt die
+    Entscheidung des Kalkulators."""
+    require(request, "pricing", "LESEN")
+    data = matrix_service.vk_vorschlag(article_id, menge=menge)
+    if data is None:
+        raise HttpError(404, "Artikel nicht gefunden.")
+    return data
+
+

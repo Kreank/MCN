@@ -10,11 +10,14 @@ Views dünn, rufen die Service-Schicht.
 Personendaten (Name, Anrede, Geburtsdatum) liegen in identity.person und werden
 hier nur mitgelesen, nie geschrieben — dafür ist die Kontakte-API zuständig.
 """
+import csv
+import io
 from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
 from django.db.models import Case, IntegerField, Q, Value, When
+from django.http import HttpResponse
 from ninja import Query, Router, Schema
 from ninja.errors import HttpError
 from ninja.responses import Status
@@ -92,7 +95,33 @@ class VacationAccountOut(Schema):
     adjustment_reason: str | None = None
     total_days: Decimal
     used_days: Decimal
+    # Verfallstag des Übertrags (Firmeneinstellung, Migration 0072).
+    # None = kein Verfall eingestellt → `expired_days` ist immer 0.
+    expiry_date: date | None = None
+    expired_days: Decimal
     remaining_days: Decimal
+
+
+class CarryoverRowOut(Schema):
+    employee_id: UUID
+    employee_number: str
+    name: str
+    year: int
+    target_year: int
+    entitlement_days: Decimal
+    used_days: Decimal
+    expired_days: Decimal
+    remaining_days: Decimal
+    carryover_current: Decimal
+    carryover_new: Decimal
+    target_entitlement_days: Decimal
+    changes: bool
+
+
+class CarryoverIn(Schema):
+    year: int
+    # Leer = alle Mitarbeitenden der Vorschau.
+    employee_ids: list[UUID] | None = None
 
 
 class EmployeeDetailOut(EmployeeOut):
@@ -558,3 +587,118 @@ def set_vacation_budget(request, employee_id: UUID, payload: VacationBudgetIn):
     return VacationAccountOut(
         **mitarbeiter_service.vacation_account(employee_id, payload.year)
     )
+
+
+# --- Resturlaubs-Übertrag ins Folgejahr ------------------------------------
+
+
+@router.get("/urlaubsuebertrag/vorschau", response=list[CarryoverRowOut])
+def carryover_vorschau(request, year: int | None = Query(None)):
+    """Vorschau: „Resturlaub aus `year` → Übertrag in `year+1`" je Mitarbeiter.
+
+    Rein lesend. Der Übertrag selbst ist ein eigener, bestätigungspflichtiger
+    Schritt (`POST /urlaubsuebertrag`) — niemand überträgt aus Versehen.
+
+    `year` hat bewusst einen Default (das Vorjahr — der übliche Fall „Januar,
+    Übertrag machen"). Ohne Default parste django-ninja den fehlenden Parameter
+    VOR der Rechteprüfung und antwortete einem rechtlosen Konto mit 422 statt
+    403 — `test_endpoint_schutz` deckt genau das auf.
+    """
+    require(request, "hr", "LESEN")
+    try:
+        return mitarbeiter_service.carryover_vorschau(
+            year if year is not None else date.today().year - 1
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+
+
+@router.post("/urlaubsuebertrag", response=list[CarryoverRowOut], auth=django_auth)
+def carryover_uebertragen(request, payload: CarryoverIn):
+    """Überträgt den Resturlaub ins Folgejahr — **idempotent**.
+
+    Der Übertrag SETZT `carryover_days` des Folgejahres auf den Rest des
+    Vorjahres (er addiert nicht). Zweimal ausgeführt schreibt er zweimal
+    denselben Wert; eine Doppelbuchung ist damit strukturell ausgeschlossen —
+    nicht nur „durch Vorsicht vermieden".
+    """
+    actor, _ = require(request, "hr", "AENDERN")
+    try:
+        return mitarbeiter_service.carryover_uebertragen(
+            actor, year=payload.year, employee_ids=payload.employee_ids
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+
+
+# --- Abwesenheiten-Export (DSGVO Art. 9) -----------------------------------
+
+
+@router.get("/abwesenheiten.csv")
+def abwesenheiten_csv(
+    request,
+    von: date | None = None,
+    bis: date | None = None,
+    employee_id: UUID | None = None,
+    status: str | None = None,
+):
+    """Abwesenheiten als CSV — **mit** Abwesenheitsart, deshalb hinter dem hr-Tor.
+
+    DSGVO Art. 9: Die Art (KRANKHEIT!) ist ein Gesundheitsdatum, eine besondere
+    Kategorie. Der Export verlangt darum `hr/EXPORTIEREN` — das haben nur
+    ADMINISTRATION und GESCHAEFTSFUEHRUNG (Rechtematrix 0021), und es ist
+    strenger als das im Auftrag geforderte `hr/LESEN` (wer exportieren darf, darf
+    ohnehin lesen; die Umkehrung gilt nicht). Damit liegt der Export auf
+    derselben Linie wie `/zeiterfassung/stundenliste.csv`.
+
+    Die Disposition kommt hier **nicht** durch — sie sieht „abwesend, von–bis"
+    ohne Art unter `/planung/abwesend`.
+
+    Deutsches Excel-Format (Semikolon, UTF-8 mit BOM, Komma-Dezimal).
+    """
+    require(request, "hr", "EXPORTIEREN")
+    heute = date.today()
+    v = von or date(heute.year, 1, 1)
+    b = bis or date(heute.year, 12, 31)
+    if b < v:
+        raise HttpError(422, "Das Ende des Zeitraums liegt vor dem Beginn.")
+    if status and status not in ABSENCE_STATUS:
+        raise HttpError(422, f"Unbekannter Status: {status}")
+
+    zeilen = mitarbeiter_service.abwesenheits_zeilen(
+        v, b, employee_id=employee_id, status=status
+    )
+    puffer = io.StringIO()
+    writer = csv.writer(
+        puffer, delimiter=";", quoting=csv.QUOTE_MINIMAL, lineterminator="\r\n"
+    )
+    writer.writerow(
+        [
+            "Personalnummer", "Mitarbeiter", "Art", "Von", "Bis", "Halber Starttag",
+            "Halber Endtag", "Tage", "Status", "Grund", "Entschieden von",
+        ]
+    )
+    for z in zeilen:
+        writer.writerow(
+            [
+                z["employee_number"],
+                z["name"],
+                z["absence_type"],
+                z["start_date"].strftime("%d.%m.%Y"),
+                z["end_date"].strftime("%d.%m.%Y"),
+                "Ja" if z["half_day_start"] else "Nein",
+                "Ja" if z["half_day_end"] else "Nein",
+                str(z["days_count"]).replace(".", ","),
+                z["status"],
+                z["reason"],
+                z["decided_by"],
+            ]
+        )
+    antwort = HttpResponse(
+        puffer.getvalue().encode("utf-8-sig"), content_type="text/csv; charset=utf-8"
+    )
+    antwort["Content-Disposition"] = (
+        f'attachment; filename="abwesenheiten_{v.isoformat()}_{b.isoformat()}.csv"'
+    )
+    antwort["X-Content-Type-Options"] = "nosniff"
+    return antwort

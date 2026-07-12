@@ -1,0 +1,95 @@
+// Attest-Bereich einer Abwesenheit. Eigener Component-View -> Styles gekapselt.
+// Tokens aus styles/_tokens.scss (Light+Dark ergeben sich aus den Variablen).
+// Der Amber-Rand markiert den Bereich als besonders geschuetzt (DSGVO Art. 9) —
+// die Aussage steht aber im Text, nie nur in der Farbe (WCAG 2.2 AA).
+
+:host {
+  display: block;
+}
+
+.attest {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+}
+
+.attest__kopf {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.attest__titel {
+  margin: 0;
+  font-size: var(--step-0);
+  color: var(--ink);
+}
+
+.attest__hinweis,
+.attest__fussnote {
+  margin: 0;
+  font-size: var(--step--1);
+  line-height: 1.5;
+  color: var(--ink-muted);
+}
+
+.attest__liste {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.attest__zeile {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+
+  @media (max-width: 40rem) {
+    grid-template-columns: 1fr;
+    justify-items: start;
+  }
+}
+
+.attest__name {
+  font-weight: 600;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.attest__mark {
+  margin-right: var(--space-1);
+}
+
+.attest__meta {
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+.attest__upload {
+  justify-self: start;
+  cursor: pointer;
+
+  &:focus-within .link-knopf {
+    outline: var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+
+.attest__fortschritt {
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}

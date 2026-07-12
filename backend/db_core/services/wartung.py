@@ -24,6 +24,9 @@ import calendar
 import uuid
 from datetime import date, timedelta
 
+from django.db import IntegrityError, transaction
+from django.utils import timezone
+
 from db_core.db_context import business_transaction
 from db_core.gate_errors import as_business_error
 from db_core.models import MaintenanceContract, MaintenanceEvent, Project, Property
@@ -262,8 +265,67 @@ def trigger_action(actor_app_user_id, *, contract_id, note=None, catch_up_until=
                 note=note,
                 triggered_by_id=actor_app_user_id,
             )
+            _schliesse_faelligkeit(actor_app_user_id, contract, event)
             MaintenanceContract.objects.filter(id=contract_id).update(
                 next_due_date=new_due
             )
     contract.refresh_from_db()
     return event, contract
+
+
+def _schliesse_faelligkeit(actor_app_user_id, contract, event):
+    """Hält die Fälligkeiten-Ansicht (Migration 0071) mit der Auslösung synchron.
+
+    Es darf nur EINE Wahrheit geben: egal ob die Wartung automatisch ausgelöst
+    (Command wartung_faellige_ausloesen), von Hand am Vertrag ausgelöst oder aus
+    der Fälligkeiten-Ansicht erledigt wird — es entsteht genau ein
+    maintenance.due_item mit genau einem Folgeobjekt.
+
+    * Gibt es zu dieser (Vertrag, Fälligkeit) schon einen OFFENEN Eintrag, wird er
+      ERLEDIGT und zeigt auf das Folgeobjekt.
+    * Gibt es keinen (Fälligkeit ohne Vorlauf, Scheduler lief nie), wird der
+      Nachweis nachgeholt — direkt als ERLEDIGT. Der UNIQUE-Index sorgt dafür,
+      dass daraus keine Dublette wird.
+    * Ist er bereits abgeschlossen (VERWORFEN/ERLEDIGT), bleibt er, wie er ist:
+      eine abgeschlossene Fälligkeit wird nicht nachträglich umgeschrieben.
+
+    Läuft INNERHALB der business_transaction von trigger_action.
+    """
+    # Lokaler Import: faelligkeit importiert wartung nicht, aber die Modul-Kette
+    # (faelligkeit → einsatz/beleg/…) soll beim Import von wartung nicht mitziehen.
+    from db_core.models import DueItem
+
+    felder = dict(
+        status="ERLEDIGT",
+        result_object_type=event.result_object_type,
+        result_object_id=event.result_object_id,
+        resolution_note=event.note,
+        resolved_at=timezone.now(),
+        resolved_by_id=actor_app_user_id,
+    )
+    geaendert = DueItem.objects.filter(
+        contract_id=contract.id, due_date=contract.next_due_date, status="OFFEN"
+    ).update(**felder)
+    if geaendert:
+        return
+    if DueItem.objects.filter(
+        contract_id=contract.id, due_date=contract.next_due_date
+    ).exists():
+        return  # bereits abgeschlossen — nicht umschreiben
+    try:
+        with transaction.atomic():
+            DueItem.objects.create(
+                id=uuid.uuid4(),
+                kind="WARTUNG",
+                contract_id=contract.id,
+                property_id=contract.property_id,
+                title=f"Wartung: {contract.name}",
+                due_date=contract.next_due_date,
+                lead_time_days=contract.lead_time_days or 0,
+                created_by_id=actor_app_user_id,
+                **felder,
+            )
+    except IntegrityError:
+        # Paralleler Lauf war schneller — der UNIQUE-Index hat gewonnen. Kein
+        # Problem: der Nachweis existiert.
+        pass

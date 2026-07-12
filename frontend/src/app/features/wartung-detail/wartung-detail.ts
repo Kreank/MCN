@@ -37,7 +37,7 @@ export class WartungDetail {
   private readonly svc = inject(WartungService);
   private readonly auth = inject(AuthService);
 
-  protected readonly darfAendern = computed(() => this.auth.darf('workflow', 'AENDERN'));
+  protected readonly darfAendern = computed(() => this.auth.darf('maintenance', 'AENDERN'));
 
   protected readonly tab = signal('details');
   protected readonly state = signal<ViewState>({ kind: 'loading' });

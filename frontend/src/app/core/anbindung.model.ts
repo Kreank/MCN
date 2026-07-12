@@ -89,6 +89,13 @@ export interface ResolvedPosition {
   article_name: string | null;
   matched: boolean;
   ambiguous: boolean;
+  /**
+   * VK-Vorschlag aus der Aufschlagsmatrix (nur für zugeordnete Artikel).
+   * `net_price` ist der EINKAUFSpreis des Händlers — ohne Vorschlag bleibt der
+   * Verkaufspreis leer („unbekannt"), er wird NIE mit dem EK gleichgesetzt.
+   */
+  sale_price: string | null;
+  sale_price_hinweis: string | null;
 }
 
 export interface PunchoutSession {

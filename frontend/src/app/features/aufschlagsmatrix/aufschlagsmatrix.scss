@@ -1,0 +1,197 @@
+.matrix {
+  max-width: var(--content-w);
+  margin: 0 auto;
+}
+
+.page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-3);
+}
+.page-head__kicker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+}
+.page-head__scale {
+  width: 2.5rem;
+  height: 0.5rem;
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--line-strong) 0,
+    var(--line-strong) 1px,
+    transparent 1px,
+    transparent 0.5rem
+  );
+  border-bottom: 1.5px solid var(--line-strong);
+}
+.page-head__titel {
+  font-size: var(--step-3);
+}
+
+.intro {
+  margin-bottom: var(--space-5);
+  max-width: 62rem;
+}
+
+.hinweis-inline {
+  color: var(--ink-muted);
+  font-size: var(--step--1);
+}
+
+.edit-form,
+.mp {
+  padding: var(--space-5);
+  margin-bottom: var(--space-5);
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.edit-form__titel,
+.mp__titel {
+  font-size: var(--step-1);
+  margin: 0 0 var(--space-4);
+}
+.edit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+.edit-aktionen {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.staffel {
+  margin: 0 0 var(--space-4);
+  padding: var(--space-4);
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-md);
+}
+.legende {
+  font-weight: 600;
+  padding: 0 var(--space-2);
+}
+.staffel-tabelle {
+  width: 100%;
+  border-collapse: collapse;
+  margin: var(--space-3) 0;
+
+  th,
+  td {
+    text-align: left;
+    padding: var(--space-2) var(--space-3) var(--space-2) 0;
+  }
+  thead th {
+    font-size: var(--step--1);
+    color: var(--ink-muted);
+  }
+}
+.eingabe {
+  width: 100%;
+  min-width: 6rem;
+  padding: var(--space-2) var(--space-3);
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+.eingabe:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.tabelle-rahmen {
+  overflow-x: auto;
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius-lg);
+  margin-bottom: var(--space-5);
+}
+.regel-tabelle,
+.mp-tabelle {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 52rem;
+
+  th,
+  td {
+    text-align: left;
+    padding: var(--space-3) var(--space-4);
+    vertical-align: top;
+    border-bottom: 1px solid var(--line);
+  }
+  th.num,
+  td.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  thead th {
+    font-size: var(--step--1);
+    color: var(--ink-muted);
+  }
+  tbody tr:last-child th,
+  tbody tr:last-child td {
+    border-bottom: none;
+  }
+  .zeile--inaktiv th,
+  .zeile--inaktiv td {
+    color: var(--ink-muted);
+  }
+}
+.staffel-liste {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--step--1);
+  font-variant-numeric: tabular-nums;
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: 600;
+  font-size: var(--step--1);
+}
+.status--aktiv {
+  color: var(--positive-ink);
+}
+.status--inaktiv {
+  color: var(--ink-muted);
+}
+.aktionen-zelle {
+  white-space: nowrap;
+}
+.zeilen-aktionen {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.mp-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-4);
+  margin: var(--space-4) 0;
+}
+.mp-zahlen {
+  font-variant-numeric: tabular-nums;
+  margin: var(--space-4) 0 var(--space-3);
+}
+.aktion {
+  font-weight: 600;
+  font-size: var(--step--1);
+}

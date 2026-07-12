@@ -1,0 +1,221 @@
+<section class="gewaehrleistung" aria-labelledby="gewaehrleistung-titel">
+  <header class="page-head">
+    <div class="page-head__text">
+      <p class="page-head__kicker">
+        <span class="page-head__scale" aria-hidden="true"></span>
+        Wartung · Gewährleistung
+      </p>
+      <h1 id="gewaehrleistung-titel" class="page-head__titel">Gewährleistung</h1>
+      <p class="page-head__hint">
+        Fristen aus abgeschlossenen Aufträgen. Je Auftrag einstellbar; der Ablauf
+        wird im Vorlauf unter <a routerLink="/wartung">Was steht an?</a> sichtbar,
+        damit man noch reagieren kann.
+      </p>
+    </div>
+  </header>
+
+  <app-wartung-nav />
+
+  @if (state().kind === 'forbidden') {
+    <app-kein-zugriff />
+  } @else {
+    <p class="rechtshinweis">
+      <span class="rechtshinweis__icon" aria-hidden="true">§</span>
+      <span>
+        <strong>Kein Rechtsrat, nur eine Erinnerung.</strong> Als Anhaltspunkte
+        gelten üblicherweise: BGB bei Bauwerken regelmäßig 5 Jahre, VOB/B
+        regelmäßig 4 Jahre, bei wartungsbedürftigen maschinellen Anlagen ohne
+        Wartungsvertrag ggf. kürzer. Was in Ihrem Fall gilt, ergibt sich aus
+        Vertrag und Recht — <strong>das Programm rechnet nichts davon aus</strong>.
+        Maßgeblich ist allein die Frist, die Sie hier eintragen.
+      </span>
+    </p>
+
+    @if (meldung(); as m) {
+      <p class="meldung" [class.meldung--fehler]="m.art === 'fehler'" role="status">
+        <span aria-hidden="true">{{ m.art === 'fehler' ? '⚠' : '✓' }}</span>
+        {{ m.text }}
+        <button type="button" class="meldung__zu" (click)="meldung.set(null)" aria-label="Meldung schließen">
+          ✕
+        </button>
+      </p>
+    }
+
+    @switch (state().kind) {
+      @case ('loading') {
+        <p class="lade-hinweis" role="status">Gewährleistungen werden geladen …</p>
+      }
+      @case ('error') {
+        <p class="note note--fehler" role="alert">
+          Die Gewährleistungen konnten nicht geladen werden.
+          <button type="button" class="btn" (click)="laden()">Erneut versuchen</button>
+        </p>
+      }
+      @case ('ready') {
+        @if ($any(state()).data; as data) {
+          <p class="dezent voreinstellung">
+            Voreinstellung für neue Gewährleistungen:
+            <strong>{{ data.default_months }} Monate</strong>, Vorlauf
+            <strong>{{ data.default_lead_days }} Tage</strong> (Firmenprofil).
+          </p>
+
+          @if (data.items.length === 0) {
+            <p class="note">
+              Noch keine Gewährleistung erfasst. Sie entsteht aus einem Auftrag,
+              dessen Leistung erbracht ist (ab Status „technisch abgeschlossen“).
+            </p>
+          } @else {
+            <ul class="liste">
+              @for (w of data.items; track w.id) {
+                <li class="karte" [class.karte--ablauf]="w.laeuft_ab_in_tagen < 90 && !w.abgelaufen" [class.karte--weg]="w.abgelaufen">
+                  <div class="karte__kopf">
+                    <h2 class="karte__titel">
+                      <a [routerLink]="['/auftraege', w.work_order_id]">{{ w.order_number }}</a>
+                      — {{ w.order_title }}
+                    </h2>
+                    @if (w.abgelaufen) {
+                      <span class="stamp">Abgelaufen</span>
+                    } @else if (w.laeuft_ab_in_tagen < 90) {
+                      <span class="stamp stamp--warn">Läuft in {{ w.laeuft_ab_in_tagen }} Tagen ab</span>
+                    }
+                  </div>
+
+                  <dl class="karte__daten">
+                    <div>
+                      <dt>Grundlage</dt>
+                      <dd>{{ w.basis }}</dd>
+                    </div>
+                    <div>
+                      <dt>Beginn</dt>
+                      <dd>{{ w.start_date }}</dd>
+                    </div>
+                    <div>
+                      <dt>Frist</dt>
+                      <dd>{{ w.duration_months }} Monate</dd>
+                    </div>
+                    <div>
+                      <dt>Läuft ab</dt>
+                      <dd><strong>{{ w.end_date }}</strong></dd>
+                    </div>
+                    <div>
+                      <dt>Vorlauf</dt>
+                      <dd>{{ w.lead_time_days }} Tage</dd>
+                    </div>
+                    <div>
+                      <dt>Liegenschaft</dt>
+                      <dd>
+                        <a [routerLink]="['/liegenschaften', w.property.id]">
+                          {{ w.property.name }}
+                        </a>
+                      </dd>
+                    </div>
+                  </dl>
+
+                  @if (w.vertriebshinweis) {
+                    <p class="tipp">
+                      <span class="tipp__icon" aria-hidden="true">💡</span>
+                      <span>
+                        {{ w.vertriebshinweis }}
+                        <a routerLink="/wartung/vertraege" class="tipp__link">
+                          Wartungsvertrag anlegen
+                        </a>
+                      </span>
+                    </p>
+                  }
+
+                  @if (w.notes) {
+                    <p class="dezent">{{ w.notes }}</p>
+                  }
+
+                  @if (darfAendern()) {
+                    <div class="karte__aktionen">
+                      <button type="button" class="btn" (click)="bearbeitenOeffnen(w)">
+                        Frist bearbeiten …
+                      </button>
+                    </div>
+                  }
+                </li>
+              }
+            </ul>
+          }
+        }
+      }
+    }
+  }
+</section>
+
+<app-dialog
+  [offen]="bearbeiten() !== null"
+  titel="Gewährleistungsfrist bearbeiten"
+  (schliessen)="bearbeiten.set(null)"
+>
+  @if (bearbeiten(); as w) {
+    <form [formGroup]="form" (ngSubmit)="speichern()" class="dialog-form">
+      <p class="dialog-form__intro">
+        <strong>{{ w.order_number }}</strong> — {{ w.order_title }}
+      </p>
+
+      <app-feld
+        [control]="form.controls.basis"
+        label="Grundlage"
+        typ="select"
+        [optionen]="basen"
+        [pflicht]="true"
+        hinweis="Nur ein Etikett: das Programm leitet daraus keine Frist ab. Die Auswahl schlägt lediglich eine übliche Dauer vor."
+        (change)="basisGewechselt()"
+      />
+
+      <app-feld
+        [control]="form.controls.start_date"
+        label="Beginn der Frist"
+        typ="datum"
+        [pflicht]="true"
+        hinweis="In der Regel die Abnahme."
+      />
+
+      <app-feld
+        [control]="form.controls.duration_months"
+        label="Frist in Monaten"
+        typ="zahl"
+        inputmode="numeric"
+        [pflicht]="true"
+        hinweis="Maßgeblich ist dieser Wert — er wird von Ihnen gesetzt, nicht berechnet."
+      />
+
+      <app-feld
+        [control]="form.controls.lead_time_days"
+        label="Vorlauf in Tagen"
+        typ="zahl"
+        inputmode="numeric"
+        [pflicht]="true"
+        hinweis="So viele Tage vor Fristablauf erscheint die Fälligkeit unter „Was steht an?“."
+      />
+
+      <app-feld
+        [control]="form.controls.is_machinery"
+        label="Wartungsbedürftige maschinelle Anlage"
+        typ="checkbox"
+        hinweis="Reiner Merkposten für den Vertrieb: fehlt an der Liegenschaft ein aktiver Wartungsvertrag, wird darauf hingewiesen. Die Frist wird dadurch NICHT verändert."
+      />
+
+      <app-feld [control]="form.controls.notes" label="Notizen" typ="textarea" [zeilen]="2" />
+
+      <p class="note note--klein">
+        Ändert sich das Fristende, wird eine bereits erzeugte, offene Fälligkeit zum
+        alten Datum begründet verworfen (nicht gelöscht) — der Scheduler erzeugt die
+        neue.
+      </p>
+
+      @if (formFehler(); as f) {
+        <p class="note note--fehler" role="alert">{{ f }}</p>
+      }
+
+      <div class="dialog-form__aktionen">
+        <button type="button" class="btn" (click)="bearbeiten.set(null)">Abbrechen</button>
+        <button type="submit" class="btn btn--primary" [disabled]="laeuft()">
+          {{ laeuft() ? 'Wird gespeichert …' : 'Speichern' }}
+        </button>
+      </div>
+    </form>
+  }
+</app-dialog>

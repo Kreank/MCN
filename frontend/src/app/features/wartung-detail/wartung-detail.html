@@ -13,7 +13,7 @@
       <p class="note__text">Die Schnittstelle war nicht erreichbar oder der Vertrag existiert nicht.</p>
       <div class="note__aktionen">
         <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
-        <a class="btn" routerLink="/wartung">Zu den Wartungsverträgen</a>
+        <a class="btn" routerLink="/wartung/vertraege">Zu den Wartungsverträgen</a>
       </div>
     </div>
   }
@@ -36,8 +36,8 @@
     <app-mappe
       kicker="Wartungsvertrag {{ daten()!.contract_number }}"
       [titel]="daten()!.name"
-      backLink="/wartung"
-      backLabel="Wartung"
+      backLink="/wartung/vertraege"
+      backLabel="Wartungsverträge"
       [tabs]="tabs"
       [(aktiv)]="tab"
     >

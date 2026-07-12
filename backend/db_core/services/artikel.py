@@ -907,7 +907,12 @@ def set_verkaufspreise(actor_app_user_id, *, article_id, entries):
             asp = bestehend.get(row["gid"])
             if asp is not None:
                 asp.fixed_price = row["fixed"]
-                asp.save(update_fields=["fixed_price", "updated_at"])
+                # Was hier von Hand gesetzt wird, ist MANUELL — die Massenpflege
+                # der Aufschlagsmatrix (0069) fasst solche Preise nicht mehr an.
+                asp.price_origin = "MANUELL"
+                asp.save(
+                    update_fields=["fixed_price", "price_origin", "updated_at"]
+                )
             else:
                 ArticleSalePrice.objects.create(
                     id=uuid.uuid4(),

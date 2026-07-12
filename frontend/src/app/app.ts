@@ -45,7 +45,7 @@ export class App {
     { path: '/planung', label: 'Planung', mark: '50', recht: ['workflow', 'LESEN'] },
     // Wartung liegt fachlich beim Service-/Einsatz-Cluster (wiederkehrende
     // Einsätze) → Zwischenschritt 55 statt Renummerierung der Folgepunkte.
-    { path: '/wartung', label: 'Wartung', mark: '55', recht: ['workflow', 'LESEN'] },
+    { path: '/wartung', label: 'Wartung', mark: '55', recht: ['maintenance', 'LESEN'] },
     { path: '/aufgaben', label: 'Aufgaben', mark: '60', recht: ['workflow', 'LESEN'] },
     // Vier-Augen-Freigaben sind bereichsübergreifende Governance (Bankdaten,
     // Rechnungskorrektur) — sie hängen an keinem Fachbereich, stehen aber bei

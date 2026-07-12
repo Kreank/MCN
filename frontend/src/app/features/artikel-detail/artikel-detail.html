@@ -177,6 +177,51 @@
                   {{ priceUnitText($any(vk()).data.price_unit) }}. Einkaufs-, Listenpreis
                   und MwSt. werden über „Bearbeiten“ bzw. den Lieferantenbezug gepflegt.
                 </p>
+
+                <!-- Welche Regel macht den Preis? (Aufschlagsmatrix) -------- -->
+                @if (vorschlag(); as v) {
+                  <div class="regel-block">
+                    <h3 class="regel-block__titel">Woher der Verkaufspreis kommt</h3>
+                    <dl class="feld-raster">
+                      <div class="feld">
+                        <dt class="feld__label">Quelle</dt>
+                        <dd class="feld__wert">
+                          @switch (v.quelle) {
+                            @case ('ARTIKEL_FESTPREIS') { Festpreis am Artikel }
+                            @case ('ARTIKEL_VK_GRUPPE') { VK-Gruppe am Artikel }
+                            @case ('MATRIX') { Aufschlagsmatrix }
+                            @default { unbekannt }
+                          }
+                        </dd>
+                      </div>
+                      @if (v.regel; as r) {
+                        <div class="feld">
+                          <dt class="feld__label">Regel</dt>
+                          <dd class="feld__wert">{{ r.name }} · {{ r.scope_text }}</dd>
+                        </div>
+                        <div class="feld">
+                          <dt class="feld__label">Rechnung</dt>
+                          <dd class="feld__wert">{{ vorschlagFormel(v) }}</dd>
+                        </div>
+                      }
+                      <div class="feld">
+                        <dt class="feld__label">Verkaufspreis (Menge 1)</dt>
+                        <dd class="feld__wert" [class.feld__wert--leer]="!v.sale_price">
+                          {{ v.sale_price ? euro(v.sale_price) : 'unbekannt' }}
+                        </dd>
+                      </div>
+                    </dl>
+                    <p class="kalk__hinweis">
+                      {{ v.hinweis }}
+                      @if (v.min_margin_applied) {
+                        <strong> Die Mindestmarge hat den Preis angehoben.</strong>
+                      }
+                    </p>
+                    <a class="btn" routerLink="/artikel/aufschlagsmatrix">
+                      Aufschlagsmatrix pflegen →
+                    </a>
+                  </div>
+                }
               </section>
 
               <!-- Rechts: Verkaufspreise ----------------------------------- -->

@@ -26,6 +26,35 @@ Der Download ist an dieselbe Grenze gebunden: eine Datei ist für den Monteur nu
 abrufbar, wenn **mindestens eine** ihrer Verknüpfungen auf einen eigenen Einsatz
 oder einen Bericht daran zeigt — sonst 404.
 
+**Das Attest (`absence_id`) — besondere Kategorie, eigenes Tor (Migration 0072).**
+Eine Arbeitsunfähigkeitsbescheinigung ist ein **Gesundheitsdatum** und damit eine
+besondere Kategorie nach **DSGVO Art. 9**. Die Rechtsgrundlage ist Art. 9 Abs. 2
+lit. b i. V. m. § 26 Abs. 3 BDSG (arbeitsrechtliche Pflichten: Entgeltfortzahlung
+nach § 3 EFZG, Nachweis nach § 5 EFZG) — sie trägt die Verarbeitung **genau für
+diesen Zweck und für niemanden sonst**.
+
+Das `content`-Recht allein reicht dafür **nicht**. Die Disposition hat
+`content/LESEN` mit Scope ALLE — sie darf Projektpläne und Baustellenfotos sehen,
+aber selbstverständlich nicht die Krankschreibung eines Kollegen. Deshalb prüft
+`_attest_guard` das Ziel `absence_id` **unabhängig vom content-Scope**:
+
+  * **der Betroffene selbst** (die Abwesenheit hängt an seinem Personalsatz) —
+    er lädt sein Attest hoch und sieht es; oder
+  * die **Personalverwaltung**: `hr/LESEN` **und** `hr/AENDERN`, beide mit
+    row_scope **ALLE** (Rechtematrix: ADMINISTRATION/GESCHAEFTSFUEHRUNG).
+
+**Alles andere ist 404** — nicht 403: Die Existenz einer Abwesenheit (und damit
+die Tatsache einer Krankmeldung) darf nicht einmal indirekt bestätigt werden. Der
+Vorgesetzte ohne hr-Recht sieht nichts; die Disposition sieht nichts. Eine
+Datei-Liste an einem anderen Ziel enthält Atteste nie, weil ein `file_link` an
+genau einem Objekt hängt (`num_nonnulls = 1`).
+
+**Der Dateiname wird verworfen.** `grippaler_infekt.pdf` verriete in jeder
+Dateiliste die Diagnose. Der Anzeigename entsteht deshalb neutral aus dem
+Zeitraum der Abwesenheit („Arbeitsunfaehigkeitsbescheinigung_2026-07-01_bis_
+2026-07-05.pdf"); die Endung bleibt (sie bestimmt den MIME-Typ). Eine **Diagnose
+wird nirgends gespeichert** — das System kennt nur „arbeitsunfähig von–bis".
+
 Der Download läuft bewusst **durch die Anwendung** und nicht über eine
 vorsignierte URL des Objektspeichers. Eine solche URL wäre nach dem Erzeugen für
 jeden gültig, der sie besitzt — die Rechteprüfung liefe ins Leere, und die URL
@@ -36,6 +65,7 @@ Browser. Zusammen mit der Typ-Whitelist im Service (kein HTML, kein SVG)
 verhindert das, dass hochgeladener Inhalt im Ursprung der Anwendung ausgeführt
 wird.
 """
+from pathlib import PurePosixPath
 from urllib.parse import quote
 from uuid import UUID
 
@@ -48,11 +78,55 @@ from ninja.files import UploadedFile
 from ninja.responses import Status
 from ninja.security import django_auth
 
-from api.permissions import require, require_scoped
-from db_core.models import FileLink, JobAssignment, SiteReport
+from api.permissions import check, require, require_scoped
+from db_core.models import Absence, FileLink, JobAssignment, SiteReport
 from db_core.services import dateien as dateien_service
 
 router = Router()
+
+# Fachliche Kategorie der Attest-Verknüpfung (Service-Whitelist).
+ATTEST_KATEGORIE = "ATTEST"
+
+
+# --- Attest ('absence_id') — DSGVO Art. 9, eigenes Tor ----------------------
+
+def _personalverwaltung(request):
+    """Darf dieses Konto Personalakten führen? (hr/LESEN **und** hr/AENDERN, ALLE)
+
+    `check` ist fail-closed: bei row_scope EIGENE liefert es None. Ein Monteur
+    fällt hier also durch — er kommt nur über den Eigentümer-Pfad an sein eigenes
+    Attest.
+    """
+    return (
+        check(request, "hr", "LESEN") == "ALLE"
+        and check(request, "hr", "AENDERN") == "ALLE"
+    )
+
+
+def _attest_erlaubt(absence_id, actor, request):
+    """Nur der Betroffene selbst oder die Personalverwaltung. Sonst: nein."""
+    if absence_id is None:
+        return False
+    besitzer = (
+        Absence.objects.filter(id=absence_id)
+        .values_list("employee__app_user_id", flat=True)
+        .first()
+    )
+    if besitzer is None:
+        return False
+    if besitzer == actor:
+        return True
+    return _personalverwaltung(request)
+
+
+def _attest_guard(absence_id, actor, request):
+    """404 für jeden, der weder betroffen noch Personalverwaltung ist.
+
+    **404, nicht 403** — ein 403 bestätigte die Existenz der Abwesenheit und
+    damit die Tatsache einer Krankmeldung.
+    """
+    if not _attest_erlaubt(absence_id, actor, request):
+        raise HttpError(404, "Abwesenheit nicht gefunden.")
 
 
 # --- Zeilenbegrenzung ('EIGENE') -------------------------------------------
@@ -63,19 +137,31 @@ def _eigener_job(job_id, actor):
     ).exists()
 
 
-def _ziel_guard(ziele: dict, actor, scope):
-    """Setzt die 'EIGENE'-Grenze auf dem Zielobjekt der Verknüpfung durch.
+def _ziel_guard(ziele: dict, actor, scope, request):
+    """Setzt die Grenzen auf dem Zielobjekt der Verknüpfung durch.
 
-    `ziele` ist das bereits auf gesetzte Werte reduzierte Ziel-Dict. Bei Scope
-    'ALLE' passiert nichts. Bei 'EIGENE' sind nur der eigene Einsatz und Berichte
-    daran zulässig (404 bei fremden, 403 bei nicht scopebaren Zielarten).
+    Zwei Grenzen, unabhängig voneinander:
+
+    1. **`absence_id` (Attest)** — geprüft **immer**, auch bei Scope 'ALLE':
+       Gesundheitsdaten hängen nicht am content-Recht (sonst läse die Disposition
+       mit). Siehe Modul-Docstring.
+    2. **row_scope 'EIGENE'** (Monteur) — nur eigener Einsatz und Berichte daran;
+       jede andere Zielart ist 403 (fail-closed).
     """
+    if len(ziele) != 1:
+        if scope == "EIGENE" or "absence_id" in ziele:
+            # Kein Guard kann hier greifen → nichts durchlassen. (Die
+            # Genau-ein-Ziel-Regel selbst prüft ohnehin der Service, 422.)
+            raise HttpError(422, "Eine Datei hängt an genau einem Objekt.")
+        return
+    art, wert = next(iter(ziele.items()))
+
+    if art == "absence_id":
+        _attest_guard(wert, actor, request)
+        return
+
     if scope != "EIGENE":
         return
-    if len(ziele) != 1:
-        # Genau-ein-Ziel prüft der Service (422). Hier nichts durchlassen.
-        raise HttpError(422, "Eine Datei hängt an genau einem Objekt.")
-    art, wert = next(iter(ziele.items()))
     if art == "service_job_id":
         if not _eigener_job(wert, actor):
             raise HttpError(404, "Einsatz nicht gefunden.")
@@ -96,9 +182,41 @@ def _ziel_guard(ziele: dict, actor, scope):
     )
 
 
-def _datei_guard(file_id, actor, scope):
-    """Download-Grenze: mindestens eine Verknüpfung der Datei muss auf einen
-    eigenen Einsatz (oder einen Bericht daran) zeigen. Sonst 404."""
+def _datei_guard(file_id, actor, scope, request):
+    """Download-Grenze — zwei Prüfungen.
+
+    **1. Attest-Grenze (für JEDEN Scope) — fail-closed.** Trägt die Datei
+    **mindestens eine** Attest-Verknüpfung, gilt die Attest-Grenze für die
+    **ganze Datei**: Sie ist nur abrufbar, wenn der Abrufer für mindestens eine
+    dieser Abwesenheiten befugt ist (Betroffener oder Personalverwaltung). Sonst
+    404 — auch für die Disposition mit `content/LESEN` ALLE.
+
+    Eine frühere Fassung verlangte, dass die Datei **ausschließlich** an
+    Abwesenheiten hängt, mit dem Argument, ein zusätzlich anderswo verknüpfter
+    Inhalt sei dort ohnehin abrufbar. Das war die falsche Richtung für einen
+    Guard (Review-Befund A2): Es genügte, dass der Monteur sein Attest-PDF
+    zusätzlich an seinen eigenen Einsatz hängt (`content/ANLEGEN` mit Scope
+    EIGENE erlaubt ihm das) — und die Krankschreibung lag offen für die ganze
+    Disposition. **Ein Guard fällt auf sicher, nicht auf offen.**
+
+    Der zweite Riegel liegt im Service: ein Attest wird **nie dedupliziert** und
+    nie auf ein bestehendes Objekt gelegt (`services/dateien.py`). Ein
+    Gesundheitsdatum ist damit physisch nie dieselbe Datei wie ein
+    Projektdokument — diese Prüfung hier ist der Gürtel zum Hosenträger.
+
+    **2. row_scope 'EIGENE'** (Monteur): mindestens eine Verknüpfung muss auf
+    einen eigenen Einsatz, einen Bericht daran **oder eine eigene Abwesenheit**
+    zeigen (sonst sähe er sein eigenes Attest nicht).
+    """
+    attest_ids = list(
+        FileLink.objects.filter(file_id=file_id, absence_id__isnull=False)
+        .values_list("absence_id", flat=True)
+    )
+    if attest_ids:
+        if not any(_attest_erlaubt(a, actor, request) for a in attest_ids):
+            raise HttpError(404, "Datei nicht gefunden.")
+        return
+
     if scope != "EIGENE":
         return
     eigene_jobs = JobAssignment.objects.filter(assignee_id=actor).values(
@@ -107,6 +225,7 @@ def _datei_guard(file_id, actor, scope):
     sichtbar = FileLink.objects.filter(file_id=file_id).filter(
         Q(service_job_id__in=eigene_jobs)
         | Q(site_report__service_job_id__in=eigene_jobs)
+        | Q(absence__employee__app_user_id=actor)
     ).exists()
     if not sichtbar:
         raise HttpError(404, "Datei nicht gefunden.")
@@ -142,6 +261,8 @@ class ZielFilter(Schema):
     invoice_id: UUID | None = None
     article_id: UUID | None = None
     site_report_id: UUID | None = None
+    # Attest an einer Abwesenheit — DSGVO Art. 9, eigener Guard (s. o.).
+    absence_id: UUID | None = None
 
 
 def _out(link):
@@ -172,14 +293,36 @@ def datei_hochladen(
     Der Dateiname ist reine Anzeige; der Speicherort entsteht aus einer UUID.
     Der Dateityp wird aus der Endung gegen eine Whitelist geprüft, nicht aus dem
     vom Browser gemeldeten Content-Type übernommen.
+
+    **Ziel `absence_id` (Attest):** Der vom Client gelieferte Dateiname wird
+    **verworfen** und durch einen neutralen ersetzt — er darf keine Diagnose
+    tragen (DSGVO Art. 9 / Art. 5 Datenminimierung: gespeichert wird
+    „arbeitsunfähig von–bis", nicht *warum*). Die Kategorie ist fest `ATTEST`;
+    eine frei gewählte Kategorie brächte hier keinen Nutzen, aber die Gefahr,
+    dass jemand die Datei mit einer sprechenden Kategorie versieht.
     """
     actor, scope = require_scoped(request, "content", "ANLEGEN")
     ziele = {k: v for k, v in ziel.dict().items() if v}
-    _ziel_guard(ziele, actor, scope)
+    _ziel_guard(ziele, actor, scope, request)
+
+    dateiname = datei.name
+    if ziele.get("absence_id"):
+        dateiname = _attest_dateiname(ziele["absence_id"], datei.name)
+        link_category = ATTEST_KATEGORIE
+    elif link_category == ATTEST_KATEGORIE:
+        # Eine „Attest"-Kategorie an einem Projekt/Auftrag wäre eine
+        # Gesundheitsaussage am falschen Objekt — und stünde außerhalb des
+        # Attest-Guards. Fail-closed.
+        raise HttpError(
+            422,
+            "Die Kategorie ATTEST ist ausschließlich an einer Abwesenheit "
+            "zulässig.",
+        )
+
     try:
         _, link = dateien_service.datei_hochladen(
             actor,
-            dateiname=datei.name,
+            dateiname=dateiname,
             inhalt=datei.read(),
             link_category=link_category,
             **ziele,
@@ -192,12 +335,37 @@ def datei_hochladen(
     return Status(201, _out(link))
 
 
+def _attest_dateiname(absence_id, original):
+    """Neutraler Anzeigename: „Arbeitsunfaehigkeitsbescheinigung_<von>_bis_<bis>.<ext>".
+
+    Der Zeitraum steht ohnehin in der Abwesenheit — der Name verrät also nichts,
+    was der Berechtigte nicht schon sieht. Was er NICHT verrät: die Diagnose. Ein
+    Upload namens `burnout.pdf` würde sonst in jeder Ansicht mitgelesen, in der
+    der Dateiname erscheint.
+    """
+    endung = PurePosixPath((original or "").lower()).suffix
+    zeitraum = (
+        Absence.objects.filter(id=absence_id)
+        .values_list("start_date", "end_date")
+        .first()
+    )
+    if zeitraum is None:  # pragma: no cover — der Guard hat sie bereits geprüft
+        raise HttpError(404, "Abwesenheit nicht gefunden.")
+    von, bis = zeitraum
+    return f"Arbeitsunfaehigkeitsbescheinigung_{von}_bis_{bis}{endung}"
+
+
 @router.get("/files", response=DateiListeOut)
 def dateien_auflisten(request, ziel: ZielFilter = Query(...)):
-    """Alle Dateien an einem Zielobjekt (Projekt, Liegenschaft, Kontakt …)."""
+    """Alle Dateien an einem Zielobjekt (Projekt, Liegenschaft, Kontakt …).
+
+    Atteste erscheinen **nur** in der Liste zu genau ihrer `absence_id` — und die
+    ist durch den Attest-Guard gedeckt. In keiner anderen Dateiliste taucht ein
+    Attest auf, weil eine Verknüpfung an genau einem Objekt hängt.
+    """
     actor, scope = require_scoped(request, "content", "LESEN")
     ziele = {k: v for k, v in ziel.dict().items() if v}
-    _ziel_guard(ziele, actor, scope)
+    _ziel_guard(ziele, actor, scope, request)
     try:
         links = dateien_service.dateien_am_ziel(**ziele)
     except dateien_service.DateiFehler as exc:
@@ -210,7 +378,7 @@ def dateien_auflisten(request, ziel: ZielFilter = Query(...)):
 def datei_herunterladen(request, file_id: UUID):
     """Liefert den Dateiinhalt aus — durch die Anwendung, nicht per Direkt-URL."""
     actor, scope = require_scoped(request, "content", "LESEN")
-    _datei_guard(file_id, actor, scope)
+    _datei_guard(file_id, actor, scope, request)
     try:
         datei, inhalt = dateien_service.datei_inhalt(file_id)
     except dateien_service.DateiFehler as exc:
@@ -249,8 +417,26 @@ def verknuepfung_loesen(request, link_id: UUID):
     'EIGENE' → 403. Der Monteur hat ohnehin kein `content/AENDERN`. Am
     **unterzeichneten** Baustellenbericht verbietet die DB das Lösen (0065) — das
     kommt als 422 zurück, nicht als 404.
+
+    **Attest:** Das Lösen verlangt zusätzlich die Attest-Befugnis (Betroffener
+    oder Personalverwaltung), sonst 404 — `content/AENDERN` allein (Disposition!)
+    reicht nicht. Praktisch heißt das: **nur die Personalverwaltung** kann ein
+    Attest lösen. Der Beschäftigte kommt über `require` (Scope EIGENE → 403) gar
+    nicht hierher, und das ist richtig so: Die Bescheinigung ist der Nachweis
+    seines Anspruchs auf Entgeltfortzahlung (§ 5 EFZG) und liegt in der
+    Aufbewahrung des Arbeitgebers. Sie einseitig wieder zurückziehen zu können,
+    entwertete den Nachweis. Das Entfernen nach Ablauf der Aufbewahrungsfrist ist
+    genau diese Bürotätigkeit — und die Datei selbst bleibt in `content.file`
+    (echtes Löschen ist Sache des Löschkonzepts, Beschluss C-07/C-08).
     """
     actor, _ = require(request, "content", "AENDERN")
+    absence_id = (
+        FileLink.objects.filter(id=link_id)
+        .values_list("absence_id", flat=True)
+        .first()
+    )
+    if absence_id is not None:
+        _attest_guard(absence_id, actor, request)
     try:
         dateien_service.verknuepfung_loesen(actor, link_id=link_id)
     except dateien_service.VerknuepfungGesperrt as exc:

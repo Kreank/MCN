@@ -334,3 +334,56 @@ fieldset.rechner__satz {
   color: var(--ink-hint);
   line-height: 1.55;
 }
+
+// ----------------------------------------------------------------- Aufmass ---
+// Teilmasse als Karten (keine Tabelle): bricht auf schmalen Breiten sauber um,
+// nie horizontales Scrollen, und jedes Feld behaelt sein eigenes Label.
+.aufmass__teil {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+}
+.aufmass__teil-kopf {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.aufmass__masse {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+  gap: var(--space-3);
+}
+.aufmass__teil-fuss {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.aufmass__weg,
+.aufmass__plus {
+  min-height: 40px;
+  padding: 0 var(--space-4);
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: var(--step--1);
+  font-weight: 600;
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--ink);
+  }
+}
+.aufmass__plus {
+  align-self: flex-start;
+}

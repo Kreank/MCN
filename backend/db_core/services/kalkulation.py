@@ -114,6 +114,51 @@ def _apply_formula(basis, group):
     return _round2(basis + sign * group.amount_change)
 
 
+def _matrix_variante(article, asp, ek):
+    """VK-Variante, die aus der Aufschlagsmatrix stammt — live gerechnet.
+
+    Der gespeicherte `fixed_price` wird bewusst NICHT ausgewiesen: er ist nur die
+    zuletzt geschriebene Ausfertigung der Regel und kann veraltet sein (Regel
+    geändert oder deaktiviert). Maßgeblich ist immer die Regel.
+    """
+    # Lokaler Import: `aufschlagsmatrix` setzt auf diesem Modul auf.
+    from db_core.services import aufschlagsmatrix as matrix
+
+    lief, _ek_ref = matrix._bezug([article.id]).get(article.id, (None, None))
+    regel, res = matrix.matrix_preis(
+        article, ek=ek, supplier_party_id=lief, menge=Decimal(1)
+    )
+    if regel is None:
+        return {
+            "label": asp.label,
+            "is_standard": asp.is_standard,
+            "kind": "MATRIX",
+            "group_name": None,
+            "basis_kind": None,
+            "basis_amount": None,
+            "operator": None,
+            "percent_change": None,
+            "amount_change": None,
+            "sale_price": None,   # keine Regel mehr → unbekannt, nicht der Altwert
+        }
+    return {
+        "label": asp.label,
+        "is_standard": asp.is_standard,
+        "kind": "MATRIX",
+        "group_name": regel.name,
+        "basis_kind": res["basis_kind"],
+        "basis_amount": (
+            str(res["basis_amount"]) if res["basis_amount"] is not None else None
+        ),
+        "operator": "AUFSCHLAG" if res["markup_percent"] >= 0 else "ABSCHLAG",
+        "percent_change": str(abs(res["markup_percent"])),
+        "amount_change": None,
+        "sale_price": (
+            str(res["sale_price"]) if res["sale_price"] is not None else None
+        ),
+    }
+
+
 def article_kalkulation(article_id):
     """VK-Kalkulation eines Artikels: Listenpreis, aktueller EK und alle
     VK-Varianten (Formel oder Festpreis) mit errechnetem Verkaufspreis.
@@ -132,6 +177,15 @@ def article_kalkulation(article_id):
         .order_by("-is_standard", "label")
     ):
         if asp.sale_price_group_id is None:
+            # Eine von der Aufschlagsmatrix geschriebene Zeile (price_origin
+            # MATRIX) ist eine AUSFERTIGUNG der Regel, keine eigene Wahrheit:
+            # Sie wird live neu gerechnet. Sonst zeigte die Artikelansicht den
+            # gespeicherten Preis, während der Angebots-Editor (der immer live
+            # rechnet) einen anderen einsetzt — zwei Verkaufspreise für denselben
+            # Artikel. Greift keine Regel mehr, ist der Preis „unbekannt".
+            if getattr(asp, "price_origin", "MANUELL") == "MATRIX":
+                variants.append(_matrix_variante(article, asp, ek))
+                continue
             variants.append(
                 {
                     "label": asp.label,

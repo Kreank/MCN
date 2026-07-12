@@ -1,0 +1,339 @@
+.faelligkeiten {
+  max-width: 72rem;
+}
+
+/* Rechtshinweis — bewusst nüchtern, nicht als Warnung getarnt. */
+.rechtshinweis {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-4);
+  border-left: 3px solid var(--line-strong, var(--line));
+  border-radius: var(--radius-1);
+  background: var(--surface-2);
+  color: var(--ink-muted);
+  font-size: var(--step--1);
+  line-height: 1.5;
+
+  &__icon {
+    flex: none;
+    font-size: 1.25em;
+    font-weight: 700;
+    color: var(--ink-muted);
+  }
+
+  strong {
+    color: var(--ink);
+  }
+}
+
+.meldung {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-4);
+  border-radius: var(--radius-1);
+  background: color-mix(in srgb, var(--positive) 18%, var(--surface-1));
+  border: 1.5px solid color-mix(in srgb, var(--positive) 45%, transparent);
+  font-size: var(--step--1);
+
+  &--hinweis {
+    background: color-mix(in srgb, var(--warn) 16%, var(--surface-1));
+    border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+  }
+
+  &--fehler {
+    background: color-mix(in srgb, var(--danger, #b3261e) 12%, var(--surface-1));
+    border-color: color-mix(in srgb, var(--danger, #b3261e) 40%, transparent);
+  }
+
+  &__zu {
+    margin-left: auto;
+    border: 0;
+    background: none;
+    cursor: pointer;
+    color: inherit;
+    padding: var(--space-1);
+    border-radius: var(--radius-1);
+
+    &:focus-visible {
+      outline: 2.5px solid var(--focus-ring);
+      outline-offset: 1px;
+    }
+  }
+}
+
+/* ------------------------------- Filter ------------------------------- */
+
+.filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  align-items: flex-end;
+  margin-bottom: var(--space-5);
+}
+
+.segmente {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--radius-2);
+  background: var(--surface-2);
+}
+
+.segment {
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: calc(var(--radius-2) - 3px);
+  background: transparent;
+  color: var(--ink-muted);
+  font-size: var(--step--1);
+  font-weight: 600;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--ink);
+  }
+
+  &.is-active {
+    background: var(--surface-1);
+    color: var(--ink);
+    box-shadow: var(--shadow-1);
+  }
+
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 1px;
+  }
+}
+
+.feldchen {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+
+  &__label {
+    font-size: var(--step--2);
+    font-weight: 600;
+    color: var(--ink-muted);
+  }
+
+  &__input {
+    min-height: 40px;
+    padding: 0 var(--space-3);
+    border: 1.5px solid var(--line);
+    border-radius: var(--radius-1);
+    background: var(--surface-1);
+    color: var(--ink);
+    font: inherit;
+
+    &:focus-visible {
+      outline: 2.5px solid var(--focus-ring);
+      outline-offset: 1px;
+    }
+  }
+}
+
+/* ------------------------------- KPIs ------------------------------- */
+
+.kpis {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+}
+
+.kpi {
+  flex: 1 1 8rem;
+  padding: var(--space-3) var(--space-4);
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius-2);
+  background: var(--surface-1);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+
+  &--warn {
+    border-color: color-mix(in srgb, var(--warn) 60%, transparent);
+    background: color-mix(in srgb, var(--warn) 10%, var(--surface-1));
+  }
+
+  &__wert {
+    font-size: var(--step-3);
+    font-weight: 700;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+  }
+
+  &__label {
+    font-size: var(--step--2);
+    color: var(--ink-muted);
+  }
+}
+
+/* ------------------------------- Liste ------------------------------- */
+
+.liste {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-3);
+}
+
+.karte {
+  padding: var(--space-4);
+  border: 1.5px solid var(--line);
+  border-left: 4px solid var(--line);
+  border-radius: var(--radius-2);
+  background: var(--surface-1);
+
+  &--ueberfaellig {
+    border-left-color: var(--warn);
+  }
+
+  &__kopf {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    margin-bottom: var(--space-3);
+  }
+
+  &__titel {
+    margin: 0;
+    font-size: var(--step-0);
+    font-weight: 650;
+  }
+
+  &__daten {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+    gap: var(--space-3);
+    margin: 0 0 var(--space-3);
+
+    dt {
+      font-size: var(--step--2);
+      color: var(--ink-muted);
+      margin-bottom: 2px;
+    }
+
+    dd {
+      margin: 0;
+      font-size: var(--step--1);
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--space-2);
+      align-items: baseline;
+    }
+  }
+
+  &__notiz {
+    margin: 0 0 var(--space-3);
+    font-size: var(--step--1);
+  }
+
+  &__aktionen {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+}
+
+/* Art-Chip: Farbe PLUS Text (WCAG — nie Status nur über Farbe). */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px var(--space-2);
+  border-radius: 999px;
+  font-size: var(--step--2);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  border: 1.5px solid transparent;
+}
+
+.art--wartung {
+  background: color-mix(in srgb, var(--brand) 14%, var(--surface-1));
+  border-color: color-mix(in srgb, var(--brand) 40%, transparent);
+  color: var(--brand-ink, var(--ink));
+}
+
+.art--pruefung {
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface-1));
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  color: var(--accent-ink);
+}
+
+.art--gewaehrleistung {
+  background: color-mix(in srgb, var(--positive) 16%, var(--surface-1));
+  border-color: color-mix(in srgb, var(--positive) 45%, transparent);
+  color: var(--positive-ink, var(--ink));
+}
+
+.frist {
+  font-size: var(--step--2);
+  color: var(--ink-muted);
+
+  &--warn {
+    color: var(--warn-ink, var(--ink));
+    font-weight: 700;
+  }
+}
+
+/* Verkaufsargument — Hinweis, keine Rechtsbehauptung. */
+.tipp {
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  margin: 0 0 var(--space-3);
+  border-radius: var(--radius-1);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-1));
+  border: 1.5px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  font-size: var(--step--1);
+  line-height: 1.5;
+
+  &__icon {
+    flex: none;
+  }
+}
+
+.dezent {
+  color: var(--ink-muted);
+  font-size: var(--step--2);
+}
+
+/* ------------------------------- Dialog ------------------------------- */
+
+.dialog-form {
+  display: grid;
+  gap: var(--space-4);
+
+  &__intro {
+    margin: 0;
+    padding-bottom: var(--space-3);
+    border-bottom: 1.5px solid var(--line);
+  }
+
+  &__aktionen {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-2);
+  }
+}
+
+.note--klein {
+  font-size: var(--step--2);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.btn--klein {
+  min-height: 32px;
+  padding: 0 var(--space-2);
+  font-size: var(--step--2);
+}

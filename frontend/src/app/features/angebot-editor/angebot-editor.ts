@@ -7,6 +7,7 @@ import { FormBuilder, FormControl, ReactiveFormsModule, Validators } from '@angu
 import { Observable, Subject, debounceTime, distinctUntilChanged, map } from 'rxjs';
 import { BelegService } from '../../core/beleg.service';
 import { ArtikelService } from '../../core/artikel.service';
+import { AufschlagsmatrixService } from '../../core/aufschlagsmatrix.service';
 import { StammdatenUebernahmeIn } from '../../core/artikel.model';
 import { AuthService } from '../../core/auth.service';
 import {
@@ -34,6 +35,7 @@ import { Feld, FeldOption } from '../../shared/formular/feld';
 import { Bestaetigung } from '../../shared/bestaetigung/bestaetigung';
 import { IdsBestellung } from './ids-bestellung/ids-bestellung';
 import { WerkzeugeDialog } from '../werkzeuge/werkzeuge-dialog';
+import { RechnerPosition } from '../werkzeuge/rechner-basis';
 import { ResolvedPosition } from '../../core/anbindung.model';
 import { apiFehlerZuweisen } from '../../shared/formular/api-fehler';
 import {
@@ -191,6 +193,8 @@ export class AngebotEditor {
   private readonly route = inject(ActivatedRoute);
   private readonly svc = inject(BelegService);
   private readonly artikelSvc = inject(ArtikelService);
+  /** Die EINE Rechenstelle für Verkaufspreise (Aufschlagsmatrix, Migration 0069). */
+  private readonly matrixSvc = inject(AufschlagsmatrixService);
   private readonly auth = inject(AuthService);
   private readonly fb = inject(FormBuilder);
 
@@ -1151,24 +1155,40 @@ export class AngebotEditor {
         };
         this.lineEinsetzen(line, zielRubrik, zielIndex);
         this.ansage.set(`Artikel „${art.description}" nach „${zielName}" übernommen.`);
-        // EK/VK aus der Kalkulation ergänzen (best effort — 403 bleibt ohne EK/VK).
-        this.artikelSvc.getKalkulation(id).subscribe({
-          next: (k) => {
-            const standard = k.variants.find((v) => v.is_standard) ?? k.variants[0];
+        // EK/VK ergänzen. Der Verkaufspreis kommt aus der EINEN Rechenstelle des
+        // Servers (`/vk-vorschlag`): Festpreis bzw. VK-Gruppe am Artikel, sonst die
+        // Aufschlagsmatrix — die Rangfolge entscheidet der Server, nicht der Editor.
+        // Der Vorschlag ist ÜBERSCHREIBBAR: die Kalkulation genau dieses Angebots
+        // bleibt die Entscheidung des Kalkulators. Ohne Preis bleibt das Feld LEER
+        // (nie 0). Best effort — ein 403 lässt die Position ohne Preise stehen.
+        this.matrixSvc.vkVorschlag(id, '1').subscribe({
+          next: (v) => {
             this.lines.update((ls) =>
               ls.map((l) =>
                 l.uid === line.uid
                   ? {
                       ...l,
-                      unit_cost: k.ek,
-                      unit_price: standard?.sale_price ?? l.unit_price,
+                      unit_cost: v.ek,
+                      unit_price: v.sale_price ?? l.unit_price,
+                      markup_percent: v.quelle === 'MATRIX' ? v.markup_percent : l.markup_percent,
                     }
                   : l,
               ),
             );
+            if (v.sale_price == null) {
+              this.ansage.set(
+                `Artikel „${art.description}" übernommen — kein Verkaufspreis ` +
+                  `ermittelbar (${v.hinweis}) Bitte Einzelpreis ergänzen.`,
+              );
+            } else if (v.regel) {
+              this.ansage.set(
+                `Artikel „${art.description}" nach „${zielName}" übernommen. ` +
+                  `Verkaufspreis aus Regel „${v.regel.name}" — überschreibbar.`,
+              );
+            }
           },
           error: () => {
-            /* Kalkulation nicht abrufbar → Preise trägt der Nutzer nach. */
+            /* VK-Vorschlag nicht abrufbar → Preise trägt der Nutzer nach. */
           },
         });
       },
@@ -1254,9 +1274,12 @@ export class AngebotEditor {
   protected readonly idsQuoteId = computed(() => (this.istRechnung ? null : this.quoteId || null));
 
   /** Die aus dem Händler-Warenkorb zurückgegebenen Positionen als Belegzeilen
-   * übernehmen. Der Netto-EK wird als Einkaufspreis (unit_cost) UND provisorisch
-   * als Einzelpreis gesetzt; den Aufschlag prüft der Anwender (Ansage weist darauf
-   * hin). Nicht zugeordnete Positionen werden als freie Materialzeilen übernommen. */
+   * übernehmen. Der Netto-EK des Händlers wird als Einkaufspreis (`unit_cost`)
+   * gesetzt; als Einzelpreis kommt der **VK-Vorschlag aus der Aufschlagsmatrix**
+   * (`sale_price`, vom Server gerechnet — die Menge der Position berücksichtigt
+   * dabei die Rabattstaffel). Ließ sich kein VK ermitteln (unbekannter EK, keine
+   * Regel, nicht zugeordnete Position), bleibt der Einzelpreis **leer**: der EK
+   * wird NIE als Verkaufspreis eingetragen. Alles bleibt überschreibbar. */
   idsPositionenUebernehmen(pos: ResolvedPosition[]): void {
     if (this.readonly() || pos.length === 0) return;
     const zielRubrik = this.zielRubrik();
@@ -1268,7 +1291,7 @@ export class AngebotEditor {
       description: p.short_text || p.article_name || `Artikel ${p.art_no}`,
       quantity: p.qty ?? '1',
       unit: p.unit,
-      unit_price: p.net_price,
+      unit_price: p.sale_price,
       discount_percent: null,
       tax_code: this.vatZuTaxCode(p.vat),
       unit_cost: p.net_price,
@@ -1281,9 +1304,13 @@ export class AngebotEditor {
     }));
     this.lines.update((ls) => [...ls, ...neu]);
     this.markiereGeaendert();
+    const ohneVk = neu.filter((l) => l.unit_price == null).length;
     this.ansage.set(
       `${neu.length} Position(en) aus dem Händler-Warenkorb übernommen. ` +
-        'Die Preise sind Einkaufspreise — bitte Aufschlag prüfen.',
+        (ohneVk === 0
+          ? 'Die Verkaufspreise stammen aus der Aufschlagsmatrix — bitte prüfen.'
+          : `Bei ${ohneVk} Position(en) ließ sich kein Verkaufspreis ermitteln — ` +
+            'bitte Einzelpreis ergänzen.'),
     );
   }
 
@@ -1329,6 +1356,44 @@ export class AngebotEditor {
     this.lines.update((ls) => [...ls, line]);
     this.markiereGeaendert();
     this.ansage.set('Rechenergebnis als Textposition übernommen.');
+  }
+
+  /**
+   * Aufmaß-Ergebnis als **bepreisbare Position** übernehmen (Menge + Einheit +
+   * Rechenaufstellung im Positionstext).
+   *
+   * Warum hier — anders als bei den Überschlagsrechnern — eine Zahl in die
+   * Position darf: Das Aufmaß liefert eine **Menge**, keinen Betrag. Sie kommt
+   * als Dezimal-**String** (`RechnerPosition.menge`, nie `number`), genau wie
+   * eine getippte Menge. Ein **Preis wird bewusst nicht gesetzt** — er wird im
+   * Positionsdialog nachgetragen, der sich sofort öffnet (wie bei `freieZeile`).
+   * Positionsnetto, Steuer und Summen rechnet weiterhin allein der Server.
+   */
+  aufmassPositionUebernehmen(p: RechnerPosition): void {
+    if (this.readonly() || !p.menge || !p.beschreibung.trim()) return;
+    const line: EditorLine = {
+      uid: neueUid(),
+      rubrikUid: this.zielRubrik(),
+      line_type: 'MATERIAL',
+      line_kind: 'NORMAL',
+      description: p.beschreibung.trim(),
+      quantity: p.menge,
+      unit: p.einheit,
+      unit_price: null,
+      discount_percent: null,
+      tax_code: 'DE_19',
+      unit_cost: null,
+      markup_percent: null,
+      sale_price_group_id: null,
+      source_article_id: null,
+      source_assembly_id: null,
+      netAmount: null,
+      taxRatePercent: null,
+    };
+    this.lines.update((ls) => [...ls, line]);
+    this.markiereGeaendert();
+    this.ansage.set(`Aufmaß übernommen: ${p.menge} ${p.einheit}. Bitte den Einzelpreis ergänzen.`);
+    this.zeileOeffnen(line);
   }
 
   private vatZuTaxCode(vat: string | null): string {

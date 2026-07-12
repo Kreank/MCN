@@ -371,3 +371,15 @@
   font-style: italic;
   color: var(--ink-faint);
 }
+
+/* Aufschlagsmatrix: welche Regel den VK gerade macht (Nachvollziehbarkeit). */
+.regel-block {
+  margin-top: var(--space-5);
+  padding: var(--space-4);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-md);
+}
+.regel-block__titel {
+  margin: 0 0 var(--space-3);
+  font-size: var(--step-0);
+}

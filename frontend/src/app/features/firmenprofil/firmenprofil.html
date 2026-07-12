@@ -271,6 +271,30 @@
         }
       </fieldset>
 
+      <fieldset class="profil-abschnitt">
+        <legend class="legende">Urlaub · Verfall des Übertrags</legend>
+        <p class="profil-hinweis">
+          Wann verfällt Resturlaub, der ins Folgejahr übertragen wurde? Die
+          Voreinstellung ist <strong>„kein Verfall"</strong> — MCN rechnet
+          <strong>nichts</strong> weg, was Sie nicht ausdrücklich einstellen.
+        </p>
+        <p class="note profil-warnung" role="note">
+          § 7 Abs. 3 BUrlG <em>erlaubt</em> den Verfall zum 31.03. des Folgejahres,
+          er ordnet ihn nicht an: Er setzt eine entsprechende Regelung und
+          betriebliche oder personenbezogene Gründe voraus. Nach der
+          Rechtsprechung von BAG und EuGH verfällt Urlaub zudem <strong>nur
+          dann</strong>, wenn Sie die Beschäftigten rechtzeitig aufgefordert und
+          über den drohenden Verfall belehrt haben. Diese Einstellung ersetzt
+          das nicht — sie rechnet nur, was Sie vereinbart und erfüllt haben.
+        </p>
+        <div class="profil-grid">
+          <app-feld [control]="form.controls.vacation_carryover_expiry"
+                    label="Verfall des Resturlaubs-Übertrags" typ="select"
+                    [optionen]="verfallOptionen"
+                    hinweis="Der Übertrag wird vor dem laufenden Anspruch verbraucht." />
+        </div>
+      </fieldset>
+
       @if (darfAendern()) {
         <div class="profil-aktionen">
           <button type="submit" class="btn btn--primary" [disabled]="laedt()">

@@ -13,11 +13,14 @@ import { Feld, FeldOption } from '../../shared/formular/feld';
 import { ReferenzWahl, RefSuche } from '../../shared/formular/referenz-wahl';
 import { apiFehlerZuweisen } from '../../shared/formular/api-fehler';
 import {
+  apiZuDeAnzeige,
   apiZuDeEingabe,
   deZuApiDezimal,
   dezimalValidator,
   istDezimalApiWert,
 } from '../../shared/formular/dezimal';
+import { AufschlagsmatrixService } from '../../core/aufschlagsmatrix.service';
+import { VkVorschlag } from '../../core/aufschlagsmatrix.model';
 import { gtinValidator } from '../../shared/formular/gtin';
 import {
   felderAlsBeruehrtMarkieren,
@@ -153,6 +156,7 @@ export class ArtikelDetail {
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
   private readonly svc = inject(ArtikelService);
+  private readonly matrixSvc = inject(AufschlagsmatrixService);
   private readonly accountingSvc = inject(BelegerfassungService);
   private readonly partySvc = inject(PartyService);
   private readonly dateiSvc = inject(DateiService);
@@ -182,6 +186,8 @@ export class ArtikelDetail {
   protected readonly vkStandard = signal<string>('');
   protected readonly vkSaving = signal(false);
   protected readonly vkMeldung = signal<string | null>(null);
+  /** Welche Regel/Kalkulation den VK gerade macht (Aufschlagsmatrix, 0069). */
+  protected readonly vorschlag = signal<VkVorschlag | null>(null);
 
   protected readonly historie = signal<HistorieState>({ kind: 'idle' });
   private historieReqId = 0;
@@ -746,6 +752,29 @@ export class ArtikelDetail {
         if (rid === this.vkReqId) this.vk.set(fehlerState(err));
       },
     });
+    // Welche Regel greift gerade? (Nachvollziehbarkeit — der Anwender muss sehen,
+    // WARUM der Preis so ist.) Best effort: ein Fehler blendet den Block nur aus.
+    this.vorschlag.set(null);
+    this.matrixSvc.vkVorschlag(id).subscribe({
+      next: (v) => {
+        if (rid === this.vkReqId) this.vorschlag.set(v);
+      },
+      error: () => {
+        /* Vorschlag nicht abrufbar → Block bleibt leer. */
+      },
+    });
+  }
+
+  /** Formel-Text zum aktuellen VK-Vorschlag („EK 100,00 € + 45 % = 145,00 €"). */
+  protected vorschlagFormel(v: VkVorschlag): string {
+    if (v.basis_amount == null || v.markup_percent == null) return '';
+    const basis = v.basis_kind === 'LISTENPREIS' ? 'Listenpreis' : 'EK';
+    const auf = apiZuDeAnzeige(v.markup_percent, 1);
+    const vorzeichen = Number(v.markup_percent) < 0 ? '−' : '+';
+    return (
+      `${basis} ${apiZuDeAnzeige(v.basis_amount, 2)} € ` +
+      `${vorzeichen} ${auf.replace('-', '')} %`
+    );
   }
 
   /** Editierfelder + Standardauswahl aus der Server-Übersicht initialisieren. */

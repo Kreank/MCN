@@ -1,0 +1,84 @@
+<section class="attest" aria-labelledby="attest-titel-{{ absenceId() }}">
+  <div class="attest__kopf">
+    <h4 class="attest__titel" id="attest-titel-{{ absenceId() }}">
+      Arbeitsunfähigkeitsbescheinigung
+    </h4>
+    @if (anzahl() > 0) {
+      <span class="stamp stamp--positive">
+        <span aria-hidden="true">✓</span>
+        {{ anzahl() }} hinterlegt
+      </span>
+    } @else if (!laedt() && !kannNicht()) {
+      <span class="stamp stamp--warn">
+        <span aria-hidden="true">!</span>
+        keine hinterlegt
+      </span>
+    }
+  </div>
+
+  <p class="attest__hinweis">
+    Gesundheitsdaten (DSGVO Art. 9). Sichtbar ausschließlich für die betroffene
+    Person selbst und die Personalverwaltung. Es wird <strong>keine Diagnose</strong>
+    gespeichert — nur die Bescheinigung über die Arbeitsunfähigkeit im Zeitraum
+    dieser Abwesenheit.
+  </p>
+
+  <p class="sr-only" aria-live="polite" role="status">{{ meldung() }}</p>
+
+  @if (laedt()) {
+    <p class="lade-hinweis">Wird geladen …</p>
+  } @else if (kannNicht()) {
+    <p class="tab-platzhalter">Für diese Abwesenheit ist keine Einsicht möglich.</p>
+  } @else {
+    @if (fehler(); as f) {
+      <p class="note note--error" role="alert">{{ f }}</p>
+    }
+
+    @if (anzahl() > 0) {
+      <ul class="attest__liste">
+        @for (d of dateien(); track d.link_id) {
+          <li class="attest__zeile">
+            <span class="attest__name">
+              <span class="attest__mark" aria-hidden="true">📄</span>
+              {{ d.original_filename }}
+            </span>
+            <span class="attest__meta">
+              {{ groesse(d.size_bytes) }} · hinterlegt am {{ datum(d.uploaded_at) }}
+            </span>
+            <button type="button" class="btn btn--klein" (click)="herunterladen(d)">
+              Herunterladen
+            </button>
+          </li>
+        }
+      </ul>
+    } @else {
+      <p class="tab-platzhalter">Es ist noch keine Bescheinigung hinterlegt.</p>
+    }
+
+    @if (darfHochladen()) {
+      <label class="attest__upload">
+        <span class="link-knopf">Bescheinigung hochladen …</span>
+        <input
+          type="file"
+          class="sr-only"
+          accept=".pdf,.png,.jpg,.jpeg"
+          [disabled]="uploadLaeuft()"
+          (change)="dateiGewaehlt($event)"
+          aria-label="Arbeitsunfähigkeitsbescheinigung hochladen"
+        />
+      </label>
+      @if (uploadLaeuft()) {
+        <p class="attest__fortschritt" aria-live="polite">
+          Wird hochgeladen
+          @if (uploadProzent() !== null) {
+            <span> … {{ uploadProzent() }} %</span>
+          }
+        </p>
+      }
+      <p class="attest__fussnote">
+        Der Dateiname wird beim Hochladen durch einen neutralen ersetzt — er darf
+        keine Diagnose enthalten.
+      </p>
+    }
+  }
+</section>

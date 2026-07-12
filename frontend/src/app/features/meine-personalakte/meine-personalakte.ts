@@ -3,12 +3,14 @@ import { HttpErrorResponse } from '@angular/common/http';
 import { RouterLink } from '@angular/router';
 import { MitarbeiterService } from '../../core/mitarbeiter.service';
 import {
+  Absence,
   Contract,
   EmployeeDetail,
   absenceStatusClass,
   absenceStatusLabel,
   absenceTypeLabel,
 } from '../../core/mitarbeiter.model';
+import { Attest } from '../../shared/attest/attest';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 
@@ -27,7 +29,7 @@ type ViewState =
  */
 @Component({
   selector: 'app-meine-personalakte',
-  imports: [RouterLink, KeinZugriff],
+  imports: [RouterLink, KeinZugriff, Attest],
   templateUrl: './meine-personalakte.html',
   styleUrl: './meine-personalakte.scss',
 })
@@ -77,5 +79,24 @@ export class MeinePersonalakte {
 
   protected aktuellerVertrag(data: EmployeeDetail): Contract | null {
     return data.contracts.find((c) => c.is_current) ?? data.contracts[0] ?? null;
+  }
+
+  /**
+   * Die eigenen Krankmeldungen — nur an ihnen hängt eine
+   * Arbeitsunfähigkeitsbescheinigung. Für Urlaub oder Fortbildung gibt es nichts
+   * zu bescheinigen, und ein Upload-Feld dort lüde zu Datensammlung ein, für die
+   * es keinen Zweck gibt (DSGVO Art. 5: Datenminimierung).
+   */
+  protected krankmeldungen(data: EmployeeDetail): Absence[] {
+    return data.absences.filter((a) => a.absence_type === 'KRANKHEIT');
+  }
+
+  /**
+   * Eine verworfene Abwesenheit (abgelehnt/zurückgezogen) nimmt keine
+   * Bescheinigung mehr an — der Antrag ist gegenstandslos, die DB verbietet den
+   * Anhang. Der Knopf verschwindet, statt in einen 422 zu laufen.
+   */
+  protected attestOffen(a: Absence): boolean {
+    return a.status !== 'ABGELEHNT' && a.status !== 'ZURUECKGEZOGEN';
   }
 }

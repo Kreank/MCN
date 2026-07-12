@@ -6,18 +6,22 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 > TL;DR: MCN ist ein KI-first CRM (Nachfolger des Hero-CRM) für Handwerk/
 > Gebäudeservice. DB ist database-first PostgreSQL (Regeln in Triggern). Backend
 > Django 5 + django-ninja. Frontend Angular „Leitstand". Es wird in **vertikalen
-> Slices** gebaut (DB→Service→API→UI→Verifikation→Review). Aktuell **~18 Bereiche
+> Slices** gebaut (DB→Service→API→UI→Verifikation→Review). Aktuell **~20 Bereiche
 > live und bedienbar** (Kontakte, Liegenschaften, Projekte, Dokumente, Planung
-> inkl. Plantafel/Kalender/Ressourcen, Wartung, Aufgaben, Mitarbeiter/HR, Artikel
-> inkl. VK-Kalkulation, Buchhaltung inkl. Mahnwesen + Storno/Korrektur +
-> Beleg-PDF, Auswertungen, Einstellungen, Mein Profil).
+> inkl. Plantafel mit Drag&Drop/Kalender/Ressourcen, Wartung, Aufgaben,
+> Mitarbeiter/HR inkl. **Zeiterfassung mit Stempeluhr**, Artikel inkl.
+> VK-Kalkulation, Buchhaltung inkl. Mahnwesen + Storno/Korrektur + Beleg-PDF +
+> E-Rechnung, Auswertungen, **Werkzeuge** (Heizlast u. a.), Einstellungen,
+> Mein Profil).
 > **Auth/Login + Rechtematrix stehen** (eigenes Login, kein SSO); die gesamte API
 > ist anmeldepflichtig. **Der Schreibpfad ist verdrahtet**: „+ Neu", Statusaktionen
 > und Freigaben laufen aus dem UI durch Rechte, Statusautomaten und DB-Trigger.
 > Dazu **Vier-Augen-Freigaben**, **Belegerfassung** (Eingangsrechnungen) und die
 > **Rechtematrix-Pflege** als UI.
-> **1981 Backend-Tests grün** (13 skipped: 12 E-Rechnungs-Validatortests ohne Java,
-> 1 MinIO-E2E), db_core-Migrationen bis **0065**, accounts bis **0002**.
+> **2193 Backend-Tests grün** (13 skipped: 12 E-Rechnungs-Validatortests ohne Java,
+> 1 MinIO-E2E), db_core-Migrationen bis **0068**, accounts bis **0002**.
+> Das **Frontend baut erstmals ohne Budget-Warnung** (8/10 kB gehalten — nicht
+> lockern, sondern auslagern).
 > Stand 2026-07-11 (Hero-Paritäts-Ausbau, 20 Slices an einem Tag — Details in
 > `git log`): Artikelstamm nach Hero (Felder/VK-Gruppen/Lieferant/Bild,
 > Suchoperatoren + · | · *, Spaltenwahl, Kopieren), **Marge/Deckungsbeitrag** in
@@ -41,8 +45,9 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 > von mir eingecheckt), **Erste-Schritte-Checkliste** auf der Übersicht,
 > **Akquisekanäle/Quellen** (`/company/acquisition-sources` + Quelle am Kontakt,
 > Migration 0049/0050).
-> **Migrations-Graph ist frei** (`0065_bericht_anhaenge_versiegeln` ist einziges Leaf).
-> **Neu (2026-07-11, diese Session):** **DATEV-EXTF-Export** (Buchungsstapel aus
+> **Migrationskopf 0068** (bei Redaktionsschluss einziges Leaf; **derzeit bauen vier
+> Parallel-Agenten 0069–0072** — vor eigener Migration `showmigrations` prüfen).
+> **Neu (2026-07-11):** **DATEV-EXTF-Export** (Buchungsstapel aus
 > veröffentlichten Rechnungen, `GET /buchhaltung/datev-export.csv`, Config am
 > Firmenprofil, Migration 0051; Dialog in der Buchhaltung). v1-Grenzen dokumentiert
 > (Sammeldebitor, Automatik = aktuelle Sätze, Steuerberater-Roundtrip offen) —
@@ -51,7 +56,7 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 > neu Service `anbindung.py` + `GET/POST/PATCH /api/pricing/supplier-connections` +
 > Frontend `features/haendler-anbindungen`, Einstieg aus Artikel). `credential_reference`
 > bleibt reiner Verweis (nie Secret). Details Memory `ids-connect`.
-> **AKTUELL (2026-07-12, diese Session):** Erst der konsolidierte Commit `170f3c7`
+> **2026-07-12, Welle 1:** Erst der konsolidierte Commit `170f3c7`
 > (**IDS-Connect komplett** inkl. Warenkorb-Roundtrip — nur Live-Test mit echter
 > G.U.T.-URL offen —, **Baustellenberichte**, **DATANORM-Frontend-Import**), dann die
 > **vier priorisierten Slices aus den Grundsatzentscheidungen — alle vier gebaut**:
@@ -63,6 +68,12 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 > (0063, Schalter am Firmenprofil) und **Baustellenbericht am freien Termin**
 > (0064/0065, dabei zwei Sicherheitslücken in der Datei-API geschlossen). Details
 > unten. Grundsatzentscheidungen: Memory `grundsatz-entscheidungen-2026-07`.
+> **AKTUELL (2026-07-12, Welle 2):** `f1ed9d9` **Plantafel Drag & Drop, Design-
+> Behebung und ein Datenverlust-Bug** (die deutsche Dezimal-Formatierung schrieb
+> stillschweigend falsche Mengen — siehe Invariante unten) und `9893120`
+> **Zeiterfassung mit Stempeluhr** (Migrationen 0066–0068, gesetzliche Pflicht
+> nach § 17 MiLoG), **Plantafel auf Dispo-Niveau** und **Werkzeuge** (Nav 92:
+> Heizlast, Heizkörper-Umrechnung, Volumenstrom, Einheiten). Details unten.
 
 ---
 
@@ -191,6 +202,10 @@ Dann erst einchecken (nach `makemigrations --check` sauber + Suite grün), sonst
 kollidiert der Migrations-Graph (zwei Blätter auf demselben Parent). Beim Commit
 sonst **nur eigene Slice-Dateien** stagen (selektives Hunk-Staging bei geteilten
 Dateien wie `app.routes.ts`).
+**Stand jetzt akut:** Vier Agenten bauen parallel die Migrationen **0069–0072** (siehe
+„Nächste Schritte"). Wer dazwischen etwas anfasst, prüft vorher `git status` und
+`showmigrations` — halbfertige Migrationsdateien im Arbeitsbaum können sogar
+`manage.py` zum Absturz bringen.
 
 ### Die vier priorisierten Slices sind GEBAUT (2026-07-12)
 
@@ -331,13 +346,97 @@ UI in der Buchhaltung; Memory `datev-export`).
      (INSERT/UPDATE/DELETE, OLD **und** NEW). Die Race gegen `sign_report` ist
      serialisiert (nachgewiesen).
 
-**★ NÄCHSTE SCHRITTE (offen).** Zuerst das, was auf Externe wartet, sichtbar halten:
+### Welle 2 (2026-07-12): Datenverlust-Bug, Zeiterfassung, Plantafel, Werkzeuge
+
+8. ✔ **Plantafel Drag & Drop + Design-Behebung + ein Datenverlust-Bug** (`f1ed9d9`,
+   keine Migration).
+   **Der Bug war KRITISCH und vorbestehend:** Die deutsche Dezimal-Formatierung
+   setzte einen Tausenderpunkt (1200 → „1.200"), die Rückwandlung entfernte Punkte
+   aber nur, wenn ein Komma vorhanden war. Wer eine **Menge von 1200 auf „1.500"
+   änderte, speicherte 1,5** — ohne Warnung, ohne Fehler. Jetzt sind die beiden
+   Richtungen getrennt: `apiZuDeEingabe` (**ohne** Gruppierung, für Eingabefelder)
+   und `apiZuDeAnzeige` (mit Tausenderpunkt, **nur** Anzeige); eine mehrdeutige
+   Eingabe wie „1.500" wird **abgelehnt** statt geraten. 22 Unit-Tests.
+   **Design:** Der Hinweistext im Formularfeld stand ZWISCHEN Label und Input und
+   schob das Feld nach unten — ~25 Formulare fluchteten deshalb nicht (Rechnungskopf:
+   5 Felder in 4 Höhen, 83 px Spreizung). Der Hinweis steht jetzt UNTER dem Feld.
+   Beleg-Editor: Breitendeckel angehoben, Positionszeile ist eine echte
+   Spaltentabelle mit Inline-Edit, Palette gefixt, Kalkulationsleiste kollabierbar.
+   Neuer Kontrast-Token `--ink-hint`, Container-Tokens, Legenden vereinheitlicht.
+   **Plantafel:** Drag & Drop per Maus, Tastatur und Touch, neuer Endpunkt zum
+   Aufheben einer Zuweisung, Belegungswarnung für Mitarbeiter UND Ressourcen.
+9. ✔ **Zeiterfassung mit Stempeluhr** (`9893120`, Migrationen 0066–0068).
+   Gesetzliche Pflicht (BAG 2022; **§ 17 MiLoG** für Bau/Gebäudedienst: Beginn/Ende/
+   Dauer, binnen 7 Tagen aufzuzeichnen, 2 Jahre aufzubewahren, dem Zoll vorzulegen).
+   - **Architektur: EIN Zeitstrahl, zwei Auswertungen.** `workflow.time_entry` bleibt
+     die einzige Wahrheit. Neu `hr.time_category` — **`is_work_time` ist das einzige
+     harte Attribut** (PAUSE ist nicht umschaltbar). **`time_type` ist GEDROPPT** (eine
+     Read-only-Property spiegelt es für Altcode). Der Einsatzbezug ist für JEDE
+     Kategorie optional — Werkstatt/Büro/Schulung sind erstklassige Zeiten.
+     Überlappungssperre per EXCLUDE (nur über abgeschlossene Buchungen; die laufende
+     Buchung ist über einen partiellen UNIQUE-Index eindeutig).
+   - **Stempeluhr** (Start/Pause/Weiter/Stopp) unter `features/meine-zeiten`; die
+     Buchung hängt am Termin und erscheint im Baustellenbericht
+     (`shared/einsatz-zeiten`).
+   - `workflow.work_day` (ENTWURF→EINGEREICHT→BESTAETIGT|ABGELEHNT, **Vier-Augen als
+     DB-Trigger**); die Änderung an einem bestätigten Tag verlangt eine Begründung und
+     wirft den Tag auf ENTWURF zurück. **Das kaufmännische Tor B-28 bleibt daneben
+     scharf — zwei unabhängige Schlösser, nicht eins.**
+   - `hr.break_rule` (KEINE/GESETZLICH/FESTE_ZEITEN), `hr.holiday` (2026/27),
+     Soll/Ist/**Saldo abgeleitet, nie gespeichert**, Stundenliste als CSV.
+   - **Nachtschicht zählt zum Anfangstag** (22:00–06:00 = EIN Arbeitstag);
+     `workflow.local_day()` und `BETRIEBS_TZ` sind deckungsgleich (über DST geprüft).
+   - Nebenbefund behoben: Die Mitarbeiter-Auswertung zählte nur `ARBEITSZEIT` —
+     Fahrt-, Bereitschafts- und Nacharbeitszeit fielen unter den Tisch. Jetzt
+     `category__is_work_time`.
+   - Rechtematrix: MONTEUR bekommt `hr/LESEN` + `hr/AENDERN` mit row_scope EIGENE.
+10. ✔ **Plantafel auf Dispo-Niveau** (`9893120`, keine Migration): Rückstandsleiste
+    (ungeplante Einsätze, Drag UND Tastatur, Rückweg ins Backlog mit Begründung),
+    **Mehrtages-Balken** statt Punkt am Starttag, Abwesenheiten und Feiertage als
+    Sperrflächen, Konflikte an der Kachel (Text UND Symbol), Ansichten Tag/Woche/2W/4W,
+    Termin anlegen/bearbeiten mit n Mitarbeitern und n Ressourcen in EINER Transaktion,
+    Auslastung je Bahn gegen die Vertrags-Sollstunden (ohne Vertrag `null` =
+    „unbekannt", **nie 0**). `actual_start`/`actual_end` werden im Statusautomaten
+    gestempelt.
+    **Hero kann laut eigener Doku beides NICHT**: keine Verfügbarkeitsprüfung beim
+    Anlegen, kein Ort für ungeplante Arbeit. Das sind unsere zwei echten Vorsprünge.
+    **Zwei Review-Funde, die es nicht ins Produkt geschafft haben:**
+    - Das Board gab die **Abwesenheitsart** (Krankheit!) an jeden mit `workflow`-Recht
+      preis — DSGVO Art. 9. Das Repo hatte diese Grenze für dieselben Daten in
+      `api/mitarbeiter.py` längst gezogen. Jetzt zeigt das Board nur „abwesend, von–bis".
+    - Der Termin-Dialog löschte beim Ändern der Uhrzeit stillschweigend Vor-Ort-Kontakt
+      und Zutrittshinweise (er schickte Felder mit, die er nie geladen hatte).
+11. ✔ **Werkzeuge** (`9893120`, `features/werkzeuge`, Nav 92): Heizlastrechner
+    (überschlägig) fachlich 1:1 aus `D:\Mitra\NotizApp_Win` portiert (nachgerechnet,
+    gleiche Zahlen), Heizkörper-Umrechnung (WP-Umstellung), Volumenstrom,
+    Einheiten-Umrechner. Einstieg auch aus Liegenschaft und Beleg-Editor.
+    Ein Ergebnis geht **nur als Textposition** in einen Beleg — **kein in JavaScript
+    gerechneter Wert wird je Menge oder Preis.** Unübersehbarer Hinweis im UI: kein
+    Nachweis nach DIN EN 12831, nicht förderfähig.
+    **Normrecht (wichtig für künftige Werkzeuge):** Die bloße Anwendung einer
+    Rechenvorschrift ist frei — **Norm-Tabellenwerte abzudrucken oder mitzuliefern ist
+    es nicht** (das sagt DIN ausdrücklich für Software). Deshalb keine
+    DIN-Klimadaten/-Tabellen im Produkt.
+
+**★ NÄCHSTE SCHRITTE (offen).** Zuerst das, was gerade läuft und was auf Externe
+wartet, sichtbar halten:
+
+**In Arbeit (vier parallele Agenten, Stand jetzt):**
+- **EK→VK-Aufschlagsmatrix** (Migration 0069).
+- **Aufmaß-Rechner** + Wasserinhalt/Ausdehnungsgefäß aus der NotizApp (0070).
+- **Fälligkeiten-Engine** für Wartung/Prüffristen/Gewährleistung (0071).
+- **HR-Reste:** Stundenausgleich, Resturlaubs-Übertrag, Attest-Upload,
+  „Derzeit abwesend" (0072).
+
+**Danach geplant:**
+- **§ 35a-Ausweis** (Lohn-/Materialanteil auf der Privatkundenrechnung).
+- **Plantafel Stufe 1:** Default-Dauer je Kategorie, Kopieren/Wiederholen,
+  Kolonnen-Modell.
 
 **Wartet auf den User / auf Externe:**
-- **Lexware-Export** — wartet auf das konkrete Importformat (Rücksprache Buchhaltung).
-  Bis dahin reicht DATEV.
-- **OAuth-Absenderkonten** für den Mailversand — wartet auf Chef-Entscheidung
-  (App-Registrierung); SMTP reicht vorerst.
+- **Lexware Office** — ans Ende geschoben. Cloud-API erst ab Tarif XL, der Voucher-Weg
+  ist recherchiert. **Offene Frage: wer macht die USt-Voranmeldung?** Bis dahin reicht
+  DATEV.
 - **DATEV-Roundtrip beim Steuerberater** (echter Import des Buchungsstapels),
   Personenkonten/OPOS.
 - **Anzahlungskonto für steuerfrei und § 13b bestätigen lassen** — aktuell das
@@ -347,13 +446,16 @@ UI in der Buchhaltung; Memory `datev-export`).
   (`branch_trade`-Link) vs. je Auftrag/Projekt. Wahrscheinlichste Auslegung: je
   Niederlassung.
 
-**Ableitbar, kann sofort gebaut werden:**
-- **XRechnung** (reines XML, B2G/Leitweg-ID) — optional, User hat 1–2×/Jahr
-  öffentliche Auftraggeber. Das CII-Mapping steht bereits.
+**Optional/klein, ableitbar:**
+- **XRechnung** (reines XML, B2G/Leitweg-ID) — User hat 1–2×/Jahr öffentliche
+  Auftraggeber. Das CII-Mapping steht bereits.
 - **Vier-Augen auf weitere Aktionen ausrollen** (Dubletten-Merge, Massenexport,
   KI-Massenaktionen): Applier in `_APPLIERS` bzw. `claim()` — Flow steht.
-- **Plantafel Drag & Drop** (`POST /planung/einsaetze/{id}/schedule` existiert).
-- **Mailversand-Reste:** persönliche Absenderkonten, E-Mail-Templates-Verwaltung.
+- **E-Mail-Vorlagenverwaltung.**
+
+**Erledigt, aus der Liste gestrichen:** OAuth-Absenderkonten (**verworfen** — es wird
+immer über die Firmen-Mail versendet), veraPDF/Schematron-Gegenprüfung,
+Baustellenbericht am freien Termin, Plantafel Drag & Drop.
 
 **Bewusst NICHT gebaut:** „Freien Termin zum Auftrag hochstufen". Der Auftragsbezug
 eines Einsatzes ist **unveränderlich** (sonst Torumgehung, s. o.). Wer das will,
@@ -366,6 +468,23 @@ Scratch-Daten; bei Bedarf auf INAKTIV setzen.
 
 ### Bewusst offene Invarianten (nicht versehentlich „reparieren")
 
+- **Ein Wert, der in ein EINGABEFELD geht, darf NIE gruppiert formatiert sein.**
+  `apiZuDeEingabe` (ohne Tausenderpunkt) für Formulare, `apiZuDeAnzeige` (mit) nur für
+  reine Anzeige. Die Rückwandlung **lehnt Mehrdeutiges wie „1.500" ab** statt zu raten.
+  Das ist die Lehre aus einem stillen Datenverlust: 1200 → „1.200" → editiert zu
+  „1.500" → gespeichert als **1,5**. Nicht wieder zu einer Formatierfunktion
+  zusammenlegen.
+- **Gesundheitsdaten gehören hinter `hr/LESEN` — nie in eine `workflow`-Schnittstelle.**
+  Die Plantafel zeigt „abwesend, von–bis", **nicht** die Abwesenheitsart (DSGVO Art. 9).
+  `api/mitarbeiter.py` zieht dieselbe Grenze; ein Review hat sie im Board-Endpunkt
+  gerissen vorgefunden.
+- **Vergessenes Ausstempeln wird NICHT automatisch beendet.** Ein erfundenes Ende wäre
+  eine Falschaussage in einer gesetzlichen Aufzeichnung (§ 17 MiLoG). Die Buchung
+  bleibt offen und wird als **überfällig markiert**. Das ist bewusst unbequem — kein
+  „Auto-Stopp nach 12 h" nachrüsten.
+- **Die gesetzliche Pause wird VOLL abgezogen, nicht auf die Schwelle gekappt**
+  (6 h 01 Arbeit → 5 h 31 Nettozeit). Eine gekappte 1-Minuten-„Pause" wäre keine
+  Ruhepause nach § 4 ArbZG (Mindestabschnitt 15 min), sondern eine erfundene Zahl.
 - **`row_scope='EIGENE'` ist nur für Aufgaben und Einsätze umgesetzt.** Überall
   sonst gilt **fail-closed**: `require()` wirft 403. Ein MONTEUR sieht Projekte,
   Aufträge, Wartung und Plantafel deshalb gar nicht. Wer das ändern will, setzt
@@ -383,16 +502,22 @@ Scratch-Daten; bei Bedarf auf INAKTIV setzen.
   Trigger `content.protect_signed_site_report_links` (INSERT/UPDATE/DELETE, OLD und
   NEW). Ohne den war der Bericht nur scheinbar unveränderlich: die Fotos, auf die er
   sich beruft, ließen sich danach noch tauschen.
-- **Ressourcen-Doppelbelegung ist nicht physisch verhindert.** Der maßgebliche
-  Zeitraum liegt auf `service_job` und ist dort nullable; ein EXCLUDE käme nur
-  mit Denormalisierung plus Synchron-Trigger zustande und griffe an NULL-Rändern
-  still nicht. Der Service warnt, blockiert aber nicht. Die Roadmap führt
-  Doppelbuchung ausdrücklich als weich.
+- **Doppelbelegung bleibt eine WARNUNG, keine Sperre** (Invariante aus 0025 — nicht
+  aufweichen, auch nicht „nur für Ressourcen"). Der maßgebliche Zeitraum liegt auf
+  `service_job` und ist dort nullable; ein EXCLUDE käme nur mit Denormalisierung plus
+  Synchron-Trigger zustande und griffe an NULL-Rändern still nicht. Der Service warnt
+  (Mitarbeiter UND Ressourcen), blockiert aber nicht. Die Roadmap führt Doppelbuchung
+  ausdrücklich als weich. **Nicht zu verwechseln mit der Zeiterfassung:** dort ist die
+  Überlappung eigener Zeitbuchungen per EXCLUDE **hart** gesperrt.
 - **Mahnstufen:** `fee`/`interest_note` bleiben NULL (Beschluss B-22,
   Steuerberater-Vorbehalt). Aktive Stufen müssen einen lückenlosen Präfix bilden,
   sonst könnte der DB-Trigger sie nie ausstellen.
-- **Kein Feiertagskalender** — Abwesenheitstage zählen gesetzliche Feiertage als
-  Arbeitstage, wenn der Vertrag für den Wochentag ein Soll ausweist.
+- **Der Feiertagskalender (`hr.holiday`, 2026/27, Migration 0068) gilt für
+  Zeiterfassung und Plantafel — NICHT für die Urlaubstage-Zählung.** `days_count`
+  einer Abwesenheit zählt einen gesetzlichen Feiertag weiterhin als Arbeitstag, wenn
+  der Vertrag für den Wochentag ein Soll ausweist (`services/zeiterfassung.py` und
+  `planung.py` lesen `Holiday`, die Abwesenheitsberechnung nicht). Wer das umstellt,
+  ändert rückwirkend Urlaubssalden — bewusst noch nicht getan.
 - **Belegeditor rechnet keine Summen.** Exakte Rundung je Steuergruppe ist in
   JavaScript-`number` nicht verlustfrei; der Server rechnet verbindlich. Nicht
   „nachrüsten".
@@ -423,6 +548,13 @@ Scratch-Daten; bei Bedarf auf INAKTIV setzen.
 **Dev-Datenbank** (Docker): Container `mitra-crm-test`, Port `55432`, DB heißt
 **`mitra_crm_test`** (NICHT der Django-Default `mitra_crm_dev`!), User `postgres`,
 Passwort **`mcn_dev_local`** (lokales Wegwerf-PW, in einer früheren Session gesetzt).
+
+**Die Dev-DB wurde am 2026-07-12 komplett neu aufgebaut** (Entscheidung des Users):
+Sie enthielt 52 Dubletten einer Zeitbuchung aus Agenten-Testläufen, die der neue
+EXCLUDE-Constraint aus 0066 zu Recht zurückwies. Die frische DB migriert die ganze
+Kette **sauber durch — kein Migrationsfehler.** (Migration 0066 nennt bei
+Überlappungen jetzt die schuldigen Zeilen, statt roh abzubrechen.) Reine
+Scratch-Daten, kein Verlust. Danach `seed_demo` neu fahren.
 
 ```bash
 docker start mitra-crm-test           # falls gestoppt (Exited)
@@ -483,12 +615,13 @@ Default `mcn-dev-passwort-2026`):
 | `joerg.feldmann@mitra-sanitaer.de` | ADMINISTRATION | alles |
 | `petra.lindqvist@mitra-sanitaer.de` | DISPOSITION | kein `hr`, kein `pricing`/`invoicing` |
 | `sven.ostmann@mitra-sanitaer.de` | NUR_LESEN | nur lesen, kein `hr` |
+| `timo.kalinski@mitra-sanitaer.de` | MONTEUR | nur eigene Einsätze/Aufgaben/Zeiten (row_scope EIGENE) |
 
 **Backend** (`cd backend`, uv):
 ```bash
 uv run python manage.py check
-uv run pytest -p no:cacheprovider -q          # aktuell 1981 grün, 13 skipped
-uv run python manage.py migrate               # Migrationskopf: 0065_bericht_anhaenge_versiegeln
+uv run pytest -p no:cacheprovider -q          # aktuell 2193 grün, 13 skipped
+uv run python manage.py migrate               # Migrationskopf: 0068 (Stand Redaktionsschluss)
 uv run python manage.py runserver 127.0.0.1:8000 --noreload
 uv run python manage.py seed_demo             # idempotenter Demo-Datensatz
 ```
@@ -508,11 +641,14 @@ für JSON-Inspektion `curl` roh nutzen, kein `python -m json.tool`. Die
 
 ## 2. Der wichtigste Gotcha: Migrationen auf der Dev-DB
 
-Die Dev-DB hat das Fachschema physisch, aber `django_migrations` kennt die
-Baseline NICHT (`showmigrations db_core` = alles `[ ]`). Ein direktes `migrate`
-scheitert an `0001_baseline` („schema identity already exists").
+**Seit dem Neuaufbau der Dev-DB (2026-07-12) ist die ganze Kette real durchmigriert** —
+`django_migrations` kennt die Baseline jetzt. **Erst `showmigrations db_core` ansehen:**
 
-**Vorgehen bei einer NEUEN db_core-Migration:**
+- Steht alles auf `[X]` → einfach `uv run python manage.py migrate db_core`. Fertig.
+- Steht alles auf `[ ]` (alte, nicht neu aufgebaute DB) → gilt der alte Gotcha: Das
+  Fachschema ist physisch da, aber unbekannt; ein direktes `migrate` scheitert an
+  `0001_baseline` („schema identity already exists"). Dann:
+
 ```bash
 uv run python manage.py migrate db_core <bisher_letzte> --fake   # markiert Vorhandene als angewandt
 uv run python manage.py migrate db_core                          # wendet die NEUE real an
@@ -585,7 +721,7 @@ Bereiche — **nutze sie, baue nichts Eigenes**:
 |---|---|
 | `shared/dialog` | native `<dialog>`-Hülle: Fokus-Trap, Fokus-Rückgabe, Escape/Backdrop abschaltbar, Scroll-Lock |
 | `shared/formular/feld` | ein Feld für Text/Textarea/Zahl/Datum/Select/Checkbox, mit Label, `aria-invalid`, `aria-describedby` |
-| `shared/formular/dezimal.ts` | deutsche Komma-Eingabe ⇄ API-Punkt-String. **Decimal bleibt String** |
+| `shared/formular/dezimal.ts` | deutsche Komma-Eingabe ⇄ API-Punkt-String. **Decimal bleibt String.** `apiZuDeEingabe` = **ohne** Tausenderpunkt (Formulare), `apiZuDeAnzeige` = mit (nur Anzeige) — nie vertauschen, siehe Invariante |
 | `shared/formular/api-fehler.ts` | `apiFehlerZuweisen` — versteht beide 422-Formen (Pydantic-Feldfehler und Freitext aus `HttpError(422, str(exc))`) |
 | `shared/formular/referenz-wahl` | WAI-ARIA-Combobox mit Serversuche für Fremdschlüssel (statt roher UUID) |
 | `shared/bestaetigung` | Konsequenz-Text, optionales Pflicht-Begründungsfeld, „Bestätigen" ist nie der Standardfokus |
@@ -696,7 +832,7 @@ Nav-Reihenfolge (Marks 00–60), alle committet, je Tests + Browser + Review:
 | Projekte (30) | …zusätzlich **Aufträge**-Tab (work_order) in der Projektmappe | `/api/workflow/work_orders` |
 | Dokumente (40) | **Angebote + Rechnungen**: Liste + Mappe, Anlegen bis ENTWURF; **Veröffentlichen (Rechnung→VEROEFFENTLICHT) / Versenden (Angebot→VERSENDET)** inkl. Snapshot+Hash+Beteiligte | `/api/invoicing/…/publish`,`/send`,`/parties` |
 | Aufträge | Detail-Mappe (Übersicht/Beteiligte/Verlauf), Statusautomat bis KAUFMAENNISCH_GEPRUEFT/ABGERECHNET mit DB-Toren | `/api/workflow/work_orders` |
-| Planung (50) | **Einsätze** (`workflow.service_job`): Liste + Einsatz-Mappe (Übersicht, Zuweisungen, Zeiten & Material, Verlauf) + **Plantafel** (Schwimmbahnen-Board) + **Kalender** (Monatsansicht), Subnav. Read-only | `/api/planung/einsaetze`, `/api/planung/plantafel` |
+| Planung (50) | **Einsätze** (`workflow.service_job`): Liste + Einsatz-Mappe (Übersicht, Zuweisungen, Zeiten & Material, Verlauf) + **Plantafel** (Schwimmbahnen-Board, **Drag & Drop per Maus/Tastatur/Touch**, Rückstandsleiste, Mehrtages-Balken, Abwesenheits-/Feiertags-Sperrflächen, Auslastung je Bahn, Termin anlegen/bearbeiten) + **Kalender** (Monatsansicht), Subnav | `/api/planung/einsaetze`, `/api/planung/plantafel` |
 | Wartung (55) | **Wartungsverträge** (`maintenance.*`, NEUES Schema): Liste + Detail-Mappe (Details/Erinnerung/Verlauf), Fälligkeits-Aktionen. Write-Service (create/status/trigger) existiert + getestet | `/api/maintenance/contracts` |
 | Aufgaben (60) | Liste + Statusaktionen; **neue Tabelle `workflow.task`** | `/api/workflow/tasks` |
 | Mitarbeiter (65) | **Personalstamm** (`hr.*`, NEUES Schema 0019): Liste + Mappe (Persönliches/Vertrag/Abwesenheiten/Urlaub). Write-Service (employee/contract/absence/urlaubskonto) existiert + getestet | `/api/hr/employees` |
@@ -708,6 +844,8 @@ Nav-Reihenfolge (Marks 00–60), alle committet, je Tests + Browser + Review:
 | Belegerfassung (82) | **Eingangsrechnungen** (`accounting.*`, NEUES Schema 0030/0031): Liste + Beleg-Mappe (Positionen/Verlauf), Editor, Statusautomat ERFASST→GEPRUEFT→FREIGEGEBEN→GEBUCHT/ABGELEHNT, Freigabe-Tor (Kontierung je Position), Stammdaten (Buchungskonten/Kostenstellen) | `/api/accounting` |
 | Einstellungen · Rechte | **Rechtematrix-Editor** (Rolle × Modul × Aktion + row_scope) + **Rollenzuordnungen**. Härtungen: keine Selbst-Erweiterung, keine Selbstzuweisung, letzte ADMINISTRATION geschützt | `/api/security/{roles,permissions,users,user-roles}` |
 | Mein Profil | Anzeigename/E-Mail/Rollen read-only + **Passwort ändern** (Sitzung bleibt gültig) | `/api/auth/password` |
+| Meine Zeiten | **Stempeluhr** (Start/Pause/Weiter/Stopp), eigene Zeitbuchungen, Arbeitstag einreichen (`workflow.time_entry`/`work_day`, 0066–0068). Für Auswerter: Stundenliste + CSV | `/api/zeiterfassung` |
+| Werkzeuge (92) | **Heizlast** (überschlägig), Heizkörper-Umrechnung (WP), Volumenstrom, Einheiten. Ergebnis geht nur als **Textposition** in einen Beleg | (rein clientseitig) |
 
 **Der Schreibpfad ist verdrahtet.** In allen Bereichen gibt es „+ Neu",
 Statusaktionen, Freigaben; unumkehrbare Aktionen laufen über einen
@@ -717,7 +855,7 @@ erzeugen, Belegeditor mit Positionen, Einsatz-Zuweisung, Zeit-/Materialbuchung
 
 Nav-Marks: Planung=50, Wartung=55 (bewusst nicht-rund, Service-Cluster),
 Aufgaben=60, Mitarbeiter=65, Artikel=70, Buchhaltung=80, Auswertungen=90,
-Einstellungen=95.
+Werkzeuge=92, Einstellungen=95.
 
 Backend: **808 Tests grün**, db_core-Migrationen bis **0027**, accounts bis 0002.
 Hand-SQL-Fachschemata: 0016 `maintenance`, 0019 `hr`, 0023 `company`,
@@ -848,15 +986,18 @@ Veröffentlichung (invoice→VEROEFFENTLICHT / quote→VERSENDET, ohne PDF).
     Sollstunden-Raster des am jeweiligen Tag gültigen Vertrags — Wochenenden und
     0-Stunden-Tage zählen nicht, halbe Randtage ziehen 0,5 ab. Der Client liefert
     `days_count` nie selbst.
-  - **Bewusste Lücken:** kein Feiertagskalender (Feiertage zählen als Arbeitstage,
-    wenn der Wochentag ein Soll hat); jahresübergreifende Urlaube werden komplett
-    dem Startjahr zugerechnet; unterjähriger Eintritt kürzt den Anspruch nicht
-    automatisch (dafür ist die begründungspflichtige Anpassung da) — Hero verhält
-    sich genauso.
-  - **Ausgeklammert (eigene Migration):** Steuer-/Bankdaten (DSGVO Art. 9/32;
+  - **Bewusste Lücken:** die Urlaubstage-Zählung kennt **keinen Feiertag** (Feiertage
+    zählen als Arbeitstage, wenn der Wochentag ein Soll hat — `hr.holiday` gibt es seit
+    0068, aber nur für Zeiterfassung/Plantafel, siehe Invariante); jahresübergreifende
+    Urlaube werden komplett dem Startjahr zugerechnet; unterjähriger Eintritt kürzt den
+    Anspruch nicht automatisch (dafür ist die begründungspflichtige Anpassung da) —
+    Hero verhält sich genauso.
+  - **Zeitwirtschaft ist inzwischen gebaut** (0066–0068): `hr.time_category`,
+    `hr.break_rule`, `hr.holiday`, `workflow.work_day` — siehe „Welle 2" oben.
+    **Weiterhin ausgeklammert:** Steuer-/Bankdaten (DSGVO Art. 9/32;
     `security.four_eyes_action` kennt bereits 'BANKDATEN', app-seitig nicht
-    durchgesetzt — hängt an Auth), Zeitkategorien/Pausenregeln/Stundenausgleich
-    (erst Abgrenzung zur operativen `workflow.time_entry` klären), Niederlassung.
+    durchgesetzt), Niederlassung. **Stundenausgleich** und Resturlaubs-Übertrag baut
+    gerade ein Parallel-Agent (0072).
   - **DSGVO-Merkposten:** `GET /api/hr/absences` ist der **einzige** Lese-Endpunkt
     mit `auth=django_auth` (Krankheitsdaten über den ganzen Bestand).
     `GET /api/hr/employees/{id}` liefert ebenfalls Krankheitshistorie und ist
@@ -897,7 +1038,9 @@ Empfohlene nächste Reihenfolge:
   Häkchen im Angebotseditor (siehe Invariante oben).
 
 Kleinere offene Enden: Objekt-Bilder; ISO-Datums-Formatierung im UI (aktuell teils
-roh); `angebot-editor.scss` liegt über dem 8-kB-Budget (nur Warnung, vorbestehend).
+roh). **Das Stil-Budget ist wieder eingehalten** — das Frontend baut seit `f1ed9d9`
+erstmals **ohne Budget-Warnung** (8/10 kB). Wer ein Stylesheet über die Grenze
+treibt: **auslagern, nicht das Budget lockern.**
 
 ## 9. Wo alles liegt
 

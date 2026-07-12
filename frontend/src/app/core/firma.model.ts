@@ -50,6 +50,17 @@ export interface CompanyProfile {
   datev_advance_account_reduced: string | null;
   datev_advance_account_free: string | null;
   datev_advance_account_reverse: string | null;
+
+  // --- Resturlaubs-Verfall (Migration 0072) --------------------------------
+  /**
+   * Verfallstag des Urlaubs-Uebertrags im Folgejahr (z. B. Monat 3 / Tag 31 =
+   * „31.03."). **Beide null = KEIN Verfall — und das ist der Default.** Es wird
+   * nichts weggerechnet, was der Betrieb nicht ausdruecklich eingestellt hat:
+   * § 7 Abs. 3 BUrlG *erlaubt* den Verfall zum 31.03., er ordnet ihn nicht an,
+   * und nach BAG/EuGH verfaellt Urlaub nur bei erfuellter Hinweispflicht.
+   */
+  vacation_carryover_expiry_month: number | null;
+  vacation_carryover_expiry_day: number | null;
 }
 
 /** Änderungs-Payload des Firmenprofils (nur gesetzte Felder werden gesendet). */

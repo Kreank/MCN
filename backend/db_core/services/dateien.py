@@ -85,6 +85,10 @@ ZIELE = (
     "communication_id",
     "article_id",
     "site_report_id",
+    # Attest an einer Abwesenheit (Migration 0072). Gesundheitsdatum, DSGVO
+    # Art. 9 — der Zugriff hängt NICHT am content-Recht allein, sondern am
+    # Attest-Guard in api/dateien.py. Der Service kennt hier nur die Zielspalte.
+    "absence_id",
 )
 
 # Fachliche Einordnung. Freitext in der DB; hier eine gepflegte Liste, damit die
@@ -99,6 +103,9 @@ LINK_KATEGORIEN = (
     "VERTRAG",
     # Artikelbild: höchstens eines je Artikel (partieller Unique-Index 0042).
     "ARTIKELBILD",
+    # Arbeitsunfähigkeitsbescheinigung. Vergibt NUR api/dateien.py, und zwar
+    # ausschließlich am Ziel `absence_id` (dort erzwungen).
+    "ATTEST",
     "SONSTIGES",
 )
 
@@ -165,10 +172,33 @@ def datei_hochladen(
     gespeichert — es entsteht nur eine weitere Verknüpfung. Das spart nicht bloß
     Platz: dieselbe Rechnung, die an Projekt und Kontakt hängt, ist dann auch
     wirklich dieselbe Datei.
+
+    **Ausnahme: Gesundheitsdaten werden NIE dedupliziert** (Review-Befund A2,
+    DSGVO Art. 9). Der Dedup verknüpft Inhalte über ihre Bytes — und damit über
+    Zweckgrenzen hinweg. Zwei Wege führten in dasselbe Leck:
+
+      * Ein Attest-Upload, dessen Bytes schon als Projektdokument liegen, bekäme
+        die **bestehende** `file_id` — die Datei ist dann über das Projekt für
+        jeden mit `content/LESEN` abrufbar.
+      * Umgekehrt (der realistische Fall, ganz ohne Angreifer): Der Monteur hängt
+        sein Attest-PDF zusätzlich an seinen eigenen Einsatz (`content/ANLEGEN`
+        mit Scope EIGENE erlaubt ihm das). Der Dedup liefert dieselbe `file_id` —
+        und die Krankschreibung liegt offen für die ganze Disposition.
+
+    Deshalb: **Ein Attest bekommt immer ein eigenes Speicherobjekt, und auf ein
+    Attest-Objekt wird nie dedupliziert.** Ein Gesundheitsdatum darf physisch
+    nicht dieselbe Datei sein wie ein Projektdokument — sonst hängt sein Schutz
+    davon ab, wo dieselben Bytes sonst noch hängen. Die Ersparnis (ein paar
+    hundert Kilobyte) ist den Preis nicht wert.
+
+    Der Guard in `api/dateien.py::_datei_guard` ist zusätzlich fail-closed
+    (**jede** Attest-Verknüpfung sperrt die Datei) — zwei Riegel, kein Verlass
+    auf einen.
     """
     name = _sicherer_name(dateiname)
     mime = _mime_aus_endung(name)
     ziel_spalte = _ziel_pruefen(ziel)
+    ist_attest = "absence_id" in ziel_spalte
 
     if link_category not in LINK_KATEGORIEN:
         raise DateiFehler(
@@ -184,7 +214,21 @@ def datei_hochladen(
         )
 
     digest = hashlib.sha256(inhalt).hexdigest()
-    vorhanden = File.objects.filter(sha256=digest, size_bytes=len(inhalt)).first()
+    if ist_attest:
+        # Gesundheitsdatum: immer ein eigenes Objekt, nie an einen bestehenden
+        # Inhalt angehängt (s. Docstring).
+        vorhanden = None
+    else:
+        vorhanden = (
+            File.objects.filter(sha256=digest, size_bytes=len(inhalt))
+            # …und niemals AUF ein Attest deduplizieren: sonst zöge ein harmloser
+            # Upload derselben Bytes (der Monteur hängt sein Attest zusätzlich an
+            # seinen Einsatz) das Gesundheitsdatum in eine offene Ablage. `exclude`
+            # auf die Rückwärtsrelation wirft jede Datei raus, die MINDESTENS eine
+            # Attest-Verknüpfung trägt.
+            .exclude(links__absence_id__isnull=False)
+            .first()
+        )
 
     if vorhanden is None:
         # Der Speicherort entsteht aus einer UUID, nie aus dem Dateinamen.

@@ -1,8 +1,10 @@
 <app-dialog [offen]="offen()" titel="Werkzeuge" (schliessen)="offen.set(false)">
   <p class="wzd__lead">
-    Rechnen, ohne den Beleg zu verlassen. Das Ergebnis lässt sich als
-    <strong>Textposition</strong> übernehmen — es dokumentiert die Annahme, es setzt keinen Preis
-    und keine Menge.
+    Rechnen, ohne den Beleg zu verlassen. Überschlagswerte werden als
+    <strong>Textposition</strong> übernommen — sie dokumentieren die Annahme, sie setzen keinen
+    Preis und keine Menge. Das <strong>Aufmaß</strong> übergibt zusätzlich die
+    <strong>Menge</strong> samt Rechenaufstellung; den Einzelpreis trägst du danach ein, die Summe
+    rechnet der Server.
   </p>
 
   <div class="wzd__tabs" role="tablist" aria-label="Werkzeuge">
@@ -32,6 +34,27 @@
     [attr.aria-labelledby]="'wzd-tab-' + aktiv()"
   >
     @switch (aktiv()) {
+      @case ('aufmass') {
+        <app-aufmass-rechner
+          [kontext]="kontext()"
+          [uebernahme]="true"
+          (uebernehmenPosition)="positionWeitergeben($event)"
+        />
+      }
+      @case ('wasserinhalt') {
+        <app-wasserinhalt-rechner
+          [kontext]="kontext()"
+          [uebernahme]="true"
+          (uebernehmen)="weitergeben($event)"
+        />
+      }
+      @case ('mag') {
+        <app-ausdehnungsgefaess-rechner
+          [kontext]="kontext()"
+          [uebernahme]="true"
+          (uebernehmen)="weitergeben($event)"
+        />
+      }
       @case ('heizlast') {
         <app-heizlast-rechner
           [kontext]="kontext()"

@@ -29,6 +29,7 @@ import {
   felderAlsBeruehrtMarkieren,
   serverFehlerZuruecksetzen,
 } from '../../shared/formular/formular.util';
+import { WartungNav } from '../wartung-nav/wartung-nav';
 
 type ViewState =
   | { kind: 'loading' }
@@ -41,7 +42,15 @@ type Meldung = { art: 'erfolg' | 'fehler'; text: string };
 
 @Component({
   selector: 'app-wartung',
-  imports: [RouterLink, KeinZugriff, ReactiveFormsModule, Dialog, Feld, ReferenzWahl],
+  imports: [
+    RouterLink,
+    KeinZugriff,
+    ReactiveFormsModule,
+    Dialog,
+    Feld,
+    ReferenzWahl,
+    WartungNav,
+  ],
   templateUrl: './wartung.html',
   styleUrl: './wartung.scss',
 })
@@ -53,7 +62,7 @@ export class Wartung {
   private readonly auth = inject(AuthService);
   private readonly fb = inject(FormBuilder);
 
-  protected readonly darfAnlegen = computed(() => this.auth.darf('workflow', 'ANLEGEN'));
+  protected readonly darfAnlegen = computed(() => this.auth.darf('maintenance', 'ANLEGEN'));
 
   protected readonly intervalle: FeldOption[] = [
     { wert: 'JAEHRLICH', label: 'Jährlich' },

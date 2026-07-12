@@ -1,0 +1,297 @@
+<section class="faelligkeiten" aria-labelledby="faelligkeiten-titel">
+  <header class="page-head">
+    <div class="page-head__text">
+      <p class="page-head__kicker">
+        <span class="page-head__scale" aria-hidden="true"></span>
+        Wartung · Fristen
+      </p>
+      <h1 id="faelligkeiten-titel" class="page-head__titel">Was steht an?</h1>
+      <p class="page-head__hint">
+        Wartungsintervalle, Prüffristen und ablaufende Gewährleistungen — in einer
+        Liste, mit Vorlauf. Aus jeder Fälligkeit wird auf Knopfdruck ein Termin,
+        ein Angebot, ein Auftrag oder eine Aufgabe.
+      </p>
+    </div>
+  </header>
+
+  <app-wartung-nav />
+
+  @if (state().kind === 'forbidden') {
+    <app-kein-zugriff />
+  } @else {
+    <!-- Rechtshinweis: das Produkt kennt die Fristen nicht, der Betrieb pflegt sie. -->
+    <p class="rechtshinweis">
+      <span class="rechtshinweis__icon" aria-hidden="true">§</span>
+      <span>
+        <strong>Kein Rechtsrat.</strong> Prüfarten, Intervalle und
+        Gewährleistungsfristen pflegt der Betrieb selbst. Die mitgelieferten
+        Prüfarten sind unverbindliche Vorschläge; ob und in welchem Turnus eine
+        Prüfung fällig ist, hängt vom Einzelfall ab.
+      </span>
+    </p>
+
+    @if (meldung(); as m) {
+      <p
+        class="meldung"
+        [class.meldung--fehler]="m.art === 'fehler'"
+        [class.meldung--hinweis]="m.art === 'hinweis'"
+        role="status"
+      >
+        <span aria-hidden="true">{{ m.art === 'fehler' ? '⚠' : m.art === 'hinweis' ? 'ℹ' : '✓' }}</span>
+        {{ m.text }}
+        <button type="button" class="meldung__zu" (click)="meldung.set(null)" aria-label="Meldung schließen">
+          ✕
+        </button>
+      </p>
+    }
+
+    <!-- ============================= Filter ============================= -->
+    <div class="filter">
+      <div class="segmente" role="group" aria-label="Nach Art filtern">
+        @for (a of arten; track a.label) {
+          <button
+            type="button"
+            class="segment"
+            [class.is-active]="art() === a.value"
+            [attr.aria-pressed]="art() === a.value"
+            (click)="artWaehlen(a.value)"
+          >
+            {{ a.label }}
+          </button>
+        }
+      </div>
+
+      <div class="segmente" role="group" aria-label="Nach Status filtern">
+        @for (s of statusSegmente; track s.value) {
+          <button
+            type="button"
+            class="segment"
+            [class.is-active]="status() === s.value"
+            [attr.aria-pressed]="status() === s.value"
+            (click)="statusWaehlen(s.value)"
+          >
+            {{ s.label }}
+          </button>
+        }
+      </div>
+
+      <label class="feldchen">
+        <span class="feldchen__label">Fällig bis</span>
+        <input
+          type="date"
+          class="feldchen__input"
+          [value]="bis()"
+          (change)="bisSetzen($any($event.target).value)"
+        />
+      </label>
+    </div>
+
+    @switch (state().kind) {
+      @case ('loading') {
+        <p class="lade-hinweis" role="status">Fälligkeiten werden geladen …</p>
+      }
+      @case ('error') {
+        <p class="note note--fehler" role="alert">
+          Die Fälligkeiten konnten nicht geladen werden.
+          <button type="button" class="btn" (click)="laden()">Erneut versuchen</button>
+        </p>
+      }
+      @case ('ready') {
+        @if ($any(state()).data; as data) {
+          <!-- Kennzahlen: überfällig ist die Zahl, die weh tut. -->
+          <div class="kpis">
+            <div class="kpi">
+              <span class="kpi__wert">{{ data.offen_total }}</span>
+              <span class="kpi__label">offene Fälligkeiten</span>
+            </div>
+            <div class="kpi" [class.kpi--warn]="data.ueberfaellig_total > 0">
+              <span class="kpi__wert">{{ data.ueberfaellig_total }}</span>
+              <span class="kpi__label">davon überfällig</span>
+            </div>
+            <div class="kpi">
+              <span class="kpi__wert">{{ data.total }}</span>
+              <span class="kpi__label">in dieser Ansicht</span>
+            </div>
+          </div>
+
+          @if (data.items.length === 0) {
+            <p class="note">
+              Nichts steht an. Der Scheduler
+              (<code>manage.py wartung_faellige_ausloesen</code>) erzeugt Fälligkeiten,
+              sobald ihr Vorlauf beginnt.
+            </p>
+          } @else {
+            <ul class="liste">
+              @for (item of data.items; track item.id) {
+                <li class="karte" [class.karte--ueberfaellig]="item.ueberfaellig">
+                  <div class="karte__kopf">
+                    <span class="chip" [class]="artClass(item.kind)">{{ artLabel(item.kind) }}</span>
+                    <h2 class="karte__titel">{{ item.title }}</h2>
+                    @if (item.status !== 'OFFEN') {
+                      <span class="stamp">{{ statusLabel(item.status) }}</span>
+                    }
+                  </div>
+
+                  <dl class="karte__daten">
+                    <div>
+                      <dt>Fällig am</dt>
+                      <dd>
+                        <strong>{{ item.due_date }}</strong>
+                        @if (item.status === 'OFFEN') {
+                          <span
+                            class="frist"
+                            [class.frist--warn]="item.ueberfaellig"
+                            >{{ fristText(item.tage_bis_faellig) }}</span
+                          >
+                        }
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Quelle</dt>
+                      <dd>{{ item.quelle }}</dd>
+                    </div>
+                    @if (item.property) {
+                      <div>
+                        <dt>Liegenschaft</dt>
+                        <dd>
+                          <a [routerLink]="['/liegenschaften', item.property.id]">
+                            {{ item.property.name }}
+                          </a>
+                          <span class="dezent">{{ item.property.city }}</span>
+                        </dd>
+                      </div>
+                    }
+                    <div>
+                      <dt>Vorlauf</dt>
+                      <dd>{{ item.lead_time_days }} Tage</dd>
+                    </div>
+                  </dl>
+
+                  @if (item.vertriebshinweis) {
+                    <p class="tipp">
+                      <span class="tipp__icon" aria-hidden="true">💡</span>
+                      {{ item.vertriebshinweis }}
+                    </p>
+                  }
+
+                  @if (item.termin_hinweis && item.status === 'OFFEN') {
+                    <p class="dezent karte__notiz">{{ item.termin_hinweis }}</p>
+                  }
+
+                  @if (item.status !== 'OFFEN') {
+                    <p class="karte__notiz">
+                      <strong>{{ statusLabel(item.status) }}</strong>
+                      @if (item.resolved_by) {
+                        <span> durch {{ item.resolved_by }}</span>
+                      }
+                      @if (item.resolution_note) {
+                        <span>: {{ item.resolution_note }}</span>
+                      }
+                    </p>
+                  }
+
+                  @if (item.status === 'OFFEN') {
+                    <div class="karte__aktionen">
+                      @if (darfErledigen()) {
+                        <button
+                          type="button"
+                          class="btn btn--primary"
+                          (click)="erledigenOeffnen(item)"
+                        >
+                          Erledigen …
+                        </button>
+                      }
+                      @if (darfVerwerfen()) {
+                        <button type="button" class="btn" (click)="verwerfenOeffnen(item)">
+                          Verwerfen …
+                        </button>
+                      }
+                      @if (!darfErledigen() && !darfVerwerfen()) {
+                        <span class="dezent">Nur Leserecht.</span>
+                      }
+                    </div>
+                  }
+                </li>
+              }
+            </ul>
+          }
+        }
+      }
+    }
+  }
+</section>
+
+<!-- ========================= Erledigen-Dialog ========================= -->
+<app-dialog
+  [offen]="erledigenFuer() !== null"
+  titel="Fälligkeit erledigen"
+  (schliessen)="erledigenFuer.set(null)"
+>
+  @if (erledigenFuer(); as item) {
+    <form [formGroup]="form" (ngSubmit)="erledigen()" class="dialog-form">
+      <p class="dialog-form__intro">
+        <strong>{{ item.title }}</strong><br />
+        <span class="dezent">Fällig am {{ item.due_date }} · {{ item.quelle }}</span>
+      </p>
+
+      <app-feld
+        [control]="form.controls.folgeaktion"
+        label="Was soll daraus entstehen?"
+        typ="select"
+        [optionen]="folgeaktionen"
+        [pflicht]="true"
+        hinweis="Das Folgeobjekt entsteht über den normalen Weg — mit Statusautomat, Nummernkreis und Rechten."
+      />
+
+      @if (istTermin()) {
+        <app-feld
+          [control]="form.controls.termin_datum"
+          label="Wunschtermin (optional)"
+          typ="datum"
+          hinweis="Der Termin landet im Rückstand der Plantafel — wer ihn fährt, entscheidet die Disposition beim Einplanen. Ein Wunschtermin wird als Vermerk am Einsatz hinterlegt (Sonntage und Feiertage rücken auf den nächsten Werktag)."
+        />
+        @if (item.termin_hinweis) {
+          <p class="note note--klein">
+            {{ item.termin_hinweis }}
+            <button type="button" class="btn btn--klein" (click)="vorschlagUebernehmen()">
+              Vorschlag übernehmen
+            </button>
+          </p>
+        }
+      }
+
+      <app-feld
+        [control]="form.controls.notiz"
+        label="Vermerk"
+        typ="textarea"
+        [zeilen]="3"
+        hinweis="Bei „Nur vermerken“ ist der Vermerk Pflicht — sonst bliebe unklar, warum die Frist als erledigt gilt."
+      />
+
+      @if (formFehler(); as f) {
+        <p class="note note--fehler" role="alert">{{ f }}</p>
+      }
+
+      <div class="dialog-form__aktionen">
+        <button type="button" class="btn" (click)="erledigenFuer.set(null)">Abbrechen</button>
+        <button type="submit" class="btn btn--primary" [disabled]="laeuft()">
+          {{ laeuft() ? 'Wird ausgeführt …' : 'Erledigen' }}
+        </button>
+      </div>
+    </form>
+  }
+</app-dialog>
+
+<!-- ========================= Verwerfen ========================= -->
+<app-bestaetigung
+  [offen]="verwerfenFuer() !== null"
+  titel="Fälligkeit verwerfen?"
+  text="Die Fälligkeit wird nicht gelöscht — sie bleibt mit Ihrer Begründung dauerhaft nachvollziehbar (GoBD). Der Plan läuft weiter: die nächste Fälligkeit entsteht wie vorgesehen. Ein verworfener Eintrag taucht nicht wieder auf."
+  bestaetigenLabel="Verwerfen"
+  [gefahr]="true"
+  [begruendungPflicht]="true"
+  begruendungLabel="Warum wird diese Frist nicht wahrgenommen?"
+  [laedt]="laeuft()"
+  (bestaetigen)="verwerfen($event)"
+  (abbrechen)="verwerfenFuer.set(null)"
+/>

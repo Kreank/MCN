@@ -21,6 +21,14 @@ export interface ZielFilter {
   invoice_id?: string;
   article_id?: string;
   site_report_id?: string;
+  /**
+   * Attest (Arbeitsunfaehigkeitsbescheinigung) an einer Abwesenheit.
+   * Gesundheitsdatum — besondere Kategorie nach DSGVO Art. 9. Der Server prueft
+   * dieses Ziel mit einem EIGENEN Guard (nicht nur mit dem content-Recht): nur
+   * der Betroffene selbst und die Personalverwaltung kommen heran, alles andere
+   * ist 404. Nicht in `app-dateien` verwenden — dafuer gibt es `app-attest`.
+   */
+  absence_id?: string;
 }
 
 /** Fachliche Einordnung einer Verknuepfung (Freitext in der DB, gepflegte Liste). */
@@ -33,7 +41,9 @@ export type LinkKategorie =
   | 'PLAN'
   | 'VERTRAG'
   | 'SONSTIGES'
-  | 'BELEG_PDF';
+  | 'BELEG_PDF'
+  // Vergibt der Server selbst am Ziel `absence_id` — nie von Hand waehlbar.
+  | 'ATTEST';
 
 /** Eine Datei samt ihrer Verknuepfung an einem Zielobjekt (DateiOut). */
 export interface Datei {

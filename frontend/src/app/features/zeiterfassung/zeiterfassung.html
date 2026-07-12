@@ -18,23 +18,51 @@
         <h1>Zeiterfassung</h1>
       </div>
       @if (darfExportieren()) {
-        <button type="button" class="btn" (click)="exportieren()">
-          Stundenliste (CSV)
-        </button>
+        <div class="kopf__aktionen">
+          <button type="button" class="btn" (click)="exportieren()">
+            Stundenliste (CSV)
+          </button>
+          <button type="button" class="btn" (click)="abwesenheitenExportieren()">
+            Abwesenheiten (CSV)
+          </button>
+        </div>
       }
     </header>
 
-    <p class="hinweis">
-      § 17 MiLoG verlangt für Baugewerbe und Gebäudedienstleistung Beginn, Ende und
-      Dauer der täglichen Arbeitszeit — aufgezeichnet binnen sieben Kalendertagen,
-      zwei Jahre aufbewahrt, der Zollbehörde vorzulegen.
-    </p>
+    <!-- ================= REITER ================= -->
+    <nav class="reiter" aria-label="Bereiche der Zeiterfassung">
+      <ul class="reiter__liste" role="tablist">
+        @for (r of reiterListe; track r.wert) {
+          <li role="presentation">
+            <button
+              type="button"
+              role="tab"
+              class="reiter__knopf"
+              [class.is-active]="reiter() === r.wert"
+              [attr.aria-selected]="reiter() === r.wert"
+              (click)="reiterWechseln(r.wert)"
+            >
+              {{ r.label }}
+            </button>
+          </li>
+        }
+      </ul>
+    </nav>
+
+    @if (reiter() === 'tage') {
+      <p class="hinweis">
+        § 17 MiLoG verlangt für Baugewerbe und Gebäudedienstleistung Beginn, Ende und
+        Dauer der täglichen Arbeitszeit — aufgezeichnet binnen sieben Kalendertagen,
+        zwei Jahre aufbewahrt, der Zollbehörde vorzulegen.
+      </p>
+    }
 
     <p class="sr-only" aria-live="polite" role="status">{{ meldung() }}</p>
     @if (fehler(); as f) {
       <div class="note note--error" role="alert">{{ f }}</div>
     }
 
+    @if (reiter() !== 'resturlaub') {
     <!-- ================= FILTER ================= -->
     <section class="filter" aria-label="Filter">
       <fieldset class="segment">
@@ -93,6 +121,12 @@
           <p class="kachel__label">Abwesend</p>
           <p class="kachel__wert">{{ k.abwesend }} h</p>
         </div>
+        <div class="kachel">
+          <p class="kachel__label">Ausgleich</p>
+          <p class="kachel__wert">
+            {{ +k.ausgleich > 0 ? '+' : '' }}{{ k.ausgleich }} h
+          </p>
+        </div>
         <div class="kachel" [class.kachel--minus]="+k.saldo < 0">
           <p class="kachel__label">Saldo</p>
           <p class="kachel__wert">
@@ -110,11 +144,17 @@
       <p class="hinweis hinweis--klein">
         Soll = Vertragsraster minus Feiertage minus genehmigte Abwesenheiten.
         Ist = alle Buchungen mit Arbeitszeit-Kennzeichen (auch Fahrt- und
-        Bereitschaftszeit). Nichts davon ist gespeichert — alles wird abgeleitet.
-        Zeitraum: laufender Monat.
+        Bereitschaftszeit). Saldo = Ist − Soll + Ausgleich. Nichts davon ist
+        gespeichert — alles wird abgeleitet. Zeitraum: laufender Monat.
+      </p>
+    } @else if (reiter() === 'ausgleich') {
+      <p class="hinweis hinweis--klein">
+        Wählen Sie oben einen Mitarbeiter, um dessen Stundenkonto zu sehen.
       </p>
     }
+    }
 
+    @if (reiter() === 'tage') {
     <div class="spalten">
       <!-- ================= TAGESLISTE ================= -->
       <section class="liste" aria-labelledby="liste-titel">
@@ -272,6 +312,205 @@
         }
       </section>
     </div>
+    }
+
+    <!-- ================= STUNDENAUSGLEICH ================= -->
+    @if (reiter() === 'ausgleich') {
+      <section class="ausgleich" aria-labelledby="ausgleich-titel">
+        <div class="ausgleich__kopf">
+          <h2 id="ausgleich-titel">Stundenausgleich</h2>
+          @if (darfAendern()) {
+            <button
+              type="button"
+              class="btn btn--primary"
+              [disabled]="laeuftAktion()"
+              (click)="ausgleichDialogOeffnen()"
+            >
+              Ausgleich buchen
+            </button>
+          }
+        </div>
+
+        <p class="hinweis">
+          Eine Ausgleichsbuchung bewegt das Arbeitszeitkonto — sie überschreibt
+          keinen Saldo (es gibt keinen gespeicherten): <strong>Saldo = Ist − Soll +
+          Summe der Ausgleiche</strong>. Jede Buchung ist begründungspflichtig und
+          wird nie gelöscht, sondern storniert. Das eigene Konto kann niemand selbst
+          ausgleichen.
+        </p>
+
+        @if (ausgleiche().length === 0) {
+          <p class="tab-platzhalter">
+            Keine Ausgleichsbuchungen
+            @if (userFilter()) { für diesen Mitarbeiter } @else { im Bestand }.
+          </p>
+        } @else {
+          <table class="tabelle">
+            <caption class="sr-only">Ausgleichsbuchungen auf dem Arbeitszeitkonto</caption>
+            <thead>
+              <tr>
+                <th scope="col">Mitarbeiter</th>
+                <th scope="col">Verbucht am</th>
+                <th scope="col">Art</th>
+                <th scope="col">Stunden</th>
+                <th scope="col">Begründung</th>
+                <th scope="col">Status</th>
+                <th scope="col"><span class="sr-only">Aktionen</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (a of ausgleiche(); track a.id) {
+                <tr [class.zeile--storniert]="a.status === 'STORNIERT' || a.ist_storno">
+                  <td>{{ a.mitarbeiter }}</td>
+                  <td>{{ datum(a.effective_on) }}</td>
+                  <td>{{ AUSGLEICHSART_LABEL[a.adjustment_type] }}</td>
+                  <td class="num">{{ ausgleichText(a.minutes) }}</td>
+                  <td class="ausgleich__grund">{{ a.reason }}</td>
+                  <td>
+                    @if (a.ist_storno) {
+                      <span class="stamp stamp--type">
+                        <span aria-hidden="true">↩</span> Storno
+                      </span>
+                    } @else if (a.status === 'STORNIERT') {
+                      <span class="stamp stamp--negativ">
+                        <span aria-hidden="true">✕</span> Storniert
+                      </span>
+                    } @else {
+                      <span class="stamp stamp--positive">
+                        <span aria-hidden="true">✓</span> Gebucht
+                      </span>
+                    }
+                  </td>
+                  <td>
+                    @if (darfAendern() && a.status === 'GEBUCHT' && !a.ist_storno) {
+                      <button
+                        type="button"
+                        class="btn btn--klein"
+                        [disabled]="laeuftAktion()"
+                        (click)="ausgleichStornoZiel.set(a)"
+                        [attr.aria-label]="'Buchung vom ' + datum(a.effective_on) + ' stornieren'"
+                      >
+                        Stornieren
+                      </button>
+                    }
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+          <p class="hinweis hinweis--klein">
+            Eine stornierte Buchung und ihr Storno bleiben stehen (GoBD) — beide
+            zählen nicht mehr im Saldo.
+          </p>
+        }
+      </section>
+    }
+
+    <!-- ================= RESTURLAUB ================= -->
+    @if (reiter() === 'resturlaub') {
+      <section class="resturlaub" aria-labelledby="resturlaub-titel">
+        <div class="ausgleich__kopf">
+          <h2 id="resturlaub-titel">Resturlaub ins Folgejahr übertragen</h2>
+          <label class="filter__feld">
+            <span>Aus dem Jahr</span>
+            <select
+              [value]="uebertragJahr()"
+              (change)="jahrWechseln($any($event.target).value)"
+            >
+              @for (j of jahre(); track j.wert) {
+                <option [value]="j.wert">{{ j.label }}</option>
+              }
+            </select>
+          </label>
+        </div>
+
+        <p class="hinweis">
+          Der Rest wird <strong>ermittelt</strong>, nicht getippt: Anspruch + Übertrag
+          + Anpassung − Verbrauch (aus genehmigten Urlaubsabwesenheiten, halbe Tage
+          eingerechnet). Der Übertrag <strong>setzt</strong> den Übertrag des
+          Folgejahres auf diesen Rest — er addiert nicht. Zweimal ausführen ändert
+          deshalb nichts.
+        </p>
+
+        @if (uebertragLaedt()) {
+          <p class="lade-hinweis">Vorschau wird berechnet …</p>
+        } @else if (uebertragZeilen(); as zeilen) {
+          @if (uebertragFertig()) {
+            <p class="note" role="status">
+              Übertrag ausgeführt. Die Spalte „Übertrag {{ uebertragJahr() + 1 }}"
+              zeigt jetzt den geschriebenen Stand.
+            </p>
+          }
+          @if (zeilen.length === 0) {
+            <p class="tab-platzhalter">Keine Mitarbeitenden mit Übertragsanspruch.</p>
+          } @else {
+            <table class="tabelle">
+              <caption class="sr-only">
+                Resturlaub {{ uebertragJahr() }} und resultierender Übertrag
+              </caption>
+              <thead>
+                <tr>
+                  <th scope="col">Mitarbeiter</th>
+                  <th scope="col">Anspruch {{ uebertragJahr() }}</th>
+                  <th scope="col">Verbraucht</th>
+                  <th scope="col">Verfallen</th>
+                  <th scope="col">Rest</th>
+                  <th scope="col">Übertrag {{ uebertragJahr() + 1 }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (z of zeilen; track z.employee_id) {
+                  <tr>
+                    <td>{{ z.name }} <span class="nummer">{{ z.employee_number }}</span></td>
+                    <td class="num">{{ urlaubstage(z.entitlement_days) }}</td>
+                    <td class="num">{{ urlaubstage(z.used_days) }}</td>
+                    <td class="num">
+                      @if (+z.expired_days > 0) {
+                        <span class="stamp stamp--warn">
+                          <span aria-hidden="true">!</span> {{ urlaubstage(z.expired_days) }}
+                        </span>
+                      } @else {
+                        —
+                      }
+                    </td>
+                    <td class="num"><strong>{{ urlaubstage(z.remaining_days) }}</strong></td>
+                    <td class="num">
+                      @if (z.changes) {
+                        <span class="uebertrag__alt">{{ urlaubstage(z.carryover_current) }}</span>
+                        <span aria-hidden="true"> → </span>
+                        <strong>{{ urlaubstage(z.carryover_new) }}</strong>
+                      } @else {
+                        {{ urlaubstage(z.carryover_new) }}
+                        <span class="kachel__zusatz">unverändert</span>
+                      }
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+
+            @if (darfAendern()) {
+              <div class="detail__aktionen">
+                <button
+                  type="button"
+                  class="btn btn--primary"
+                  [disabled]="laeuftAktion() || zuUebertragen().length === 0"
+                  (click)="uebertragOffen.set(true)"
+                >
+                  Resturlaub übertragen ({{ zuUebertragen().length }})
+                </button>
+              </div>
+              @if (zuUebertragen().length === 0) {
+                <p class="hinweis hinweis--klein">
+                  Es gibt nichts zu übertragen — die Überträge des Folgejahres stimmen
+                  bereits mit dem ermittelten Rest überein.
+                </p>
+              }
+            }
+          }
+        }
+      </section>
+    }
 
     <!-- ================= DIALOGE ================= -->
     <app-bestaetigung
@@ -313,6 +552,102 @@
       (bestaetigen)="eintragLoeschen($event)"
       (abbrechen)="loeschenOffen.set(null)"
     />
+
+    <app-bestaetigung
+      [offen]="!!ausgleichStornoZiel()"
+      titel="Ausgleichsbuchung stornieren"
+      text="Die Buchung wird nicht gelöscht: Es entsteht eine Gegenbuchung, und beide
+            Zeilen bleiben sichtbar (GoBD). Aus dem Saldo fallen danach beide heraus."
+      bestaetigenLabel="Stornieren"
+      [gefahr]="true"
+      [begruendungPflicht]="true"
+      begruendungLabel="Grund des Stornos"
+      [laedt]="laeuftAktion()"
+      (bestaetigen)="ausgleichStornieren($event)"
+      (abbrechen)="ausgleichStornoZiel.set(null)"
+    />
+
+    <app-bestaetigung
+      [offen]="uebertragOffen()"
+      titel="Resturlaub ins Folgejahr übertragen"
+      [text]="
+        'Für ' +
+        zuUebertragen().length +
+        ' Mitarbeitende wird der Übertrag des Folgejahres auf den ermittelten Rest ' +
+        'gesetzt (nicht addiert). Ein zweiter Durchlauf schreibt denselben Wert und ' +
+        'verdoppelt nichts. Bereits von Hand eingetragene Überträge werden überschrieben.'
+      "
+      bestaetigenLabel="Übertragen"
+      [laedt]="laeuftAktion()"
+      (bestaetigen)="uebertragen()"
+      (abbrechen)="uebertragOffen.set(false)"
+    />
+
+    <app-dialog
+      [offen]="ausgleichDialogOffen()"
+      titel="Stundenausgleich buchen"
+      (schliessen)="ausgleichDialogOffen.set(false)"
+    >
+      <form [formGroup]="ausgleichForm" (ngSubmit)="ausgleichSpeichern()">
+        <app-feld
+          [control]="$any(ausgleichForm.controls.employee_id)"
+          label="Mitarbeiter"
+          typ="select"
+          [pflicht]="true"
+          [optionen]="mitarbeiterOptionen()"
+          hinweis="Das eigene Konto kann nicht ausgeglichen werden (Vier-Augen-Prinzip)."
+        />
+        <app-feld
+          [control]="$any(ausgleichForm.controls.adjustment_type)"
+          label="Ausgleichsart"
+          typ="select"
+          [pflicht]="true"
+          [optionen]="ausgleichArtOptionen"
+          [hinweis]="artHinweis()"
+        />
+        <app-feld
+          [control]="$any(ausgleichForm.controls.effective_on)"
+          label="Verbucht am"
+          typ="datum"
+          [pflicht]="true"
+          hinweis="Der Tag, an dem der Ausgleich auf dem Konto wirkt."
+        />
+        <app-feld
+          [control]="$any(ausgleichForm.controls.vorzeichen)"
+          label="Wirkung"
+          typ="select"
+          [pflicht]="true"
+          [optionen]="vorzeichenOptionen"
+        />
+        <div class="zeit-paar">
+          <app-feld
+            [control]="$any(ausgleichForm.controls.stunden)"
+            label="Stunden"
+            typ="zahl"
+          />
+          <app-feld
+            [control]="$any(ausgleichForm.controls.minuten)"
+            label="Minuten"
+            typ="zahl"
+          />
+        </div>
+        <app-feld
+          [control]="$any(ausgleichForm.controls.reason)"
+          label="Begründung"
+          typ="textarea"
+          [pflicht]="true"
+          hinweis="Pflicht: Der Beschäftigte muss nachlesen können, warum sein Konto sich ändert."
+        />
+        <div class="dialog-aktionen">
+          <button type="button" class="btn" (click)="ausgleichDialogOffen.set(false)">
+            Abbrechen
+          </button>
+          <button type="submit" class="btn btn--primary" [disabled]="laeuftAktion()">
+            Buchen
+          </button>
+        </div>
+      </form>
+    </app-dialog>
 
     <app-dialog
       [offen]="eintragDialogOffen()"

@@ -1,0 +1,93 @@
+<div class="rechner">
+  <form class="rechner__eingabe" [formGroup]="form" (submit)="$event.preventDefault()">
+    <fieldset class="rechner__satz">
+      <legend class="rechner__legende">Rohrnetz</legend>
+
+      <app-feld
+        [control]="form.controls.rohrLaenge"
+        label="Rohrleitung, Länge gesamt (m)"
+        typ="zahl"
+        hinweis="Verteilung, Vor- und Rücklauf zusammen"
+      />
+      <app-feld
+        [control]="form.controls.rohrTyp"
+        label="Rohrdimension"
+        typ="select"
+        [optionen]="rohrOptionen"
+      />
+
+      <app-feld
+        [control]="form.controls.fbhLaenge"
+        label="Fußbodenheizung, Rohrlänge gesamt (m)"
+        typ="zahl"
+        hinweis="Alle Heizkreise zusammen"
+      />
+      <app-feld
+        [control]="form.controls.fbhTyp"
+        label="FBH-Rohrdimension"
+        typ="select"
+        [optionen]="fbhOptionen"
+      />
+    </fieldset>
+
+    <fieldset class="rechner__satz">
+      <legend class="rechner__legende">Komponenten</legend>
+
+      <div class="rechner__paar">
+        <app-feld [control]="form.controls.hkAnzahl" label="Heizkörper (Stück)" typ="zahl" />
+        <app-feld [control]="form.controls.hkInhalt" label="Inhalt je Heizkörper (l)" typ="zahl" />
+      </div>
+
+      <div class="rechner__paar">
+        <app-feld [control]="form.controls.erzeuger" label="Wärmeerzeuger (l)" typ="zahl" />
+        <app-feld [control]="form.controls.puffer" label="Pufferspeicher (l)" typ="zahl" />
+      </div>
+    </fieldset>
+  </form>
+
+  <div class="rechner__ergebnis">
+    <p class="rechner__ergebnis-label" id="wasser-label">Anlagenwasserinhalt</p>
+    <output
+      class="rechner__wert"
+      [class.rechner__wert--leer]="!ergebnis()"
+      aria-labelledby="wasser-label"
+      aria-live="polite"
+      >{{ summeText() }}</output
+    >
+
+    @if (aufschluesselung()) {
+      <p class="rechner__formel">{{ aufschluesselung() }}</p>
+    } @else {
+      <p class="rechner__formel">
+        Mindestens eine Komponente eingeben (Rohrlänge, Heizkörper, Erzeuger oder Puffer).
+      </p>
+    }
+
+    <div class="rechner__aktionen">
+      <button type="button" class="rechner__btn" [disabled]="!ergebnis()" (click)="kopieren()">
+        Ergebnis kopieren
+      </button>
+      @if (uebernahme()) {
+        <button
+          type="button"
+          class="rechner__btn rechner__btn--primary"
+          [disabled]="!ergebnis()"
+          (click)="uebernehmenKlick()"
+        >
+          Als Textposition übernehmen
+        </button>
+      }
+    </div>
+
+    @if (rueckmeldung()) {
+      <p class="rechner__rueckmeldung" role="status">{{ rueckmeldung() }}</p>
+    }
+  </div>
+</div>
+
+<p class="rechner__hinweis">
+  Summe der Komponenten — Grundlage für Befüllmenge und Nachspeisung (VDI 2035). Die Wasserinhalte
+  je Meter stammen aus dem lichten Querschnitt der gängigen Dimensionen; Armaturen, Verteiler und
+  Bögen sind nicht enthalten. Bei kritischer Wasserbeschaffenheit ist die Füllmenge zu messen, nicht
+  zu schätzen.
+</p>
