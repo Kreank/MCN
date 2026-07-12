@@ -16,7 +16,8 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 > und Freigaben laufen aus dem UI durch Rechte, Statusautomaten und DB-Trigger.
 > Dazu **Vier-Augen-Freigaben**, **Belegerfassung** (Eingangsrechnungen) und die
 > **Rechtematrix-Pflege** als UI.
-> **1687 Backend-Tests grün**, db_core-Migrationen bis **0053**, accounts bis **0002**.
+> **1937 Backend-Tests grün** (1 skipped), db_core-Migrationen bis **0062**,
+> accounts bis **0002**. Arbeitsbaum sauber, alles committet.
 > Stand 2026-07-11 (Hero-Paritäts-Ausbau, 20 Slices an einem Tag — Details in
 > `git log`): Artikelstamm nach Hero (Felder/VK-Gruppen/Lieferant/Bild,
 > Suchoperatoren + · | · *, Spaltenwahl, Kopieren), **Marge/Deckungsbeitrag** in
@@ -40,8 +41,7 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 > von mir eingecheckt), **Erste-Schritte-Checkliste** auf der Übersicht,
 > **Akquisekanäle/Quellen** (`/company/acquisition-sources` + Quelle am Kontakt,
 > Migration 0049/0050).
-> **Noch offen — DERIVIERBAR:** Gewerke-Firmenzuordnung (Link-Tabelle, Semantik
-> klären). **Migrations-Graph ist wieder frei** (0050 ist Kopf).
+> **Migrations-Graph ist frei** (`0062_freier_termin` ist einziges Leaf).
 > **Neu (2026-07-11, diese Session):** **DATEV-EXTF-Export** (Buchungsstapel aus
 > veröffentlichten Rechnungen, `GET /buchhaltung/datev-export.csv`, Config am
 > Firmenprofil, Migration 0051; Dialog in der Buchhaltung). v1-Grenzen dokumentiert
@@ -51,16 +51,14 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 > neu Service `anbindung.py` + `GET/POST/PATCH /api/pricing/supplier-connections` +
 > Frontend `features/haendler-anbindungen`, Einstieg aus Artikel). `credential_reference`
 > bleibt reiner Verweis (nie Secret). Details Memory `ids-connect`.
-> **AKTUELL (2026-07-11/12, diese Session):** **IDS-Connect komplett** (inkl.
-> Warenkorb-Roundtrip: Punchout-Session + token-gesicherter HOOK + Editor-Übernahme;
-> nur Live-Test mit echter G.U.T.-URL offen), **Baustellenberichte** (site_report,
-> Foto+Unterschrift), **DATANORM-Frontend-Import** (Upsert-Service + Upload-Dialog),
-> plus Rechnungs-Editor/Plantafel-Vollbild/Auftrags-Termine-Reiter. **Kopf 0057,
-> 1744 Tests grün.** Diese Arbeit ist **NOCH NICHT committet** (im Arbeitsbaum).
-> **GRUNDSATZFRAGEN SIND ENTSCHIEDEN (User, 2026-07-12)** — Memory
-> `grundsatz-entscheidungen-2026-07`; die priorisierten nächsten Schritte stehen unten
-> im Abschnitt „★ NÄCHSTE SCHRITTE" (kurz: 1. Skonto, 2. E-Rechnung ZUGFeRD, 3.
-> Abschlags-/Schlussrechnung, 4. freier Termin ohne Auftrag; Lexware+OAuth warten).
+> **AKTUELL (2026-07-12, diese Session):** Erst der konsolidierte Commit `170f3c7`
+> (**IDS-Connect komplett** inkl. Warenkorb-Roundtrip — nur Live-Test mit echter
+> G.U.T.-URL offen —, **Baustellenberichte**, **DATANORM-Frontend-Import**), dann die
+> **vier priorisierten Slices aus den Grundsatzentscheidungen — alle vier gebaut**:
+> **Skonto** (`ae4d241`, 0058), **E-Rechnung ZUGFeRD/Factur-X** (`12e4f7f`, 0059),
+> **Abschlags-/Teil-/Schlussrechnung** (`5c66561`, 0060/0061), **freier Termin ohne
+> Auftrag** (`eb215f3`, 0062). Details unten in „★ NÄCHSTE SCHRITTE" und in den
+> Commit-Messages. Grundsatzentscheidungen: Memory `grundsatz-entscheidungen-2026-07`.
 
 ---
 
@@ -140,15 +138,15 @@ Artikelstamm übernehmen"** im Positionsdetail des Angebotseditors:
 Vier Tests sichern das ab (u. a. ein statischer, der einen Schreibpfad von
 `beleg.py` in den Artikelstamm verhindert).
 
-### Stand 2026-07-11 & was als Nächstes ansteht (AKTUELL)
+### Stand 2026-07-12 & was als Nächstes ansteht (AKTUELL)
 
-**In dieser Sessionswelle gebaut (alle reviewed + Browser-E2E + committet):**
+**Frühere Sessionswelle (alle reviewed + Browser-E2E + committet):**
 Lohngruppen (`e9bfe06`), Mahnlauf (`e6ac0c4`), HR-Selbstauskunft (`6fd4f80`),
 Onboarding-Checkliste (`468ddd4`), Akquisekanäle/Quellen (`a346fa8`). Dazu die
 fertige Parallel-Agent-Arbeit **Schnellerfassung + Zum-Projekt-Hochstufen**
 konsolidiert eingecheckt (`f681efd`). **1607 Tests grün, Migrationen bis 0050.**
 
-**Seither (Folge-Session, NOCH NICHT committet — im Arbeitsbaum):** DATEV-Export
+**Seither (alles committet, `170f3c7` konsolidiert die frühere Arbeitsbaum-Arbeit):** DATEV-Export
 (s. u.), IDS-Connect (Anbindungsverwaltung + Warenkorb-Kern + Credentials/Punchout;
 Slice „Shop-Roundtrip/HOOK-Return + Frontend-Button" wartet auf G.U.T.-Connector-URL
 des Users), sowie die Test-Feedback-Punkte: Angebots-/Rechnungs-Editor-Einstieg
@@ -169,7 +167,6 @@ aufgelöst (inkl. EK aus `NetPrice/PriceBasis`) und im Editor übernommen. Zugan
 (Benutzer/Passwort, Fernet) pflegt man je Anbindung über „Zugangsdaten"; die
 Shop-/Connector-URL ist das `shop_url`-Feld (die G.U.T.-URL trägt der User dort ein —
 sie ist Konfig, kein Code). Die itek-2.5-XSDs liegen unter `d:\Mitra\MCN\IDS\`.
-**1733 Tests grün, Kopf 0057.**
 
 Und der **DATANORM-Frontend-Import**: der DATANORM-4-Parser + CLI-Command
 existierten schon; neu ist der **Upsert-fähige Import-Service**
@@ -190,43 +187,109 @@ kollidiert der Migrations-Graph (zwei Blätter auf demselben Parent). Beim Commi
 sonst **nur eigene Slice-Dateien** stagen (selektives Hunk-Staging bei geteilten
 Dateien wie `app.routes.ts`).
 
-**Nächster ableitbarer Rest:**
-- **Gewerke-Firmenzuordnung** (S, braucht Migration/Link-Tabelle). **Semantik erst
-  klären:** „welche Gewerke bietet die Firma" (fast redundant zum `company.trade`-
-  Katalog) vs. „welche Gewerke je Niederlassung" (`branch_trade`-Link) vs. je
-  Auftrag/Projekt. Wahrscheinlichste sinnvolle Auslegung: je Niederlassung.
+### Die vier priorisierten Slices sind GEBAUT (2026-07-12)
 
-**★ NÄCHSTE SCHRITTE — Grundsatzfragen sind ENTSCHIEDEN (User, 2026-07-12).**
-Details/Begründung: Memory `grundsatz-entscheidungen-2026-07`. Empfohlene Reihenfolge:
+Die Grundsatzfragen waren entschieden (Memory `grundsatz-entscheidungen-2026-07`),
+die vier daraus abgeleiteten Slices sind umgesetzt, reviewed und committet:
 
-1. **Skonto** (klein, `je Rechnung` eingebbar — kein Kundenstandard). Feld + Modell an
-   der Rechnung, berührt GoBD-Beleg + Beleg-PDF. **Zuerst, weil es in die E-Rechnung
-   einfließt** (ZUGFeRD-Zahlungsbedingungen).
-2. **E-Rechnung: ZUGFeRD/Factur-X** (Hybrid PDF/A-3 + eingebettetes XML) — der
-   Default, deckt B2B ab. Compliance-Priorität (gesetzl. Pflicht seit 2025). Lib-Wahl
-   treffen (z. B. Factur-X-/ZUGFeRD-Erzeugung; PDF/A-3-Einbettung). **XRechnung
-   (reines XML, B2G/Leitweg-ID) nur DANACH und optional** — User hat nur 1–2×/Jahr
-   öffentliche Auftraggeber.
-3. **Abschlags-/Teil-/Schlussrechnung** (großer Fachslice, Kernprozess des Users):
-   Abschlagsrechnung als Belegart, Schlussrechnung referenziert + rechnet bereits
-   berechnete Abschläge an. GoBD-Implikationen sauber modellieren.
-4. **Freier Termin ohne Auftrag** (Schema): `service_job.work_order_id` nullable +
-   Semantik „freier Termin". Zusätzlich: bei Begehungen ist der **Kontakt evtl. noch
-   nicht angelegt** → Kontaktbezug optional/nachträglich.
-5. **Lexware-Export** — WARTET auf das konkrete Importformat vom User (nach Rücksprache
-   Buchhaltung). Bis dahin reicht DATEV.
-6. **OAuth-Absenderkonten** — WARTET auf Chef-Entscheidung; SMTP reicht vorerst.
+1. ✔ **Skonto: Zahlungsbedingungen je Rechnung** (`ae4d241`, Migration 0058).
+   `invoicing.invoice` trägt `payment_term_days`, `discount_percent`,
+   `discount_days` — je Rechnung, kein Kundenstandard. `publish_invoice` schreibt
+   das **Belegdatum immer** fest (deckungsgleich mit dem DB-Trigger) und leitet die
+   Fälligkeit aus dem Zahlungsziel ab. Die **Skontofrist darf nicht hinter der
+   Fälligkeit liegen** — geprüft beim Anlegen, beim Ändern (gegen den gemergten
+   Ergebniszustand) und als letzte Instanz beim Veröffentlichen; sonst landete der
+   Widerspruch auf einem bereits unveränderlichen Kundenbeleg. Genau **eine
+   Rechenstelle**: `beleg.zahlungsbedingungen()` (Skontodatum/-betrag/-zahlbetrag) —
+   PDF, XML, API und Frontend ziehen von dort. **Skonto bucht NICHTS aus**: offener
+   Betrag und Zahlungsstatus bleiben unverändert abgeleitet.
+2. ✔ **E-Rechnung ZUGFeRD/Factur-X** (`12e4f7f`, Migration 0059), Profil EN16931.
+   Zuerst die **Snapshot-Härtung** (`snapshot_version=2`): `publish_invoice` friert
+   jetzt auch Aussteller (`header["issuer"]`), Leistungsort (`header["delivery"]`)
+   und je Beteiligtem Name/Anschrift/USt-IdNr (`parties[i]["snapshot"]`) ein — ohne
+   das hätte eine spätere Firmenprofil-Änderung den Inhalt eines festgeschriebenen
+   Belegs verändert. **Bestehende Belege werden NICHT rehasht**, fehlende Felder
+   fallen **feldweise** auf Live-Daten zurück. Neuer Service `services/erechnung.py`:
+   CII-XML (factur-x, XSD-geprüft) + Hybrid-PDF/A-3B (fpdf2 `enforce_compliance`).
+   `beleg_pdf.py` nutzt jetzt **eingebettetes DejaVu Sans** (PDF/A verbietet
+   Kernfonts; Nebeneffekt: Umlaute/€/m² werden nicht mehr ersetzt). Skonto steht
+   maschinenlesbar in BT-20 (`#SKONTO#TAGE=..#PROZENT=..#BASISBETRAG=..#`).
+   Endpunkte `GET /invoicing/invoices/{id}/zugferd.pdf` und `.../zugferd.xml`,
+   Archivierung in MinIO (`link_category='E_RECHNUNG'`).
+   **Offen/ehrlich:** PDF/A-3B ist **nicht mit veraPDF gegengeprüft** (Marker
+   gesetzt, Konformität nicht zertifiziert), und es läuft nur die **XSD**-, keine
+   **Schematron**-Prüfung — ein Lauf gegen KoSIT/Mustang steht **vor dem Live-Gang**
+   aus. XRechnung (B2G) bleibt offen und optional.
+3. ✔ **Abschlags-, Teil- und Schlussrechnung** (`5c66561`, Migration 0060/0061) —
+   der Kernprozess des Users. `invoicing.invoice_advance` friert Netto/Steuer/Brutto
+   je (Schlussrechnung, Abschlag, Steuercode) ein, `invoice_line.advance_invoice_id`
+   trägt den Rückverweis. **Anrechnung als NEGATIVE POSITIONEN je Steuersatz**, nicht
+   als Kopffeld: so trägt die DB-Summenprüfung sie unverändert, `gross_total` der
+   Schlussrechnung IST der Zahlbetrag, und offener Posten, Mahnwesen, DATEV und
+   Auswertungen bleiben ohne Umbau korrekt (Aufteilung je Steuersatz wegen § 14
+   Abs. 5 UStG). Auftrags-Tor **B-08 ist belegartabhängig**: AR/TR ab FREIGEGEBEN,
+   RECHNUNG/SR erst ab KAUFMAENNISCH_GEPRUEFT. **Doppelanrechnung ist physisch
+   ausgeschlossen**; eine SR, die einen anrechenbaren Abschlag **übergeht**, ist
+   nicht veröffentlichbar (Service UND DB) — der teuerste denkbare Bedienfehler der
+   Domäne. Storno/Gutschrift eines angerechneten Abschlags ist gesperrt, solange die
+   SR veröffentlicht ist; eine SR mit Anrechnung ist nur **voll**stornierbar. Die DB
+   verbietet jetzt jeden Kreditbeleg mit positivem Betrag. **BT-113
+   (TotalPrepaidAmount) wird bewusst NICHT genutzt** — es meint den GEZAHLTEN Betrag
+   und mindert die Steuerbasis nicht, der Empfänger zöge die Vorsteuer doppelt.
+   0-€-Abschläge sind weder anrechenbar noch blockierend.
+4. ✔ **Freier Termin ohne Auftrag** (`eb215f3`, Migration 0062).
+   `workflow.service_job.work_order_id` ist nullable; neu `title` (Pflicht, sobald
+   kein Auftrag dranhängt) und `property_id`, abgesichert über den zusammengesetzten
+   FK gegen den Auftrag (ein auftragsgebundener Einsatz kann keine fremde
+   Liegenschaft tragen). Die zwei auftragsabhängigen Tore prüfen bei NULL nichts,
+   bleiben für auftragsgebundene Einsätze unverändert scharf. **Neu dafür: der
+   Auftragsbezug ist unveränderlich** — sonst ließe sich ein laufender Einsatz
+   nachträglich an einen abgerechneten Auftrag hängen und beide Tore umgehen. Das
+   B-28-Korrekturfenster joint jetzt per LEFT JOIN (notwendige Anpassung an den
+   NULL-Fall, **kein Bugfix** — mit NOT NULL konnte der Fall nie auftreten). Die
+   EIGENE-Sicht hängt bei Einsätzen allein an der Zuweisung, nie am Auftrag: ein
+   freier Termin wird also nicht öffentlich. `PATCH /einsaetze/{id}` lässt den
+   Monteur am eigenen **freien** Termin nur Kontakt und Zugangshinweise nachtragen.
+   `seed_demo` legt eine Begehung an. **Grenze:** `site_report` bleibt
+   auftragsgebunden (`work_order_id` NOT NULL) — ein Begehungsprotokoll geht darüber
+   noch nicht.
 
-- ✔ **DATEV-Export** (EXTF-Buchungsstapel) — **gebaut** (Migration 0051, Config am
-  Firmenprofil, `services/datev.py`, UI in der Buchhaltung). Offen: echter
-  DATEV-Import-Roundtrip beim Steuerberater, Personenkonten (OPOS). Memory `datev-export`.
+Dazu ✔ **DATEV-Export** (EXTF-Buchungsstapel, Migration 0051, `services/datev.py`,
+UI in der Buchhaltung; Memory `datev-export`).
 
-**Weitere ableitbare Reste (Bestand, noch offen):**
+**★ NÄCHSTE SCHRITTE (offen).** Zuerst das, was auf Externe wartet, sichtbar halten:
+
+**Wartet auf den User / auf Externe:**
+- **Lexware-Export** — wartet auf das konkrete Importformat (Rücksprache Buchhaltung).
+  Bis dahin reicht DATEV.
+- **OAuth-Absenderkonten** für den Mailversand — wartet auf Chef-Entscheidung
+  (App-Registrierung); SMTP reicht vorerst.
+- **veraPDF-/Schematron-Gegenprüfung der E-Rechnung** — muss **vor dem Live-Gang**
+  laufen (KoSIT-Validator/Mustang gegen `zugferd.xml`, veraPDF gegen `zugferd.pdf`).
+- **DATEV-Roundtrip beim Steuerberater** (echter Import des Buchungsstapels),
+  Personenkonten/OPOS.
+- **Abschläge auf „Erhaltene Anzahlungen" statt Erlös** — Kontierungsfrage an den
+  Steuerberater; aktuell laufen sie wie normale Erlöse.
+- **Gewerke-Firmenzuordnung** — **Semantik erst klären:** „welche Gewerke bietet die
+  Firma" (fast redundant zum `company.trade`-Katalog) vs. je Niederlassung
+  (`branch_trade`-Link) vs. je Auftrag/Projekt. Wahrscheinlichste Auslegung: je
+  Niederlassung.
+
+**Ableitbar, kann sofort gebaut werden:**
+- **XRechnung** (reines XML, B2G/Leitweg-ID) — optional, User hat 1–2×/Jahr
+  öffentliche Auftraggeber. Das CII-Mapping steht bereits.
 - **Vier-Augen auf weitere Aktionen ausrollen** (Dubletten-Merge, Massenexport,
   KI-Massenaktionen): Applier in `_APPLIERS` bzw. `claim()` — Flow steht.
 - **Plantafel Drag & Drop** (`POST /planung/einsaetze/{id}/schedule` existiert).
-- **Mailversand-Reste:** OAuth-Absenderkonten (braucht App-Registrierung des Users),
-  persönliche Absenderkonten, E-Mail-Templates-Verwaltung.
+- **Baustellenbericht am freien Termin** — braucht Migration:
+  `site_report.work_order_id` ist NOT NULL, das Begehungsprotokoll ist genau der
+  Fall, für den der freie Termin gebaut wurde.
+- **Mailversand-Reste:** persönliche Absenderkonten, E-Mail-Templates-Verwaltung.
+
+**Bewusst NICHT gebaut:** „Freien Termin zum Auftrag hochstufen". Der Auftragsbezug
+eines Einsatzes ist **unveränderlich** (sonst Torumgehung, s. o.). Wer das will,
+braucht einen eigenen, getorten Servicepfad (Auftrag anlegen + Einsatz übertragen),
+kein Aufweichen des Triggers.
 
 **Dev-Notiz:** Der Demo-Login `admin@` ist testweise auch Mitarbeiter (MA-00004,
 30 Urlaubstage) — damit „Mein Profil → Personalakte" live etwas zeigt. Reine
@@ -254,6 +317,26 @@ Scratch-Daten; bei Bedarf auf INAKTIV setzen.
 - **Belegeditor rechnet keine Summen.** Exakte Rundung je Steuergruppe ist in
   JavaScript-`number` nicht verlustfrei; der Server rechnet verbindlich. Nicht
   „nachrüsten".
+- **`beleg.anzeige_menge_preis()` ist die EINZIGE Vorzeichenstelle für die AUSGABE
+  von Kreditbelegen.** Web-Mappe und Editor zeigen bewusst die **DB-Wahrheit**
+  (100 × −2,40 €), PDF und XML die **EN16931-Darstellung** (−100 × 2,40 €), weil
+  BR-27 negative Einzelpreise verbietet. Das ist **kein Bug** — und es ist keine
+  zweite Umrechnung an anderer Stelle nachzurüsten: PDF und XML nutzen dieselbe
+  Funktion, damit Sichtbild und Daten dasselbe zeigen.
+- **Bekannte Sichtbild-Divergenz bei Altbelegen.** Belege, deren `BELEG_PDF` vor der
+  Font-Umstellung archiviert wurde, behalten ihre Ausfertigung; eine später erzeugte
+  E-Rechnung desselben Belegs zeigt die neue Typografie und den vollständigen
+  Anschriftsblock. **Die Beträge sind identisch.** Ein Neurendern der archivierten
+  Ausfertigung ist per GoBD ausgeschlossen — nicht „reparieren".
+- **Eine NULL im `billing_snapshot` ist eine LÜCKE, keine eingefrorene Aussage.**
+  Deshalb der **feldweise** Live-Fallback (nicht: „Snapshot vorhanden → alles aus dem
+  Snapshot"). Belege vor `snapshot_version=2` haben schlicht weniger Felder; sie
+  werden nicht rehasht.
+- **`db/migrations/0014_einsatz.sql` und `0017` spiegeln die aktuellen
+  Trigger-Funktionen NICHT mehr.** Repo-Praxis ist inzwischen Django-`RunSQL`
+  (`backend/db_core/migrations/`). Wer `db/` als Quelle der Wahrheit liest, sieht die
+  **alten** Tore (z. B. ohne den NULL-Fall des freien Termins). Maßgeblich ist die
+  zuletzt angewandte Django-Migration.
 ---
 
 ## 1. Sofort loslegen: Umgebung
@@ -315,8 +398,8 @@ Default `mcn-dev-passwort-2026`):
 **Backend** (`cd backend`, uv):
 ```bash
 uv run python manage.py check
-uv run pytest -p no:cacheprovider -q          # aktuell 1744 grün, 2 skipped
-uv run python manage.py migrate               # Migrationskopf: 0057
+uv run pytest -p no:cacheprovider -q          # aktuell 1937 grün, 1 skipped
+uv run python manage.py migrate               # Migrationskopf: 0062_freier_termin
 uv run python manage.py runserver 127.0.0.1:8000 --noreload
 uv run python manage.py seed_demo             # idempotenter Demo-Datensatz
 ```
@@ -553,8 +636,8 @@ Rechtematrix um die Module `hr` und `company`; 0025 baut die Mahnleiter auf sech
 Stufen aus. **Achtung:** zwei Migrationen heißen `0025_*` (paralleler Bau); der
 Graph ist gültig (0026 führt beide Zweige zusammen, 0027 ist das einzige Leaf),
 aber `migrate db_core 0025` ist mehrdeutig — vollen Namen angeben.
-Neue Dependency **fpdf2**
-(Beleg-PDF). `seed_demo` deckt
+Dependencies **fpdf2** (Beleg-PDF, PDF/A-3B) und **factur-x** (ZUGFeRD-XML).
+`seed_demo` deckt
 alle Bereiche ab (Kontakte, Liegenschaften, Projekte+Vorgänge, **durchgeschalteter
 Auftrag**, Aufgaben, Angebot [versendet], **veröffentlichte Rechnung**, Artikel,
 Cockpit).
