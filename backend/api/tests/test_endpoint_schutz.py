@@ -44,6 +44,10 @@ WHITELIST = {
     # Enumeration), /confirm setzt anhand eines Einmal-Tokens ein neues Passwort.
     "/api/auth/password-reset/request",
     "/api/auth/password-reset/confirm",
+    # IDS-Connect Warenkorb-Rückgabe: der Händler-Shop POSTet hierher (aus dem
+    # Browser des Handwerkers, ohne MCN-Sitzung). Autorisierung ist das Einmal-
+    # Token in der URL (in der DB nur als Hash); kein Modul-Recht, auth=None.
+    "/api/pricing/warenkorb-return/{token}",
 }
 
 # Authentifiziert (auth=django_auth), aber bewusst OHNE Modul-Recht: jeder darf

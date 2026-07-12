@@ -37,6 +37,8 @@ import { VerbotenState, fehlerDetail, fehlerState, istVerboten } from '../../sha
 import { Dialog } from '../../shared/dialog/dialog';
 import { Feld, FeldOption } from '../../shared/formular/feld';
 import { Bestaetigung } from '../../shared/bestaetigung/bestaetigung';
+import { IdsBestellung } from './ids-bestellung/ids-bestellung';
+import { ResolvedPosition } from '../../core/anbindung.model';
 import { apiFehlerZuweisen } from '../../shared/formular/api-fehler';
 import {
   felderAlsBeruehrtMarkieren,
@@ -160,6 +162,7 @@ const EDITIERBAR: QuoteStatus[] = ['ENTWURF', 'INTERN_GEPRUEFT', 'FREIGEGEBEN'];
     Dialog,
     Feld,
     Bestaetigung,
+    IdsBestellung,
   ],
   templateUrl: './angebot-editor.html',
   styleUrl: './angebot-editor.scss',
@@ -1033,6 +1036,57 @@ export class AngebotEditor {
     this.lines.update((ls) => [...ls, line]);
     this.markiereGeaendert();
     this.zeileOeffnen(line);
+  }
+
+  // ======================= IDS-Connect: Bei Händler bestellen ==============
+  protected readonly idsOffen = signal(false);
+
+  /** quote_id-Kontext für den Punchout: nur bei einem echten Angebot (die
+   * Session-FK zeigt auf invoicing.quote — eine Rechnungs-ID gehört NICHT dahin). */
+  protected readonly idsQuoteId = computed(() =>
+    this.istRechnung ? null : this.quoteId || null,
+  );
+
+  /** Die aus dem Händler-Warenkorb zurückgegebenen Positionen als Belegzeilen
+   * übernehmen. Der Netto-EK wird als Einkaufspreis (unit_cost) UND provisorisch
+   * als Einzelpreis gesetzt; den Aufschlag prüft der Anwender (Ansage weist darauf
+   * hin). Nicht zugeordnete Positionen werden als freie Materialzeilen übernommen. */
+  idsPositionenUebernehmen(pos: ResolvedPosition[]): void {
+    if (this.readonly() || pos.length === 0) return;
+    const zielRubrik = this.zielRubrik();
+    const neu: EditorLine[] = pos.map((p) => ({
+      uid: neueUid(),
+      rubrikUid: zielRubrik,
+      line_type: 'MATERIAL',
+      line_kind: 'NORMAL',
+      description: p.short_text || p.article_name || `Artikel ${p.art_no}`,
+      quantity: p.qty ?? '1',
+      unit: p.unit,
+      unit_price: p.net_price,
+      discount_percent: null,
+      tax_code: this.vatZuTaxCode(p.vat),
+      unit_cost: p.net_price,
+      markup_percent: null,
+      sale_price_group_id: null,
+      source_article_id: p.article_id,
+      source_assembly_id: null,
+      netAmount: null,
+      taxRatePercent: null,
+    }));
+    this.lines.update((ls) => [...ls, ...neu]);
+    this.markiereGeaendert();
+    this.ansage.set(
+      `${neu.length} Position(en) aus dem Händler-Warenkorb übernommen. ` +
+        'Die Preise sind Einkaufspreise — bitte Aufschlag prüfen.',
+    );
+  }
+
+  private vatZuTaxCode(vat: string | null): string {
+    if (!vat) return 'DE_19';
+    const n = Number(vat);
+    if (n === 7) return 'DE_7';
+    if (n === 0) return 'DE_0';
+    return 'DE_19';
   }
 
   // ======================= Speichern ======================================

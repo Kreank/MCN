@@ -371,6 +371,11 @@
   flex-direction: column;
   gap: var(--space-2);
 }
+// „Bei Händler bestellen“ unter der freien Position, volle Breite der Palette.
+.palette__ids {
+  width: 100%;
+  margin-top: var(--space-2);
+}
 .palette__liste {
   border-top: 1px solid var(--line);
   padding-top: var(--space-3);

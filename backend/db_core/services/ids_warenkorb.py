@@ -59,12 +59,19 @@ class WarenkorbError(ValueError):
 
 @dataclass(frozen=True)
 class CartPosition:
-    """Eine Warenkorb-Position, wie sie der Shop zurückgibt."""
+    """Eine Warenkorb-Position, wie sie der Shop zurückgibt.
+
+    `net_price` ist der Netto-Einkaufspreis JE EINHEIT (aus `NetPrice`/`PriceBasis`
+    umgerechnet), `vat` der Mehrwertsteuersatz in Prozent — beide optional, weil
+    reale Rückgabe-Warenkörbe oft nur ArtNo/Qty/QU tragen.
+    """
     art_no: str
     qty: Decimal
     unit: str | None = None
     short_text: str | None = None
     ean: str | None = None
+    net_price: Decimal | None = None
+    vat: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -75,6 +82,8 @@ class ResolvedPosition:
     unit: str | None
     short_text: str | None
     ean: str | None
+    net_price: Decimal | None
+    vat: Decimal | None
     article_id: str | None
     article_number: str | None
     article_name: str | None
@@ -205,9 +214,44 @@ def parse_returned_cart(xml) -> list[CartPosition]:
                 unit=_text(item, "QU"),
                 short_text=_text(item, "Kurztext"),
                 ean=_text(item, "EAN"),
+                net_price=_unit_price(item),
+                vat=_dezimal(_text(item, "VAT")),
             )
         )
     return positions
+
+
+def _dezimal(wert):
+    """Wandelt einen Zahlentext in Decimal um, oder None (leer/ungültig → None)."""
+    if not wert:
+        return None
+    try:
+        d = Decimal(wert.replace(",", "."))
+    except InvalidOperation:
+        return None
+    return d if d.is_finite() else None
+
+
+def _unit_price(item):
+    """Netto-EK je Einheit aus `NetPrice`/`PriceBasis`.
+
+    IDS gibt Preise auf eine Preisbasis bezogen an (z. B. `NetPrice=522`,
+    `PriceBasis=1000` → 0,522 je Einheit). Fehlt `PriceBasis` oder ist sie 0/
+    ungültig, gilt Basis 1. Ohne `NetPrice` gibt es keinen Preis (None)."""
+    net = _dezimal(_text(item, "NetPrice"))
+    if net is None:
+        return None
+    basis = _dezimal(_text(item, "PriceBasis"))
+    if basis is None or basis == 0:
+        basis = Decimal("1")
+    # Auf vier Nachkommastellen begrenzen (Sub-Cent-Preise je Einheit sind üblich);
+    # der Beleg quantisiert später auf seine eigene Preisskala. Ein absurd großer
+    # Wert (Koeffizient über der Decimal-Kontextpräzision) würde beim quantize
+    # werfen — dann lieber keinen Preis (None) als einen 500er.
+    try:
+        return (net / basis).quantize(Decimal("0.0001"))
+    except InvalidOperation:
+        return None
 
 
 # --- Positionen auf den Artikelstamm mappen ---------------------------------
@@ -229,6 +273,9 @@ def resolve_positions(source_namespace: str, positions) -> list[ResolvedPosition
             source_namespace=source_namespace,
             supplier_article_number__in=art_nos,
             valid_until__isnull=True,
+            # Deaktivierte Artikel (z. B. per DATANORM-Löschung) sind nicht mehr
+            # bestellbar und dürfen im Warenkorb nicht als „zugeordnet" erscheinen.
+            article__status="AKTIV",
         ).select_related("article"):
             nach_nummer.setdefault(ref.supplier_article_number, []).append(ref)
 
@@ -246,6 +293,8 @@ def resolve_positions(source_namespace: str, positions) -> list[ResolvedPosition
                 unit=p.unit,
                 short_text=p.short_text,
                 ean=p.ean,
+                net_price=p.net_price,
+                vat=p.vat,
                 article_id=str(art.id) if art else None,
                 article_number=art.article_number if art else None,
                 article_name=art.description if art else None,

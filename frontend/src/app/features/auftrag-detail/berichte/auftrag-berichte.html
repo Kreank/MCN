@@ -1,0 +1,220 @@
+@if (meldung(); as m) {
+  <div
+    class="melde melde--{{ m.art === 'erfolg' ? 'erfolg' : 'fehler' }}"
+    [attr.role]="m.art === 'fehler' ? 'alert' : 'status'"
+  >
+    <span class="melde__mark" aria-hidden="true">{{ m.art === 'fehler' ? '!' : '✓' }}</span>
+    <span class="melde__text">
+      <strong>{{ m.art === 'fehler' ? 'Fehler:' : 'Erledigt:' }}</strong> {{ m.text }}
+    </span>
+    <button type="button" class="melde__zu" (click)="meldungSchliessen()" aria-label="Meldung schließen">
+      <span aria-hidden="true">✕</span>
+    </button>
+  </div>
+}
+
+@switch (zustand().kind) {
+  @case ('loading') {
+    <p class="lade-hinweis" role="status">Berichte werden geladen …</p>
+  }
+  @case ('forbidden') {
+    <app-kein-zugriff [detail]="$any(zustand()).detail" />
+  }
+  @case ('error') {
+    <div class="note note--error" role="alert">
+      <p class="note__text">Die Baustellenberichte konnten nicht geladen werden.</p>
+      <div class="note__aktionen">
+        <button type="button" class="btn" (click)="neuLaden()">Erneut versuchen</button>
+      </div>
+    </div>
+  }
+  @case ('ready') {
+    @if (darfAnlegen()) {
+      <div class="tab-toolbar">
+        <button type="button" class="btn btn--primary" (click)="neuOeffnen()">
+          <span aria-hidden="true">＋</span> Neuer Bericht
+        </button>
+      </div>
+    }
+
+    @if (berichte().length === 0) {
+      <div class="tab-platzhalter">
+        <p>Für diesen Auftrag ist noch kein Baustellenbericht erfasst.</p>
+      </div>
+    } @else {
+      <div class="berichte">
+        <!-- Liste (Master) -->
+        <ul class="berichte__liste" role="list">
+          @for (b of berichte(); track b.id) {
+            <li>
+              <button
+                type="button"
+                class="berichte__eintrag"
+                [class.berichte__eintrag--aktiv]="b.id === ausgewaehltId()"
+                [attr.aria-current]="b.id === ausgewaehltId() ? 'true' : null"
+                (click)="waehlen(b.id)"
+              >
+                <span class="berichte__datum">{{ datum(b.report_date) }}</span>
+                <span class="berichte__aktivitaet">{{ b.activity_text }}</span>
+                <span class="stamp {{ statusClass(b.status) }}">{{ statusLabel(b.status) }}</span>
+              </button>
+            </li>
+          }
+        </ul>
+
+        <!-- Detail -->
+        @if (ausgewaehlt(); as r) {
+          <section class="bericht" aria-label="Berichtsdetails">
+            <header class="bericht__kopf">
+              <div>
+                <span class="bericht__kicker">Bericht vom {{ datum(r.report_date) }}</span>
+                <span class="stamp {{ statusClass(r.status) }}">{{ statusLabel(r.status) }}</span>
+              </div>
+              @if (r.status === 'ENTWURF' && darfAendern()) {
+                <div class="bericht__aktionen">
+                  <button type="button" class="btn" (click)="bearbeitenOeffnen()">Bearbeiten</button>
+                  <button type="button" class="btn btn--primary" (click)="unterschriftOeffnen()">
+                    Unterschreiben
+                  </button>
+                </div>
+              }
+            </header>
+
+            <dl class="feld-raster">
+              <div class="feld"><dt class="feld__label">Datum</dt><dd class="feld__wert">{{ datum(r.report_date) }}</dd></div>
+              <div class="feld"><dt class="feld__label">Erfasst von</dt><dd class="feld__wert" [class.feld__wert--leer]="!r.author_name">{{ r.author_name || '—' }}</dd></div>
+              <div class="feld"><dt class="feld__label">Wetter</dt><dd class="feld__wert" [class.feld__wert--leer]="!r.weather">{{ r.weather || '—' }}</dd></div>
+              <div class="feld"><dt class="feld__label">Arbeitsstunden</dt><dd class="feld__wert">{{ stunden(r.hours_worked) }}</dd></div>
+            </dl>
+
+            <div class="bericht__block">
+              <h3 class="bericht__h">Tätigkeiten</h3>
+              <p class="bericht__text">{{ r.activity_text }}</p>
+            </div>
+            @if (r.materials_note) {
+              <div class="bericht__block">
+                <h3 class="bericht__h">Material</h3>
+                <p class="bericht__text">{{ r.materials_note }}</p>
+              </div>
+            }
+            @if (r.remarks) {
+              <div class="bericht__block">
+                <h3 class="bericht__h">Bemerkungen</h3>
+                <p class="bericht__text">{{ r.remarks }}</p>
+              </div>
+            }
+
+            @if (r.status === 'UNTERZEICHNET') {
+              <div class="bericht__abnahme">
+                <span class="bericht__abnahme-mark" aria-hidden="true">✓</span>
+                <div>
+                  <strong>Abgenommen von {{ r.signed_by_name }}</strong>
+                  <span class="bericht__abnahme-zeit">am {{ zeitpunkt(r.signed_at) }} · unveränderlich</span>
+                </div>
+              </div>
+            }
+
+            <!-- Fotos: eigene Datei-Ablage am Bericht -->
+            <div class="bericht__block">
+              <h3 class="bericht__h">Fotos &amp; Anhänge</h3>
+              <app-dateien [ziel]="fotoZiel()" />
+            </div>
+          </section>
+        }
+      </div>
+    }
+  }
+}
+
+<!-- ------------------------------ Neu/Bearbeiten-Dialog ------------------- -->
+<app-dialog
+  [offen]="dialogOffen() === 'neu' || dialogOffen() === 'bearbeiten'"
+  [titel]="dialogOffen() === 'bearbeiten' ? 'Bericht bearbeiten' : 'Neuer Baustellenbericht'"
+  (schliessen)="dialogSchliessen()"
+>
+  <form
+    id="bericht-form"
+    class="dialog-form"
+    (submit)="$event.preventDefault(); dialogOffen() === 'bearbeiten' ? bearbeitenAbsenden() : neuAbsenden()"
+    novalidate
+  >
+    @if (formularMeldung(); as fm) {
+      <div class="melde melde--fehler" role="alert">
+        <span class="melde__mark" aria-hidden="true">!</span>
+        <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+      </div>
+    }
+    <app-feld [control]="berichtForm.controls.report_date" label="Berichtsdatum" typ="datum" [pflicht]="true" />
+    <app-referenz-wahl
+      [control]="berichtForm.controls.service_job_id"
+      label="Einsatz (optional)"
+      platzhalter="Einsatz suchen"
+      [suche]="einsatzSuche"
+    />
+    <app-feld
+      [control]="berichtForm.controls.activity_text"
+      label="Tätigkeiten"
+      typ="textarea"
+      [zeilen]="4"
+      [pflicht]="true"
+      hinweis="Was wurde vor Ort ausgeführt?"
+    />
+    <app-feld [control]="berichtForm.controls.weather" label="Wetter" hinweis="Optional, z. B. „sonnig, 18 °C“" />
+    <app-feld
+      [control]="berichtForm.controls.hours_worked"
+      label="Arbeitsstunden"
+      typ="zahl"
+      hinweis="Optional, z. B. 6,5"
+    />
+    <app-feld [control]="berichtForm.controls.materials_note" label="Material" typ="textarea" />
+    <app-feld [control]="berichtForm.controls.remarks" label="Bemerkungen" typ="textarea" />
+  </form>
+  <div dialog-aktionen class="dialog__aktionen">
+    <button type="button" class="btn" [disabled]="dialogLaedt()" (click)="dialogSchliessen()">Abbrechen</button>
+    <button type="submit" form="bericht-form" class="btn btn--primary" [disabled]="dialogLaedt()" [attr.aria-busy]="dialogLaedt()">
+      {{ dialogLaedt() ? 'Wird gespeichert …' : (dialogOffen() === 'bearbeiten' ? 'Speichern' : 'Anlegen') }}
+    </button>
+  </div>
+</app-dialog>
+
+<!-- ------------------------------ Unterschrift-Dialog --------------------- -->
+<app-dialog
+  [offen]="dialogOffen() === 'unterschrift'"
+  titel="Bericht unterzeichnen"
+  (schliessen)="dialogSchliessen()"
+>
+  <form id="unterschrift-form" class="dialog-form" (submit)="$event.preventDefault(); unterschriftAbsenden()" novalidate>
+    @if (formularMeldung(); as fm) {
+      <div class="melde melde--fehler" role="alert">
+        <span class="melde__mark" aria-hidden="true">!</span>
+        <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+      </div>
+    }
+    <p class="dialog-hinweis">
+      Mit der Unterschrift nimmt der Kunde die Leistung ab. Der Bericht wird
+      dadurch <strong>besiegelt und unveränderlich</strong>.
+    </p>
+    <app-feld
+      [control]="unterschriftForm.controls.signed_by_name"
+      label="Name des Unterzeichnenden"
+      [pflicht]="true"
+      autocomplete="name"
+    />
+    <div class="feld-gruppe">
+      <span class="feld-gruppe__label">Unterschrift <span class="feld-gruppe__stern" aria-hidden="true">*</span></span>
+      <app-unterschrift-pad #pad label="Unterschriftenfeld des Kunden" (veraendert)="onUnterschriftVeraendert()" />
+    </div>
+  </form>
+  <div dialog-aktionen class="dialog__aktionen">
+    <button type="button" class="btn" [disabled]="dialogLaedt()" (click)="dialogSchliessen()">Abbrechen</button>
+    <button
+      type="submit"
+      form="unterschrift-form"
+      class="btn btn--primary"
+      [disabled]="dialogLaedt() || unterschriftLeer()"
+      [attr.aria-busy]="dialogLaedt()"
+    >
+      {{ dialogLaedt() ? 'Wird besiegelt …' : 'Unterzeichnen' }}
+    </button>
+  </div>
+</app-dialog>

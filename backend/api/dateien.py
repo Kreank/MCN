@@ -61,6 +61,7 @@ class ZielFilter(Schema):
     quote_id: UUID | None = None
     invoice_id: UUID | None = None
     article_id: UUID | None = None
+    site_report_id: UUID | None = None
 
 
 def _out(link):

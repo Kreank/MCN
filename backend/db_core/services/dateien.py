@@ -83,6 +83,7 @@ ZIELE = (
     "invoice_id",
     "communication_id",
     "article_id",
+    "site_report_id",
 )
 
 # Fachliche Einordnung. Freitext in der DB; hier eine gepflegte Liste, damit die

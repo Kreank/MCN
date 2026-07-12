@@ -1,0 +1,106 @@
+<app-dialog
+  [offen]="offen()"
+  [titel]="'DATANORM-Import' + (connection() ? ' — ' + connection()!.label : '')"
+  (schliessen)="schliessen()"
+>
+  @if (fehler(); as f) {
+    <p class="note note--error" role="alert">{{ f }}</p>
+  }
+
+  <p class="page-hint">
+    Stammdatei (Pflicht) und optional die Preisdatei wählen — je ZIP oder rohe
+    DATANORM-Datei. Vorhandene Artikel werden aktualisiert, neue angelegt,
+    gelöschte deaktiviert. Sehr große Vollkataloge laufen über das Kommandozeilen-
+    Werkzeug (Upload-Grenze ~80 MB).
+  </p>
+
+  <div class="dn-felder">
+    <label class="dn-feld">
+      <span class="feld-gruppe__label">
+        Stammdatei <span class="feld-gruppe__stern" aria-hidden="true">*</span>
+      </span>
+      <input
+        type="file"
+        required
+        accept=".zip,.001,.txt,application/zip"
+        [disabled]="busy() || abgeschlossen()"
+        (change)="stammGewaehlt($event)"
+      />
+      @if (stamm(); as s) { <span class="dn-datei">{{ s.name }}</span> }
+    </label>
+
+    <label class="dn-feld">
+      <span class="feld-gruppe__label">Preisdatei (optional)</span>
+      <input
+        type="file"
+        accept=".zip,.001,.txt,application/zip"
+        [disabled]="busy() || abgeschlossen()"
+        (change)="preiseGewaehlt($event)"
+      />
+      @if (preise(); as p) { <span class="dn-datei">{{ p.name }}</span> }
+    </label>
+  </div>
+
+  @if (busy()) {
+    <p class="lade-hinweis" role="status">
+      @if (prozent() !== null) { Datei wird übertragen … {{ prozent() }} % }
+      @else { Import läuft … das kann bei großen Dateien einen Moment dauern. }
+    </p>
+  }
+
+  @if (ergebnis(); as e) {
+    <div #ergebnisPanel class="dn-ergebnis" role="status" tabindex="-1">
+      <p class="dn-ergebnis__kopf">
+        @if (e.dry_run) { <strong>Vorschau</strong> — es wurde nichts geschrieben. }
+        @else { <strong>Import abgeschlossen.</strong> }
+        @if (e.version) { <span class="dn-ergebnis__meta">DATANORM {{ e.version }} · {{ e.waehrung }} · Stand {{ e.stand }}</span> }
+      </p>
+      <ul class="dn-zahlen">
+        <li><span class="dn-zahl">{{ e.angelegt }}</span> neu</li>
+        <li><span class="dn-zahl">{{ e.aktualisiert }}</span> aktualisiert</li>
+        <li><span class="dn-zahl">{{ e.deaktiviert }}</span> deaktiviert</li>
+        <li><span class="dn-zahl">{{ e.ohne_einkaufspreis }}</span> ohne EK</li>
+      </ul>
+
+      @if (e.beispiele.length > 0) {
+        <table class="dn-tabelle">
+          <caption class="sr-only">Beispiele der verarbeiteten Artikel</caption>
+          <thead>
+            <tr><th scope="col">Nummer</th><th scope="col">Bezeichnung</th><th scope="col">Aktion</th><th scope="col">EK</th></tr>
+          </thead>
+          <tbody>
+            @for (b of e.beispiele; track $index) {
+              <tr>
+                <td><code>{{ b.artikelnummer }}</code></td>
+                <td>{{ b.bezeichnung }}</td>
+                <td>{{ aktionLabel(b.aktion) }}</td>
+                <td>{{ preis(b.einkaufspreis) }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      }
+
+      @if (e.fehler.length > 0) {
+        <details class="dn-fehler">
+          <summary>{{ e.fehler.length }} Hinweis(e)/Fehler</summary>
+          <ul>@for (f of e.fehler; track $index) { <li>{{ f }}</li> }</ul>
+        </details>
+      }
+    </div>
+  }
+
+  <div dialog-aktionen class="dialog__aktionen">
+    <button type="button" class="btn" (click)="schliessen()">
+      {{ busy() ? 'Abbrechen' : (abgeschlossen() ? 'Schließen' : 'Abbrechen') }}
+    </button>
+    @if (!abgeschlossen()) {
+      <button type="button" class="btn" (click)="vorschau()" [disabled]="!kannStarten()">
+        Vorschau
+      </button>
+      <button type="button" class="btn btn--primary" (click)="importieren()" [disabled]="!kannStarten()">
+        {{ busy() ? 'Läuft …' : 'Importieren' }}
+      </button>
+    }
+  </div>
+</app-dialog>

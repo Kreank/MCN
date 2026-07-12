@@ -20,6 +20,7 @@ import {
 import { ServiceJob, ServiceJobStatus, serviceJobStatusLabel } from '../../core/einsatz.model';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { Dateien } from '../../shared/dateien/dateien';
+import { AuftragBerichte } from './berichte/auftrag-berichte';
 import { ZielFilter } from '../../core/datei.model';
 import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 import { Dialog } from '../../shared/dialog/dialog';
@@ -66,6 +67,7 @@ const STATUS_KANDIDATEN: WorkOrderStatus[] = [
     Bestaetigung,
     Feld,
     ReferenzWahl,
+    AuftragBerichte,
   ],
   templateUrl: './auftrag-detail.html',
   styleUrl: './auftrag-detail.scss',
@@ -89,6 +91,7 @@ export class AuftragDetail {
     { id: 'uebersicht', label: 'Übersicht' },
     { id: 'beteiligte', label: 'Beteiligte' },
     { id: 'termine', label: 'Termine' },
+    { id: 'berichte', label: 'Berichte' },
     { id: 'verlauf', label: 'Verlauf' },
     { id: 'dateien', label: 'Dateien' },
   ];

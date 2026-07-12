@@ -35,6 +35,7 @@ from api.planung import router as planung_router
 from api.projekt import router as projekt_router
 from api.property import router as property_router
 from api.security import router as security_router
+from api.site_report import router as site_report_router
 
 # Cookie-basierte Session-Auth für die ganze API; django-ninja aktiviert damit
 # zugleich den CSRF-Schutz für unsichere Methoden.
@@ -52,6 +53,7 @@ api.add_router("/property", property_router, tags=["property"])
 api.add_router("/workflow", projekt_router, tags=["workflow"])
 api.add_router("/workflow", aufgabe_router, tags=["workflow"])
 api.add_router("/workflow", auftrag_router, tags=["workflow"])
+api.add_router("/workflow", site_report_router, tags=["workflow"])
 api.add_router("/planung", planung_router, tags=["planung"])
 api.add_router("/invoicing", beleg_router, tags=["invoicing"])
 api.add_router("/buchhaltung", buchhaltung_router, tags=["buchhaltung"])

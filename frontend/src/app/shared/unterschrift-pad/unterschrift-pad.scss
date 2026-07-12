@@ -1,0 +1,47 @@
+:host {
+  display: block;
+}
+
+.pad {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.pad__flaeche {
+  width: 100%;
+  height: 180px;
+  border: 1.5px dashed var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  touch-action: none; // Zeichnen darf nicht scrollen/zoomen.
+  cursor: crosshair;
+  display: block;
+}
+
+// Hinweis mittig auf der leeren Fläche; er blockiert keine Zeigereingabe.
+.pad__hinweis {
+  position: absolute;
+  top: calc(90px - 0.5em);
+  left: 0;
+  right: 0;
+  text-align: center;
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+.pad__leiste {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.btn--klein {
+  min-height: 36px;
+  padding: 0 var(--space-4);
+  font-size: var(--step--1);
+}

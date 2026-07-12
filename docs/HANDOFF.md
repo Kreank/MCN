@@ -51,19 +51,16 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 > neu Service `anbindung.py` + `GET/POST/PATCH /api/pricing/supplier-connections` +
 > Frontend `features/haendler-anbindungen`, Einstieg aus Artikel). `credential_reference`
 > bleibt reiner Verweis (nie Secret). Details Memory `ids-connect`.
-> **Noch offen — GRUNDSATZENTSCHEIDUNG nötig:** XRechnung/ZUGFeRD (gesetzl. E-Rechnungs-
-> pflicht B2B! Format-/Lib-Wahl), **Lexware-Export** (Format), Skonto (Feld+Modell),
-> Abschlags→Schlussrechnung-Anrechnung, freier Termin ohne Auftrag
-> (`service_job.work_order_id` NOT NULL), OAuth-Absenderkonten (User-App-Registrierung),
-> **IDS-Connect Slice 2b** (Shop-Punchout — s. u.).
-> Dazu **IDS-Connect Slice 2a: Warenkorb-Kern** (`services/ids_warenkorb.py` — Rückgabe-
-> Warenkorb v2.5 parsen [namespace-tolerant, defusedxml-gehärtet], auf `article_supplier_reference`
-> mappen, Ausgangs-Warenkorb bauen; `POST /pricing/supplier-connections/{id}/warenkorb/preview`).
-> Protokoll geklärt: klassisches IDS-Connect-Warenkorb-Verfahren (kein OCI). Details Memory
-> `ids-connect`. **Offen — IDS-Connect Slice 2b:** verschlüsselte Zugangsdaten (Fernet, wie
-> Mailkonto), Punchout-Formular, token-gesicherter Rückgabe-Endpunkt, Cart→Angebot, Frontend
-> „Bei Händler bestellen" — braucht das Anbindungsblatt des Händlers (Shop-/Connector-URL +
-> Login-Feldnamen).
+> **AKTUELL (2026-07-11/12, diese Session):** **IDS-Connect komplett** (inkl.
+> Warenkorb-Roundtrip: Punchout-Session + token-gesicherter HOOK + Editor-Übernahme;
+> nur Live-Test mit echter G.U.T.-URL offen), **Baustellenberichte** (site_report,
+> Foto+Unterschrift), **DATANORM-Frontend-Import** (Upsert-Service + Upload-Dialog),
+> plus Rechnungs-Editor/Plantafel-Vollbild/Auftrags-Termine-Reiter. **Kopf 0057,
+> 1744 Tests grün.** Diese Arbeit ist **NOCH NICHT committet** (im Arbeitsbaum).
+> **GRUNDSATZFRAGEN SIND ENTSCHIEDEN (User, 2026-07-12)** — Memory
+> `grundsatz-entscheidungen-2026-07`; die priorisierten nächsten Schritte stehen unten
+> im Abschnitt „★ NÄCHSTE SCHRITTE" (kurz: 1. Skonto, 2. E-Rechnung ZUGFeRD, 3.
+> Abschlags-/Schlussrechnung, 4. freier Termin ohne Auftrag; Lexware+OAuth warten).
 
 ---
 
@@ -151,6 +148,40 @@ Onboarding-Checkliste (`468ddd4`), Akquisekanäle/Quellen (`a346fa8`). Dazu die
 fertige Parallel-Agent-Arbeit **Schnellerfassung + Zum-Projekt-Hochstufen**
 konsolidiert eingecheckt (`f681efd`). **1607 Tests grün, Migrationen bis 0050.**
 
+**Seither (Folge-Session, NOCH NICHT committet — im Arbeitsbaum):** DATEV-Export
+(s. u.), IDS-Connect (Anbindungsverwaltung + Warenkorb-Kern + Credentials/Punchout;
+Slice „Shop-Roundtrip/HOOK-Return + Frontend-Button" wartet auf G.U.T.-Connector-URL
+des Users), sowie die Test-Feedback-Punkte: Angebots-/Rechnungs-Editor-Einstieg
+wiederhergestellt + **Rechnungs-Editor** (Artikel-Palette), **Plantafel Vollbreite**
++ Klick→Termin-für-Auftrag, Auftrags-Reiter **Termine** (Kundenhistorie), und
+**Baustellenberichte** (`workflow.site_report`, Migration 0054/0055): Bericht +
+Fotos (`content.file_link.site_report_id`) + Kunden­unterschrift (Canvas-Pad → PNG
+im Objektspeicher, besiegelt ENTWURF→UNTERZEICHNET, danach per Trigger
+unveränderlich). Reiter „Berichte" im Auftrags-Detail.
+
+Danach der **IDS-Connect Warenkorb-Roundtrip** (`pricing.punchout_session`,
+Migration 0056/0057): „Bei Händler bestellen" aus dem Angebots-Editor →
+Punchout-Formular (itek 2.5, WKE/WKS) öffnet den Großhändler-Shop → der Shop
+POSTet den fertigen Warenkorb an einen **token-gesicherten HOOK**
+(`POST /api/pricing/warenkorb-return/{token}`, auth=None, Token nur als SHA-256-Hash,
+Einmal-Einlösung via select_for_update) → Positionen werden gegen den Artikelstamm
+aufgelöst (inkl. EK aus `NetPrice/PriceBasis`) und im Editor übernommen. Zugangsdaten
+(Benutzer/Passwort, Fernet) pflegt man je Anbindung über „Zugangsdaten"; die
+Shop-/Connector-URL ist das `shop_url`-Feld (die G.U.T.-URL trägt der User dort ein —
+sie ist Konfig, kein Code). Die itek-2.5-XSDs liegen unter `d:\Mitra\MCN\IDS\`.
+**1733 Tests grün, Kopf 0057.**
+
+Und der **DATANORM-Frontend-Import**: der DATANORM-4-Parser + CLI-Command
+existierten schon; neu ist der **Upsert-fähige Import-Service**
+(`services/datanorm_import.py`) mit Datei-Upload — Artikel/Preise anlegen ODER
+aktualisieren, Löschung (VKZ L) → Artikel INAKTIV, EK auch direkt aus dem A-Satz
+(Preiskennzeichen), Zip-Bomben-Schutz (entpackte Byte-Grenze), Vorschau (dry-run).
+Endpoint `POST /supplier-connections/{id}/imports/datanorm` (Stamm + optional
+Preisdatei, `pricing/ANLEGEN`, 80 MB, stempelt `last_import_at`, nur Großhändler).
+Frontend: „DATANORM-Import"-Dialog je Großhändler-Anbindung (Datei wählen →
+Vorschau/Importieren, Fortschritt, Ergebnis-Tabelle). Vollkataloge (mehrere GB)
+bleiben beim CLI-Kommando. Kein offener Feedback-Punkt mehr aus dem Testlauf.
+
 **⚠️ Gotcha Parallel-Agent:** Ein zweiter Agent baut manchmal mit, committet seine
 Arbeit aber NICHT selbst — sie liegt fertig+getestet im Arbeitsbaum. Vor eigenen
 Migrationen/`models.py`-Änderungen prüfen: liegt Fremdarbeit uncommittet herum?
@@ -165,17 +196,30 @@ Dateien wie `app.routes.ts`).
   Katalog) vs. „welche Gewerke je Niederlassung" (`branch_trade`-Link) vs. je
   Auftrag/Projekt. Wahrscheinlichste sinnvolle Auslegung: je Niederlassung.
 
-**Große, wertvolle Brocken — brauchen eine User-Entscheidung vor dem Bau:**
-- **E-Rechnung (XRechnung/ZUGFeRD)** — gesetzliche B2B-Pflicht, aktuell KEIN Feld/
-  Export. Format-/Lib-Wahl (ZUGFeRD-PDF/A-3+XML vs. reine XRechnung-XML), Leitweg-
-  ID-Modell. Compliance-Risiko, eigentlich vorrangig.
+**★ NÄCHSTE SCHRITTE — Grundsatzfragen sind ENTSCHIEDEN (User, 2026-07-12).**
+Details/Begründung: Memory `grundsatz-entscheidungen-2026-07`. Empfohlene Reihenfolge:
+
+1. **Skonto** (klein, `je Rechnung` eingebbar — kein Kundenstandard). Feld + Modell an
+   der Rechnung, berührt GoBD-Beleg + Beleg-PDF. **Zuerst, weil es in die E-Rechnung
+   einfließt** (ZUGFeRD-Zahlungsbedingungen).
+2. **E-Rechnung: ZUGFeRD/Factur-X** (Hybrid PDF/A-3 + eingebettetes XML) — der
+   Default, deckt B2B ab. Compliance-Priorität (gesetzl. Pflicht seit 2025). Lib-Wahl
+   treffen (z. B. Factur-X-/ZUGFeRD-Erzeugung; PDF/A-3-Einbettung). **XRechnung
+   (reines XML, B2G/Leitweg-ID) nur DANACH und optional** — User hat nur 1–2×/Jahr
+   öffentliche Auftraggeber.
+3. **Abschlags-/Teil-/Schlussrechnung** (großer Fachslice, Kernprozess des Users):
+   Abschlagsrechnung als Belegart, Schlussrechnung referenziert + rechnet bereits
+   berechnete Abschläge an. GoBD-Implikationen sauber modellieren.
+4. **Freier Termin ohne Auftrag** (Schema): `service_job.work_order_id` nullable +
+   Semantik „freier Termin". Zusätzlich: bei Begehungen ist der **Kontakt evtl. noch
+   nicht angelegt** → Kontaktbezug optional/nachträglich.
+5. **Lexware-Export** — WARTET auf das konkrete Importformat vom User (nach Rücksprache
+   Buchhaltung). Bis dahin reicht DATEV.
+6. **OAuth-Absenderkonten** — WARTET auf Chef-Entscheidung; SMTP reicht vorerst.
+
 - ✔ **DATEV-Export** (EXTF-Buchungsstapel) — **gebaut** (Migration 0051, Config am
-  Firmenprofil, `services/datev.py`, UI in der Buchhaltung). v1: Sammeldebitor,
-  Automatik-Erlöskonten je Steuersatz (SKR03/04), cent-genaue Reconciliation,
-  cp1252. Offen: echter DATEV-Import-Roundtrip beim Steuerberater, Personenkonten
-  (OPOS). Details Memory `datev-export`.
-- **Lexware-Export** (anderes Format) — noch offen, Config/Format vom User nötig.
-- **Skonto** (Feld + Modell an der Rechnung; berührt GoBD-Beleg + PDF).
+  Firmenprofil, `services/datev.py`, UI in der Buchhaltung). Offen: echter
+  DATEV-Import-Roundtrip beim Steuerberater, Personenkonten (OPOS). Memory `datev-export`.
 
 **Weitere ableitbare Reste (Bestand, noch offen):**
 - **Vier-Augen auf weitere Aktionen ausrollen** (Dubletten-Merge, Massenexport,
@@ -271,8 +315,8 @@ Default `mcn-dev-passwort-2026`):
 **Backend** (`cd backend`, uv):
 ```bash
 uv run python manage.py check
-uv run pytest -p no:cacheprovider -q          # aktuell 1687 grün, 2 skipped
-uv run python manage.py migrate               # Migrationskopf: 0053
+uv run pytest -p no:cacheprovider -q          # aktuell 1744 grün, 2 skipped
+uv run python manage.py migrate               # Migrationskopf: 0057
 uv run python manage.py runserver 127.0.0.1:8000 --noreload
 uv run python manage.py seed_demo             # idempotenter Demo-Datensatz
 ```

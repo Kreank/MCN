@@ -4,6 +4,7 @@ import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { map } from 'rxjs';
 import { AnbindungService } from '../../core/anbindung.service';
 import {
+  CredentialStatus,
   SupplierConnection,
   kindLabel,
   sourceSystemLabel,
@@ -15,6 +16,7 @@ import { Dialog } from '../../shared/dialog/dialog';
 import { Feld, FeldOption } from '../../shared/formular/feld';
 import { ReferenzWahl, RefSuche } from '../../shared/formular/referenz-wahl';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { DatanormImport } from './datanorm-import/datanorm-import';
 import { VerbotenState, fehlerDetail, fehlerState } from '../../shared/http-fehler';
 
 type ViewState =
@@ -35,7 +37,15 @@ type ViewState =
  */
 @Component({
   selector: 'app-haendler-anbindungen',
-  imports: [RouterLink, ReactiveFormsModule, Dialog, Feld, ReferenzWahl, KeinZugriff],
+  imports: [
+    RouterLink,
+    ReactiveFormsModule,
+    Dialog,
+    Feld,
+    ReferenzWahl,
+    KeinZugriff,
+    DatanormImport,
+  ],
   templateUrl: './haendler-anbindungen.html',
   styleUrl: './haendler-anbindungen.scss',
 })
@@ -73,6 +83,35 @@ export class HaendlerAnbindungen {
     this.partySvc
       .list({ page: 1, page_size: 20, q })
       .pipe(map((p) => p.items.map((o) => ({ id: o.id, label: o.display_name }))));
+
+  // --- DATANORM-Import -----------------------------------------------------
+  protected readonly importOffen = signal(false);
+  protected readonly importConn = signal<SupplierConnection | null>(null);
+
+  datanormImportOeffnen(c: SupplierConnection): void {
+    if (!this.darfAnlegen()) return;
+    this.importConn.set(c);
+    this.importOffen.set(true);
+  }
+
+  /** Nach einem echten Import: Liste neu laden (zeigt last_import_at aktuell). */
+  neuLadenNachImport(): void {
+    this.neuLaden();
+  }
+
+  // --- Zugangsdaten (IDS-Connect) ------------------------------------------
+  protected readonly credOffen = signal(false);
+  protected readonly credBusy = signal(false);
+  protected readonly credFehler = signal<string | null>(null);
+  protected readonly credConn = signal<SupplierConnection | null>(null);
+  protected readonly credStatus = signal<CredentialStatus | null>(null);
+
+  protected readonly credForm = this.fb.group({
+    username: this.fb.control('', { nonNullable: true }),
+    customer_number: this.fb.control('', { nonNullable: true }),
+    password: this.fb.control('', { nonNullable: true }),
+    passwort_entfernen: this.fb.control(false, { nonNullable: true }),
+  });
 
   protected readonly form = this.fb.group({
     supplier_party_id: this.fb.control('', {
@@ -203,6 +242,72 @@ export class HaendlerAnbindungen {
     }
   }
 
+  // ---- Zugangsdaten (Benutzername/Kundennummer/Passwort) -------------------
+  zugangsdaten(c: SupplierConnection): void {
+    if (!this.darfAendern()) return;
+    this.credConn.set(c);
+    this.credStatus.set(null);
+    this.credFehler.set(null);
+    this.credForm.reset({
+      username: '',
+      customer_number: '',
+      password: '',
+      passwort_entfernen: false,
+    });
+    this.credOffen.set(true);
+    // Aktuellen Status laden (nie das Passwort) und die Felder vorbelegen.
+    this.svc.credentials(c.id).subscribe({
+      next: (s) => {
+        this.credStatus.set(s);
+        this.credForm.patchValue({
+          username: s.username ?? '',
+          customer_number: s.customer_number ?? '',
+        });
+      },
+      error: (err: unknown) =>
+        this.credFehler.set(fehlerDetail(err) ?? 'Zugangsdaten konnten nicht geladen werden.'),
+    });
+  }
+
+  zugangsdatenSchliessen(): void {
+    if (this.credBusy()) return;
+    this.credOffen.set(false);
+  }
+
+  zugangsdatenSpeichern(): void {
+    const c = this.credConn();
+    if (!c || this.credBusy()) return;
+    const v = this.credForm.getRawValue();
+    // Passwort write-only: entfernen = "", neu = eingegebener Wert, sonst
+    // weglassen (unverändert). username/customer_number immer mitsenden.
+    const payload: {
+      username: string | null;
+      customer_number: string | null;
+      password?: string | null;
+    } = {
+      username: v.username.trim() || null,
+      customer_number: v.customer_number.trim() || null,
+    };
+    if (v.passwort_entfernen) {
+      payload.password = '';
+    } else if (v.password) {
+      payload.password = v.password;
+    }
+    this.credBusy.set(true);
+    this.credFehler.set(null);
+    this.svc.setCredentials(c.id, payload).subscribe({
+      next: (s) => {
+        this.credBusy.set(false);
+        this.credStatus.set(s);
+        this.credOffen.set(false);
+      },
+      error: (err: unknown) => {
+        this.credBusy.set(false);
+        this.credFehler.set(fehlerDetail(err) ?? 'Zugangsdaten konnten nicht gespeichert werden.');
+      },
+    });
+  }
+
   statusUmschalten(c: SupplierConnection): void {
     if (this.dialogBusy() || !this.darfAendern()) return;
     this.listenFehler.set(null);
@@ -225,5 +330,11 @@ export class HaendlerAnbindungen {
   }
   statusLabel(s: string): string {
     return statusLabel(s);
+  }
+  importDatum(iso: string): string {
+    const d = new Date(iso);
+    return isNaN(d.getTime())
+      ? iso
+      : d.toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' });
   }
 }

@@ -1,0 +1,21 @@
+<div class="pad">
+  <canvas
+    #canvas
+    class="pad__flaeche"
+    role="img"
+    [attr.aria-label]="label()"
+    (pointerdown)="onPointerDown($event)"
+    (pointermove)="onPointerMove($event)"
+    (pointerup)="onPointerUp($event)"
+    (pointercancel)="onPointerUp($event)"
+    (pointerleave)="onPointerUp($event)"
+  ></canvas>
+  @if (leer()) {
+    <span class="pad__hinweis" aria-hidden="true">Hier unterschreiben</span>
+  }
+  <div class="pad__leiste">
+    <button type="button" class="btn btn--klein" (click)="leeren()" [disabled]="leer()">
+      Löschen
+    </button>
+  </div>
+</div>

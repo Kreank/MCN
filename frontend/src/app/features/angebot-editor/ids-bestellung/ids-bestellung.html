@@ -1,0 +1,108 @@
+<app-dialog [offen]="offen()" titel="Bei Händler bestellen (IDS-Connect)" (schliessen)="schliessen()">
+  @if (fehler(); as f) {
+    <p class="note note--error" role="alert">{{ f }}</p>
+  }
+
+  @switch (phase()) {
+    @case ('auswahl') {
+      @if (connections().length === 0) {
+        <p class="tab-platzhalter">
+          Keine aktive IDS-Connect-Anbindung vorhanden. Lege unter „Artikel ·
+          Anbindungen“ eine an und hinterlege Shop-URL + Zugangsdaten.
+        </p>
+      } @else {
+        <p class="ids-hint">
+          Wähle den Großhändler. Der Shop öffnet in einem neuen Tab; dort stellst
+          du den Warenkorb zusammen und übergibst ihn zurück an MCN.
+        </p>
+        <ul class="ids-conns" role="list">
+          @for (c of connections(); track c.id) {
+            <li>
+              <button
+                type="button"
+                class="ids-conn"
+                [class.ids-conn--aktiv]="c.id === gewaehlt()"
+                [attr.aria-pressed]="c.id === gewaehlt()"
+                (click)="waehlen(c.id)"
+              >
+                <span class="ids-conn__name">{{ c.label }}</span>
+                <span class="ids-conn__sub">{{ c.supplier_name ?? c.source_namespace }}</span>
+              </button>
+            </li>
+          }
+        </ul>
+      }
+    }
+
+    @case ('wartet') {
+      <div class="ids-warten" role="status">
+        <span class="ids-warten__spinner" aria-hidden="true"></span>
+        <p>
+          Der Shop sollte sich in einem neuen Tab geöffnet haben (sonst bitte den
+          Popup-Blocker prüfen). Sobald du den Warenkorb dort an MCN übergibst,
+          erscheinen die Positionen hier automatisch.
+        </p>
+      </div>
+    }
+
+    @case ('fertig') {
+      <p class="ids-hint" role="status">
+        {{ positionen().length }} Position(en) empfangen, davon {{ matchedCount() }}
+        einem Stammartikel zugeordnet. Nicht zugeordnete Positionen werden als freie
+        Zeilen übernommen (Preise sind Einkaufspreise — Aufschlag bitte prüfen).
+      </p>
+      <ul class="ids-pos" role="list">
+        @for (p of positionen(); track $index) {
+          <li class="ids-pos__item">
+            <span class="ids-pos__nr"><code>{{ p.art_no }}</code></span>
+            <span class="ids-pos__text">{{ p.short_text || p.article_name || '—' }}</span>
+            <span class="ids-pos__menge">{{ p.qty }} {{ p.unit }}</span>
+            <span class="ids-pos__preis">{{ preis(p) }}</span>
+            @if (p.matched) {
+              <span class="stamp stamp--positive">Zugeordnet</span>
+            } @else if (p.ambiguous) {
+              <span class="stamp stamp--warn">Mehrdeutig</span>
+            } @else {
+              <span class="stamp">Frei</span>
+            }
+          </li>
+        }
+      </ul>
+    }
+  }
+
+  <div dialog-aktionen class="dialog__aktionen">
+    <button type="button" class="btn" (click)="schliessen()" [disabled]="busy()">
+      {{ phase() === 'fertig' ? 'Verwerfen' : 'Abbrechen' }}
+    </button>
+
+    @switch (phase()) {
+      @case ('auswahl') {
+        <button
+          type="button"
+          class="btn btn--primary"
+          (click)="shopOeffnen()"
+          [disabled]="busy() || !gewaehlt()"
+        >
+          {{ busy() ? 'Öffnet …' : 'Shop öffnen' }}
+        </button>
+      }
+      @case ('wartet') {
+        <button type="button" class="btn" (click)="jetztPruefen()" [disabled]="busy()">
+          {{ busy() ? 'Prüft …' : 'Jetzt prüfen' }}
+        </button>
+      }
+      @case ('fertig') {
+        <button
+          #uebernehmenBtn
+          type="button"
+          class="btn btn--primary"
+          (click)="uebernehmenBestaetigen()"
+          [disabled]="positionen().length === 0"
+        >
+          In das Angebot übernehmen
+        </button>
+      }
+    }
+  </div>
+</app-dialog>

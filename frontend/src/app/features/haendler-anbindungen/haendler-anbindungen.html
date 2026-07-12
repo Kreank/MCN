@@ -14,8 +14,10 @@
     Katalog-Anbindungen der Lieferanten (DATANORM-Import und IDS-Connect). An einem
     Namespace hängen die Artikel- und Preisreferenzen des Händlers — Quellsystem,
     Namespace und Lieferant sind darum nach dem Anlegen unveränderlich; nicht mehr
-    genutzte Anbindungen werden deaktiviert, nicht gelöscht. Der eigentliche
-    IDS-Connect-Warenkorb (Shop-Roundtrip) folgt als eigener Ausbauschritt.
+    genutzte Anbindungen werden deaktiviert, nicht gelöscht. Für IDS-Connect
+    hinterlegst du je Anbindung die Shop-/Connector-URL und über „Zugangsdaten“
+    Benutzername und Passwort; damit läuft der Warenkorb-Roundtrip (aus einem
+    Angebot „Bei Händler bestellen“).
   </p>
 
   @switch (state().kind) {
@@ -68,13 +70,28 @@
                   <dt>Zugangsdaten</dt>
                   <dd>{{ c.credential_reference ? ('Verweis: ' + c.credential_reference) : '—' }}</dd>
                 </div>
+                @if (c.last_import_at) {
+                  <div><dt>Letzter Import</dt><dd>{{ importDatum(c.last_import_at) }}</dd></div>
+                }
               </dl>
-              @if (darfAendern()) {
+              @if (darfAendern() || (darfAnlegen() && c.connection_kind === 'GROSSHAENDLER')) {
                 <div class="karte__aktionen">
-                  <button type="button" class="btn" (click)="bearbeiten(c)">Bearbeiten</button>
-                  <button type="button" class="btn" (click)="statusUmschalten(c)">
-                    {{ c.status === 'ACTIVE' ? 'Deaktivieren' : 'Aktivieren' }}
-                  </button>
+                  @if (darfAendern()) {
+                    <button type="button" class="btn" (click)="bearbeiten(c)">Bearbeiten</button>
+                    @if (c.source_system === 'IDS_CONNECT') {
+                      <button type="button" class="btn" (click)="zugangsdaten(c)">Zugangsdaten</button>
+                    }
+                  }
+                  @if (darfAnlegen() && c.connection_kind === 'GROSSHAENDLER') {
+                    <button type="button" class="btn" (click)="datanormImportOeffnen(c)">
+                      DATANORM-Import
+                    </button>
+                  }
+                  @if (darfAendern()) {
+                    <button type="button" class="btn" (click)="statusUmschalten(c)">
+                      {{ c.status === 'ACTIVE' ? 'Deaktivieren' : 'Aktivieren' }}
+                    </button>
+                  }
                 </div>
               }
             </li>
@@ -129,15 +146,15 @@
       />
       <app-feld
         [control]="form.controls.shop_url"
-        label="Shop-URL"
+        label="Shop-/Connector-URL"
         typ="text"
-        hinweis="Optional — Einstiegs-URL des Händler-Shops (für IDS-Connect)."
+        hinweis="IDS-Connect: die Einstiegs-/Connector-URL des Händler-Shops, an die der Punchout gesendet wird."
       />
       <app-feld
         [control]="form.controls.credential_reference"
         label="Zugangsdaten-Verweis"
         typ="text"
-        hinweis="Nur ein Verweis auf den Secret-Store (z. B. Schlüsselname) — niemals das Passwort selbst."
+        hinweis="Nur ein Verweis (z. B. Schlüsselname) — niemals das Passwort selbst. Benutzername/Passwort setzt du über „Zugangsdaten“."
       />
     </form>
     @if (dialogFehler(); as f) {
@@ -157,4 +174,55 @@
       </button>
     </div>
   </app-dialog>
+
+  <!-- Zugangsdaten-Dialog (IDS-Connect) -->
+  <app-dialog
+    [offen]="credOffen()"
+    titel="IDS-Zugangsdaten"
+    (schliessen)="zugangsdatenSchliessen()"
+  >
+    @if (credConn(); as c) {
+      <p class="page-hint">
+        Benutzername und Passwort für den IDS-Connect-Zugang bei
+        <strong>{{ c.label }}</strong>. Das Passwort wird verschlüsselt gespeichert
+        und nie wieder angezeigt.
+      </p>
+    }
+    <form class="anbindung-form" [formGroup]="credForm" (ngSubmit)="zugangsdatenSpeichern()" novalidate>
+      <app-feld [control]="credForm.controls.username" label="Benutzername" autocomplete="off" />
+      <app-feld [control]="credForm.controls.customer_number" label="Kundennummer" autocomplete="off" />
+      <app-feld
+        [control]="credForm.controls.password"
+        label="Passwort"
+        typ="password"
+        autocomplete="new-password"
+        [hinweis]="credStatus()?.has_password ? 'Leer lassen = unverändert. Neuer Wert = ersetzt das gespeicherte Passwort.' : 'Wird verschlüsselt gespeichert.'"
+      />
+      @if (credStatus()?.has_password) {
+        <app-feld
+          [control]="credForm.controls.passwort_entfernen"
+          label="Passwort entfernen"
+          typ="checkbox"
+        />
+      }
+    </form>
+    @if (credFehler(); as f) {
+      <p class="note note--error" role="alert">{{ f }}</p>
+    }
+    <div dialog-aktionen class="dialog__aktionen">
+      <button type="button" class="btn" (click)="zugangsdatenSchliessen()" [disabled]="credBusy()">
+        Abbrechen
+      </button>
+      <button type="button" class="btn btn--primary" (click)="zugangsdatenSpeichern()" [disabled]="credBusy()">
+        {{ credBusy() ? 'Speichern …' : 'Speichern' }}
+      </button>
+    </div>
+  </app-dialog>
+
+  <!-- DATANORM-Import-Dialog -->
+  <app-datanorm-import
+    [connection]="importConn()"
+    [(offen)]="importOffen"
+    (importiert)="neuLadenNachImport()"
+  />
 </section>

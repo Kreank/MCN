@@ -20,6 +20,7 @@ export interface ZielFilter {
   quote_id?: string;
   invoice_id?: string;
   article_id?: string;
+  site_report_id?: string;
 }
 
 /** Fachliche Einordnung einer Verknuepfung (Freitext in der DB, gepflegte Liste). */

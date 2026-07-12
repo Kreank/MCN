@@ -2785,6 +2785,10 @@ class FileLink(models.Model):
         "Article", models.DO_NOTHING, db_column="article_id",
         null=True, blank=True, related_name="file_links",
     )
+    site_report = models.ForeignKey(
+        "SiteReport", models.DO_NOTHING, db_column="site_report_id",
+        null=True, blank=True, related_name="file_links",
+    )
     asset_id = models.UUIDField(null=True, blank=True)
     communication_id = models.UUIDField(null=True, blank=True)
     link_category = models.TextField(null=True, blank=True)
@@ -2799,6 +2803,53 @@ class FileLink(models.Model):
 
     def __str__(self):
         return f"{self.file_id} -> {self.link_category or 'ohne Kategorie'}"
+
+
+class SiteReport(models.Model):
+    """workflow.site_report — Baustellenbericht (Migration 0054).
+
+    Tätigkeitsnachweis vor Ort zu einem Auftrag (optional Einsatz). Fotos hängen
+    als content.file_link (site_report_id) daran; die Kundenunterschrift
+    (`signature_file_id`, PNG im Objektspeicher) besiegelt den Bericht
+    (ENTWURF → UNTERZEICHNET). Ein unterzeichneter Bericht ist unveränderlich
+    (Trigger `protect_site_report`); kein Löschen (GoBD-Schutzstandard).
+    """
+
+    id = models.UUIDField(primary_key=True)
+    work_order = models.ForeignKey(
+        "WorkOrder", models.DO_NOTHING, db_column="work_order_id",
+        related_name="site_reports",
+    )
+    service_job = models.ForeignKey(
+        "ServiceJob", models.DO_NOTHING, db_column="service_job_id",
+        null=True, blank=True, related_name="site_reports",
+    )
+    report_date = models.DateField()
+    author = models.ForeignKey(
+        AppUser, models.DO_NOTHING, db_column="author_id",
+        related_name="site_reports",
+    )
+    weather = models.TextField(null=True, blank=True)
+    activity_text = models.TextField()
+    hours_worked = models.DecimalField(
+        max_digits=6, decimal_places=2, null=True, blank=True
+    )
+    materials_note = models.TextField(null=True, blank=True)
+    remarks = models.TextField(null=True, blank=True)
+    status = models.TextField(db_default="ENTWURF")  # ENTWURF | UNTERZEICHNET
+    signed_by_name = models.TextField(null=True, blank=True)
+    signed_at = models.DateTimeField(null=True, blank=True)
+    signature_file_id = models.UUIDField(null=True, blank=True)
+    version = models.IntegerField(db_default=models.Value(1))
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'workflow"."site_report'
+
+    def __str__(self):
+        return f"Baustellenbericht {self.report_date} ({self.status})"
 
 
 class SupplierConnection(models.Model):
@@ -2866,3 +2917,44 @@ class SupplierCredential(models.Model):
 
     def __str__(self):
         return f"Zugangsdaten {self.connection_id}"
+
+
+class PunchoutSession(models.Model):
+    """pricing.punchout_session — kurzlebige IDS-Connect-Punchout-Session
+    (Migration 0056).
+
+    Ordnet den unauthentifizierten Shop-Rückruf (hookurl) der auslösenden Aktion
+    zu. In der DB liegt nur der SHA-256-Hash des Einmal-Tokens (`token_hash`); der
+    Klartext lebt nur in der an den Shop übergebenen hookurl. Statusautomat
+    OFFEN → EINGELOEST; abgelaufene Sessions (`expires_at`) wehrt der Service ab.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    connection = models.ForeignKey(
+        SupplierConnection, models.DO_NOTHING, db_column="connection_id",
+        related_name="punchout_sessions",
+    )
+    quote = models.ForeignKey(
+        "Quote", models.DO_NOTHING, db_column="quote_id",
+        null=True, blank=True, related_name="punchout_sessions",
+    )
+    token_hash = models.TextField()
+    action = models.TextField()  # WKE | WKS
+    status = models.TextField(db_default="OFFEN")  # OFFEN | EINGELOEST
+    returned_cart_xml = models.TextField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        AppUser, models.DO_NOTHING, db_column="created_by",
+        related_name="punchout_sessions",
+    )
+    expires_at = models.DateTimeField()
+    redeemed_at = models.DateTimeField(null=True, blank=True)
+    version = models.IntegerField(db_default=models.Value(1))
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'pricing"."punchout_session'
+
+    def __str__(self):
+        return f"Punchout {self.action} ({self.status})"

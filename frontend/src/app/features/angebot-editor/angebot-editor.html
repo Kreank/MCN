@@ -426,6 +426,10 @@
                 + Freie Position
               </button>
 
+              <button type="button" class="btn palette__ids" (click)="idsOffen.set(true)">
+                Bei Händler bestellen
+              </button>
+
               <div class="palette__liste" aria-live="polite">
                 @if (paletteLaedt()) {
                   <p class="palette__hinweis">Wird gesucht …</p>
@@ -663,4 +667,11 @@
   [laedt]="versendenLaedt()"
   (bestaetigen)="versendenBestaetigen()"
   (abbrechen)="versendenAbbrechen()"
+/>
+
+<!-- ===================== IDS-Connect: Bei Händler bestellen ===================== -->
+<app-ids-bestellung
+  [quoteId]="idsQuoteId()"
+  [(offen)]="idsOffen"
+  (uebernehmen)="idsPositionenUebernehmen($event)"
 />

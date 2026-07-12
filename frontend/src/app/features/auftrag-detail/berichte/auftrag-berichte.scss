@@ -1,0 +1,135 @@
+:host {
+  display: block;
+}
+
+.berichte {
+  display: grid;
+  grid-template-columns: minmax(14rem, 20rem) 1fr;
+  gap: var(--space-5);
+  align-items: start;
+
+  @media (max-width: 52rem) {
+    grid-template-columns: 1fr;
+  }
+}
+
+// --- Liste (Master) --------------------------------------------------------
+.berichte__liste {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.berichte__eintrag {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    'datum status'
+    'aktivitaet aktivitaet';
+  gap: var(--space-1) var(--space-2);
+  width: 100%;
+  text-align: left;
+  padding: var(--space-3);
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+
+  &:hover {
+    border-color: var(--line-strong);
+  }
+  &--aktiv {
+    border-color: var(--command);
+    box-shadow: inset 0 0 0 1px var(--command);
+  }
+}
+
+.berichte__datum {
+  grid-area: datum;
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+.berichte__aktivitaet {
+  grid-area: aktivitaet;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: var(--step-0);
+}
+
+// --- Detail ----------------------------------------------------------------
+.bericht {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-width: 0;
+}
+
+.bericht__kopf {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+}
+.bericht__kicker {
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  margin-right: var(--space-3);
+}
+.bericht__aktionen {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.bericht__block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.bericht__h {
+  font-size: var(--step--1);
+  font-family: var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.bericht__text {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+// Abnahme-Banner (nur bei unterzeichneten Berichten).
+.bericht__abnahme {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius);
+  background: var(--positive-tint, color-mix(in srgb, #9fcd99 22%, transparent));
+  border: 1.5px solid color-mix(in srgb, #9fcd99 55%, var(--line-strong));
+}
+.bericht__abnahme-mark {
+  font-size: 1.4rem;
+  line-height: 1;
+}
+.bericht__abnahme-zeit {
+  display: block;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+.dialog-hinweis {
+  margin: 0 0 var(--space-2);
+  color: var(--ink-muted);
+  font-size: var(--step--1);
+}
