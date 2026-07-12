@@ -21,15 +21,20 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
 
+from django.utils import timezone as dj_timezone
+
 from db_core.db_context import business_transaction
 from db_core.gate_errors import as_business_error
 from db_core.models import (
     Article,
     Assembly,
     BelegRubrik,
+    CompanyProfile,
     Invoice,
     InvoiceLine,
     InvoiceParty,
+    Organization,
+    PartyAddress,
     Project,
     Property,
     Quote,
@@ -724,6 +729,238 @@ def add_invoice_party(
     return party
 
 
+# ---------------------------------------------------------------------------
+# Stammdaten-Snapshot (Aussteller, Beteiligte, Leistungsort)
+# ---------------------------------------------------------------------------
+# Ein veröffentlichter Beleg muss sich allein aus seinem Snapshot rekonstruieren
+# lassen (B-21/B-30). Bis zum E-Rechnungs-Slice fror `billing_snapshot` von den
+# Beteiligten nur die `party_id` + Rolle ein — Name, Anschrift und USt-IdNr.
+# kamen beim Rendern aus den LIVE-Stammdaten. Ein Umzug des Kunden oder eine
+# geänderte Firmenanschrift hätte damit einen längst gestellten Beleg
+# nachträglich verändert (und beim ZUGFeRD-XML ein anderes XML erzeugt als das
+# archivierte PDF zeigt). Seit `SNAPSHOT_VERSION = 2` friert die
+# Veröffentlichung diese Stammdaten mit ein.
+#
+# Der Hash ändert sich dadurch NUR für neu veröffentlichte Belege — bestehende
+# Belege werden nicht rehasht (das wäre eine nachträgliche Änderung an einem
+# festgeschriebenen Beleg). Leser (Beleg-PDF, ZUGFeRD) müssen deshalb den
+# Live-Fallback für Altbelege behalten.
+SNAPSHOT_VERSION = 2
+
+# Reihenfolge = Vorrang bei der Adresswahl für den Beleg: die Rechnungsadresse
+# schlägt die Geschäfts-/Post-/Privatadresse.
+_ADDRESS_PREFERENCE = ("BILLING", "BUSINESS", "POSTAL", "PRIVATE")
+
+
+def _address_snapshot(address):
+    if address is None:
+        return None
+    return {
+        "street": address.street,
+        "house_number": address.house_number,
+        "address_addition": address.address_addition,
+        "postal_code": address.postal_code,
+        "city": address.city,
+        "country_code": address.country_code,
+    }
+
+
+def party_address(party_id, on_date=None):
+    """Die zum Stichtag gültige Belegadresse einer Partei (Address) oder None.
+
+    Vorrang: BILLING > BUSINESS > POSTAL > PRIVATE, innerhalb eines Typs die
+    primäre Zuordnung. Ohne Stichtag zählt die heute gültige Zuordnung.
+
+    **Stichtag ist der Zeitpunkt der Veröffentlichung, nicht das Belegdatum.**
+    Ein Beleg darf zurückdatiert werden (Monatsabrechnung zum Ersten); die
+    Adresszuordnung trägt aber das Datum ihrer Erfassung. Mit dem Belegdatum als
+    Stichtag fiele die Anschrift eines erst danach erfassten Kunden still weg —
+    der Beleg ginge ohne Empfängeranschrift raus. Maßgeblich ist, wohin der Beleg
+    JETZT geht.
+
+    `localdate()` und NICHT `utcnow().date()`: `party_address.valid_from` wird von
+    `identity.add_address` mit dem LOKALEN Datum gesetzt. Zwischen 00:00 und 02:00
+    MESZ liegt das UTC-Datum einen Tag zurück — eine am selben lokalen Tag erfasste
+    Adresse fiele dann still aus dem Gültigkeitsfenster.
+
+    (Die Ableitung von Beleg- und Fälligkeitsdatum in `publish_invoice` bleibt
+    bewusst bei UTC: sie muss deckungsgleich mit dem DB-Trigger bleiben, der
+    `(now() AT TIME ZONE 'UTC')::date` setzt.)
+    """
+    stichtag = on_date or dj_timezone.localdate()
+    zuordnungen = [
+        pa
+        for pa in PartyAddress.objects.filter(party_id=party_id).select_related("address")
+        if pa.valid_from <= stichtag
+        and (pa.valid_until is None or pa.valid_until > stichtag)
+    ]
+    if not zuordnungen:
+        return None
+
+    def rang(pa):
+        typ = (
+            _ADDRESS_PREFERENCE.index(pa.address_type)
+            if pa.address_type in _ADDRESS_PREFERENCE
+            else len(_ADDRESS_PREFERENCE)
+        )
+        return (typ, 0 if pa.is_primary else 1, pa.valid_from)
+
+    return sorted(zuordnungen, key=rang)[0].address
+
+
+def party_stammdaten(party, on_date=None):
+    """Stammdaten-Snapshot einer Partei: Name, Typ, Steuer-IDs, Anschrift.
+
+    USt-IdNr./Steuernummer gibt es nur an Organisationen (identity.organization);
+    eine natürliche Person trägt keine.
+    """
+    org = Organization.objects.filter(party_id=party.id).first()
+    return {
+        "display_name": party.display_name,
+        "party_type": party.party_type,
+        "vat_id": org.vat_id if org else None,
+        "tax_number": org.tax_number if org else None,
+        "address": _address_snapshot(party_address(party.id, on_date)),
+    }
+
+
+def issuer_stammdaten():
+    """Stammdaten-Snapshot des Ausstellers (company.company_profile, Singleton).
+
+    None, wenn noch kein Firmenprofil gepflegt ist — der Beleg bleibt dann
+    ausstellbar (das PDF zeigt seinen Fallback), die E-Rechnung verweigert
+    ehrlich (ohne Verkäuferanschrift gibt es kein gültiges EN16931-XML).
+    """
+    profile = CompanyProfile.objects.first()
+    if profile is None:
+        return None
+    return {
+        "company_name": profile.company_name,
+        "legal_form": profile.legal_form,
+        "street": profile.street,
+        "postal_code": profile.postal_code,
+        "city": profile.city,
+        "country": profile.country,
+        "vat_id": profile.vat_id,
+        "tax_number": profile.tax_number,
+        "iban": profile.iban,
+        "bic": profile.bic,
+        "bank_name": profile.bank_name,
+        "email": profile.email,
+        "phone": profile.phone,
+        "commercial_register": profile.commercial_register,
+        "managing_director": profile.managing_director,
+        "managing_director_title": profile.managing_director_title,
+    }
+
+
+def delivery_stammdaten(prop):
+    """Snapshot des Leistungsorts (Liegenschaft) — im CII die ShipToTradeParty.
+
+    Die Liegenschaft ist am Beleg Pflicht (invoice.property_id NOT NULL); sie ist
+    der Ort, an dem die Leistung erbracht wurde. Sie wandert deshalb ebenfalls in
+    den Snapshot, statt beim Rendern live nachgeschlagen zu werden.
+    """
+    if prop is None:
+        return None
+    return {
+        "name": prop.name,
+        "property_number": prop.property_number,
+        "address": _address_snapshot(prop.address),
+    }
+
+
+def beleg_stammdaten(invoice):
+    """Aussteller, Beteiligte und Leistungsort eines Belegs für die Ausgabe.
+
+    **Quelle ist der eingefrorene Snapshot** (SNAPSHOT_VERSION >= 2): PDF und
+    ZUGFeRD-XML zeigen damit genau die Stammdaten, die bei der Veröffentlichung
+    galten — und beide dasselbe.
+
+    **Live-Fallback JE FELD, nicht je Snapshot-Version.** Er greift für Entwürfe
+    (die haben noch gar keinen Snapshot), für Altbelege vor der Snapshot-Härtung
+    — und auch dann, wenn ein v2-Snapshot ein Feld gar nicht füllen KONNTE: wurde
+    ein Beleg veröffentlicht, bevor das Firmenprofil gepflegt war, steht dort
+    `issuer: null`. Ein reiner Versions-Fallback hätte diesen Beleg für immer
+    ausstellerlos gelassen (PDF-Kopf „Firmenprofil noch nicht gepflegt", E-Rechnung
+    dauerhaft 422) — und ein veröffentlichter Beleg lässt sich nicht neu ausstellen.
+    Ein NULL-Feld ist keine eingefrorene Aussage, sondern eine Lücke; sie darf
+    nachgezogen werden, ohne den Snapshot anzufassen (B-30 bleibt unberührt).
+
+    Was der Snapshot WIRKLICH trägt, gewinnt dagegen immer — ein späterer Umzug
+    des Kunden oder der Firma ändert keinen gestellten Beleg.
+
+    Erwartet ein Invoice mit vorgeladenem `property__address` und `parties__party`.
+    """
+    snapshot = invoice.billing_snapshot or {}
+    header = snapshot.get("header") or {}
+    gefroren = {p.get("party_id"): p for p in (snapshot.get("parties") or [])}
+
+    def _partei(p):
+        eingefroren = gefroren.get(str(p.party_id)) or {}
+        return {
+            "party_id": str(p.party_id),
+            "role": eingefroren.get("role", p.role),
+            "is_primary": eingefroren.get("is_primary", p.is_primary),
+            "allocation_percent": eingefroren.get(
+                "allocation_percent",
+                str(p.allocation_percent) if p.allocation_percent is not None else None,
+            ),
+            # Fehlt der eingefrorene Stammdatensatz (Altbeleg), live nachschlagen.
+            "snapshot": eingefroren.get("snapshot") or party_stammdaten(p.party),
+        }
+
+    return {
+        # Sagt dem Aufrufer, ob die Stammdaten aus dem eingefrorenen Beleg kommen.
+        "aus_snapshot": bool(header.get("issuer")),
+        "issuer": header.get("issuer") or issuer_stammdaten(),
+        "delivery": header.get("delivery") or delivery_stammdaten(invoice.property),
+        "parties": [
+            _partei(p)
+            for p in sorted(
+                invoice.parties.all(), key=lambda p: (p.role, str(p.party_id))
+            )
+        ],
+    }
+
+
+def beteiligter(stammdaten, role):
+    """Der (primäre) Beteiligte einer Rolle aus `beleg_stammdaten`, sonst None."""
+    chosen = None
+    for p in stammdaten["parties"]:
+        if p.get("role") == role:
+            chosen = p
+            if p.get("is_primary"):
+                break
+    return chosen
+
+
+def anzeige_menge_preis(line):
+    """(Menge, Einzelpreis) einer Position **für die Ausgabe** — PDF wie XML.
+
+    Ein Kreditbeleg (Gutschrift/Storno) speichert seine Umkehr im Einzelpreis:
+    `_negated_lines` negiert den Preis, die Menge bleibt positiv (DB-CHECK
+    `quantity > 0`). Für die Ausgabe taugt das nicht:
+
+    - EN16931 verbietet einen negativen Nettoeinzelpreis (BR-27).
+    - ZUGFeRD verlangt, dass Sichtbild (PDF) und Daten (XML) DENSELBEN Inhalt
+      tragen. Zeigte das PDF „100 × −2,40" und das XML „−100 × 2,40", wäre das
+      Hybrid-Dokument in sich widersprüchlich.
+
+    Deshalb wird das Vorzeichen für die Ausgabe einheitlich auf die MENGE gelegt.
+    Der Positionsbetrag (`net_amount`) bleibt unangetastet — er ist in beiden
+    Darstellungen derselbe (negativ), und Menge × Preis geht weiterhin auf.
+
+    **Einzige Vorzeichenstelle für die Ausgabe** — beide Renderer rufen sie auf,
+    damit sie nicht auseinanderlaufen können.
+    """
+    menge = line.quantity
+    preis = line.unit_price
+    if preis is not None and preis < 0:
+        return (None if menge is None else -menge), -preis
+    return menge, preis
+
+
 def _line_snapshot(line, rubrik_nummern=None):
     def s(v):
         return None if v is None else str(v)
@@ -790,7 +1027,8 @@ def publish_invoice(actor_app_user_id, *, invoice_id):
     """
     invoice = (
         Invoice.objects.filter(id=invoice_id)
-        .prefetch_related("lines", "parties")
+        .select_related("property__address")
+        .prefetch_related("lines", "parties__party")
         .first()
     )
     if invoice is None:
@@ -828,6 +1066,10 @@ def publish_invoice(actor_app_user_id, *, invoice_id):
     )
 
     header = {
+        # Versionsstempel des Snapshot-Aufbaus: Leser erkennen daran, ob die
+        # Stammdaten (Aussteller/Beteiligte/Leistungsort) eingefroren sind oder
+        # ob sie für einen Altbeleg live nachgeschlagen werden müssen.
+        "snapshot_version": SNAPSHOT_VERSION,
         "invoice_type": invoice.invoice_type,
         "property_id": str(invoice.property_id),
         "project_id": str(invoice.project_id) if invoice.project_id else None,
@@ -852,6 +1094,11 @@ def publish_invoice(actor_app_user_id, *, invoice_id):
         "net_total": str(invoice.net_total),
         "tax_total": str(invoice.tax_total),
         "gross_total": str(invoice.gross_total),
+        # Stammdaten einfrieren (SNAPSHOT_VERSION 2): Aussteller und Leistungsort
+        # gehören auf den Beleg — eine spätere Änderung am Firmenprofil oder an der
+        # Liegenschaft darf einen gestellten Beleg nicht rückwirkend umschreiben.
+        "issuer": issuer_stammdaten(),
+        "delivery": delivery_stammdaten(invoice.property),
     }
     parties = [
         {
@@ -861,6 +1108,9 @@ def publish_invoice(actor_app_user_id, *, invoice_id):
             "allocation_percent": (
                 str(p.allocation_percent) if p.allocation_percent is not None else None
             ),
+            # Name/Anschrift/USt-IdNr. des Beteiligten einfrieren (Stichtag =
+            # jetzt, siehe party_address: das Belegdatum kann zurückdatiert sein).
+            "snapshot": party_stammdaten(p.party),
         }
         for p in sorted(invoice.parties.all(), key=lambda p: (p.role, str(p.party_id)))
     ]

@@ -21,6 +21,25 @@
   font-size: var(--step--1);
 }
 
+// Erklärt den E-Rechnungs-Knopf im Mappenkopf (aria-describedby): „ZUGFeRD"
+// sagt niemandem etwas, der es nicht schon kennt — der Knopf darf kein
+// Fachkürzel ohne Erläuterung bleiben.
+.erechnung-hinweis {
+  max-width: 60ch;
+  margin: 0 0 var(--space-5);
+  padding: var(--space-3) var(--space-4);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink-muted);
+  font-size: var(--step--1);
+  line-height: 1.55;
+
+  strong {
+    color: var(--ink);
+  }
+}
+
 // ---- Beteiligtenliste (wie Auftrag/Projekt) -------------------------------
 .ref-liste {
   list-style: none;

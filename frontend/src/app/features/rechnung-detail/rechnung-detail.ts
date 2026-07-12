@@ -25,6 +25,7 @@ import { ReferenzWahl, RefSuche } from '../../shared/formular/referenz-wahl';
 import { apiFehlerZuweisen } from '../../shared/formular/api-fehler';
 import { apiZuDeDezimal } from '../../shared/formular/dezimal';
 import { fristAbgelaufen, isoDatumDe } from '../../shared/datum';
+import { dateiDownloadAusloesen } from '../../shared/datei-download';
 import {
   felderAlsBeruehrtMarkieren,
   serverFehlerZuruecksetzen,
@@ -394,5 +395,53 @@ export class RechnungDetail {
   /** URL der on-the-fly gerenderten PDF-Ausfertigung (nur veröffentlicht). */
   pdfUrl(id: string): string {
     return `/api/invoicing/invoices/${id}/pdf`;
+  }
+
+  // --- E-Rechnung (ZUGFeRD/Factur-X) ---------------------------------------
+  // Bewusst KEIN `window.open` auf die URL: der Endpunkt ist anmeldepflichtig,
+  // und ein neues Fenster trägt weder den CSRF-Header noch verlässlich das
+  // Session-Cookie. Der Download läuft daher als Blob durch den HttpClient
+  // (Interceptor) und wird lokal als Datei ausgelöst.
+  protected readonly eRechnungLaedt = signal(false);
+
+  eRechnungHerunterladen(): void {
+    const d = this.daten();
+    if (!d || this.eRechnungLaedt()) return;
+    this.eRechnungLaedt.set(true);
+    this.meldung.set(null);
+    this.svc.zugferdPdf(d.id).subscribe({
+      next: (blob) => {
+        this.eRechnungLaedt.set(false);
+        const nummer = d.invoice_number ?? d.id;
+        dateiDownloadAusloesen(blob, `${nummer}-zugferd.pdf`);
+      },
+      error: (err) => {
+        this.eRechnungLaedt.set(false);
+        void this.eRechnungFehlerAnzeigen(err);
+      },
+    });
+  }
+
+  /** Bei responseType 'blob' ist der 422-Fehlerkörper ein Blob — als Text lesen,
+   * damit der Nutzer den echten Grund sieht (z. B. „Firmenprofil fehlt"). */
+  private async eRechnungFehlerAnzeigen(err: unknown): Promise<void> {
+    const koerper = (err as { error?: unknown })?.error;
+    if (koerper instanceof Blob) {
+      try {
+        const detail = JSON.parse(await koerper.text())?.detail;
+        if (typeof detail === 'string') {
+          this.meldung.set({ art: 'fehler', text: detail });
+          return;
+        }
+      } catch {
+        /* kein JSON-Körper → generische Meldung unten */
+      }
+    }
+    this.meldung.set({
+      art: 'fehler',
+      text:
+        fehlerDetail(err) ??
+        'Die E-Rechnung konnte nicht erzeugt werden. Bitte erneut versuchen.',
+    });
   }
 }

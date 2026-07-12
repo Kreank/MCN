@@ -20,6 +20,7 @@ from db_core.models import Invoice, Quote
 from db_core.services import beleg as beleg_service
 from db_core.services import beleg_pdf as beleg_pdf_service
 from db_core.services import beleg_versand as beleg_versand_service
+from db_core.services import erechnung as erechnung_service
 from db_core.services.mail import MailSendError
 
 router = Router()
@@ -838,6 +839,59 @@ def invoice_pdf(request, invoice_id: UUID):
     safe = "".join(ch for ch in raw if ch.isalnum() or ch in "-_")
     response = HttpResponse(pdf, content_type="application/pdf")
     response["Content-Disposition"] = f'inline; filename="{safe or "beleg"}.pdf"'
+    return response
+
+
+def _beleg_dateiname(invoice_id):
+    """Unbedenklicher Dateiname aus der Belegnummer (Header-Injection-Schutz)."""
+    invoice = Invoice.objects.filter(id=invoice_id).only("invoice_number").first()
+    raw = (invoice.invoice_number if invoice else None) or str(invoice_id)
+    return "".join(ch for ch in raw if ch.isalnum() or ch in "-_") or "beleg"
+
+
+@router.get("/invoices/{invoice_id}/zugferd.pdf")
+def invoice_zugferd_pdf(request, invoice_id: UUID):
+    """E-Rechnung (ZUGFeRD/Factur-X): Hybrid-PDF mit eingebettetem CII-XML.
+
+    Eigene Ausfertigung neben dem Beleg-PDF (link_category 'E_RECHNUNG',
+    Migration 0059): PDF/A-3B mit dem maschinenlesbaren EN16931-XML im Anhang.
+    Beim ersten Abruf wird sie archiviert, danach unverändert ausgeliefert.
+
+    Nur veröffentlichte Rechnungen (sonst 404 — ein Entwurf ist keine Rechnung).
+    Lässt die Datenlage kein gültiges EN16931-XML zu (kein Firmenprofil, kein
+    Empfänger, inkonsistente Steueraufteilung), antwortet der Endpunkt mit 422 und
+    nennt den Grund — statt eine E-Rechnung auszuliefern, die der Empfänger
+    zurückweist."""
+    actor, _ = require(request, "invoicing", "LESEN")
+    try:
+        pdf = erechnung_service.get_or_archive_zugferd_pdf(actor, invoice_id)
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    if pdf is None:
+        raise HttpError(404, "Veröffentlichte Rechnung nicht gefunden.")
+    response = HttpResponse(pdf, content_type="application/pdf")
+    name = f"{_beleg_dateiname(invoice_id)}-zugferd.pdf"
+    response["Content-Disposition"] = f'attachment; filename="{name}"'
+    return response
+
+
+@router.get("/invoices/{invoice_id}/zugferd.xml")
+def invoice_zugferd_xml(request, invoice_id: UUID):
+    """Das reine CII-XML der E-Rechnung (Prüf-/Debug-Ansicht).
+
+    Dasselbe XML, das im Hybrid-PDF steckt — hier einzeln, damit es sich gegen
+    einen externen Validator (z. B. Mustang/KoSiT) halten lässt. Bewusst NICHT
+    archiviert: die aufbewahrungspflichtige Ausfertigung ist das Hybrid-PDF."""
+    require(request, "invoicing", "LESEN")
+    try:
+        xml = erechnung_service.build_cii_xml_for(invoice_id)
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    if xml is None:
+        raise HttpError(404, "Veröffentlichte Rechnung nicht gefunden.")
+    response = HttpResponse(xml, content_type="application/xml; charset=utf-8")
+    name = f"{_beleg_dateiname(invoice_id)}-zugferd.xml"
+    response["Content-Disposition"] = f'attachment; filename="{name}"'
     return response
 
 

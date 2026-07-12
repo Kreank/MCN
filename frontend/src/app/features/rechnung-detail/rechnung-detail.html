@@ -32,6 +32,18 @@
       @if (daten()!.status === 'VEROEFFENTLICHT') {
         <a mappe-kopf class="btn kopf-pdf" [href]="pdfUrl(daten()!.id)" target="_blank" rel="noopener" aria-label="PDF ansehen (öffnet in neuem Tab)">PDF ansehen ↗</a>
       }
+      @if (daten()!.status === 'VEROEFFENTLICHT') {
+        <button
+          mappe-kopf
+          type="button"
+          class="btn"
+          [disabled]="eRechnungLaedt()"
+          (click)="eRechnungHerunterladen()"
+          aria-describedby="erechnung-hinweis"
+        >
+          {{ eRechnungLaedt() ? 'E-Rechnung wird erzeugt …' : 'E-Rechnung (ZUGFeRD) herunterladen' }}
+        </button>
+      }
       @if (darfBearbeiten()) {
         <a mappe-kopf class="btn btn--primary" [routerLink]="['/dokumente/rechnung', daten()!.id]">
           Bearbeiten
@@ -74,6 +86,15 @@
             <span aria-hidden="true">✕</span>
           </button>
         </div>
+      }
+
+      @if (daten()!.status === 'VEROEFFENTLICHT') {
+        <p id="erechnung-hinweis" class="erechnung-hinweis">
+          <strong>E-Rechnung (ZUGFeRD/Factur-X):</strong> ein PDF, das zusätzlich die
+          Rechnungsdaten maschinenlesbar (XML nach EN&nbsp;16931) im Anhang trägt — seit
+          2025 das Pflichtformat im Geschäftsverkehr zwischen Unternehmen. Das Sichtbild
+          ist dasselbe wie im normalen Beleg-PDF.
+        </p>
       }
 
       @if (tab() === 'positionen') {

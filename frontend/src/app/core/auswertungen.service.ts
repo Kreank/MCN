@@ -1,6 +1,7 @@
 import { HttpClient, HttpParams, HttpResponse } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable, map } from 'rxjs';
+import { dateiDownloadAusloesen } from '../shared/datei-download';
 import {
   ArtikelDashboard,
   AuswertungQuery,
@@ -126,26 +127,12 @@ export class AuswertungService {
 }
 
 /**
- * Loest einen Datei-Download aus einem Blob aus: Object-URL + unsichtbarer
- * `<a download>`. Die URL wird erst NACH dem aktuellen Task freigegeben (ein
- * synchrones revoke bricht den Download in manchen Browsern ab). Bewusst KEIN
- * `window.open`. Spiegel des Musters aus shared/dateien.
+ * CSV-Download aus einem Blob. Die Mechanik liegt in
+ * `shared/datei-download` (dieselbe Funktion trägt inzwischen auch das
+ * ZUGFeRD-PDF) — hier bleibt nur der sprechende Name für die Aufrufer.
  */
 export function csvDownloadAusloesen(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  try {
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.rel = 'noopener';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 0);
-  } catch (e) {
-    URL.revokeObjectURL(url);
-    throw e;
-  }
+  dateiDownloadAusloesen(blob, filename);
 }
 
 /**

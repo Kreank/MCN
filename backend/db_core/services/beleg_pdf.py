@@ -22,11 +22,30 @@ Beleg nie unzugänglich machen; die Archivierung wird beim nächsten Abruf
 nachgeholt, sobald der Speicher wieder da ist.
 
 Nutzt fpdf2 (reines Python). Beträge in deutscher Formatierung.
+
+Schrift: **eingebettete TrueType-Schrift** (DejaVu Sans, freie Lizenz, unter
+``db_core/assets/fonts/``) statt des fpdf2-Kernfonts Helvetica. Zwei Gründe:
+1. PDF/A-3B (E-Rechnung, services/erechnung.py) verlangt zwingend eingebettete
+   Schriften — ein Kernfont ist dort verboten. Beide Ausfertigungen teilen sich
+   dasselbe Layout, also gilt die Schrift für beide.
+2. Der Kernfont kann nur Latin-1; Umlaute mussten ersetzt werden, das €-Zeichen
+   war gar nicht darstellbar. Mit DejaVu ist Unicode-Text unverfälscht.
+
+**Bekannte Sichtbild-Divergenz bei Altbelegen** (bewusst in Kauf genommen):
+Belege, deren BELEG_PDF VOR der Font-Umstellung archiviert wurde, behalten ihre
+archivierte Ausfertigung (Helvetica, Empfänger nur als Name). Wird für denselben
+Beleg später eine E-Rechnung erzeugt, trägt deren Sichtbild die neue Typografie
+und den vollständigen Anschriftsblock. **Beträge, Positionen und Summen sind
+identisch** — es gibt keinen Datenwiderspruch, nur zwei optisch verschiedene
+Ausfertigungen desselben Belegs. Ein Neurendern der archivierten Ausfertigung
+wäre die Alternative gewesen und ist ausgeschlossen (GoBD: eine Ausfertigung,
+einmal abgelegt, bleibt).
 """
 import logging
 import uuid
 from decimal import Decimal
 from io import BytesIO
+from pathlib import Path
 
 from django.db import IntegrityError, connection
 from fpdf import FPDF
@@ -34,11 +53,39 @@ from fpdf import FPDF
 from db_core import storage as storage_module
 from db_core.db_context import business_transaction
 from db_core.models import CompanyProfile, File, Invoice, Quote
-from db_core.services.beleg import zahlungsbedingungen
+from db_core.services.beleg import (
+    anzeige_menge_preis,
+    beleg_stammdaten,
+    beteiligter,
+    issuer_stammdaten,
+    zahlungsbedingungen,
+)
 
 log = logging.getLogger(__name__)
 
 _BELEG_PDF_CATEGORY = "BELEG_PDF"
+
+# Eingebettete Schrift (freie Lizenz; LICENSE-DejaVu.txt liegt daneben).
+FONT_DIR = Path(__file__).resolve().parent.parent / "assets" / "fonts"
+FONT_FAMILY = "DejaVu"
+_FONT_FILES = {"": "DejaVuSans.ttf", "B": "DejaVuSans-Bold.ttf"}
+
+
+def new_beleg_pdf(*, compliance=None):
+    """Ein leeres A4-Beleg-PDF mit eingebetteter Schrift und Belegrändern.
+
+    `compliance` reicht fpdf2s `enforce_compliance` durch (z. B. "PDF/A-3B" für
+    die E-Rechnung). fpdf2 setzt dann OutputIntent + XMP und verweigert
+    nicht-eingebettete Schriften — deshalb registrieren wir die TTF immer,
+    nicht nur im PDF/A-Fall.
+    """
+    pdf = FPDF(format="A4", unit="mm", enforce_compliance=compliance)
+    for style, datei in _FONT_FILES.items():
+        pdf.add_font(FONT_FAMILY, style, str(FONT_DIR / datei))
+    pdf.set_auto_page_break(auto=True, margin=18)
+    pdf.set_margins(20, 18, 20)
+    pdf.add_page()
+    return pdf
 
 # Ein Angebot erhält erst ab dem Versand eine finale Ausfertigung: vorher (ENTWURF/
 # INTERN_GEPRUEFT/FREIGEGEBEN) ist es unverbindlicher Entwurf ohne Belegnummer und
@@ -69,17 +116,19 @@ _TYPE_TITLES = {
 
 
 def _txt(value):
-    """Latin-1-sichere Textausgabe für den fpdf2-Kernfont (ersetzt nicht
-    darstellbare Zeichen, damit exotische Altdaten kein 500 auslösen)."""
+    """None-sichere Textausgabe. Seit der Umstellung auf die eingebettete
+    DejaVu-Schrift ist keine Latin-1-Ersetzung mehr nötig — Umlaute, €, ² usw.
+    werden unverfälscht gesetzt."""
     if value is None:
         return ""
-    return str(value).encode("latin-1", "replace").decode("latin-1")
+    return str(value)
 
 
 def _eur(value):
     """Formatiert einen Decimal/None als deutschen Eurobetrag (1.234,56 EUR).
 
-    Das €-Zeichen liegt außerhalb von Latin-1 (fpdf2-Kernfont) — daher „EUR"."""
+    Bewusst „EUR" statt „€": im Beleg-Kontext gebräuchlich und in jedem Viewer
+    eindeutig (die Schrift könnte inzwischen auch €)."""
     if value is None:
         return "-"
     q = Decimal(value).quantize(Decimal("0.01"))
@@ -97,7 +146,7 @@ def _de_prozent(value):
     return f"{Decimal(value).quantize(Decimal('0.01'))}".replace(".", ",")
 
 
-def _zahlungsbedingungen_text(invoice):
+def zahlungsbedingungen_text(invoice):
     """Die Zahlungsbedingungs-Zeile des Belegs (oder None).
 
     Rechnet nicht selbst: der Skontobetrag kommt aus `beleg.zahlungsbedingungen()`,
@@ -120,43 +169,72 @@ def _zahlungsbedingungen_text(invoice):
     return None
 
 
-def _issuer_lines(profile):
-    """(Name, Unterzeile) des Ausstellers — pure Funktion (ohne Profil: Fallback)."""
-    if profile is None:
+def _issuer_lines(issuer):
+    """(Name, Unterzeile) des Ausstellers — pure Funktion.
+
+    `issuer` ist der Stammdaten-Snapshot aus `beleg.beleg_stammdaten` (dict) bzw.
+    `beleg.issuer_stammdaten` (Angebot: live). None ⇒ Fallback ohne Absturz.
+    """
+    if not issuer:
         return _FALLBACK_NAME, _FALLBACK_SUBLINE
-    name = profile.company_name
     addr_bits = [
-        profile.street,
-        " ".join(b for b in (profile.postal_code, profile.city) if b),
+        issuer.get("street"),
+        " ".join(
+            b for b in (issuer.get("postal_code"), issuer.get("city")) if b
+        ),
     ]
-    subline = " · ".join(b for b in addr_bits if b) or (profile.legal_form or "")
-    return name, subline
+    subline = " · ".join(b for b in addr_bits if b) or (issuer.get("legal_form") or "")
+    return issuer.get("company_name"), subline
 
 
-def _footer_parts(profile):
+def _footer_parts(issuer):
     """Liste der Fußzeilen-Angaben (Steuer/Register/Bank) — nur was gepflegt ist."""
-    if profile is None:
+    if not issuer:
         return []
     parts = []
-    if profile.tax_number:
-        parts.append(f"Steuernr.: {profile.tax_number}")
-    if profile.vat_id:
-        parts.append(f"USt-IdNr.: {profile.vat_id}")
-    if profile.commercial_register:
-        parts.append(profile.commercial_register)
-    if profile.managing_director:
-        title = profile.managing_director_title or "Geschäftsführung"
-        parts.append(f"{title}: {profile.managing_director}")
+    if issuer.get("tax_number"):
+        parts.append(f"Steuernr.: {issuer['tax_number']}")
+    if issuer.get("vat_id"):
+        parts.append(f"USt-IdNr.: {issuer['vat_id']}")
+    if issuer.get("commercial_register"):
+        parts.append(issuer["commercial_register"])
+    if issuer.get("managing_director"):
+        title = issuer.get("managing_director_title") or "Geschäftsführung"
+        parts.append(f"{title}: {issuer['managing_director']}")
     bank = []
-    if profile.bank_name:
-        bank.append(profile.bank_name)
-    if profile.iban:
-        bank.append(f"IBAN {profile.iban}")
-    if profile.bic:
-        bank.append(f"BIC {profile.bic}")
+    if issuer.get("bank_name"):
+        bank.append(issuer["bank_name"])
+    if issuer.get("iban"):
+        bank.append(f"IBAN {issuer['iban']}")
+    if issuer.get("bic"):
+        bank.append(f"BIC {issuer['bic']}")
     if bank:
         parts.append(" · ".join(bank))
     return parts
+
+
+def empfaenger_zeilen(party_snapshot):
+    """Anschriftsblock eines Beteiligten (Name + Adresszeilen) als Liste.
+
+    Ohne Adresse bleibt nur der Name — ein Beleg muss auch dann rendern, wenn
+    beim Kontakt keine Anschrift gepflegt ist.
+    """
+    if not party_snapshot:
+        return []
+    zeilen = [party_snapshot.get("display_name") or "-"]
+    addr = party_snapshot.get("address")
+    if addr:
+        strasse = " ".join(
+            b for b in (addr.get("street"), addr.get("house_number")) if b
+        )
+        if addr.get("address_addition"):
+            zeilen.append(addr["address_addition"])
+        if strasse:
+            zeilen.append(strasse)
+        ort = " ".join(b for b in (addr.get("postal_code"), addr.get("city")) if b)
+        if ort:
+            zeilen.append(ort)
+    return zeilen
 
 
 # Rahmen (mm), in den das Logo oben rechts eingepasst wird (Seitenverhältnis
@@ -211,35 +289,36 @@ def _place_logo(pdf, logo_bytes):
         pdf.set_xy(x0, y0)
 
 
-def _render_issuer(pdf, profile):
-    """Kopfzeile des Ausstellers aus dem Firmenprofil (oder Fallback).
+def _render_issuer(pdf, issuer):
+    """Kopfzeile des Ausstellers aus dem Stammdaten-Snapshot (oder Fallback).
 
     Ist ein Firmenlogo gepflegt und abrufbar, wird es oben rechts eingebettet;
     fehlt es oder ist der Objektspeicher weg, bleibt der Text-Kopf unverändert
-    (graceful degradation).
+    (graceful degradation). Das Logo bleibt bewusst LIVE (es ist Dekoration, kein
+    belegrelevanter Inhalt, und wird als Dateiverweis geführt).
     """
-    logo = _logo_bytes(profile)
+    logo = _logo_bytes(CompanyProfile.objects.first())
     if logo is not None:
         _place_logo(pdf, logo)
-    name, subline = _issuer_lines(profile)
-    pdf.set_font("Helvetica", "B", 14)
+    name, subline = _issuer_lines(issuer)
+    pdf.set_font(FONT_FAMILY, "B", 14)
     pdf.cell(0, 8, _txt(name), new_x="LMARGIN", new_y="NEXT")
     if subline:
-        pdf.set_font("Helvetica", "", 9)
+        pdf.set_font(FONT_FAMILY, "", 9)
         pdf.set_text_color(110, 110, 110)
         pdf.cell(0, 5, _txt(subline), new_x="LMARGIN", new_y="NEXT")
         pdf.set_text_color(0, 0, 0)
     pdf.ln(6)
 
 
-def _render_footer(pdf, profile):
+def _render_footer(pdf, issuer):
     """Fußzeile mit Steuer-/Register-/Bankangaben (nur was gepflegt ist)."""
-    parts = _footer_parts(profile)
+    parts = _footer_parts(issuer)
     if not parts:
         return
     pdf.ln(6)
     pdf.set_draw_color(210, 210, 210)
-    pdf.set_font("Helvetica", "", 8)
+    pdf.set_font(FONT_FAMILY, "", 8)
     pdf.set_text_color(120, 120, 120)
     pdf.multi_cell(0, 4, _txt(" · ".join(parts)), border="T")
     pdf.set_text_color(0, 0, 0)
@@ -248,22 +327,30 @@ def _render_footer(pdf, profile):
 def _render_lines(pdf, lines):
     """Positionstabelle (Kopf + Zeilen). Gemeinsam für Rechnung und Angebot —
     Angebots- und Rechnungsposition tragen dieselben Felder (position_number,
-    line_type, quantity, unit, unit_price, net_amount, description)."""
+    line_type, quantity, unit, unit_price, net_amount, description).
+
+    Menge und Einzelpreis kommen aus `beleg.anzeige_menge_preis` — derselben
+    Funktion, die auch das ZUGFeRD-XML nutzt. Bei Kreditbelegen (Gutschrift/
+    Storno) liegt das Vorzeichen dadurch in BEIDEN Darstellungen auf der Menge
+    („−100 × 2,40 EUR"). Ohne diese gemeinsame Quelle zeigte das Sichtbild
+    „100 × −2,40" und das eingebettete XML „−100 × 2,40" — dasselbe Ergebnis,
+    aber ein in sich widersprüchliches Hybrid-Dokument."""
     widths = (12, 82, 20, 16, 28, 32)  # Summe 190 mm (usable width)
     headers = ("Pos", "Beschreibung", "Menge", "Einheit", "Einzelpreis", "Betrag")
-    pdf.set_font("Helvetica", "B", 9)
+    pdf.set_font(FONT_FAMILY, "B", 9)
     pdf.set_fill_color(238, 238, 238)
     for w, h in zip(widths, headers):
         align = "R" if h in ("Menge", "Einzelpreis", "Betrag") else "L"
         pdf.cell(w, 7, h, border="B", align=align, fill=True)
     pdf.ln(7)
 
-    pdf.set_font("Helvetica", "", 9)
+    pdf.set_font(FONT_FAMILY, "", 9)
     for line in sorted(lines, key=lambda x: x.position_number):
         is_text = line.line_type in ("TEXT", "ZWISCHENSUMME")
-        menge = "" if is_text or line.quantity is None else _num(line.quantity)
+        anz_menge, anz_preis = anzeige_menge_preis(line)
+        menge = "" if is_text or anz_menge is None else _num(anz_menge)
         einheit = "" if is_text else _txt(line.unit or "")
-        ep = "" if is_text or line.unit_price is None else _eur(line.unit_price)
+        ep = "" if is_text or anz_preis is None else _eur(anz_preis)
         betrag = "" if is_text or line.net_amount is None else _eur(line.net_amount)
         y0 = pdf.get_y()
         pdf.multi_cell(widths[0], 6, str(line.position_number), align="L",
@@ -290,17 +377,17 @@ def _render_totals(pdf, net_total, tax_total, gross_total):
         ("Umsatzsteuer", tax_total, False),
         ("Gesamtbetrag", gross_total, True),
     ):
-        pdf.set_font("Helvetica", "B" if bold else "", 10 if bold else 9)
+        pdf.set_font(FONT_FAMILY, "B" if bold else "", 10 if bold else 9)
         pdf.cell(label_w, 7, label, align="R")
         pdf.cell(val_w, 7, _eur(value), align="R",
                  border="T" if bold else 0, new_x="LMARGIN", new_y="NEXT")
 
 
-def render_invoice_pdf(invoice_id):
-    """Rendert das PDF einer veröffentlichten Rechnung und gibt die Bytes zurück.
+def load_invoice_for_render(invoice_id):
+    """Lädt eine Rechnung mit allem, was Layout und ZUGFeRD-XML brauchen.
 
-    Gibt None zurück, wenn die Rechnung nicht existiert oder nicht veröffentlicht
-    ist (nur festgeschriebene Belege erhalten eine Ausfertigung).
+    None, wenn sie nicht existiert oder nicht veröffentlicht ist — nur
+    festgeschriebene Belege erhalten eine Ausfertigung.
     """
     invoice = (
         Invoice.objects.filter(id=invoice_id)
@@ -310,40 +397,50 @@ def render_invoice_pdf(invoice_id):
     )
     if invoice is None or invoice.status != "VEROEFFENTLICHT":
         return None
+    return invoice
 
+
+def render_invoice_document(invoice, *, compliance=None):
+    """Rendert das Beleg-PDF einer veröffentlichten Rechnung (Bytes).
+
+    Gemeinsame Layout-Quelle für die normale Ausfertigung und die
+    ZUGFeRD-Ausfertigung (`compliance="PDF/A-3B"`, services/erechnung.py) — das
+    Sichtbild ist in beiden Fällen dasselbe, nur der PDF-Standard unterscheidet
+    sich. Stammdaten (Aussteller/Empfänger) kommen aus dem eingefrorenen
+    Snapshot (Live-Fallback nur für Altbelege, siehe beleg.beleg_stammdaten).
+    """
     title = _TYPE_TITLES.get(invoice.invoice_type, invoice.invoice_type)
-    debtor = _party(invoice, "INVOICE_DEBTOR")
-    recipient = _party(invoice, "INVOICE_RECIPIENT") or debtor
+    stamm = beleg_stammdaten(invoice)
+    debtor = beteiligter(stamm, "INVOICE_DEBTOR")
+    recipient = beteiligter(stamm, "INVOICE_RECIPIENT") or debtor
+    debtor_name = (debtor or {}).get("snapshot", {}).get("display_name")
+    recipient_snapshot = (recipient or {}).get("snapshot")
 
-    pdf = FPDF(format="A4", unit="mm")
-    pdf.set_auto_page_break(auto=True, margin=18)
-    pdf.set_margins(20, 18, 20)
-    pdf.add_page()
+    pdf = new_beleg_pdf(compliance=compliance)
+    _render_issuer(pdf, stamm["issuer"])
 
-    # Aussteller aus dem Firmenprofil (Singleton). Ohne gepflegtes Profil ein
-    # neutraler Fallback statt Absturz.
-    profile = CompanyProfile.objects.first()
-    _render_issuer(pdf, profile)
-
-    # Empfänger
-    pdf.set_font("Helvetica", "", 11)
-    pdf.cell(0, 6, _txt(recipient) or "-", new_x="LMARGIN", new_y="NEXT")
+    # Empfänger (Name + Anschrift, soweit gepflegt)
+    pdf.set_font(FONT_FAMILY, "", 11)
+    zeilen = empfaenger_zeilen(recipient_snapshot) or ["-"]
+    for zeile in zeilen:
+        pdf.cell(0, 6, _txt(zeile), new_x="LMARGIN", new_y="NEXT")
     pdf.ln(4)
 
     # Belegkopf
-    pdf.set_font("Helvetica", "B", 16)
+    pdf.set_font(FONT_FAMILY, "B", 16)
     pdf.cell(0, 9, f"{title} {invoice.invoice_number or ''}".strip(), new_x="LMARGIN", new_y="NEXT")
-    pdf.set_font("Helvetica", "", 10)
+    pdf.set_font(FONT_FAMILY, "", 10)
     pdf.cell(0, 6, _txt(f"Belegdatum: {_de_date(invoice.invoice_date)}"
                         f"    Fällig: {_de_date(invoice.due_date)}"),
              new_x="LMARGIN", new_y="NEXT")
-    zb = _zahlungsbedingungen_text(invoice)
+    zb = zahlungsbedingungen_text(invoice)
     if zb:
-        pdf.set_font("Helvetica", "", 9)
+        pdf.set_font(FONT_FAMILY, "", 9)
         pdf.multi_cell(0, 5, _txt(zb), new_x="LMARGIN", new_y="NEXT")
-        pdf.set_font("Helvetica", "", 10)
-    if debtor and debtor != recipient:
-        pdf.cell(0, 6, _txt(f"Rechnungsschuldner: {debtor}"), new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font(FONT_FAMILY, "", 10)
+    if debtor_name and debtor is not recipient:
+        pdf.cell(0, 6, _txt(f"Rechnungsschuldner: {debtor_name}"),
+                 new_x="LMARGIN", new_y="NEXT")
     pdf.ln(4)
 
     # Positionstabelle + Summen (gemeinsame Bausteine)
@@ -354,27 +451,28 @@ def render_invoice_pdf(invoice_id):
         ref = Invoice.objects.filter(id=invoice.reference_invoice_id).first()
         if ref:
             pdf.ln(4)
-            pdf.set_font("Helvetica", "", 9)
+            pdf.set_font(FONT_FAMILY, "", 9)
             pdf.set_text_color(110, 110, 110)
             pdf.multi_cell(0, 5, _txt(f"Bezieht sich auf Ursprungsbeleg "
                                       f"{ref.invoice_number or ref.invoice_type}."))
             pdf.set_text_color(0, 0, 0)
 
-    _render_footer(pdf, profile)
+    _render_footer(pdf, stamm["issuer"])
 
     out = pdf.output()
     return bytes(out)
 
 
-def _party(invoice, role):
-    """Anzeigename des primären Beteiligten einer Rolle (sonst irgendeiner)."""
-    chosen = None
-    for p in invoice.parties.all():
-        if p.role == role:
-            chosen = p
-            if p.is_primary:
-                break
-    return chosen.party.display_name if chosen else None
+def render_invoice_pdf(invoice_id):
+    """Rendert das PDF einer veröffentlichten Rechnung und gibt die Bytes zurück.
+
+    Gibt None zurück, wenn die Rechnung nicht existiert oder nicht veröffentlicht
+    ist (nur festgeschriebene Belege erhalten eine Ausfertigung).
+    """
+    invoice = load_invoice_for_render(invoice_id)
+    if invoice is None:
+        return None
+    return render_invoice_document(invoice)
 
 
 def _num(value):
@@ -426,17 +524,16 @@ def render_quote_pdf(quote_id):
     recipient_party = quote_recipient_party(quote)
     recipient = recipient_party.display_name if recipient_party else None
 
-    pdf = FPDF(format="A4", unit="mm")
-    pdf.set_auto_page_break(auto=True, margin=18)
-    pdf.set_margins(20, 18, 20)
-    pdf.add_page()
+    pdf = new_beleg_pdf()
 
-    profile = CompanyProfile.objects.first()
+    # Ein Angebot friert keine Stammdaten ein (es ist kein GoBD-Beleg im Sinne
+    # der Rechnung) — der Aussteller kommt hier bewusst live aus dem Firmenprofil.
+    profile = issuer_stammdaten()
     _render_issuer(pdf, profile)
 
     # Empfänger, falls ableitbar; sonst die Liegenschaft als Bezug (ein Angebot
     # darf ohne formalen Adressaten rendern).
-    pdf.set_font("Helvetica", "", 11)
+    pdf.set_font(FONT_FAMILY, "", 11)
     if recipient:
         pdf.cell(0, 6, _txt(recipient), new_x="LMARGIN", new_y="NEXT")
     else:
@@ -449,14 +546,14 @@ def render_quote_pdf(quote_id):
     pdf.ln(4)
 
     # Belegkopf
-    pdf.set_font("Helvetica", "B", 16)
+    pdf.set_font(FONT_FAMILY, "B", 16)
     pdf.cell(0, 9, f"Angebot {quote.quote_number or ''}".strip(),
              new_x="LMARGIN", new_y="NEXT")
-    pdf.set_font("Helvetica", "", 12)
+    pdf.set_font(FONT_FAMILY, "", 12)
     pdf.set_text_color(70, 70, 70)
     pdf.cell(0, 7, _txt(quote.title), new_x="LMARGIN", new_y="NEXT")
     pdf.set_text_color(0, 0, 0)
-    pdf.set_font("Helvetica", "", 10)
+    pdf.set_font(FONT_FAMILY, "", 10)
     pdf.cell(0, 6, f"Angebotsdatum: {_de_date(quote.quote_date)}"
                    f"    Gültig bis: {_de_date(quote.valid_until_date)}",
              new_x="LMARGIN", new_y="NEXT")
@@ -478,12 +575,13 @@ def render_quote_pdf(quote_id):
 # als schlankes Hand-SQL innerhalb der business_transaction — dieselben Tore
 # (Trigger, Constraints, Audit-Kontext) wie jeder andere fachliche Write.
 
-def _archived_key_for(link_column, ident):
-    """storage_key der bereits archivierten BELEG_PDF-Ausfertigung, sonst None.
+def archived_key_for(link_column, ident, category=_BELEG_PDF_CATEGORY):
+    """storage_key der bereits archivierten Ausfertigung dieser Kategorie, sonst None.
 
-    Reine Leseabfrage (Autocommit). Der partielle UNIQUE-Index (Migration 0032)
-    garantiert höchstens eine solche Zeile je Beleg. `link_column` ist ein
-    kontrolliertes internes Literal ('invoice_id'|'quote_id'), keine Nutzereingabe.
+    Reine Leseabfrage (Autocommit). Ein partieller UNIQUE-Index je Kategorie
+    (Migration 0032 für BELEG_PDF, 0059 für E_RECHNUNG) garantiert höchstens eine
+    solche Zeile je Beleg. `link_column` ist ein kontrolliertes internes Literal
+    ('invoice_id'|'quote_id'), keine Nutzereingabe.
     """
     with connection.cursor() as cur:
         cur.execute(
@@ -494,7 +592,7 @@ def _archived_key_for(link_column, ident):
              WHERE fl.{link_column} = %s AND fl.link_category = %s
              LIMIT 1
             """,
-            [str(ident), _BELEG_PDF_CATEGORY],
+            [str(ident), category],
         )
         row = cur.fetchone()
     return row[0] if row else None
@@ -502,21 +600,22 @@ def _archived_key_for(link_column, ident):
 
 def _archived_storage_key(invoice_id):
     """storage_key der archivierten Rechnungs-Ausfertigung (Migration 0032)."""
-    return _archived_key_for("invoice_id", invoice_id)
+    return archived_key_for("invoice_id", invoice_id)
 
 
 def _archived_quote_storage_key(quote_id):
     """storage_key der archivierten Angebots-Ausfertigung (Migration 0032)."""
-    return _archived_key_for("quote_id", quote_id)
+    return archived_key_for("quote_id", quote_id)
 
 
-def _insert_file_and_link(actor_app_user_id, link_column, ident, *, storage_key,
-                          original_filename, sha256, size_bytes):
+def insert_file_and_link(actor_app_user_id, link_column, ident, *, storage_key,
+                         original_filename, sha256, size_bytes,
+                         category=_BELEG_PDF_CATEGORY, mime_type="application/pdf"):
     """Registriert content.file + content.file_link in EINER Transaktion.
 
-    Wirft IntegrityError, wenn parallel bereits eine BELEG_PDF-Ausfertigung
-    verlinkt wurde (partieller UNIQUE-Index) — der Aufrufer behandelt den
-    Wettlauf mit Nachselektion. Bei diesem Fehler rollt die atomic-Transaktion
+    Wirft IntegrityError, wenn parallel bereits eine Ausfertigung derselben
+    Kategorie verlinkt wurde (partieller UNIQUE-Index) — der Aufrufer behandelt
+    den Wettlauf mit Nachselektion. Bei diesem Fehler rollt die atomic-Transaktion
     beide Inserts zurück (kein verwaister content.file-Steckbrief). `link_column`
     ist ein kontrolliertes internes Literal, keine Nutzereingabe.
     """
@@ -527,10 +626,10 @@ def _insert_file_and_link(actor_app_user_id, link_column, ident, *, storage_key,
                 INSERT INTO content.file
                     (id, storage_key, original_filename, mime_type,
                      size_bytes, sha256, uploaded_by)
-                VALUES (gen_random_uuid(), %s, %s, 'application/pdf', %s, %s, %s)
+                VALUES (gen_random_uuid(), %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
-                [storage_key, original_filename, size_bytes, sha256,
+                [storage_key, original_filename, mime_type, size_bytes, sha256,
                  str(actor_app_user_id)],
             )
             file_id = cur.fetchone()[0]
@@ -540,8 +639,7 @@ def _insert_file_and_link(actor_app_user_id, link_column, ident, *, storage_key,
                     (id, file_id, {link_column}, link_category, created_by)
                 VALUES (gen_random_uuid(), %s, %s, %s, %s)
                 """,
-                [str(file_id), str(ident), _BELEG_PDF_CATEGORY,
-                 str(actor_app_user_id)],
+                [str(file_id), str(ident), category, str(actor_app_user_id)],
             )
     return file_id
 
@@ -549,7 +647,7 @@ def _insert_file_and_link(actor_app_user_id, link_column, ident, *, storage_key,
 def _register_beleg_file(actor_app_user_id, invoice_id, *, storage_key,
                          original_filename, sha256, size_bytes):
     """Registriert die Rechnungs-Ausfertigung (content.file + file_link)."""
-    return _insert_file_and_link(
+    return insert_file_and_link(
         actor_app_user_id, "invoice_id", invoice_id, storage_key=storage_key,
         original_filename=original_filename, sha256=sha256, size_bytes=size_bytes,
     )
@@ -558,7 +656,7 @@ def _register_beleg_file(actor_app_user_id, invoice_id, *, storage_key,
 def _register_quote_file(actor_app_user_id, quote_id, *, storage_key,
                          original_filename, sha256, size_bytes):
     """Registriert die Angebots-Ausfertigung (content.file + file_link)."""
-    return _insert_file_and_link(
+    return insert_file_and_link(
         actor_app_user_id, "quote_id", quote_id, storage_key=storage_key,
         original_filename=original_filename, sha256=sha256, size_bytes=size_bytes,
     )
@@ -590,8 +688,8 @@ def _quote_filename(quote_id):
     return _safe_quote_filename(q) if q else "angebot.pdf"
 
 
-def _get_or_archive_pdf(actor_app_user_id, ident, *, storage_prefix, render_fn,
-                        key_lookup, register_fn, filename_fn):
+def get_or_archive_pdf(actor_app_user_id, ident, *, storage_prefix, render_fn,
+                       key_lookup, register_fn, filename_fn):
     """Gemeinsamer Ablauf für die GoBD-Archivierung von Beleg-PDFs.
 
     Ablauf (Rechnung wie Angebot):
@@ -614,7 +712,7 @@ def _get_or_archive_pdf(actor_app_user_id, ident, *, storage_prefix, render_fn,
     # 1) Bereits archiviert? Dann exakt diese Datei ausliefern.
     existing_key = key_lookup(ident)
     if existing_key is not None:
-        served = _serve_archived(existing_key)
+        served = serve_archived(existing_key)
         if served is not None:
             return served
         # Objektspeicher gerade nicht erreichbar: Steckbrief existiert, Objekt
@@ -664,10 +762,10 @@ def _get_or_archive_pdf(actor_app_user_id, ident, *, storage_prefix, render_fn,
         # Wettlauf verloren: ein paralleler Erstabruf hat die Ausfertigung schon
         # verlinkt. Eigenes (verwaistes) Objekt best-effort entfernen, die vom
         # Gewinner archivierte Datei nachselektieren und ausliefern.
-        _best_effort_remove(storage, info.storage_key)
+        best_effort_remove(storage, info.storage_key)
         winner_key = key_lookup(ident)
         if winner_key is not None:
-            served = _serve_archived(winner_key)
+            served = serve_archived(winner_key)
             if served is not None:
                 return served
         log.warning(
@@ -684,10 +782,10 @@ def get_or_archive_invoice_pdf(actor_app_user_id, invoice_id):
     """Liefert die (archivierte) PDF-Ausfertigung einer veröffentlichten Rechnung.
 
     Gibt None zurück, wenn die Rechnung nicht existiert oder nicht veröffentlicht
-    ist (Endpunkt → 404). Siehe _get_or_archive_pdf für den Ablauf (Archivierung
+    ist (Endpunkt → 404). Siehe get_or_archive_pdf für den Ablauf (Archivierung
     beim Erstabruf, Wettlauf-Nachselektion, Degradation ohne Objektspeicher).
     """
-    return _get_or_archive_pdf(
+    return get_or_archive_pdf(
         actor_app_user_id, invoice_id,
         storage_prefix="belege/rechnung",
         render_fn=render_invoice_pdf,
@@ -702,10 +800,10 @@ def get_or_archive_quote_pdf(actor_app_user_id, quote_id):
 
     Gibt None zurück, wenn das Angebot nicht existiert oder noch nicht versendet
     ist (Endpunkt → 404). Ablauf identisch zur Rechnung (siehe
-    _get_or_archive_pdf); der partielle UNIQUE-Index auf file_link.quote_id
+    get_or_archive_pdf); der partielle UNIQUE-Index auf file_link.quote_id
     (Migration 0032) sichert die eine Ausfertigung je Angebot.
     """
-    return _get_or_archive_pdf(
+    return get_or_archive_pdf(
         actor_app_user_id, quote_id,
         storage_prefix="belege/angebot",
         render_fn=render_quote_pdf,
@@ -715,7 +813,7 @@ def get_or_archive_quote_pdf(actor_app_user_id, quote_id):
     )
 
 
-def _serve_archived(storage_key):
+def serve_archived(storage_key):
     """Lädt die archivierten Bytes; None, wenn der Objektspeicher gerade fehlt."""
     try:
         return storage_module.get_storage().get_object(storage_key)
@@ -727,7 +825,7 @@ def _serve_archived(storage_key):
         return None
 
 
-def _best_effort_remove(storage, storage_key):
+def best_effort_remove(storage, storage_key):
     try:
         storage.remove_object(storage_key)
     except storage_module.StorageError as exc:  # pragma: no cover - Best-Effort

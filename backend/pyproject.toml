@@ -12,6 +12,9 @@ dependencies = [
     "minio>=7.2",
     "cryptography>=49.0.0",
     "defusedxml>=0.7",
+    # 6.x-API (generate_cii_xml/generate_from_binary/get_xml_from_pdf); ältere
+    # Serien hatten andere Signaturen — der Floor muss ehrlich sein.
+    "factur-x>=6,<7",
 ]
 
 [dependency-groups]

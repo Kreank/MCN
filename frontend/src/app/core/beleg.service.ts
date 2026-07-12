@@ -136,4 +136,20 @@ export class BelegService {
       { to_address: toAddress },
     );
   }
+
+  /**
+   * E-Rechnung (ZUGFeRD/Factur-X): Hybrid-PDF (PDF/A-3 mit eingebettetem
+   * CII-XML) einer veröffentlichten Rechnung.
+   *
+   * Bewusst als Blob über den HttpClient und NICHT als `window.open`/Direkt-URL:
+   * nur so gehen Session-Cookie und CSRF-Header durch den Interceptor. Lässt die
+   * Datenlage kein gültiges EN16931-XML zu (kein Firmenprofil, kein Empfänger),
+   * antwortet der Server mit 422 — der Fehlerkörper ist dann ein Blob, den der
+   * Aufrufer als Text liest (Muster wie beim DATEV-Export).
+   */
+  zugferdPdf(id: string): Observable<Blob> {
+    return this.http.get(`/api/invoicing/invoices/${id}/zugferd.pdf`, {
+      responseType: 'blob',
+    });
+  }
 }

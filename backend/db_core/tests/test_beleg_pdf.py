@@ -4,13 +4,13 @@ Kernpunkte: Das PDF zieht den Aussteller aus dem Firmenprofil; ohne gepflegtes
 Profil greift ein neutraler Fallback (kein Absturz). Für eine unveröffentlichte
 oder fehlende Rechnung gibt es kein PDF (None).
 """
-import re
-import zlib
+import io
 from datetime import date, timedelta
 from decimal import Decimal
 from hashlib import sha256
 
 import pytest
+from pypdf import PdfReader
 
 from db_core import storage as storage_module
 from db_core.db_context import business_transaction
@@ -64,14 +64,21 @@ def fake_storage(monkeypatch):
 
 
 def _pdf_text(data):
-    """Sichtbarer Text eines fpdf2-PDF (Inhaltsströme sind zlib-komprimiert)."""
-    stuecke = []
-    for m in re.finditer(rb"stream\r?\n(.*?)\r?\nendstream", data, re.S):
-        try:
-            stuecke.append(zlib.decompress(m.group(1)).decode("latin-1"))
-        except zlib.error:
-            continue
-    return "\n".join(stuecke)
+    """Sichtbarer Text eines PDF.
+
+    Seit der Umstellung auf die eingebettete DejaVu-Schrift (zwingend für
+    PDF/A-3B, siehe services/erechnung.py) stehen im Inhaltsstrom keine
+    Latin-1-Bytes mehr, sondern Glyph-IDs — lesbar nur über die
+    ToUnicode-Tabelle. Das erledigt pypdf (liegt ohnehin als
+    factur-x-Abhängigkeit vor).
+
+    Whitespace wird zusammengezogen: wo eine Zeile im Layout umbricht, ist der
+    Umbruch für den Test bedeutungslos (DejaVu setzt breiter als der frühere
+    Kernfont, also brechen längere Zeilen an anderer Stelle um).
+    """
+    reader = PdfReader(io.BytesIO(data))
+    roh = "\n".join(seite.extract_text() for seite in reader.pages)
+    return " ".join(roh.split())
 
 
 def _published_invoice(app_user, **invoice_kwargs):
@@ -133,22 +140,28 @@ def test_aussteller_fallback_ohne_profil():
 
 @pytest.mark.django_db
 def test_pdf_nutzt_firmenprofil_als_aussteller(app_user):
-    inv = _published_invoice(app_user)
-    profile, _ = firma_service.update_company_profile(
+    firma_service.update_company_profile(
         app_user.id, company_name="Mitra Sanitär GmbH",
         street="Industriestraße 5", postal_code="12345", city="Musterstadt",
         tax_number="12/345/67890", iban="DE12500105170648489890",
     )
-    # Aussteller- und Fußzeilen-Daten stammen aus dem Firmenprofil.
-    name, subline = beleg_pdf._issuer_lines(profile)
+    # Erst NACH dem gepflegten Profil veröffentlichen: der Aussteller wandert bei
+    # der Veröffentlichung in den Snapshot (SNAPSHOT_VERSION 2) und wird von dort
+    # gerendert.
+    inv = _published_invoice(app_user)
+    issuer = beleg_service.beleg_stammdaten(
+        beleg_pdf.load_invoice_for_render(inv.id)
+    )["issuer"]
+    name, subline = beleg_pdf._issuer_lines(issuer)
     assert name == "Mitra Sanitär GmbH"
     assert "Musterstadt" in subline
-    parts = beleg_pdf._footer_parts(profile)
+    parts = beleg_pdf._footer_parts(issuer)
     assert any("12/345/67890" in p for p in parts)
     assert any("IBAN DE12500105170648489890" in p for p in parts)
     # Und das vollständige PDF rendert weiterhin zu gültigen Bytes.
     data = beleg_pdf.render_invoice_pdf(inv.id)
     assert data is not None and data[:4] == b"%PDF"
+    assert "Mitra Sanitär GmbH" in _pdf_text(data)
 
 
 # --- Firmenlogo im PDF-Kopf ------------------------------------------------
@@ -396,7 +409,7 @@ def test_pdf_skontobetrag_kommt_aus_dem_service(app_user):
         payment_term_days=30, discount_percent="3", discount_days=8,
     )
     zb = beleg_service.zahlungsbedingungen(inv)
-    text = beleg_pdf._zahlungsbedingungen_text(inv)
+    text = beleg_pdf.zahlungsbedingungen_text(inv)
     assert beleg_pdf._eur(zb["skonto_betrag"]) in text
     assert beleg_pdf._de_date(zb["skonto_bis"]) in text
     assert zb["skonto_bis"] == inv.invoice_date + timedelta(days=8)
