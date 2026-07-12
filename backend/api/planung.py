@@ -143,6 +143,25 @@ class MaterialEntryOut(Schema):
     note: str | None = None
 
 
+class ScheduleOut(ServiceJobOut):
+    """Umplanen-Antwort: der Einsatz plus NICHT-blockierende Doppelbelegungs-
+    Hinweise für das neue Zeitfenster (Mitarbeiter und Ressourcen).
+
+    Die Umplanung ist bereits geschrieben; `warnings` verhindert nichts. Die
+    Doppelbelegung ist eine bewusst weiche Invariante (der maßgebliche Zeitraum
+    liegt nullable am service_job) — sie wird sichtbar gemacht, nicht gesperrt.
+    """
+
+    warnings: list[str] = []
+
+
+class AssignmentCreatedOut(AssignmentOut):
+    """Zuweisungs-Antwort inkl. weicher Doppelbelegungs-Hinweise (siehe
+    ScheduleOut). Die Zuweisung ist angelegt; die Warnung blockiert nicht."""
+
+    warnings: list[str] = []
+
+
 class ServiceJobDetailOut(ServiceJobOut):
     access_instructions: str | None = None
     completion_notes: str | None = None
@@ -642,13 +661,18 @@ def update_einsatz(request, job_id: UUID, payload: ServiceJobUpdateIn):
     return _einsatz_detail(job_id)
 
 
-@router.post("/einsaetze/{job_id}/schedule", response=ServiceJobOut, auth=django_auth)
+@router.post("/einsaetze/{job_id}/schedule", response=ScheduleOut, auth=django_auth)
 def set_schedule(request, job_id: UUID, payload: ScheduleIn):
     """Setzt/ändert den Planungszeitraum eines Einsatzes (ohne Statuswechsel).
+    Speist auch das Verschieben einer Kachel auf der Plantafel (Drag & Drop).
 
     `require` (fail-closed): Umplanen ist Dispositionssache; der Monteur (Scope
     'EIGENE') bekommt 403. Der DB-CHECK verlangt scheduled_end > scheduled_start
-    (→ 422)."""
+    (→ 422).
+
+    Antwort enthält `warnings`: Doppelbelegung von Mitarbeitern/Ressourcen im
+    NEUEN Zeitfenster. Diese Hinweise blockieren NICHT (weiche Invariante) — das
+    UI zeigt sie an, die Umplanung ist bereits geschrieben."""
     actor, _ = require(request, "workflow", "AENDERN")
     _load_job_or_404(job_id)
     try:
@@ -660,7 +684,10 @@ def set_schedule(request, job_id: UUID, payload: ScheduleIn):
         )
     except ValueError as exc:
         raise HttpError(422, str(exc))
-    return _reload_job(job_id)
+    base = _reload_job(job_id)
+    return ScheduleOut(
+        **base.dict(), warnings=planung_service.belegungs_warnungen(job_id)
+    )
 
 
 @router.post("/einsaetze/{job_id}/status", response=ServiceJobOut, auth=django_auth)
@@ -684,14 +711,19 @@ def advance_status(request, job_id: UUID, payload: StatusAdvanceIn):
 
 
 @router.post(
-    "/einsaetze/{job_id}/assignments", response={201: AssignmentOut}, auth=django_auth
+    "/einsaetze/{job_id}/assignments",
+    response={201: AssignmentCreatedOut},
+    auth=django_auth,
 )
 def assign_user(request, job_id: UUID, payload: AssignmentIn):
     """Weist dem Einsatz einen Mitarbeiter zu.
 
     `require` (fail-closed): Wer wen einplant, entscheidet die Disposition/Leitung
     — ein Monteur darf sich (oder andere) nicht selbst zuweisen, sonst könnte er
-    sich fremde Einsätze über die 'EIGENE'-Grenze holen; Scope 'EIGENE' → 403."""
+    sich fremde Einsätze über die 'EIGENE'-Grenze holen; Scope 'EIGENE' → 403.
+
+    Antwort enthält `warnings` (Doppelbelegung im Zeitfenster) — nicht blockierend,
+    die Zuweisung ist angelegt."""
     actor, _ = require(request, "workflow", "AENDERN")
     _load_job_or_404(job_id)
     try:
@@ -706,12 +738,39 @@ def assign_user(request, job_id: UUID, payload: AssignmentIn):
     assignment = JobAssignment.objects.select_related("assignee").get(id=assignment.id)
     return Status(
         201,
-        AssignmentOut(
+        AssignmentCreatedOut(
             assignee_id=assignment.assignee_id,
             display_name=assignment.assignee.display_name,
             role=assignment.role,
+            warnings=planung_service.belegungs_warnungen(job_id),
         ),
     )
+
+
+@router.delete(
+    "/einsaetze/{job_id}/assignments/{assignee_user_id}",
+    response={200: dict},
+    auth=django_auth,
+)
+def unassign_user(request, job_id: UUID, assignee_user_id: UUID):
+    """Hebt die Zuweisung eines Mitarbeiters am Einsatz auf (Korrektur/Umplanung).
+
+    Gegenstück zu assign_user; wird u. a. gebraucht, wenn eine Kachel auf der
+    Plantafel von einer Mitarbeiter-Bahn in eine andere gezogen wird.
+
+    `require` (fail-closed) wie assign_user: Zuweisungen steuert die Disposition —
+    ein Monteur (Scope 'EIGENE') könnte sich sonst von einem unliebsamen Einsatz
+    selbst abmelden; Scope 'EIGENE' → 403. Nach Einsatzabschluss sperrt der
+    DB-Trigger das Lösen (Historienschutz F-02) → 422."""
+    actor, _ = require(request, "workflow", "AENDERN")
+    _load_job_or_404(job_id)
+    try:
+        einsatz_service.unassign_user(
+            actor, service_job_id=job_id, assignee_user_id=assignee_user_id
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return Status(200, {"detail": "Zuweisung aufgehoben."})
 
 
 @router.post("/einsaetze/{job_id}/times", response={201: TimeEntryOut}, auth=django_auth)

@@ -3,7 +3,7 @@
 // reine Liste). Der ABGELEHNT-Stempel nutzt die globale Klasse `.stamp--negativ`
 // aus styles.scss — die Marke führt bewusst kein Rot.
 .freigaben {
-  max-width: 62rem;
+  max-width: var(--content-w);
   margin: 0 auto;
 }
 

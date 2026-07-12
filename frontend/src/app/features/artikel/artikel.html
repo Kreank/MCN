@@ -241,7 +241,7 @@
       }
 
       <fieldset class="dlg-block">
-        <legend class="dlg-block__legend">Stammdaten</legend>
+        <legend class="legende">Stammdaten</legend>
         <app-feld [control]="artikelForm.controls.description" label="Artikelname" [pflicht]="true" />
         <div class="dlg-grid">
           <app-feld [control]="artikelForm.controls.article_number" label="Artikelnummer" [pflicht]="true" hinweis="Eindeutig; keine automatische Vergabe." />
@@ -256,7 +256,7 @@
       </fieldset>
 
       <fieldset class="dlg-block">
-        <legend class="dlg-block__legend">Hersteller</legend>
+        <legend class="legende">Hersteller</legend>
         <div class="dlg-grid">
           <app-feld [control]="artikelForm.controls.manufacturer_name" label="Hersteller" />
           <app-feld [control]="artikelForm.controls.manufacturer_number" label="Hersteller-Nr." />
@@ -265,7 +265,7 @@
       </fieldset>
 
       <fieldset class="dlg-block">
-        <legend class="dlg-block__legend">Lieferant (optional)</legend>
+        <legend class="legende">Lieferant (optional)</legend>
         <p class="dialog-form__hinweis">
           Wird der Lieferant samt Lieferanten-Nr. gesetzt, legt MCN ihn direkt nach
           dem Anlegen als primären Bezug an. Der Einkaufspreis gilt je gewählter
@@ -285,7 +285,7 @@
       </fieldset>
 
       <fieldset class="dlg-block">
-        <legend class="dlg-block__legend">Beschaffung &amp; Preise</legend>
+        <legend class="legende">Beschaffung &amp; Preise</legend>
         <div class="dlg-grid">
           <app-feld [control]="artikelForm.controls.min_order_quantity" label="Mindestbestellmenge" typ="zahl" hinweis="Optional." />
           <app-feld [control]="artikelForm.controls.quantity_step" label="Mengenstaffel" typ="zahl" hinweis="Optional." />

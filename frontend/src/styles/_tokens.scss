@@ -11,6 +11,11 @@
 //   ----------------------------------------------------------------------
 //   Navy-Text #1c3244  auf Papier #f7f6f3            12,22:1  AA/AAA  (Body)
 //   Muted-Text #4a5b68 auf Papier #f7f6f3             6,50:1  AA/AAA  (2nd)
+//   Hint-Text  #5c6b78 auf Weiss  #ffffff             5,48:1  AA      (Feld-Hinweis/Placeholder)
+//   Hint-Text  #5c6b78 auf Papier #f7f6f3             5,07:1  AA
+//   Hint-Text  #5c6b78 auf Sunken #efede8             4,69:1  AA
+//   Hint dark  #93a5b3 auf Surface#1c3244             5,21:1  AA      (Feld-Hinweis dark)
+//   Hint dark  #93a5b3 auf Paper  #14232f             6,31:1  AA
 //   Accent #ef804e     auf Navy   #1c3244             4,95:1  AA      (Marke/Text auf Navy)
 //   Accent-dark #a84a17 auf Papier #f7f6f3            5,31:1  AA      (Accent-Text auf hell)
 //   Warn #db9c4d       auf Navy   #1c3244             5,58:1  AA
@@ -39,7 +44,13 @@
   // --- Neutrale Ableitungen aus Navy ---------------------------------------
   --ink: #1c3244;           // Primaertext auf hell
   --ink-muted: #4a5b68;     // Sekundaertext auf hell (6,5:1)
-  --ink-faint: #6b7a86;     // Tertiaer/Deko (grosse Texte/Icons)
+  // Tertiaertext (Feld-Hinweise, Placeholder, Mono-Labels) — AA-sicher auch bei
+  // 13 px. Der frueher hier benutzte Ton #6b7a86 erreichte nur 4,42:1 auf
+  // --surface und 4,09:1 auf --paper und war damit ein AA-Verstoss.
+  --ink-hint: #5c6b78;      // 5,48:1 auf #fff · 5,07:1 auf --paper · 4,69:1 auf --surface-sunken
+  // Alias: --ink-faint wird an ~110 Stellen fuer KLEINTEXT verwendet. Es zeigt
+  // deshalb auf denselben AA-sicheren Ton; neuer Code nimmt --ink-hint.
+  --ink-faint: var(--ink-hint);
 
   // Flaechen-Tints (aus Navy abgeleitet, warm entsaettigt)
   --paper: #f7f6f3;         // Arbeitsflaeche (kein hartes Weiss)
@@ -58,7 +69,9 @@
   // Positiv/Warn als Tint-Chips auf hell (dunkler Text darauf)
   --positive-tint: #e6f1e3;
   --warn-tint: #f7ead2;
-  --neutral-tint: #ebe8e1;
+  // Aufgehellt von #ebe8e1: mit --ink-hint darauf ergab das 4,48:1 — 0,02 unter
+  // AA. Jetzt 4,70:1 (Fundstellen: Kanban-Chips, Rechtematrix, Marge-Block).
+  --neutral-tint: #f0ede8;
 
   // Fokus
   --focus-ring: #1c3244;    // Navy-Ring auf hell
@@ -99,6 +112,12 @@
   --sidebar-w: 15.5rem;
   --header-h: 4rem;
 
+  // --- Inhaltsbreiten (EIN Raster fuer die ganze App) -----------------------
+  // Vorher trugen 9 verschiedene max-width-Werte (44/60/62/64/66/72/76/78/82rem)
+  // die Seiten; beim Wechsel Liste -> Editor sprang das Raster sichtbar.
+  --content-w: 64rem;        // Listen, Mappen, Einstellungen (Lesebreite)
+  --content-w-wide: 104rem;  // Editoren/Boards/Tabellen (nutzt 1920px wirklich aus)
+
   color-scheme: light;
 }
 
@@ -106,7 +125,10 @@
 @mixin dark-tokens {
   --ink: #e8eef2;
   --ink-muted: #a9bac8;
-  --ink-faint: #7f92a1;
+  // Dark: #7f92a1 erreichte auf --surface (#1c3244) nur 4,11:1 — zu dunkel.
+  // #93a5b3: 5,21:1 auf --surface · 6,31:1 auf --paper · 6,80:1 auf --surface-sunken.
+  --ink-hint: #93a5b3;
+  --ink-faint: var(--ink-hint);
 
   --accent-ink: #f0925f;    // auf dunkel darf Accent heller sein (6:1 auf BG)
   --warn-ink: #e0ab5e;

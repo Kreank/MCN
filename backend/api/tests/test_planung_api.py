@@ -11,7 +11,7 @@ from uuid import uuid4
 import pytest
 from django.test import Client
 
-from db_core.models import AppUser, TimeEntry
+from db_core.models import AppUser, JobAssignment, TimeEntry
 from db_core.services import auftrag as auftrag_service
 from db_core.services import einsatz as einsatz_service
 from db_core.services import identity as identity_service
@@ -258,6 +258,109 @@ def test_zuweisung(admin_client, seeded, app_user):
     assert body["assignee_id"] == str(app_user.id)
 
 
+# --- Umplanen/Bahnwechsel (Plantafel Drag & Drop) ---------------------------
+# Doppelbelegung ist eine bewusst WEICHE Invariante: der Server warnt, blockiert
+# aber nicht. Das UI muss die Warnung zeigen — verschluckt es sie, entsteht eine
+# stille Fehlplanung.
+
+@pytest.mark.django_db
+def test_umplanen_meldet_doppelbelegung_blockt_aber_nicht(admin_client, seeded, app_user):
+    """j1 (08–12) hat app_user zugewiesen. Wird app_user auch j2 zugewiesen und j2
+    ins selbe Fenster geplant, kommt eine nicht-blockierende Warnung zurück."""
+    admin_client.post(
+        f"/api/planung/einsaetze/{seeded['j2'].id}/assignments",
+        data={"assignee_user_id": str(app_user.id)},
+        content_type="application/json",
+    )
+    r = admin_client.post(
+        f"/api/planung/einsaetze/{seeded['j2'].id}/schedule",
+        data={"scheduled_start": "2026-07-13T09:00:00Z",
+              "scheduled_end": "2026-07-13T11:00:00Z"},
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    body = r.json()
+    # Die Umplanung ist geschrieben …
+    assert body["scheduled_start"].startswith("2026-07-13T09:00")
+    # … und die Doppelbelegung wird gemeldet, nicht verhindert.
+    assert len(body["warnings"]) == 1
+    assert "Doppelbelegung" in body["warnings"][0]
+    assert seeded["j1"].job_number in body["warnings"][0]
+
+
+@pytest.mark.django_db
+def test_umplanen_ohne_kollision_ohne_warnung(admin_client, seeded, app_user):
+    admin_client.post(
+        f"/api/planung/einsaetze/{seeded['j2'].id}/assignments",
+        data={"assignee_user_id": str(app_user.id)},
+        content_type="application/json",
+    )
+    r = admin_client.post(
+        f"/api/planung/einsaetze/{seeded['j2'].id}/schedule",
+        data={"scheduled_start": "2026-08-01T08:00:00Z",
+              "scheduled_end": "2026-08-01T12:00:00Z"},
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    assert r.json()["warnings"] == []
+
+
+@pytest.mark.django_db
+def test_zuweisung_meldet_doppelbelegung(admin_client, seeded, app_user):
+    """Auch die Zuweisung selbst (Bahnwechsel) warnt — j1 und j2 liegen im selben
+    Fenster, app_user ist bereits auf j1."""
+    r = admin_client.post(
+        f"/api/planung/einsaetze/{seeded['j2'].id}/assignments",
+        data={"assignee_user_id": str(app_user.id)},
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    assert any("Doppelbelegung" in w for w in r.json()["warnings"])
+
+
+@pytest.mark.django_db
+def test_zuweisung_aufheben(admin_client, seeded, app_user):
+    """DELETE /assignments/{user} (200): die Zuweisung ist weg (alte Bahn räumen)."""
+    # Nicht zugewiesen → fachlicher 422 (kein stiller Erfolg).
+    r = admin_client.delete(
+        f"/api/planung/einsaetze/{seeded['j2'].id}/assignments/{app_user.id}"
+    )
+    assert r.status_code == 422
+    admin_client.post(
+        f"/api/planung/einsaetze/{seeded['j2'].id}/assignments",
+        data={"assignee_user_id": str(app_user.id)},
+        content_type="application/json",
+    )
+    r = admin_client.delete(
+        f"/api/planung/einsaetze/{seeded['j2'].id}/assignments/{app_user.id}"
+    )
+    assert r.status_code == 200, r.content
+    assert not JobAssignment.objects.filter(
+        service_job_id=seeded["j2"].id, assignee_id=app_user.id
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_zuweisung_aufheben_nach_abschluss_422(admin_client, seeded, app_user):
+    """Historienschutz F-02: nach Einsatzabschluss lässt der DB-Trigger das Lösen
+    nicht mehr zu → 422 (kein 500)."""
+    einsatz_service.advance_status(
+        app_user.id, service_job_id=seeded["j1"].id, to_status="ABGESCHLOSSEN"
+    )
+    r = admin_client.delete(
+        f"/api/planung/einsaetze/{seeded['j1'].id}/assignments/{app_user.id}"
+    )
+    assert r.status_code == 422, r.content
+
+
+@pytest.mark.django_db
+def test_zuweisung_aufheben_unbekannter_einsatz_404(admin_client, app_user, db):
+    r = admin_client.delete(
+        f"/api/planung/einsaetze/{uuid4()}/assignments/{app_user.id}"
+    )
+    assert r.status_code == 404
+
+
 # --- MONTEUR (row_scope EIGENE) --------------------------------------------
 
 def _monteur_client(seeded, app_user, *, assigned=True):
@@ -361,6 +464,18 @@ def test_monteur_darf_nicht_zuweisen_403(seeded, app_user):
         content_type="application/json",
     )
     assert r.status_code == 403
+
+
+@pytest.mark.django_db
+def test_monteur_darf_sich_nicht_abmelden_403(seeded, app_user):
+    """unassign_user nutzt `require` (fail-closed) → der Monteur kann sich nicht
+    selbst von einem Einsatz abmelden; Umplanen ist Dispositionssache."""
+    c, monteur = _monteur_client(seeded, app_user)
+    r = c.delete(f"/api/planung/einsaetze/{seeded['j1'].id}/assignments/{monteur.id}")
+    assert r.status_code == 403
+    assert JobAssignment.objects.filter(
+        service_job_id=seeded["j1"].id, assignee_id=monteur.id
+    ).exists()
 
 
 # --- Benutzer-Auswahlliste (Zuweisung) -------------------------------------

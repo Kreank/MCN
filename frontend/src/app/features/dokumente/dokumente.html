@@ -124,7 +124,13 @@
                   <span class="row__body">
                     <span class="row__title">{{ q.title }}</span>
                     <span class="row__meta">
-                      <span class="row__nr">{{ belegNummer(q.quote_number) }}</span>
+                      <!-- Nur die Belegnummer — der Status steht ausschliesslich im Stempel. -->
+                      <span class="row__nr">
+                        {{ belegNummer(q.quote_number) }}
+                        @if (!q.quote_number) {
+                          <span class="sr-only">Belegnummer noch nicht vergeben</span>
+                        }
+                      </span>
                       <span class="row__place">◧ {{ q.property.city }}</span>
                       <span class="stamp {{ quoteStatusClass(q.status) }}">{{ quoteStatusLabel(q.status) }}</span>
                     </span>
@@ -141,7 +147,12 @@
                   <span class="row__body">
                     <span class="row__title">{{ invoiceTypeLabel(inv.invoice_type) }}</span>
                     <span class="row__meta">
-                      <span class="row__nr">{{ belegNummer(inv.invoice_number) }}</span>
+                      <span class="row__nr">
+                        {{ belegNummer(inv.invoice_number) }}
+                        @if (!inv.invoice_number) {
+                          <span class="sr-only">Belegnummer noch nicht vergeben</span>
+                        }
+                      </span>
                       <span class="row__place">◧ {{ inv.property.city }}</span>
                       <span class="stamp {{ invoiceStatusClass(inv.status) }}">{{ invoiceStatusLabel(inv.status) }}</span>
                     </span>
@@ -225,7 +236,7 @@
       <!-- Anrechnung der Abschläge (nur Schlussrechnung) -->
       @if (istSchlussrechnung()) {
         <fieldset class="anrechnung">
-          <legend class="anrechnung__legende">Abschlagsrechnungen anrechnen</legend>
+          <legend class="legende">Abschlagsrechnungen anrechnen</legend>
           @if (!neuForm.controls.work_order_id.value) {
             <p class="anrechnung__hinweis">
               Bitte zuerst den <strong>Auftrag</strong> wählen — die anrechenbaren
@@ -286,7 +297,7 @@
       </div>
 
       <fieldset class="pos-editor">
-        <legend class="pos-editor__legende">Positionen</legend>
+        <legend class="legende">Positionen</legend>
         @for (zeile of zeilen(); track $index; let i = $index) {
           <div class="pos-zeile">
             <div class="pos-zeile__kopf">

@@ -36,7 +36,7 @@ import {
   felderAlsBeruehrtMarkieren,
   serverFehlerZuruecksetzen,
 } from '../../shared/formular/formular.util';
-import { apiZuDeDezimal, deZuApiDezimal, dezimalValidator } from '../../shared/formular/dezimal';
+import { apiZuDeEingabe, deZuApiDezimal, dezimalValidator } from '../../shared/formular/dezimal';
 
 type ViewState =
   | { kind: 'loading' }
@@ -397,9 +397,9 @@ export class BelegEingangDetail {
       const g = this.zeileGruppe();
       g.reset({
         description: l.description,
-        quantity: apiZuDeDezimal(l.quantity),
+        quantity: apiZuDeEingabe(l.quantity),
         unit: l.unit ?? '',
-        unit_price: apiZuDeDezimal(l.unit_price, 2),
+        unit_price: apiZuDeEingabe(l.unit_price, 2),
         tax_code: l.tax_code,
         ledger_account_id: l.ledger_account_id ?? '',
         cost_center_id: l.cost_center_id ?? '',

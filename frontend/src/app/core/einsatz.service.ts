@@ -3,13 +3,14 @@ import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import {
   AssignableUser,
-  JobAssignment,
   JobAssignmentInput,
+  JobAssignmentResult,
   JobStatusInput,
   MaterialEntry,
   MaterialLogInput,
   Plantafel,
   ScheduleInput,
+  ScheduleResult,
   ServiceJob,
   ServiceJobCreate,
   ServiceJobDetail,
@@ -78,9 +79,13 @@ export class EinsatzService {
     return this.http.patch<ServiceJobDetail>(`${this.base}/${id}`, payload);
   }
 
-  /** Planzeitraum setzen (Recht workflow.AENDERN, Disposition). */
-  setSchedule(id: string, payload: ScheduleInput): Observable<ServiceJob> {
-    return this.http.post<ServiceJob>(`${this.base}/${id}/schedule`, payload);
+  /**
+   * Planzeitraum setzen (Recht workflow.AENDERN, Disposition) — speist auch das
+   * Verschieben einer Kachel auf der Plantafel. Die Antwort trägt `warnings`
+   * (Doppelbelegung im neuen Fenster): nicht blockierend, aber anzuzeigen.
+   */
+  setSchedule(id: string, payload: ScheduleInput): Observable<ScheduleResult> {
+    return this.http.post<ScheduleResult>(`${this.base}/${id}/schedule`, payload);
   }
 
   /** Statuswechsel (Recht workflow.AENDERN, Disposition). */
@@ -88,9 +93,21 @@ export class EinsatzService {
     return this.http.post<ServiceJob>(`${this.base}/${id}/status`, payload);
   }
 
-  /** Mitarbeiter zuweisen (Recht workflow.AENDERN, Disposition). */
-  assign(id: string, payload: JobAssignmentInput): Observable<JobAssignment> {
-    return this.http.post<JobAssignment>(`${this.base}/${id}/assignments`, payload);
+  /** Mitarbeiter zuweisen (Recht workflow.AENDERN, Disposition). Antwort mit
+   * nicht-blockierenden Doppelbelegungs-Hinweisen. */
+  assign(id: string, payload: JobAssignmentInput): Observable<JobAssignmentResult> {
+    return this.http.post<JobAssignmentResult>(`${this.base}/${id}/assignments`, payload);
+  }
+
+  /**
+   * Zuweisung aufheben (Recht workflow.AENDERN, Disposition) — nötig, wenn eine
+   * Kachel auf der Plantafel die Bahn wechselt. Nach Einsatzabschluss sperrt der
+   * DB-Trigger (Historienschutz) → 422.
+   */
+  unassign(id: string, assigneeUserId: string): Observable<{ detail: string }> {
+    return this.http.delete<{ detail: string }>(
+      `${this.base}/${id}/assignments/${assigneeUserId}`,
+    );
   }
 
   /** Zeit buchen (Recht workflow.AENDERN; auch Monteur auf eigenen Einsätzen). */

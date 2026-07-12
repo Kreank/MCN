@@ -476,8 +476,15 @@ export class Dokumente {
   }
 
   // ---- Darstellungshelfer -------------------------------------------------
+  /**
+   * Belegnummer. Frueher stand hier bei fehlender Nummer „Entwurf" — dieselbe
+   * Spalte trug damit zwei Bedeutungen (Status bei Entwuerfen, Nummer bei
+   * versendeten Belegen), und der Status stand doppelt (Text + Stempel).
+   * Jetzt zeigt die Spalte ausschliesslich die Nummer; fehlt sie, steht ein
+   * Gedankenstrich (fuer Screenreader erklaert das Template ihn).
+   */
   belegNummer(nr: string | null): string {
-    return nr ?? 'Entwurf';
+    return nr ?? '—';
   }
 
   euro(amount: string | null): string {

@@ -66,8 +66,17 @@
 }
 .board {
   display: grid;
-  grid-template-columns: 12rem repeat(var(--days), minmax(9rem, 1fr));
-  min-width: max-content;
+  // Die Tagesspalten teilen sich die Breite (1fr). KEIN `min-width: max-content`:
+  // das hebelte das minmax() aus — das Grid wuchs auf den längsten Termintitel und
+  // von sieben Tagen waren nur zwei sichtbar. Lange Titel werden stattdessen in
+  // der Kachel gekürzt (der volle Titel steht im aria-label und im title-Attribut).
+  grid-template-columns: 10rem repeat(var(--days), minmax(7rem, 1fr));
+}
+// Grid-Kinder dürfen nicht auf ihre Inhaltsbreite aufblähen (Default min-width:auto).
+.board__cell,
+.board__lane,
+.tile {
+  min-width: 0;
 }
 
 .board__corner {
@@ -216,25 +225,151 @@
 }
 
 // ============================== Kacheln =====================================
-.tile {
+// Die Kachel ist der Ziehgriff (draggable); der Link liegt darin.
+.tile,
+.tile__link {
   display: flex;
   flex-direction: column;
   gap: 0.1rem;
+  color: inherit;
+  text-decoration: none;
+}
+.tile {
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-sm);
   border-left: 3px solid var(--line-strong);
   background: var(--surface-sunken);
-  color: inherit;
-  text-decoration: none;
   transition: transform 0.1s ease, box-shadow 0.15s ease;
 
   &:hover {
     box-shadow: var(--shadow-1);
     transform: translateY(-1px);
   }
-  &:focus-visible {
-    outline: 2.5px solid var(--focus-ring);
-    outline-offset: 2px;
+}
+.tile[draggable='true'] {
+  cursor: grab;
+}
+.tile__link:focus-visible,
+.tile__griff:focus-visible,
+.cell-drop:focus-visible {
+  outline: 2.5px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+// Die verschobene Kachel bleibt sichtbar, tritt aber zurück (zusätzlich zum
+// Farbwechsel trägt die Statusleiste den Klartext — nie nur Farbe).
+.tile--bewegt {
+  opacity: 0.45;
+  border-style: dashed;
+}
+// „Verschieben"-Knopf: der maus-freie Weg (Tastatur UND Touch).
+.tile__griff {
+  align-self: stretch;
+  margin-top: 0.15rem;
+  padding: 0.1rem 0.25rem;
+  overflow: hidden;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  letter-spacing: 0.04em;
+  color: var(--ink-muted);
+  background: transparent;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    color: var(--accent-ink);
+    border-color: var(--accent);
+  }
+  &:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+}
+
+// ===================== Verschieben: Ziele & Statusleiste =====================
+// Mögliche Ziele sind durch Rahmen UND Text („Hier ablegen") markiert, nicht
+// allein durch Farbe (WCAG 1.4.1).
+.board__cell--moeglich {
+  background: color-mix(in srgb, var(--command) 6%, transparent);
+}
+.board__cell--ziel {
+  outline: 2.5px dashed var(--accent);
+  outline-offset: -3px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.cell-drop {
+  margin-top: auto;
+  align-self: stretch;
+  padding: 0.35rem 0.2rem;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 0.66rem;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  color: var(--command-ink, var(--ink));
+  background: var(--surface);
+  border: 1.5px dashed var(--line-strong);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--accent);
+    color: var(--accent-ink);
+  }
+}
+.cell-drop--ziel {
+  border-style: solid;
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.griff-leiste {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1.5px solid var(--accent);
+  border-left-width: 5px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+.griff-leiste__text {
+  margin: 0;
+  flex: 1 1 20rem;
+  font-size: var(--step--1);
+  color: var(--ink);
+}
+
+.board-hinweis {
+  margin: 0 0 var(--space-3);
+  font-size: var(--step--1);
+}
+
+// Ergebnis-Hinweise: Fehler (Rollback) und weiche Doppelbelegungs-Warnungen.
+// Basis ist die globale .note; hier nur der Umplan-Zuschnitt.
+.note--umplanen {
+  margin-bottom: var(--space-3);
+}
+.note--warnung {
+  border-color: var(--warn);
+  background: color-mix(in srgb, var(--warn-tint) 60%, var(--surface));
+}
+.note__liste {
+  margin: 0 0 var(--space-3);
+  padding-left: var(--space-5);
+  font-size: var(--step--1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tile {
+    transition: none;
+  }
+  .tile:hover {
+    transform: none;
   }
 }
 .tile__time {
@@ -247,6 +382,13 @@
   font-weight: 600;
   color: var(--ink);
   line-height: 1.2;
+  // Gekürzt statt die Spalte aufzublähen; der volle Titel steht im title- und
+  // im aria-label-Attribut der Kachel (Maus UND Screenreader bekommen ihn).
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
 }
 .tile__status {
   font-size: 0.66rem;

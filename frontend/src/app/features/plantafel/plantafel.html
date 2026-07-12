@@ -20,7 +20,51 @@
     <span class="zeitraum" aria-hidden="true">{{ rangeLabel() }}</span>
   </div>
 
+  @if (darfUmplanen()) {
+    <p class="board-hinweis">
+      Einsätze lassen sich mit der Maus in eine andere Zelle <strong>ziehen</strong> —
+      oder ohne Maus: Kachel-Knopf <strong>„Verschieben“</strong> aufnehmen,
+      <strong>Pfeiltasten</strong> bewegen, <strong>Enter</strong> ablegen,
+      <strong>Escape</strong> abbrechen.
+    </p>
+  }
+
+  <!-- Ansagen für Screenreader: Aufnehmen, Zielwechsel, Ergebnis, Fehler. -->
+  <p class="sr-only" role="status" aria-live="polite">{{ ansage() }}</p>
   <p class="sr-only" role="status">{{ summary() }}</p>
+
+  @if (griff(); as g) {
+    <div class="griff-leiste">
+      <p class="griff-leiste__text">
+        <span aria-hidden="true">⠿</span>
+        <strong>Einsatz {{ g.job.job_number }} aufgenommen.</strong>
+        Pfeiltasten bewegen das Ziel · Enter legt ab · Escape bricht ab.
+      </p>
+      <button type="button" class="btn" (click)="abbrechen()">Abbrechen</button>
+    </div>
+  }
+
+  @if (fehler(); as f) {
+    <div class="note note--error note--umplanen" role="alert">
+      <p class="note__text">{{ f }}</p>
+      <button type="button" class="btn" (click)="hinweiseSchliessen()">Verstanden</button>
+    </div>
+  }
+
+  @if (warnungen().length) {
+    <!-- Doppelbelegung ist bewusst NICHT gesperrt (der Zeitraum liegt am Einsatz
+         und ist nullable). Die Umplanung ist durchgelaufen — die Warnung wird
+         gezeigt, nicht verschluckt. -->
+    <div class="note note--warnung note--umplanen" role="status">
+      <p class="note__text"><strong>Umgeplant — mit Hinweis auf Doppelbelegung</strong></p>
+      <ul class="note__liste">
+        @for (w of warnungen(); track w) {
+          <li>{{ w }}</li>
+        }
+      </ul>
+      <button type="button" class="btn" (click)="hinweiseSchliessen()">Verstanden</button>
+    </div>
+  }
 
   @switch (state().kind) {
     @case ('loading') {
@@ -47,7 +91,9 @@
         </div>
       } @else {
         <div class="board-wrap">
-          <div class="board" [style.--days]="windowDays">
+          <!-- Tastensteuerung des Verschiebens: der Fokus liegt auf der Zielzelle,
+               das Event blubbert hierher. -->
+          <div class="board" [style.--days]="windowDays" (keydown)="boardTaste($event)">
             <div class="board__corner"></div>
             @for (day of days(); track day.iso) {
               <div class="board__dayhead" [class.is-today]="day.isToday">
@@ -56,7 +102,7 @@
               </div>
             }
 
-            @for (lane of lanes(); track lane.kind + lane.id) {
+            @for (lane of lanes(); track lane.kind + lane.id; let li = $index) {
               <div
                 class="board__lane"
                 [class.board__lane--none]="lane.kind === 'unassigned'"
@@ -67,35 +113,92 @@
                   <span class="board__lane-sub">{{ lane.sub }}</span>
                 }
               </div>
-              @for (day of days(); track day.iso) {
-                <div class="board__cell" [class.is-today]="day.isToday">
+              @for (day of days(); track day.iso; let di = $index) {
+                <div
+                  class="board__cell"
+                  [class.is-today]="day.isToday"
+                  [class.board__cell--moeglich]="quelle() && istErlaubtesZiel(li)"
+                  [class.board__cell--ziel]="istZiel(li, di)"
+                  (dragover)="dragUeber($event, li, lane, day.iso)"
+                  (dragleave)="dragVerlassen(lane, day.iso)"
+                  (drop)="drop($event, lane, day.iso)"
+                >
                   @for (job of cellJobs(lane, day.iso); track job.id) {
-                    <a
+                    <div
                       class="tile tile--{{ statusMod(job.status) }}"
-                      [routerLink]="['/planung', job.id]"
+                      [class.tile--bewegt]="istInBewegung(job)"
+                      [attr.draggable]="darfUmplanen() && !busy() ? 'true' : null"
+                      (dragstart)="dragStart($event, job, lane, day.iso)"
+                      (dragend)="dragEnde()"
+                    >
+                      <a
+                        class="tile__link"
+                        draggable="false"
+                        [routerLink]="['/planung', job.id]"
+                        [title]="job.job_number + ' · ' + job.title"
+                        [attr.aria-label]="
+                          job.title + ', ' + time(job.scheduled_start) + ', ' +
+                          statusLabel(job.status) +
+                          (job.is_free ? ', freier Termin ohne Auftrag' : '') +
+                          (job.category ? ', Kategorie ' + job.category.name : '')
+                        "
+                      >
+                        <span class="tile__time">{{ time(job.scheduled_start) }}</span>
+                        <span class="tile__title">{{ job.title }}</span>
+                        @if (job.is_free) {
+                          <!-- Kennzeichnung als TEXT (nicht nur Farbe) — WCAG 1.4.1. -->
+                          <span class="tile__frei">Freier Termin</span>
+                        }
+                        @if (job.category) {
+                          <span class="kat-chip tile__kat {{ categoryClass(job) }}">
+                            <span class="kat-dot" aria-hidden="true"></span>
+                            {{ job.category.name }}
+                          </span>
+                        }
+                        <span class="tile__status">{{ statusLabel(job.status) }}</span>
+                      </a>
+                      @if (darfUmplanen()) {
+                        <!-- Gleichwertiger Weg ohne Maus (und auf Touch, wo HTML5-
+                             Drag&Drop nicht greift): aufnehmen → Pfeiltasten → Enter. -->
+                        <!-- KEINE id aus der Job-ID: ein Einsatz mit mehreren
+                             Zuweisungen erscheint in jeder Bahn — die id wäre doppelt.
+                             Der Fokus kehrt über das Auslöser-ELEMENT zurück. -->
+                        <button
+                          type="button"
+                          class="tile__griff"
+                          [disabled]="busy()"
+                          (click)="aufnehmen(job, lane, day.iso, $event)"
+                          [attr.aria-label]="
+                            'Einsatz ' + job.job_number + ', ' + job.title +
+                            ', verschieben: aufnehmen, mit den Pfeiltasten bewegen, mit Enter ablegen'
+                          "
+                        >
+                          <span aria-hidden="true">⠿</span> Verschieben
+                        </button>
+                      }
+                    </div>
+                  }
+
+                  @if (griff() && istErlaubtesZiel(li)) {
+                    <!-- Drop-Ziel: als Knopf (Maus, Touch UND Tastatur) und mit
+                         Text markiert — nicht nur farblich. -->
+                    <button
+                      type="button"
+                      class="cell-drop"
+                      [class.cell-drop--ziel]="istZiel(li, di)"
+                      [id]="'drop-' + li + '-' + di"
+                      [attr.tabindex]="istZiel(li, di) ? 0 : -1"
+                      (click)="zielAnklicken(lane, day.iso)"
                       [attr.aria-label]="
-                        job.title + ', ' + time(job.scheduled_start) + ', ' +
-                        statusLabel(job.status) +
-                        (job.is_free ? ', freier Termin ohne Auftrag' : '') +
-                        (job.category ? ', Kategorie ' + job.category.name : '')
+                        'Hier ablegen: ' + day.dow + ', ' + day.label + ', Bahn ' + lane.name
                       "
                     >
-                      <span class="tile__time">{{ time(job.scheduled_start) }}</span>
-                      <span class="tile__title">{{ job.title }}</span>
-                      @if (job.is_free) {
-                        <!-- Kennzeichnung als TEXT (nicht nur Farbe) — WCAG 1.4.1. -->
-                        <span class="tile__frei">Freier Termin</span>
-                      }
-                      @if (job.category) {
-                        <span class="kat-chip tile__kat {{ categoryClass(job) }}">
-                          <span class="kat-dot" aria-hidden="true"></span>
-                          {{ job.category.name }}
-                        </span>
-                      }
-                      <span class="tile__status">{{ statusLabel(job.status) }}</span>
-                    </a>
-                  }
-                  @if (darfPlanen()) {
+                      <span aria-hidden="true">▾</span> Hier ablegen
+                    </button>
+                  } @else if (darfPlanen() && !griff()) {
+                    <!-- Während eines Maus-Drags bleibt der Knopf stehen (kein
+                         Layout-Sprung unter dem Zeiger); im Tastatur-Griff nimmt
+                         das Drop-Ziel seinen Platz ein. -->
                     <button
                       type="button"
                       class="cell-add"

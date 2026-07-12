@@ -3,7 +3,7 @@
 }
 
 .editor {
-  max-width: 78rem;
+  max-width: var(--content-w-wide);
   margin: 0 auto;
   // Platz, damit die sticky Kalkulationsleiste den Inhalt nicht verdeckt.
   padding-bottom: var(--space-6);
@@ -90,9 +90,12 @@
 }
 
 // ============================== Kopffelder ==================================
+// align-items: start — eine Spalte mit langem Feld-Hinweis darf die Nachbarspalte
+// nicht strecken (die Feldflucht selbst tragen die Bausteine, siehe styles.scss).
 .ed-kopf {
   display: grid;
   grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  align-items: start;
   gap: var(--space-5);
   margin-bottom: var(--space-6);
   padding: var(--space-4);
@@ -103,6 +106,7 @@
 .ed-kopf__datum {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
   gap: var(--space-4);
 }
 
@@ -113,19 +117,12 @@
   border: 0;
   min-width: 0; // sonst sprengt ein <fieldset> das Grid
 }
-.ed-kopf__zb-legende {
-  padding: 0;
-  margin-bottom: var(--space-3);
-  font-size: 0.8125rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  color: var(--ink-muted);
-}
 .ed-kopf__zb-felder {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  align-items: start;
   gap: var(--space-4);
+  margin-top: var(--space-3);
 }
 .ed-kopf__zb-vorschau {
   margin: var(--space-3) 0 0;
@@ -142,9 +139,21 @@
 // ============================== Arbeitsbereich ==============================
 .ed-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 20rem;
+  // Die Palette darf mitschrumpfen, wird aber nie breiter als bisher — die
+  // gewonnene Breite gehoert der Positionstabelle.
+  grid-template-columns: minmax(0, 1fr) minmax(17rem, 20rem);
   gap: var(--space-5);
   align-items: start;
+}
+// Leseansicht: keine Palette -> die Tabelle nimmt die ganze Breite.
+.editor--ro .ed-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+// Unter 1400px bekommt die Positionstabelle die Breite, die Palette gibt nach.
+@media (max-width: 1400px) {
+  .ed-grid {
+    grid-template-columns: minmax(0, 1fr) 17rem;
+  }
 }
 @media (max-width: 960px) {
   .ed-grid {
@@ -237,138 +246,25 @@
   color: var(--ink-faint);
 }
 
-// ------------------------------ Positionsliste -----------------------------
-.poslist {
-  list-style: none;
-  margin: 0;
-  padding: var(--space-2);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
+// ------------------------------ Positionsraster ----------------------------
+// Echte Spaltentabelle: Pos · Bezeichnung · Menge · Einheit · EP · Netto · Akt.
+// Kopfzeile und Datenzeilen teilen sich EINE Spaltendefinition (--pos-cols),
+// damit sie garantiert fluchten. Der Ziehgriff sitzt in der linken Gutter
+// (absolut), damit die Spaltenzahl in Lese- und Schreibansicht gleich bleibt.
+// Feste Zahlenspalten, die Bezeichnung bekommt den Rest (1fr). Die Aktionsspalte
+// ist reserviert (nicht `auto`) — sonst frisst sie im Engen die Restbreite auf
+// und die Knoepfe legen sich ueber den Netto-Betrag. In der Leseansicht faellt
+// sie auf 0 zurueck, dann fluchtet die Tabelle mit der Beleg-Mappe.
+.sektion {
+  --pos-akt: 4.75rem;
+  --pos-cols: 2.25rem minmax(0, 1fr) 5.5rem 3.75rem 6.5rem 6.75rem var(--pos-akt);
 }
-.posrow {
-  position: relative;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-3);
-  border: 1px solid var(--line);
-  border-left: 3px solid var(--line-strong);
-  border-radius: var(--radius);
-  background: var(--paper);
+.editor--ro .sektion {
+  --pos-akt: 0px;
 }
-// Platz für den Ziehgriff in der linken Gutter (nur im bearbeitbaren Editor).
-.editor:not(.editor--ro) .posrow {
-  padding-left: calc(var(--space-3) + 30px);
-}
-.posrow--text {
-  border-left-color: var(--ink-faint);
-}
-// Neben-/Bedarfsposition: klar abgesetzt (gestrichelte Kontur + Stempel), nie nur Farbe.
-.posrow--neben {
-  border-left-style: dashed;
-  border-left-color: var(--accent-ink);
-  background: var(--surface-sunken);
-}
-.posrow__haupt {
-  min-width: 0;
-}
-.posrow__meta {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-.posrow__typ {
-  font-family: var(--font-mono);
-  font-size: 0.62rem;
-  text-transform: uppercase;
-  color: var(--ink-faint);
-}
-.posrow__desc {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-.posrow__zahlen {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-  margin: var(--space-1) 0 0;
-  font-family: var(--font-mono);
-  font-size: var(--step--1);
-  color: var(--ink-muted);
-}
-.posrow__betrag {
-  text-align: right;
-  white-space: nowrap;
-}
-.posrow__net {
-  font-family: var(--font-mono);
-  font-weight: 600;
-}
-.posrow__net--neben {
-  color: var(--ink-muted);
-}
-.posrow__net--leer {
-  font-size: var(--step--1);
-  color: var(--ink-faint);
-}
-.posrow__akt {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-1);
-  justify-content: flex-end;
-}
-.posrow__secsel {
-  min-height: 34px;
-  max-width: 9rem;
-  font-size: var(--step--1);
-}
-
-@media (max-width: 620px) {
-  .posrow {
-    grid-template-columns: 1fr;
-  }
-  .posrow__betrag,
-  .posrow__akt {
-    justify-content: flex-start;
-    text-align: left;
-  }
-}
-
-// ------------------------------ Icon-Buttons -------------------------------
-.ibtn {
-  display: inline-grid;
-  place-items: center;
-  min-width: 34px;
-  min-height: 34px;
-  border: 1.5px solid var(--line-strong);
-  border-radius: var(--radius);
-  background: var(--surface);
-  color: var(--ink);
-  cursor: pointer;
-  transition: border-color 0.15s ease;
-
-  &:hover:not(:disabled) {
-    border-color: var(--ink);
-  }
-  &:focus-visible {
-    outline: 2.5px solid var(--focus-ring);
-    outline-offset: 2px;
-  }
-  &:disabled {
-    opacity: 0.35;
-    cursor: not-allowed;
-  }
-}
-.ibtn--weg {
-  border-color: color-mix(in srgb, var(--warn-ink) 45%, var(--line-strong));
-  color: var(--warn-ink);
-
-  &:hover:not(:disabled) {
-    border-color: var(--warn-ink);
+@media (max-width: 1400px) {
+  .sektion {
+    --pos-cols: 2rem minmax(0, 1fr) 4.5rem 3.25rem 5.25rem 5.75rem var(--pos-akt);
   }
 }
 
@@ -428,8 +324,8 @@
 .paloption {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
+  gap: var(--space-2);
+  padding: var(--space-2);
   border: 1px solid var(--line);
   border-left: 3px solid var(--line-strong);
   border-radius: var(--radius);
@@ -442,16 +338,25 @@
 .paloption__z1 {
   margin: 0;
   font-size: var(--step--1);
-  overflow-wrap: anywhere;
+  // `anywhere` (vorher) setzt die min-content-Breite auf EIN Zeichen; der
+  // Flex-Container kollabierte den Artikelnamen dann auf ~62 px und riss ihn
+  // ueber 7 Zeilen. `break-word` beeinflusst das min-content-Sizing nicht.
+  overflow-wrap: break-word;
+  // Lange Artikelnamen auf zwei Zeilen begrenzen — der volle Name steht im
+  // title und im aria-label des Uebernehmen-Knopfs.
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
 }
 .paloption__z2 {
   margin: var(--space-1) 0 0;
-  color: var(--ink-faint);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--ink-hint);
 }
 .paloption__add {
   flex: none;
-  min-height: 36px;
-  font-size: var(--step--1);
 }
 
 @media (max-width: 960px) {
@@ -472,8 +377,91 @@
   color: var(--on-command);
   box-shadow: var(--shadow-2);
 }
+// Kompakte Kopfzeile: Aufklapper links, Gesamtwerte rechts (immer sichtbar).
+.kalk__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+}
+.kalk__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 36px;
+  padding: 0 var(--space-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--on-command);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring-on-command);
+    outline-offset: 2px;
+  }
+}
+.kalk__chev {
+  display: inline-block;
+  width: 0.8em;
+}
+.kalk__kurz {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-5);
+  margin: 0;
+}
+.kalk__kv {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+.kalk__k {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--on-command-muted);
+}
+.kalk__v {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.kalk__kurz .kalk__unbekannt .kalk__v {
+  color: var(--warn);
+  font-weight: 500;
+  font-size: var(--step--1);
+}
+// Veralteter Stand (ungespeicherte Aenderungen): die Zahlen kommen vom Server
+// und stammen vom letzten Speichern. Sichtbar zuruecknehmen — aber NICHT ueber
+// `opacity` (das haette die ohnehin gedaempften Labels auf 3,1:1 gedrueckt).
+// Stattdessen der AA-sichere Muted-Token (5,9:1) plus leichtere Schrift; den
+// Zustand benennt zusaetzlich der Klartext-Hinweis — nie nur Farbe.
+.kalk--alt .kalk__v,
+.kalk--alt .kalk__tab tbody th,
+.kalk--alt .kalk__tab tbody td {
+  color: var(--on-command-muted);
+  font-weight: 500;
+}
+.kalk__alt-hinweis {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--on-command-muted);
+}
 .kalk__scroll {
   overflow-x: auto;
+  border-top: 1px solid var(--command-line);
+  max-height: 40vh;
+  overflow-y: auto;
 }
 .kalk__tab {
   width: 100%;
@@ -525,130 +513,4 @@
   border-top: 2px solid var(--accent) !important;
   font-weight: 700;
   color: var(--on-command);
-}
-
-// ============================== Dialoge =====================================
-.pos-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-4);
-}
-@media (max-width: 520px) {
-  .pos-grid {
-    grid-template-columns: 1fr;
-  }
-}
-.pos-markup {
-  margin: 0;
-  padding: var(--space-3);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--surface-sunken);
-}
-.pos-texthinweis {
-  margin: 0;
-  font-size: var(--step--1);
-}
-.pos-stamm {
-  margin-top: var(--space-4);
-  padding: var(--space-3);
-  border: 1px solid var(--line);
-  border-left: 3px solid var(--accent);
-  border-radius: var(--radius);
-  background: var(--surface-sunken);
-}
-
-// ============================== Drag & Drop =================================
-// Ziehen ist ADDITIV zu Knöpfen/Selects (WCAG 2.5.7): jede Ziehen-Aktion hat
-// eine gleichwertige, nicht-ziehende Alternative. Nur der Griff ist ziehbar,
-// damit das Ziehen nicht mit dem Klick auf die Zeile/Detail kollidiert.
-.griff {
-  display: inline-grid;
-  place-items: center;
-  min-width: 30px;
-  min-height: 30px;
-  padding: 0;
-  border: 1.5px solid var(--line-strong);
-  border-radius: var(--radius);
-  background: var(--surface);
-  color: var(--ink-faint);
-  cursor: grab;
-  touch-action: none; // CDK-Drag per Touch am Griff
-  transition: border-color 0.15s ease, color 0.15s ease;
-
-  &:hover {
-    border-color: var(--ink);
-    color: var(--ink);
-  }
-  &:focus-visible {
-    outline: 2.5px solid var(--focus-ring);
-    outline-offset: 2px;
-  }
-  &:active {
-    cursor: grabbing;
-  }
-}
-.posrow__griff {
-  position: absolute;
-  left: var(--space-2);
-  top: 50%;
-  transform: translateY(-50%);
-}
-.sektion__griff {
-  align-self: center;
-}
-
-// Leere Positionsliste bleibt ein sichtbares Drop-Ziel.
-.poslist--leer {
-  min-height: 3rem;
-}
-
-// Palette-Optionen tragen jetzt einen Griff vorneweg (Flex-Fluss).
-.paloption__griff {
-  flex: none;
-}
-
-// Ziehen-Platzhalter: Kontur (gestrichelt) + Streifenmuster, nie nur Farbe.
-.posrow__ph,
-.paloption__ph {
-  border: 2px dashed var(--accent-ink);
-  border-radius: var(--radius);
-  background: repeating-linear-gradient(
-    45deg,
-    var(--surface-sunken),
-    var(--surface-sunken) 6px,
-    transparent 6px,
-    transparent 12px
-  );
-}
-.posrow__ph {
-  height: 3.25rem;
-}
-.paloption__ph {
-  height: 2.75rem;
-}
-
-// Schwebendes Vorschau-Element beim Ziehen.
-.cdk-drag-preview {
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-2);
-}
-// Abschnitt-Platzhalter (kein Custom-Template): gestrichelte Kontur + gedämpft.
-.sektion.cdk-drag-placeholder {
-  opacity: 0.6;
-  outline: 2px dashed var(--accent-ink);
-  outline-offset: -2px;
-}
-// Rückflug-Animation nach dem Loslassen.
-.cdk-drag-animating {
-  transition: transform 0.2s cubic-bezier(0, 0, 0.2, 1);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .cdk-drag-animating {
-    transition: none !important;
-  }
-  .griff {
-    transition: none;
-  }
 }

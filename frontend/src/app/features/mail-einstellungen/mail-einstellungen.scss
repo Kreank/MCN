@@ -1,5 +1,5 @@
 .mail-einstellungen {
-  max-width: 66rem;
+  max-width: var(--content-w);
   margin: 0 auto;
 }
 
@@ -58,13 +58,6 @@
   border-radius: var(--radius-lg);
   padding: var(--space-5);
   background: var(--surface);
-
-  legend {
-    padding: 0 var(--space-2);
-    font-weight: 700;
-    font-size: var(--step-0);
-    color: var(--ink);
-  }
 }
 .mail-grid {
   display: grid;

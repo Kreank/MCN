@@ -1,5 +1,5 @@
 .schnell {
-  max-width: 60rem;
+  max-width: var(--content-w);
   margin: 0 auto;
 }
 
@@ -57,13 +57,6 @@
   padding: var(--space-5);
   background: var(--surface);
   box-shadow: var(--shadow-1);
-
-  legend {
-    padding: 0 var(--space-2);
-    font-weight: 700;
-    font-size: var(--step-0);
-    color: var(--ink);
-  }
 }
 .schnell-grid {
   display: grid;

@@ -20,6 +20,7 @@ from db_core.db_context import business_transaction
 from db_core.gate_errors import as_business_error
 from db_core.models import (
     AppointmentCategory,
+    JobAssignment,
     JobResource,
     Resource,
     ServiceJob,
@@ -280,6 +281,77 @@ def _overlap_warnings(service_job, resource_id):
                 f"{o.job_number} zugeordnet (Doppelbelegung)."
             )
     return warnings
+
+
+def belegungs_warnungen(service_job_id):
+    """Nicht-blockierende Doppelbelegungs-Hinweise für den AKTUELLEN Zustand
+    eines Einsatzes — für Mitarbeiter UND Ressourcen.
+
+    Wird nach einem Umplanen (set_schedule) oder einer Zuweisung gelesen: welche
+    anderen Einsätze belegen im neuen Zeitfenster dieselben Personen/Betriebs-
+    mittel? Die Doppelbelegung ist **bewusst nicht gesperrt** (offene Invariante,
+    siehe Modul-Docstring) — sie wird sichtbar gemacht, nicht verhindert.
+
+    Gewarnt wird nur bei VOLLSTÄNDIG bekannten Zeiträumen (start und end auf
+    beiden Seiten). Fehlt ein Ende, ist die Überlappung nicht bestimmbar; eine
+    Warnung wäre eine erfundene Regel. Halb-offene Intervalle [start, end).
+    """
+    job = ServiceJob.objects.filter(id=service_job_id).first()
+    if job is None or job.scheduled_start is None or job.scheduled_end is None:
+        return []
+    start, end = job.scheduled_start, job.scheduled_end
+    warnings = []
+
+    # Mitarbeiter: andere Einsätze derselben Zugewiesenen im selben Fenster.
+    # Die Zeitfilter schließen NULL-Ränder automatisch aus (NULL vergleicht nie
+    # wahr) — genau die gewollte Zurückhaltung.
+    user_ids = list(
+        JobAssignment.objects.filter(service_job_id=job.id).values_list(
+            "assignee_id", flat=True
+        )
+    )
+    if user_ids:
+        kollisionen = (
+            JobAssignment.objects.filter(assignee_id__in=user_ids)
+            .exclude(service_job_id=job.id)
+            .filter(
+                service_job__scheduled_start__lt=end,
+                service_job__scheduled_end__gt=start,
+            )
+            .select_related("assignee", "service_job")
+        )
+        for a in kollisionen:
+            warnings.append(
+                f"{a.assignee.display_name} ist im selben Zeitfenster bereits "
+                f"Einsatz {a.service_job.job_number} zugewiesen (Doppelbelegung)."
+            )
+
+    # Ressourcen (Betriebsmittel).
+    resource_ids = list(
+        JobResource.objects.filter(service_job_id=job.id).values_list(
+            "resource_id", flat=True
+        )
+    )
+    if resource_ids:
+        kollisionen = (
+            JobResource.objects.filter(resource_id__in=resource_ids)
+            .exclude(service_job_id=job.id)
+            .filter(
+                service_job__scheduled_start__lt=end,
+                service_job__scheduled_end__gt=start,
+            )
+            .select_related("resource", "service_job")
+        )
+        for link in kollisionen:
+            warnings.append(
+                f"Ressource {link.resource.name} ist im selben Zeitfenster "
+                f"bereits Einsatz {link.service_job.job_number} zugeordnet "
+                f"(Doppelbelegung)."
+            )
+
+    # Stabile, doppelfreie Reihenfolge (mehrere Zuweisungen können denselben
+    # Fremdeinsatz melden).
+    return sorted(set(warnings))
 
 
 def assign_resource(actor_app_user_id, *, service_job_id, resource_id):

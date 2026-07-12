@@ -23,7 +23,7 @@ import { Dialog } from '../../shared/dialog/dialog';
 import { Feld, FeldOption } from '../../shared/formular/feld';
 import { ReferenzWahl, RefSuche } from '../../shared/formular/referenz-wahl';
 import { apiFehlerZuweisen } from '../../shared/formular/api-fehler';
-import { apiZuDeDezimal } from '../../shared/formular/dezimal';
+import { apiZuDeAnzeige } from '../../shared/formular/dezimal';
 import { fristAbgelaufen, isoDatumDe } from '../../shared/datum';
 import { dateiDownloadAusloesen } from '../../shared/datei-download';
 import {
@@ -139,7 +139,7 @@ export class RechnungDetail {
     const d = this.daten();
     if (!d) return null;
     if (d.skonto_bis && d.skonto_betrag) {
-      const satz = apiZuDeDezimal(d.discount_percent, 2);
+      const satz = apiZuDeAnzeige(d.discount_percent, 2);
       // Abgelaufene Frist im Klartext benennen (nicht nur farblich), sonst liest
       // sich ein Monate alter Beleg wie ein noch einlösbarer Skontoabzug.
       const abgelaufen = fristAbgelaufen(d.skonto_bis) ? ' (Frist abgelaufen)' : '';

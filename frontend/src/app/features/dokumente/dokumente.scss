@@ -1,5 +1,5 @@
 .dokumente {
-  max-width: 60rem;
+  max-width: var(--content-w);
   margin: 0 auto;
 }
 
@@ -321,6 +321,7 @@
 .datum-paar {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
   gap: var(--space-4);
 }
 @media (max-width: 520px) {
@@ -336,14 +337,6 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
-}
-.pos-editor__legende {
-  padding: 0 var(--space-2);
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--accent-ink);
 }
 .pos-zeile {
   display: flex;
@@ -389,6 +382,7 @@
 .pos-zeile__zahlen {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
   gap: var(--space-3);
 }
 @media (max-width: 520px) {
@@ -412,10 +406,6 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-}
-.anrechnung__legende {
-  font-weight: 600;
-  padding: 0 var(--space-2);
 }
 .anrechnung__hinweis {
   margin: 0;

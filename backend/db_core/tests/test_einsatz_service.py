@@ -15,6 +15,7 @@ from decimal import Decimal
 
 import pytest
 
+from db_core.models import JobAssignment
 from db_core.services import auftrag as auftrag_service
 from db_core.services import einsatz as einsatz_service
 from db_core.services import identity as identity_service
@@ -321,3 +322,32 @@ def test_kundenhistorie_ohne_auftraggeber(app_user):
     assert h["customer_party_id"] is None
     assert h["auftraege_gesamt"] == 0
     assert h["termine_gesamt"] == 0
+
+
+# ===========================================================================
+# Zuweisung aufheben (Bahnwechsel auf der Plantafel)
+# ===========================================================================
+
+@pytest.mark.django_db
+def test_unassign_user(app_user):
+    order = _order(app_user, target="IN_AUSFUEHRUNG")
+    job = einsatz_service.create_service_job(app_user.id, work_order_id=order.id)
+    einsatz_service.assign_user(
+        app_user.id, service_job_id=job.id, assignee_user_id=app_user.id
+    )
+    einsatz_service.unassign_user(
+        app_user.id, service_job_id=job.id, assignee_user_id=app_user.id
+    )
+    assert not JobAssignment.objects.filter(
+        service_job_id=job.id, assignee_id=app_user.id
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_unassign_user_nicht_zugewiesen(app_user):
+    order = _order(app_user, target="IN_AUSFUEHRUNG")
+    job = einsatz_service.create_service_job(app_user.id, work_order_id=order.id)
+    with pytest.raises(ValueError):
+        einsatz_service.unassign_user(
+            app_user.id, service_job_id=job.id, assignee_user_id=app_user.id
+        )

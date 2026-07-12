@@ -1,8 +1,9 @@
 import { Component, computed, inject, signal } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { RouterLink } from '@angular/router';
-import { map, of, switchMap } from 'rxjs';
+import { Observable, concat, map, of, switchMap, tap, toArray } from 'rxjs';
 import { EinsatzService } from '../../core/einsatz.service';
+import { PlanungStammdatenService } from '../../core/planung-stammdaten.service';
 import {
   BoardJob,
   Plantafel as PlantafelData,
@@ -37,6 +38,16 @@ type Lane = {
 
 /** Terminart im Anlage-Dialog: an einem Auftrag oder frei (ohne Auftrag). */
 type TerminArt = 'auftrag' | 'frei';
+
+/** Aufgenommene Kachel (Maus-Drag ODER Tastatur-/Touch-Griff): woher kommt sie? */
+type Aufnahme = { job: BoardJob; lane: Lane; dayIso: string };
+
+/** Tastatur-Cursor über dem Board (Index in lanes() bzw. days()). */
+type Zielzelle = { laneIdx: number; dayIdx: number };
+
+function laneKey(lane: Lane): string {
+  return `${lane.kind}:${lane.id}`;
+}
 
 const WINDOW_DAYS = 7;
 
@@ -86,6 +97,7 @@ function localDayIso(iso: string): string {
 })
 export class Plantafel {
   private readonly svc = inject(EinsatzService);
+  private readonly stammSvc = inject(PlanungStammdatenService);
   private readonly auftragSvc = inject(AuftragService);
   private readonly propertySvc = inject(PropertyService);
   private readonly auth = inject(AuthService);
@@ -330,6 +342,435 @@ export class Plantafel {
           this.fetch();
         },
       });
+  }
+
+  // =========================================================================
+  // Umplanen per Drag & Drop — mit gleichwertiger Tastaturbedienung
+  // =========================================================================
+  // Die Bahnen sind Mitarbeiter (aus den Zuweisungen), Betriebsmittel-Ressourcen
+  // und die Sammelbahn „Ohne Zuweisung"; die Spalten sind Tage. Eine Kachel zu
+  // verschieben heißt deshalb ZWEIERLEI:
+  //   * andere Spalte  → Umplanen (POST /einsaetze/{id}/schedule): der Tag
+  //     wechselt, Uhrzeit und Dauer bleiben erhalten.
+  //   * andere Bahn    → Zuweisung/Zuordnung umhängen (POST/DELETE
+  //     .../assignments bzw. .../ressourcen).
+  //
+  // Bewusst KEIN neues Framework (kein @angular/cdk): die native HTML5-
+  // Drag&Drop-API reicht für „Kachel auf Zelle" vollständig aus. Weil sie auf
+  // Touch-Geräten nicht greift und für die Tastatur ohnehin unbrauchbar ist,
+  // trägt jede Kachel zusätzlich einen „Aufnehmen"-Knopf: er startet denselben
+  // Verschiebe-Modus (Pfeiltasten bewegen, Enter legt ab, Escape bricht ab) —
+  // ein Zustandsautomat für Maus, Tastatur und Touch.
+  //
+  // Doppelbelegung ist eine WEICHE Invariante: der Server warnt, blockiert aber
+  // nicht. Die Warnungen werden angezeigt, nicht verschluckt.
+
+  /** Umplanen braucht nur AENDERN (Anlegen ist eine andere Aktion). */
+  protected readonly darfUmplanen = computed(() => this.auth.darf('workflow', 'AENDERN'));
+
+  /** Tastatur-/Touch-Griff: Kachel ist „aufgenommen". */
+  protected readonly griff = signal<Aufnahme | null>(null);
+  /** Laufender Maus-Drag (HTML5). */
+  protected readonly zieht = signal<Aufnahme | null>(null);
+  /** Tastatur-Cursor auf dem Board (nur bei aktivem Griff). */
+  protected readonly zielzelle = signal<Zielzelle | null>(null);
+  /** Zelle unter dem Mauszeiger während eines Drags (Schlüssel `laneKey|tag`). */
+  protected readonly dropZiel = signal<string | null>(null);
+
+  protected readonly busy = signal(false);
+  protected readonly fehler = signal<string | null>(null);
+  protected readonly warnungen = signal<string[]>([]);
+  /** Ansage für die ARIA-Live-Region (und sichtbar in der Statusleiste). */
+  protected readonly ansage = signal('');
+
+  /** Aktive Quelle — egal ob Maus oder Tastatur. */
+  protected readonly quelle = computed<Aufnahme | null>(() => this.griff() ?? this.zieht());
+
+  /** Bahnen, in die die aktuelle Quelle überhaupt darf (Tastatur-Navigation
+   * überspringt die anderen). */
+  protected readonly zielBahnen = computed<number[]>(() => {
+    const q = this.quelle();
+    if (!q) return [];
+    return this.lanes()
+      .map((lane, i) => ({ lane, i }))
+      .filter((x) => this.bahnKompatibel(q.lane, x.lane))
+      .map((x) => x.i);
+  });
+
+  /**
+   * Eine Kachel wechselt nur zwischen Bahnen DERSELBEN Art; die Sammelbahn
+   * „Ohne Zuweisung" ist mit beiden verträglich (dort wird nur gelöst bzw.
+   * erstmals zugeordnet). Ein Mitarbeiter gegen ein Fahrzeug zu tauschen wäre
+   * keine Umplanung, sondern ein Datenverlust — ein Einsatz trägt beides
+   * nebeneinander. Solche Zuordnungen bleiben dem Einsatz-Detail vorbehalten.
+   */
+  private bahnKompatibel(von: Lane, nach: Lane): boolean {
+    if (von.kind === nach.kind) return true;
+    return von.kind === 'unassigned' || nach.kind === 'unassigned';
+  }
+
+  /** Ist diese Zelle gerade ein markiertes Ziel (Maus-Hover oder Tastatur-Cursor)? */
+  istZiel(laneIdx: number, dayIdx: number): boolean {
+    const z = this.zielzelle();
+    if (z && z.laneIdx === laneIdx && z.dayIdx === dayIdx) return true;
+    const lane = this.lanes()[laneIdx];
+    const day = this.days()[dayIdx];
+    return !!lane && !!day && this.dropZiel() === `${laneKey(lane)}|${day.iso}`;
+  }
+
+  /** Ist diese Zelle für die aktive Quelle ein zulässiges Ziel? */
+  istErlaubtesZiel(laneIdx: number): boolean {
+    const q = this.quelle();
+    const lane = this.lanes()[laneIdx];
+    return !!q && !!lane && this.bahnKompatibel(q.lane, lane);
+  }
+
+  /** Wird diese Kachel gerade verschoben (optisch ausgegraut)? */
+  istInBewegung(job: BoardJob): boolean {
+    return this.quelle()?.job.id === job.id;
+  }
+
+  // --- Maus (HTML5-Drag&Drop) ---------------------------------------------
+  dragStart(ev: DragEvent, job: BoardJob, lane: Lane, dayIso: string): void {
+    if (!this.darfUmplanen() || this.busy()) {
+      ev.preventDefault();
+      return;
+    }
+    this.griff.set(null);
+    this.zieht.set({ job, lane, dayIso });
+    this.fehler.set(null);
+    this.warnungen.set([]);
+    if (ev.dataTransfer) {
+      ev.dataTransfer.effectAllowed = 'move';
+      // Nutzlast nur als Beleg; die Wahrheit steht im Signal (kein Fremd-Drop).
+      ev.dataTransfer.setData('text/plain', job.job_number);
+    }
+  }
+
+  dragEnde(): void {
+    this.zieht.set(null);
+    this.dropZiel.set(null);
+  }
+
+  dragUeber(ev: DragEvent, laneIdx: number, lane: Lane, dayIso: string): void {
+    if (!this.zieht() || !this.istErlaubtesZiel(laneIdx)) return;
+    // preventDefault MACHT die Zelle erst zum Drop-Ziel.
+    ev.preventDefault();
+    if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move';
+    this.dropZiel.set(`${laneKey(lane)}|${dayIso}`);
+  }
+
+  dragVerlassen(lane: Lane, dayIso: string): void {
+    if (this.dropZiel() === `${laneKey(lane)}|${dayIso}`) this.dropZiel.set(null);
+  }
+
+  drop(ev: DragEvent, lane: Lane, dayIso: string): void {
+    ev.preventDefault();
+    const q = this.zieht();
+    this.dragEnde();
+    if (q) this.verschieben(q, lane, dayIso);
+  }
+
+  // --- Tastatur & Touch (gleichwertiger Weg) -------------------------------
+  /** Der Knopf, der den Griff ausgelöst hat — dorthin geht der Fokus zurück.
+   *
+   * Bewusst das ELEMENT, keine DOM-ID: ein Einsatz mit mehreren Zuweisungen
+   * erscheint in JEDER Bahn (n:m). Eine ID aus der Job-ID wäre mehrfach im
+   * Dokument und `getElementById` gäbe die Kachel der FALSCHEN Bahn zurück
+   * (Muster wie `menuAusloeser` im Beleg-Editor). */
+  private griffAusloeser: HTMLElement | null = null;
+
+  aufnehmen(job: BoardJob, lane: Lane, dayIso: string, ev?: Event): void {
+    if (!this.darfUmplanen() || this.busy()) return;
+    const laneIdx = this.lanes().findIndex((l) => laneKey(l) === laneKey(lane));
+    const dayIdx = this.days().findIndex((d) => d.iso === dayIso);
+    if (laneIdx < 0 || dayIdx < 0) return;
+    this.griffAusloeser = (ev?.currentTarget as HTMLElement) ?? null;
+    this.fehler.set(null);
+    this.warnungen.set([]);
+    this.griff.set({ job, lane, dayIso });
+    this.zielzelle.set({ laneIdx, dayIdx });
+    this.sagen(
+      `Einsatz ${job.job_number}, ${job.title}, aufgenommen. ` +
+        'Pfeiltasten zum Verschieben, Enter zum Ablegen, Escape zum Abbrechen.',
+    );
+    this.zielFokussieren();
+  }
+
+  abbrechen(): void {
+    const q = this.griff();
+    const ausloeser = this.griffAusloeser;
+    this.griff.set(null);
+    this.zielzelle.set(null);
+    this.griffAusloeser = null;
+    if (q) {
+      this.sagen(`Verschieben abgebrochen. Einsatz ${q.job.job_number} bleibt, wo er war.`);
+      // Fokus zurück auf GENAU den Knopf, der den Griff ausgelöst hat (nicht auf
+      // eine gleichnamige Kachel in einer anderen Bahn) — der Fokus geht nie verloren.
+      setTimeout(() => {
+        if (ausloeser?.isConnected) ausloeser.focus();
+      });
+    }
+  }
+
+  /** Tastensteuerung, solange eine Kachel aufgenommen ist (Fokus liegt auf der
+   * Zielzelle, das Event blubbert zum Board). */
+  boardTaste(ev: KeyboardEvent): void {
+    const q = this.griff();
+    const z = this.zielzelle();
+    if (!q || !z) return;
+    const bahnen = this.zielBahnen();
+    const pos = bahnen.indexOf(z.laneIdx);
+    const letzterTag = this.days().length - 1;
+    let neu: Zielzelle | null = null;
+    switch (ev.key) {
+      case 'ArrowLeft':
+        neu = { ...z, dayIdx: Math.max(0, z.dayIdx - 1) };
+        break;
+      case 'ArrowRight':
+        neu = { ...z, dayIdx: Math.min(letzterTag, z.dayIdx + 1) };
+        break;
+      case 'ArrowUp':
+        if (pos > 0) neu = { ...z, laneIdx: bahnen[pos - 1] };
+        break;
+      case 'ArrowDown':
+        if (pos >= 0 && pos < bahnen.length - 1) neu = { ...z, laneIdx: bahnen[pos + 1] };
+        break;
+      case 'Enter':
+      case ' ':
+      case 'Spacebar': {
+        ev.preventDefault();
+        const lane = this.lanes()[z.laneIdx];
+        const day = this.days()[z.dayIdx];
+        this.griff.set(null);
+        this.zielzelle.set(null);
+        this.verschieben(q, lane, day.iso);
+        return;
+      }
+      case 'Escape':
+        ev.preventDefault();
+        this.abbrechen();
+        return;
+      default:
+        return;
+    }
+    ev.preventDefault();
+    if (!neu) return;
+    this.zielzelle.set(neu);
+    const lane = this.lanes()[neu.laneIdx];
+    const day = this.days()[neu.dayIdx];
+    this.sagen(`Ziel: ${day.dow}, ${day.label}, Bahn ${lane.name}.`);
+    this.zielFokussieren();
+  }
+
+  /** Fokus auf die Zielzelle — erst NACH dem Rendern (die Drop-Knöpfe entstehen
+   * mit dem Griff; ein Microtask liefe zu früh und der Fokus bliebe hängen). */
+  private zielFokussieren(): void {
+    const z = this.zielzelle();
+    if (!z) return;
+    setTimeout(() => document.getElementById(`drop-${z.laneIdx}-${z.dayIdx}`)?.focus());
+  }
+
+  /** Klick/Tap auf eine Zielzelle (Maus & Touch nutzen denselben Weg). */
+  zielAnklicken(lane: Lane, dayIso: string): void {
+    const q = this.griff();
+    if (!q) return;
+    this.griff.set(null);
+    this.zielzelle.set(null);
+    this.verschieben(q, lane, dayIso);
+  }
+
+  // --- Der eigentliche Umzug ----------------------------------------------
+  /** Neuer Zeitraum: Tag wechselt, Uhrzeit und Dauer bleiben erhalten. */
+  private neuerZeitraum(job: BoardJob, dayIso: string): { start: string; end: string | null } {
+    const alt = new Date(job.scheduled_start);
+    const start = new Date(`${dayIso}T00:00:00`);
+    start.setHours(alt.getHours(), alt.getMinutes(), alt.getSeconds(), 0);
+    let end: string | null = null;
+    if (job.scheduled_end) {
+      const dauer = new Date(job.scheduled_end).getTime() - alt.getTime();
+      end = new Date(start.getTime() + dauer).toISOString();
+    }
+    return { start: start.toISOString(), end };
+  }
+
+  private verschieben(q: Aufnahme, ziel: Lane, dayIso: string): void {
+    if (this.busy()) return;
+    this.griffAusloeser = null;
+    this.fehler.set(null);
+    this.warnungen.set([]);
+    if (!this.bahnKompatibel(q.lane, ziel)) {
+      this.melden(
+        'Ein Einsatz wechselt nur zwischen Bahnen derselben Art. ' +
+          'Betriebsmittel ordnest du im Einsatz-Detail zu.',
+      );
+      return;
+    }
+    const tagWechsel = q.dayIso !== dayIso;
+    const bahnWechsel = laneKey(q.lane) !== laneKey(ziel);
+    if (!tagWechsel && !bahnWechsel) {
+      this.sagen('Abgelegt, wo der Einsatz schon war — nichts geändert.');
+      return;
+    }
+    const s = this.state();
+    if (s.kind !== 'ready') return;
+
+    const job = q.job;
+    const zeit = this.neuerZeitraum(job, dayIso);
+    const day = this.days().find((d) => d.iso === dayIso);
+    const zielText = `${day?.dow ?? ''} ${day?.label ?? ''}, Bahn ${ziel.name}`;
+
+    // --- Optimistisch: die Kachel springt sofort ---------------------------
+    const vorher = s.data.jobs;
+    const neuerJob: BoardJob = {
+      ...job,
+      scheduled_start: tagWechsel ? zeit.start : job.scheduled_start,
+      scheduled_end: tagWechsel ? zeit.end : job.scheduled_end,
+      assignee_ids: this.neueIds(job.assignee_ids, q.lane, ziel, 'user'),
+      resource_ids: this.neueIds(job.resource_ids, q.lane, ziel, 'resource'),
+    };
+    this.state.set({
+      kind: 'ready',
+      data: { ...s.data, jobs: vorher.map((j) => (j.id === job.id ? neuerJob : j)) },
+    });
+
+    // --- Server: erst ans Ziel hängen, dann die Quelle räumen --------------
+    // Reihenfolge mit Absicht: Schlägt das Räumen fehl, hängt der Einsatz an
+    // beiden Bahnen (sichtbar, korrigierbar) — nie an gar keiner.
+    const rufe: Observable<string[]>[] = [];
+    if (tagWechsel) {
+      rufe.push(
+        this.svc
+          .setSchedule(job.id, { scheduled_start: zeit.start, scheduled_end: zeit.end })
+          .pipe(map((r) => r.warnings ?? [])),
+      );
+    }
+    if (bahnWechsel) {
+      if (ziel.kind === 'user' && !job.assignee_ids.includes(ziel.id)) {
+        rufe.push(
+          this.svc
+            .assign(job.id, { assignee_user_id: ziel.id, role: 'TECHNICIAN' })
+            .pipe(map((r) => r.warnings ?? [])),
+        );
+      }
+      if (ziel.kind === 'resource' && !job.resource_ids.includes(ziel.id)) {
+        rufe.push(
+          this.stammSvc
+            .assignRessource(job.id, ziel.id)
+            .pipe(map((r) => r.warnings ?? [])),
+        );
+      }
+      if (q.lane.kind === 'user') {
+        rufe.push(this.svc.unassign(job.id, q.lane.id).pipe(map(() => [] as string[])));
+      }
+      if (q.lane.kind === 'resource') {
+        rufe.push(
+          this.stammSvc.unassignRessource(job.id, q.lane.id).pipe(map(() => [] as string[])),
+        );
+      }
+    }
+    if (rufe.length === 0) return;
+
+    // Ein Umzug kann aus MEHREREN Server-Schritten bestehen (Umplanen +
+    // Zuweisen + Lösen). Scheitert Schritt 2, ist Schritt 1 bereits GESCHRIEBEN —
+    // dann wäre „steht wieder an seinem alten Platz" eine Lüge. Deshalb zählen
+    // wir die geschriebenen Schritte mit und formulieren danach.
+    const schritte = rufe.length;
+    let erledigt = 0;
+
+    this.busy.set(true);
+    this.sagen(`Einsatz ${job.job_number} wird verschoben …`);
+    concat(...rufe)
+      .pipe(
+        tap(() => erledigt++),
+        toArray(),
+      )
+      .subscribe({
+        next: (listen) => {
+          this.busy.set(false);
+          const warn = [...new Set(listen.flat())];
+          this.warnungen.set(warn);
+          const kern = `Einsatz ${job.job_number} abgelegt auf ${zielText}.`;
+          this.sagen(
+            warn.length
+              ? `${kern} ${warn.length} Warnung${warn.length > 1 ? 'en' : ''}: ${warn.join(' ')}`
+              : kern,
+          );
+          // Die Wahrheit kommt vom Server (Bahnen, Zähler, Nachbarkacheln).
+          this.refresh();
+        },
+        error: (err) => {
+          this.busy.set(false);
+          const status = (err as { status?: number })?.status;
+          const detail = fehlerDetail(err);
+          const kopf =
+            status === 403
+              ? 'Keine Berechtigung zum Umplanen.'
+              : status === 422
+                ? 'Der Server hat die Umplanung abgelehnt.'
+                : 'Die Umplanung ist fehlgeschlagen.';
+          if (erledigt === 0) {
+            // Nichts geschrieben → echter Rollback, und nur DANN darf man das
+            // auch behaupten.
+            const jetzt = this.state();
+            if (jetzt.kind === 'ready') {
+              this.state.set({ kind: 'ready', data: { ...jetzt.data, jobs: vorher } });
+            }
+            this.melden(
+              `${kopf}${detail ? ' ' + detail : ''} Der Einsatz ${job.job_number} steht ` +
+                'unverändert an seinem alten Platz.',
+            );
+          } else {
+            // Teilerfolg: Schritt 1 (ggf. auch 2) IST geschrieben. Kein Rollback
+            // vortäuschen — den Stand vom Server holen und ehrlich benennen.
+            this.melden(
+              `${kopf}${detail ? ' ' + detail : ''} Achtung: Der Umzug wurde nur ` +
+                `TEILWEISE ausgeführt (${erledigt} von ${schritte} Schritten sind ` +
+                `geschrieben). Der Stand von Einsatz ${job.job_number} wurde neu geladen — ` +
+                'bitte prüfen und den Rest von Hand nachziehen.',
+            );
+          }
+          // In beiden Fällen: der Server hat recht, nicht die Optimistik.
+          this.refresh();
+        },
+      });
+  }
+
+  /** ID-Liste einer Bahnart nach dem Umzug (Ziel hinzu, Quelle raus). */
+  private neueIds(ids: string[], von: Lane, nach: Lane, art: 'user' | 'resource'): string[] {
+    let neu = [...ids];
+    if (nach.kind === art && !neu.includes(nach.id)) neu.push(nach.id);
+    if (von.kind === art && von.id !== nach.id) neu = neu.filter((i) => i !== von.id);
+    return neu;
+  }
+
+  private melden(text: string): void {
+    this.fehler.set(text);
+    this.sagen(text);
+  }
+
+  private sagen(text: string): void {
+    this.ansage.set(text);
+  }
+
+  hinweiseSchliessen(): void {
+    this.fehler.set(null);
+    this.warnungen.set([]);
+  }
+
+  /** Stilles Nachladen: das Board bleibt stehen, die Daten werden ersetzt. */
+  private refresh(): void {
+    const id = ++this.reqId;
+    const from = addDaysIso(this.rangeStart(), -1);
+    const to = addDaysIso(this.rangeStart(), WINDOW_DAYS);
+    this.svc.plantafel(from, to).subscribe({
+      next: (data) => {
+        if (id === this.reqId) this.state.set({ kind: 'ready', data });
+      },
+      error: (err) => {
+        if (id === this.reqId) this.state.set(fehlerState(err));
+      },
+    });
   }
 
   private fetch(): void {

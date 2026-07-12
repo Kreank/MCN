@@ -14,7 +14,7 @@ import {
   felderAlsBeruehrtMarkieren,
   serverFehlerZuruecksetzen,
 } from '../../shared/formular/formular.util';
-import { apiZuDeDezimal, deZuApiDezimal, dezimalValidator } from '../../shared/formular/dezimal';
+import { apiZuDeAnzeige, deZuApiDezimal, dezimalValidator } from '../../shared/formular/dezimal';
 import { fristAbgelaufen, isoDatumDe } from '../../shared/datum';
 import { VerbotenState, fehlerDetail, fehlerState, istVerboten } from '../../shared/http-fehler';
 import { BuchhaltungService } from '../../core/buchhaltung.service';
@@ -555,7 +555,7 @@ export class BuchhaltungDetail {
   protected skontoText(): string {
     const x = this.daten();
     if (!x?.skonto_betrag || !x.skonto_bis) return '—';
-    const satz = apiZuDeDezimal(x.discount_percent, 2);
+    const satz = apiZuDeAnzeige(x.discount_percent, 2);
     const kern =
       `${satz} % bis ${this.d(x.skonto_bis)} — ${euro(x.skonto_betrag)} Abzug, ` +
       `zahlbar ${euro(x.skonto_zahlbetrag)}`;

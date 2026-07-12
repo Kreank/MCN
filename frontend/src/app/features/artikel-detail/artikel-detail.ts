@@ -1,12 +1,5 @@
 import { HttpEventType } from '@angular/common/http';
-import {
-  Component,
-  DestroyRef,
-  computed,
-  effect,
-  inject,
-  signal,
-} from '@angular/core';
+import { Component, DestroyRef, computed, effect, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
@@ -20,9 +13,10 @@ import { Feld, FeldOption } from '../../shared/formular/feld';
 import { ReferenzWahl, RefSuche } from '../../shared/formular/referenz-wahl';
 import { apiFehlerZuweisen } from '../../shared/formular/api-fehler';
 import {
-  apiZuDeDezimal,
+  apiZuDeEingabe,
   deZuApiDezimal,
   dezimalValidator,
+  istDezimalApiWert,
 } from '../../shared/formular/dezimal';
 import { gtinValidator } from '../../shared/formular/gtin';
 import {
@@ -63,10 +57,7 @@ type HistorieState =
   | { kind: 'error' };
 
 type ViewState =
-  | { kind: 'loading' }
-  | { kind: 'ready'; data: ArticleDetail }
-  | VerbotenState
-  | { kind: 'error' };
+  { kind: 'loading' } | { kind: 'ready'; data: ArticleDetail } | VerbotenState | { kind: 'error' };
 
 /** Vorschau-Zustand des Artikelbilds. */
 type BildState =
@@ -210,15 +201,9 @@ export class ArtikelDetail {
   // --- Rechte (nur UI-Sichtbarkeit; der Server setzt sie durch) -----------
   protected readonly darfAendern = computed(() => this.auth.darf('pricing', 'AENDERN'));
   protected readonly darfAnlegen = computed(() => this.auth.darf('pricing', 'ANLEGEN'));
-  protected readonly darfKostenstellen = computed(() =>
-    this.auth.darf('accounting', 'LESEN'),
-  );
-  protected readonly darfBildAnlegen = computed(() =>
-    this.auth.darf('content', 'ANLEGEN'),
-  );
-  protected readonly darfBildLoesen = computed(() =>
-    this.auth.darf('content', 'AENDERN'),
-  );
+  protected readonly darfKostenstellen = computed(() => this.auth.darf('accounting', 'LESEN'));
+  protected readonly darfBildAnlegen = computed(() => this.auth.darf('content', 'ANLEGEN'));
+  protected readonly darfBildLoesen = computed(() => this.auth.darf('content', 'AENDERN'));
 
   protected readonly meldung = signal<Meldung | null>(null);
 
@@ -409,17 +394,19 @@ export class ArtikelDetail {
       manufacturer_number: art.manufacturer_number ?? '',
       manufacturer_type: art.manufacturer_type ?? '',
       gtin: art.gtin ?? '',
-      min_order_quantity: art.min_order_quantity != null ? apiZuDeDezimal(art.min_order_quantity) : '',
-      quantity_step: art.quantity_step != null ? apiZuDeDezimal(art.quantity_step) : '',
+      min_order_quantity:
+        art.min_order_quantity != null ? apiZuDeEingabe(art.min_order_quantity) : '',
+      quantity_step: art.quantity_step != null ? apiZuDeEingabe(art.quantity_step) : '',
       price_unit: String(art.price_unit ?? 1),
       delivery_time_days: art.delivery_time_days != null ? String(art.delivery_time_days) : '',
       tax_code: art.tax_code ?? '',
       // list_price hat vier Nachkommastellen; unverändert anzeigen (kein Runden).
-      list_price: art.list_price != null ? apiZuDeDezimal(art.list_price) : '',
+      list_price: art.list_price != null ? apiZuDeEingabe(art.list_price) : '',
       long_description: art.long_description ?? '',
       supplier_party_id: art.supplier_party_id ?? '',
       supplier_article_number: art.supplier_article_number ?? '',
-      last_purchase_price: art.last_purchase_price != null ? apiZuDeDezimal(art.last_purchase_price) : '',
+      last_purchase_price:
+        art.last_purchase_price != null ? apiZuDeEingabe(art.last_purchase_price) : '',
     });
     this.bearbeitenOffen.set(true);
   }
@@ -557,7 +544,8 @@ export class ArtikelDetail {
         danach?.();
         this.meldung.set({
           art: 'fehler',
-          text: apiFehlerZuweisen(err, this.bearbeitenForm).formular ?? 'Statuswechsel fehlgeschlagen.',
+          text:
+            apiFehlerZuweisen(err, this.bearbeitenForm).formular ?? 'Statuswechsel fehlgeschlagen.',
         });
       },
     });
@@ -623,8 +611,7 @@ export class ArtikelDetail {
     this.dateiSvc.liste({ article_id: articleId }).subscribe({
       next: (liste) => {
         if (rid !== this.bildReqId) return;
-        const treffer =
-          liste.items.find((d) => d.link_category === 'ARTIKELBILD') ?? null;
+        const treffer = liste.items.find((d) => d.link_category === 'ARTIKELBILD') ?? null;
         if (!treffer) {
           this.bild.set({ kind: 'ready', datei: null, url: null });
           return;
@@ -767,7 +754,7 @@ export class ArtikelDetail {
     let standard = '';
     for (const g of data.groups) {
       felder[g.sale_price_group_id] =
-        g.effective_sale_price != null ? apiZuDeDezimal(g.effective_sale_price, 2) : '';
+        g.effective_sale_price != null ? apiZuDeEingabe(g.effective_sale_price, 2) : '';
       if (g.is_standard) standard = g.sale_price_group_id;
     }
     if (!standard && data.groups.length) standard = data.groups[0].sale_price_group_id;
@@ -799,6 +786,18 @@ export class ArtikelDetail {
     const standard = this.vkStandard();
     if (!standard || !groups.some((g) => g.sale_price_group_id === standard)) {
       this.vkMeldung.set('Bitte genau eine Standard-VK-Gruppe wählen.');
+      return;
+    }
+
+    // Unlesbare oder mehrdeutige Eingabe („1.500") niemals stumm als Zahl deuten —
+    // die VK-Felder haengen an keinem FormControl, also hier selbst pruefen.
+    if (
+      groups.some((g) => !istDezimalApiWert(deZuApiDezimal(this.vkFeldWert(g.sale_price_group_id))))
+    ) {
+      this.vkMeldung.set(
+        'Ein VK-Preis ist keine eindeutige Zahl. Bitte ohne Tausenderpunkt schreiben (1500) ' +
+          'oder mit Komma (1500,00).',
+      );
       return;
     }
 

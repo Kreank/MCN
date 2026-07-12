@@ -175,8 +175,12 @@
     color: var(--on-command);
     background: var(--command-2);
   }
+  // Die Kennziffer trug auf der aktiven/gehoverten Zeile Orange auf --command-2
+  // (#ef804e auf #223b50 = 4,35:1) — unter der AA-Schwelle. Auf der aktiven
+  // Zeile traegt sie jetzt --on-command (#eaf0f4 auf #223b50 = 10,1:1); der
+  // Aktivzustand ist ohnehin doppelt kodiert (Flaeche + aria-current + Balken).
   &.is-active .nav__mark {
-    color: var(--accent);
+    color: var(--on-command);
   }
   &:focus-visible {
     outline: 2.5px solid var(--focus-ring-on-command);

@@ -342,7 +342,7 @@
         }
 
         <fieldset class="dlg-block">
-          <legend class="dlg-block__legend">Stammdaten</legend>
+          <legend class="legende">Stammdaten</legend>
           <app-feld [control]="bearbeitenForm.controls.description" label="Artikelname" [pflicht]="true" />
           <div class="pos-grid">
             <app-feld [control]="bearbeitenForm.controls.article_number" label="Artikelnummer" [pflicht]="true" />
@@ -358,7 +358,7 @@
         </fieldset>
 
         <fieldset class="dlg-block">
-          <legend class="dlg-block__legend">Hersteller</legend>
+          <legend class="legende">Hersteller</legend>
           <div class="pos-grid">
             <app-feld [control]="bearbeitenForm.controls.manufacturer_name" label="Hersteller" />
             <app-feld [control]="bearbeitenForm.controls.manufacturer_number" label="Hersteller-Nr." />
@@ -367,7 +367,7 @@
         </fieldset>
 
         <fieldset class="dlg-block">
-          <legend class="dlg-block__legend">Lieferant</legend>
+          <legend class="legende">Lieferant</legend>
           <app-referenz-wahl
             [control]="bearbeitenForm.controls.supplier_party_id"
             label="Lieferant"
@@ -382,7 +382,7 @@
         </fieldset>
 
         <fieldset class="dlg-block">
-          <legend class="dlg-block__legend">Beschaffung &amp; Preise</legend>
+          <legend class="legende">Beschaffung &amp; Preise</legend>
           <div class="pos-grid">
             <app-feld [control]="bearbeitenForm.controls.min_order_quantity" label="Mindestbestellmenge" typ="zahl" />
             <app-feld [control]="bearbeitenForm.controls.quantity_step" label="Mengenstaffel" typ="zahl" />

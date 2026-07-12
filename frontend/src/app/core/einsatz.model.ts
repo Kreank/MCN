@@ -84,6 +84,21 @@ export interface JobAssignment {
   role: string;
 }
 
+/**
+ * Antwort auf eine neue Zuweisung: die Zuweisung plus NICHT-blockierende
+ * Doppelbelegungs-Hinweise. Die Doppelbelegung ist eine bewusst weiche
+ * Invariante (die DB verhindert sie nicht) — das UI muss die Warnung ZEIGEN,
+ * die Aktion ist dennoch durchgelaufen.
+ */
+export interface JobAssignmentResult extends JobAssignment {
+  warnings: string[];
+}
+
+/** Antwort auf das Umplanen (POST .../schedule) — mit ebensolchen Warnungen. */
+export interface ScheduleResult extends ServiceJob {
+  warnings: string[];
+}
+
 /** Schlanke Zuweisungs-Auswahlliste (GET /api/planung/users): nur id + Name. */
 export interface AssignableUser {
   id: string;

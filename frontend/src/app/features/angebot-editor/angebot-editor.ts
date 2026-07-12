@@ -3,12 +3,7 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { NgTemplateOutlet } from '@angular/common';
 import { CdkDragDrop, DragDropModule, moveItemInArray } from '@angular/cdk/drag-drop';
-import {
-  FormBuilder,
-  FormControl,
-  ReactiveFormsModule,
-  Validators,
-} from '@angular/forms';
+import { FormBuilder, FormControl, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Observable, Subject, debounceTime, distinctUntilChanged, map } from 'rxjs';
 import { BelegService } from '../../core/beleg.service';
 import { ArtikelService } from '../../core/artikel.service';
@@ -45,18 +40,17 @@ import {
   serverFehlerZuruecksetzen,
 } from '../../shared/formular/formular.util';
 import {
-  apiZuDeDezimal,
+  apiZuDeAnzeige,
+  apiZuDeEingabe,
   deZuApiDezimal,
   dezimalValidator,
   ganzzahlValidator,
+  istDezimalApiWert,
+  istMehrdeutigeDezimalEingabe,
 } from '../../shared/formular/dezimal';
 import { isoDatumDe } from '../../shared/datum';
 
-type ViewState =
-  | { kind: 'loading' }
-  | { kind: 'ready' }
-  | VerbotenState
-  | { kind: 'error' };
+type ViewState = { kind: 'loading' } | { kind: 'ready' } | VerbotenState | { kind: 'error' };
 
 type Meldung = { art: 'erfolg' | 'fehler'; text: string };
 
@@ -154,6 +148,15 @@ const TAX_CODE_OPTIONEN: FeldOption[] = [
   { wert: 'DE_13B', label: '§13b UStG (Reverse Charge)' },
 ];
 const TEXT_TYPES: LineType[] = ['TEXT', 'ZWISCHENSUMME'];
+/** Merker fuer die aufgeklappte Kalkulationsleiste. */
+const KALK_KEY = 'mcn.editor.kalk-offen';
+function leseKalkOffen(): boolean {
+  try {
+    return localStorage.getItem(KALK_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
 /** Status, in denen der Beleg noch bearbeitbar ist (sonst read-only). */
 const EDITIERBAR: QuoteStatus[] = ['ENTWURF', 'INTERN_GEPRUEFT', 'FREIGEGEBEN'];
 
@@ -199,8 +202,7 @@ export class AngebotEditor {
   private reqId = 0;
   private quoteId = '';
   /** Belegart aus der Route (data.belegArt); steuert Laden/Speichern/Kopf. */
-  protected readonly istRechnung =
-    this.route.snapshot.data['belegArt'] === 'rechnung';
+  protected readonly istRechnung = this.route.snapshot.data['belegArt'] === 'rechnung';
   protected readonly belegWort = this.istRechnung ? 'Rechnung' : 'Angebot';
 
   // --- Editier-Zustand -----------------------------------------------------
@@ -250,7 +252,7 @@ export class AngebotEditor {
     if (!this.istRechnung) return null;
     const inv = this.quote() as InvoiceDetail | null;
     if (!inv?.skonto_bis || !inv.skonto_betrag) return null;
-    const satz = apiZuDeDezimal(inv.discount_percent, 2);
+    const satz = apiZuDeAnzeige(inv.discount_percent, 2);
     let text =
       `${satz} % Skonto bei Zahlung bis ${this.datumDe(inv.skonto_bis)} ` +
       `(${this.euro(inv.skonto_betrag)}), zahlbar ${this.euro(inv.skonto_zahlbetrag)}`;
@@ -276,6 +278,55 @@ export class AngebotEditor {
   // --- Kalkulation (Server) ------------------------------------------------
   protected readonly kalk = signal<Kalkulation | null>(null);
   protected readonly kalkVerborgen = signal(false); // 403 auf pricing/LESEN
+  /** Aufgeklappte Kalkulationstabelle (je Abschnitt). Standard: zu — die volle
+   *  Tabelle nahm als sticky Leiste 30 % der Viewport-Hoehe dauerhaft weg. Der
+   *  Zustand wird gemerkt; localStorage kann im Privatmodus werfen. */
+  protected readonly kalkOffen = signal(leseKalkOffen());
+
+  kalkUmschalten(): void {
+    const neu = !this.kalkOffen();
+    this.kalkOffen.set(neu);
+    try {
+      localStorage.setItem(KALK_KEY, neu ? '1' : '0');
+    } catch {
+      /* Speicher nicht verfuegbar — der Zustand gilt dann nur fuer diese Sitzung. */
+    }
+  }
+
+  // --- Ueberlaufmenue der Positionszeile ------------------------------------
+  protected readonly menuUid = signal<string | null>(null);
+  private menuAusloeser: HTMLElement | null = null;
+
+  menuUmschalten(uid: string, ev: Event): void {
+    const offen = this.menuUid() === uid;
+    this.menuAusloeser = offen ? null : (ev.currentTarget as HTMLElement);
+    this.menuUid.set(offen ? null : uid);
+  }
+
+  /** Schliesst das Menue; `fokusZurueck` gibt den Fokus an den Ausloeser zurueck
+   *  (nach „Entfernen" existiert die Zeile nicht mehr — dann false). */
+  menuSchliessen(fokusZurueck: boolean): void {
+    const el = this.menuAusloeser;
+    this.menuUid.set(null);
+    this.menuAusloeser = null;
+    if (fokusZurueck && el?.isConnected) el.focus();
+  }
+
+  /** Klick ausserhalb schliesst das Menue (der Klick auf den Ausloeser selbst
+   *  laeuft ueber menuUmschalten und wuerde sonst sofort wieder zugehen). */
+  @HostListener('document:click', ['$event'])
+  onDocClick(ev: MouseEvent): void {
+    if (this.menuUid() === null) return;
+    const ziel = ev.target as HTMLElement | null;
+    if (ziel?.closest('.posmenu')) return;
+    this.menuUid.set(null);
+    this.menuAusloeser = null;
+  }
+
+  @HostListener('document:keydown.escape')
+  onEsc(): void {
+    if (this.menuUid() !== null) this.menuSchliessen(true);
+  }
 
   // --- Palette -------------------------------------------------------------
   protected readonly paletteModus = signal<PaletteModus>('artikel');
@@ -427,24 +478,20 @@ export class AngebotEditor {
     // Text-/Nicht-Text-Umschaltung im Positionsdialog: Pflicht-Validatoren
     // (Menge/Preis) nur für Nicht-Textzeilen. FormControl-Werte sind keine
     // Signale, daher über valueChanges statt über einen effect().
-    this.posForm.controls.line_type.valueChanges
-      .pipe(takeUntilDestroyed())
-      .subscribe((lt) => {
-        const text = TEXT_TYPES.includes(lt);
-        const q = this.posForm.controls.quantity;
-        const p = this.posForm.controls.unit_price;
-        const req = text ? [dezimalValidator] : [Validators.required, dezimalValidator];
-        q.setValidators(req);
-        p.setValidators(req);
-        q.updateValueAndValidity({ emitEvent: false });
-        p.updateValueAndValidity({ emitEvent: false });
-      });
+    this.posForm.controls.line_type.valueChanges.pipe(takeUntilDestroyed()).subscribe((lt) => {
+      const text = TEXT_TYPES.includes(lt);
+      const q = this.posForm.controls.quantity;
+      const p = this.posForm.controls.unit_price;
+      const req = text ? [dezimalValidator] : [Validators.required, dezimalValidator];
+      q.setValidators(req);
+      p.setValidators(req);
+      q.updateValueAndValidity({ emitEvent: false });
+      p.updateValueAndValidity({ emitEvent: false });
+    });
 
     // Kopffeld-Änderungen (Titel/Daten) als ungespeichert markieren. `uebernehmen`
     // setzt dirty nach dem reset() wieder zurück.
-    this.kopfForm.valueChanges
-      .pipe(takeUntilDestroyed())
-      .subscribe(() => this.markiereGeaendert());
+    this.kopfForm.valueChanges.pipe(takeUntilDestroyed()).subscribe(() => this.markiereGeaendert());
   }
 
   @HostListener('window:beforeunload', ['$event'])
@@ -487,13 +534,14 @@ export class AngebotEditor {
     if (this.istRechnung) {
       const inv = data as InvoiceDetail;
       this.kopfForm.reset({
-        title: '', quote_date: '', valid_until_date: '',
+        title: '',
+        quote_date: '',
+        valid_until_date: '',
         invoice_date: inv.invoice_date ?? '',
         due_date: inv.due_date ?? '',
-        payment_term_days:
-          inv.payment_term_days === null ? '' : String(inv.payment_term_days),
+        payment_term_days: inv.payment_term_days === null ? '' : String(inv.payment_term_days),
         // Decimal bleibt String; nur die Anzeige wird eingedeutscht.
-        discount_percent: apiZuDeDezimal(inv.discount_percent, 2),
+        discount_percent: apiZuDeEingabe(inv.discount_percent, 2),
         discount_days: inv.discount_days === null ? '' : String(inv.discount_days),
       });
     } else {
@@ -502,8 +550,11 @@ export class AngebotEditor {
         title: q.title ?? '',
         quote_date: q.quote_date ?? '',
         valid_until_date: q.valid_until_date ?? '',
-        invoice_date: '', due_date: '',
-        payment_term_days: '', discount_percent: '', discount_days: '',
+        invoice_date: '',
+        due_date: '',
+        payment_term_days: '',
+        discount_percent: '',
+        discount_days: '',
       });
     }
     // Abschnitte in Anzeigereihenfolge; Nummer (1-basiert) → lokale uid.
@@ -548,7 +599,7 @@ export class AngebotEditor {
   private zuEditorLine(l: QuoteLine, nummerZuUid: Map<number, string>): EditorLine {
     return {
       uid: neueUid(),
-      rubrikUid: l.rubrik != null ? nummerZuUid.get(l.rubrik) ?? null : null,
+      rubrikUid: l.rubrik != null ? (nummerZuUid.get(l.rubrik) ?? null) : null,
       line_type: l.line_type,
       line_kind: l.line_kind,
       description: l.description,
@@ -634,7 +685,9 @@ export class AngebotEditor {
     // Zielabschnitt der Palette nicht auf einen gelöschten Abschnitt zeigen lassen
     // (sonst landeten neu übernommene Positionen in keiner Gruppe).
     if (this.zielRubrik() === r.uid) this.zielRubrik.set(null);
-    this.ansage.set(`Abschnitt „${r.title}" entfernt, Positionen nach „Ohne Abschnitt" verschoben.`);
+    this.ansage.set(
+      `Abschnitt „${r.title}" entfernt, Positionen nach „Ohne Abschnitt" verschoben.`,
+    );
     this.markiereGeaendert();
   }
 
@@ -664,7 +717,9 @@ export class AngebotEditor {
     if (this.readonly() || event.previousIndex === event.currentIndex) return;
     this.rubrikBewegen(event.previousIndex, event.currentIndex);
     const moved = this.rubriken()[event.currentIndex];
-    this.ansage.set(`Abschnitt „${moved?.title ?? ''}" an Stelle ${event.currentIndex + 1} verschoben.`);
+    this.ansage.set(
+      `Abschnitt „${moved?.title ?? ''}" an Stelle ${event.currentIndex + 1} verschoben.`,
+    );
   }
 
   // ======================= Positionen: verschieben ========================
@@ -696,12 +751,16 @@ export class AngebotEditor {
 
     // Aus der Palette gezogen: Artikel/Leistung an die Zielstelle übernehmen.
     if (event.previousContainer.id === DL_PALETTE) {
-      this.uebernehmenAusPalette(event.item.data as string, { rubrikUid: zielRubrikUid, index: zielIndex });
+      this.uebernehmenAusPalette(event.item.data as string, {
+        rubrikUid: zielRubrikUid,
+        index: zielIndex,
+      });
       return;
     }
 
     // Umsortierung: gleiche Liste ohne Positionswechsel = nichts zu tun.
-    if (event.previousContainer === event.container && event.previousIndex === event.currentIndex) return;
+    if (event.previousContainer === event.container && event.previousIndex === event.currentIndex)
+      return;
     const line = event.item.data as EditorLine;
     this.lineEinordnen(line.uid, zielRubrikUid, zielIndex);
     this.ansage.set(`Position nach „${name}", Stelle ${zielIndex + 1} verschoben.`);
@@ -740,7 +799,11 @@ export class AngebotEditor {
    * Ist die Zielgruppe leer, wird ans Array-Ende gehängt (Gruppenreihenfolge
    * ergibt sich beim Speichern ohnehin aus der Rubrik-Reihenfolge).
    */
-  private flatEinfuegeIndex(arr: EditorLine[], zielRubrikUid: string | null, zielIndex: number): number {
+  private flatEinfuegeIndex(
+    arr: EditorLine[],
+    zielRubrikUid: string | null,
+    zielIndex: number,
+  ): number {
     const gruppenIdx: number[] = [];
     arr.forEach((l, i) => {
       if (l.rubrikUid === zielRubrikUid) gruppenIdx.push(i);
@@ -749,6 +812,77 @@ export class AngebotEditor {
     if (zielIndex <= 0) return gruppenIdx[0];
     if (zielIndex >= gruppenIdx.length) return gruppenIdx[gruppenIdx.length - 1] + 1;
     return gruppenIdx[zielIndex];
+  }
+
+  /**
+   * Laufende Positionsnummer über alle Abschnitte (Anzeigereihenfolge) — dieselbe
+   * Zählung, die der Server beim Speichern vergibt und die Beleg-Mappe zeigt.
+   */
+  private readonly posNummern = computed<Map<string, number>>(() => {
+    const m = new Map<string, number>();
+    let n = 0;
+    for (const g of this.gruppen()) {
+      for (const l of g.lines) m.set(l.uid, ++n);
+    }
+    return m;
+  });
+
+  posNummer(uid: string): number {
+    return this.posNummern().get(uid) ?? 0;
+  }
+
+  /**
+   * Direktbearbeitung in der Positionszeile (Menge, Einheit, Einzelpreis). Die
+   * übrigen Felder (Art, Wertung, Rabatt, Steuer, EK, Stamm-Übernahme) bleiben im
+   * Detaildialog — sie werden selten angefasst und brauchen Erklärung.
+   *
+   * Dezimalwerte bleiben Strings (verlustfrei); der Netto-Betrag wird verworfen,
+   * weil ihn ausschließlich der Server berechnet — bis zum Speichern steht in der
+   * Zeile „nach Speichern". Eine unlesbare Zahl wird NICHT still verworfen: der
+   * alte Wert bleibt stehen und das Feld wird zurückgesetzt.
+   */
+  zeileFeld(
+    line: EditorLine,
+    feld: 'quantity' | 'unit' | 'unit_price',
+    el: HTMLInputElement,
+  ): void {
+    if (this.readonly()) return;
+    const roh = el.value.trim();
+    const nachkomma = feld === 'unit_price' ? 2 : undefined;
+    let neu: string | null;
+
+    if (feld === 'unit') {
+      neu = roh || null;
+    } else if (roh === '') {
+      neu = null;
+    } else {
+      const api = deZuApiDezimal(roh);
+      // Nur nicht-negative Zahlen; `deZuApiDezimal` liefert für Unlesbares und
+      // für Mehrdeutiges („1.500") den Sentinel, der hier ebenfalls durchfällt.
+      if (!istDezimalApiWert(api) || !/^\d+(\.\d+)?$/.test(api)) {
+        // Ungültige Eingabe: Zeile unverändert lassen, Feld sichtbar zurücksetzen.
+        el.value = this.zahlEingabe(line[feld], nachkomma);
+        this.meldung.set({
+          art: 'fehler',
+          text: istMehrdeutigeDezimalEingabe(roh)
+            ? `„${roh}" ist nicht eindeutig — Tausenderpunkt oder Dezimalpunkt? Bitte ohne ` +
+              `Punkt schreiben („${roh.replace(/\./g, '')}") oder Nachkommastellen mit Komma ` +
+              `angeben. Die Position wurde nicht geändert.`
+            : `„${roh}" ist keine gültige Zahl. Die Position wurde nicht geändert.`,
+        });
+        return;
+      }
+      neu = api;
+    }
+
+    if ((neu ?? '') === (line[feld] ?? '')) return;
+    this.lines.update((ls) =>
+      ls.map((l) => (l.uid === line.uid ? { ...l, [feld]: neu, netAmount: null } : l)),
+    );
+    // Anzeige normalisieren (das [value]-Binding schreibt nicht zurück, wenn der
+    // gebundene Wert sich aus Angulars Sicht nicht geändert hat).
+    el.value = feld === 'unit' ? (neu ?? '') : this.zahlEingabe(neu, nachkomma);
+    this.markiereGeaendert();
   }
 
   zeileEntfernen(line: EditorLine): void {
@@ -770,11 +904,11 @@ export class AngebotEditor {
       description: line.description,
       line_type: line.line_type,
       line_kind: line.line_kind,
-      quantity: line.quantity != null ? apiZuDeDezimal(line.quantity) : '',
+      quantity: line.quantity != null ? apiZuDeEingabe(line.quantity) : '',
       unit: line.unit ?? '',
-      unit_price: line.unit_price != null ? apiZuDeDezimal(line.unit_price, 2) : '',
-      unit_cost: line.unit_cost != null ? apiZuDeDezimal(line.unit_cost, 2) : '',
-      discount_percent: line.discount_percent != null ? apiZuDeDezimal(line.discount_percent) : '',
+      unit_price: line.unit_price != null ? apiZuDeEingabe(line.unit_price, 2) : '',
+      unit_cost: line.unit_cost != null ? apiZuDeEingabe(line.unit_cost, 2) : '',
+      discount_percent: line.discount_percent != null ? apiZuDeEingabe(line.discount_percent) : '',
       tax_code: line.tax_code ?? 'DE_19',
       // Häkchen bei jedem Öffnen zurücksetzen — es ist transient und persistiert nie.
       stamm_uebernehmen: false,
@@ -792,9 +926,7 @@ export class AngebotEditor {
    * eines Stammartikels) UND dem Recht pricing/AENDERN — nicht für Textzeilen.
    */
   zeigeStammHaken(): boolean {
-    return (
-      !!this.posQuelleArtikelId() && this.darfPricingAendern() && !this.posIstText()
-    );
+    return !!this.posQuelleArtikelId() && this.darfPricingAendern() && !this.posIstText();
   }
 
   stammUebernehmenAbbrechen(): void {
@@ -1039,7 +1171,10 @@ export class AngebotEditor {
         });
       },
       error: (err) => {
-        this.meldung.set({ art: 'fehler', text: this.fehlerText(err, 'Artikel konnte nicht geladen werden.') });
+        this.meldung.set({
+          art: 'fehler',
+          text: this.fehlerText(err, 'Artikel konnte nicht geladen werden.'),
+        });
       },
     });
   }
@@ -1070,10 +1205,15 @@ export class AngebotEditor {
           taxRatePercent: null,
         };
         this.lineEinsetzen(line, zielRubrik, zielIndex);
-        this.ansage.set(`Leistung „${asm.name}" nach „${zielName}" übernommen. Bitte Einzelpreis ergänzen.`);
+        this.ansage.set(
+          `Leistung „${asm.name}" nach „${zielName}" übernommen. Bitte Einzelpreis ergänzen.`,
+        );
       },
       error: (err) => {
-        this.meldung.set({ art: 'fehler', text: this.fehlerText(err, 'Leistung konnte nicht geladen werden.') });
+        this.meldung.set({
+          art: 'fehler',
+          text: this.fehlerText(err, 'Leistung konnte nicht geladen werden.'),
+        });
       },
     });
   }
@@ -1109,9 +1249,7 @@ export class AngebotEditor {
 
   /** quote_id-Kontext für den Punchout: nur bei einem echten Angebot (die
    * Session-FK zeigt auf invoicing.quote — eine Rechnungs-ID gehört NICHT dahin). */
-  protected readonly idsQuoteId = computed(() =>
-    this.istRechnung ? null : this.quoteId || null,
-  );
+  protected readonly idsQuoteId = computed(() => (this.istRechnung ? null : this.quoteId || null));
 
   /** Die aus dem Händler-Warenkorb zurückgegebenen Positionen als Belegzeilen
    * übernehmen. Der Netto-EK wird als Einkaufspreis (unit_cost) UND provisorisch
@@ -1169,7 +1307,7 @@ export class AngebotEditor {
     for (const g of this.gruppen()) {
       for (const l of g.lines) {
         const text = TEXT_TYPES.includes(l.line_type);
-        const rubrik = l.rubrikUid != null ? uidZuNummer.get(l.rubrikUid) ?? null : null;
+        const rubrik = l.rubrikUid != null ? (uidZuNummer.get(l.rubrikUid) ?? null) : null;
         if (text) {
           lines.push({ line_type: l.line_type, description: l.description, rubrik });
         } else {
@@ -1291,7 +1429,10 @@ export class AngebotEditor {
       error: (err) => {
         this.versendenLaedt.set(false);
         this.versendenOffen.set(false);
-        this.meldung.set({ art: 'fehler', text: this.fehlerText(err, 'Versenden fehlgeschlagen.') });
+        this.meldung.set({
+          art: 'fehler',
+          text: this.fehlerText(err, 'Versenden fehlgeschlagen.'),
+        });
       },
     });
   }
@@ -1332,6 +1473,22 @@ export class AngebotEditor {
   /** ISO-Datum (JJJJ-MM-TT) in deutscher Schreibweise, ohne Zeitzonen-Drift. */
   private datumDe(iso: string): string {
     return isoDatumDe(iso);
+  }
+
+  /**
+   * Dezimalwert (API-Punkt-String) für ein **Eingabefeld** eindeutschen — ohne
+   * Tausenderpunkt. Gruppiert man hier, ist der Wert beim Zurücklesen mehrdeutig
+   * („1.200" = 1200 oder 1,2?) und die Menge stürzt beim Speichern um Faktor 1000.
+   */
+  zahlEingabe(v: string | null, nachkomma?: number): string {
+    if (v == null || v === '') return '';
+    return apiZuDeEingabe(v, nachkomma);
+  }
+
+  /** Dezimalwert für die reine **Anzeige** (read-only) — mit Tausenderpunkt. */
+  zahlAnzeige(v: string | null, nachkomma?: number): string {
+    if (v == null || v === '') return '';
+    return apiZuDeAnzeige(v, nachkomma);
   }
 
   menge(qty: string | null, unit: string | null): string {

@@ -299,6 +299,26 @@ def assign_user(actor_app_user_id, *, service_job_id, assignee_user_id, role="TE
     return assignment
 
 
+def unassign_user(actor_app_user_id, *, service_job_id, assignee_user_id):
+    """Hebt die Zuweisung eines Mitarbeiters am Einsatz auf (Korrektur).
+
+    Gegenstück zu assign_user — nötig, um einen Einsatz auf der Plantafel von
+    einer Bahn in eine andere zu ziehen (die alte Zuweisung muss weichen).
+
+    Der DB-Trigger `workflow.protect_job_assignment` lässt das Löschen nur zu,
+    solange der Einsatz nicht ABGESCHLOSSEN/NACHARBEIT ist (Historienschutz
+    F-02); danach kommt der Fehler als fachlicher 422 zurück, NICHT als 500.
+    """
+    link = JobAssignment.objects.filter(
+        service_job_id=service_job_id, assignee_id=assignee_user_id
+    ).first()
+    if link is None:
+        raise ValueError("Dieser Mitarbeiter ist dem Einsatz nicht zugewiesen.")
+    with as_business_error():
+        with business_transaction(actor_app_user_id):
+            JobAssignment.objects.filter(id=link.id).delete()
+
+
 def log_time(
     actor_app_user_id,
     *,

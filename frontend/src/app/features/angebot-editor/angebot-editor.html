@@ -114,17 +114,25 @@
         <!-- ===================== Kopffelder ===================== -->
         <section class="ed-kopf" [formGroup]="kopfForm" [attr.aria-label]="belegWort + 'kopf'">
           @if (istRechnung) {
-            <div class="ed-kopf__datum">
-              <app-feld [control]="kopfForm.controls.invoice_date" label="Rechnungsdatum" typ="datum" />
-              <app-feld
-                [control]="kopfForm.controls.due_date"
-                label="Fällig bis"
-                typ="datum"
-                hinweis="Leer lassen: wird beim Veröffentlichen aus dem Zahlungsziel berechnet."
-              />
-            </div>
+            <!--
+              Beide Gruppen tragen eine Legende — sonst begänne die rechte Gruppe
+              (Zahlungsbedingungen) um die Legendenhöhe tiefer und die Felder der
+              Kopfzeile flüchteten wieder nicht.
+            -->
             <fieldset class="ed-kopf__zb">
-              <legend class="ed-kopf__zb-legende">Zahlungsbedingungen</legend>
+              <legend class="legende">Belegdaten</legend>
+              <div class="ed-kopf__zb-felder">
+                <app-feld [control]="kopfForm.controls.invoice_date" label="Rechnungsdatum" typ="datum" />
+                <app-feld
+                  [control]="kopfForm.controls.due_date"
+                  label="Fällig bis"
+                  typ="datum"
+                  hinweis="Leer lassen: wird beim Veröffentlichen aus dem Zahlungsziel berechnet."
+                />
+              </div>
+            </fieldset>
+            <fieldset class="ed-kopf__zb">
+              <legend class="legende">Zahlungsbedingungen</legend>
               <div class="ed-kopf__zb-felder">
                 <app-feld
                   [control]="kopfForm.controls.payment_term_days"
@@ -286,6 +294,28 @@
             <!-- Wiederverwendete Positionsliste (Abschnitt oder „Ohne Abschnitt").
                  Als cdkDropList mit allen anderen Listen und der Palette verbunden. -->
             <ng-template #poslistTpl let-g="gruppe">
+              <!--
+                Spaltenkopf des Positionsrasters. Die Positionszeile ist eine
+                echte Spaltentabelle (Pos · Bezeichnung · Menge · Einheit · EP ·
+                Netto · Aktionen) — vorher quetschte eine 3-Spalten-Zeile die
+                Zahlen in eine Unterzeile („8 h × 62,00 €") und gab 296 px an
+                vier Icon-Knöpfe und ein Select. Menge/Einheit/EP werden jetzt
+                DIREKT in der Zeile bearbeitet; der Dialog bleibt für die
+                selteneren Felder (Art, Wertung, Rabatt, Steuer, EK, Stamm).
+              -->
+              @if (g.lines.length > 0) {
+                <div class="poshead" aria-hidden="true">
+                  <span class="poscell poscell--nr">Pos.</span>
+                  <span class="poscell poscell--desc">Bezeichnung</span>
+                  <span class="poscell poscell--num">Menge</span>
+                  <span class="poscell poscell--einheit">Einheit</span>
+                  <span class="poscell poscell--num">Einzelpreis</span>
+                  <span class="poscell poscell--num">Netto</span>
+                  @if (!readonly()) {
+                    <span class="poscell poscell--akt"></span>
+                  }
+                </div>
+              }
               <ul
                 class="poslist"
                 [class.poslist--leer]="g.lines.length === 0"
@@ -321,87 +351,151 @@
                         <span aria-hidden="true">⣿</span>
                       </button>
                     }
-                    <div class="posrow__haupt">
+
+                    <span class="poscell poscell--nr posrow__nr">{{ posNummer(l.uid) }}</span>
+
+                    <div class="poscell poscell--desc">
                       <div class="posrow__meta">
                         <span class="posrow__typ">{{ lineTypeLabel(l.line_type) }}</span>
                         @if (istNebenposition(l.line_kind)) {
                           <span class="stamp stamp--type posrow__kind">{{ lineKindLabel(l.line_kind) }}</span>
                         }
+                        @if (l.discount_percent) {
+                          <span class="posrow__rabatt">− {{ prozent(l.discount_percent) }} Rabatt</span>
+                        }
                       </div>
                       <p class="posrow__desc">{{ l.description }}</p>
-                      @if (!istText(l.line_type)) {
-                        <p class="posrow__zahlen">
-                          <span>{{ menge(l.quantity, l.unit) }}</span>
-                          <span aria-hidden="true">×</span>
-                          <span>{{ euro(l.unit_price) }}</span>
-                          @if (l.discount_percent) {
-                            <span class="posrow__rabatt">− {{ prozent(l.discount_percent) }}</span>
-                          }
-                        </p>
-                      }
                     </div>
 
-                    <div class="posrow__betrag">
-                      @if (istText(l.line_type)) {
-                        <span class="posrow__net posrow__net--leer">—</span>
-                      } @else if (l.netAmount !== null) {
-                        @if (istNebenposition(l.line_kind)) {
-                          <span class="posrow__net posrow__net--neben">({{ euro(l.netAmount) }})</span>
+                    @if (istText(l.line_type)) {
+                      <span class="poscell posrow__textspan">
+                        {{ l.line_type === 'ZWISCHENSUMME' ? 'Zwischensumme' : 'Textzeile' }} — ohne Betrag
+                      </span>
+                    } @else {
+                      <span class="poscell poscell--num">
+                        @if (readonly()) {
+                          <span class="poszahl">{{ zahlAnzeige(l.quantity) }}</span>
                         } @else {
-                          <span class="posrow__net">{{ euro(l.netAmount) }}</span>
+                          <input
+                            class="posinp posinp--num"
+                            type="text"
+                            inputmode="decimal"
+                            [value]="zahlEingabe(l.quantity)"
+                            [attr.aria-label]="'Menge von „' + l.description + '“'"
+                            (change)="zeileFeld(l, 'quantity', $any($event.target))"
+                          />
                         }
-                      } @else {
-                        <span class="posrow__net posrow__net--leer" title="Betrag wird nach dem Speichern vom Server berechnet">nach Speichern</span>
-                      }
-                    </div>
+                      </span>
+                      <span class="poscell poscell--einheit">
+                        @if (readonly()) {
+                          <span class="poszahl">{{ l.unit || '—' }}</span>
+                        } @else {
+                          <input
+                            class="posinp"
+                            type="text"
+                            [value]="l.unit ?? ''"
+                            [attr.aria-label]="'Einheit von „' + l.description + '“'"
+                            (change)="zeileFeld(l, 'unit', $any($event.target))"
+                          />
+                        }
+                      </span>
+                      <span class="poscell poscell--num">
+                        @if (readonly()) {
+                          <span class="poszahl">{{ euro(l.unit_price) }}</span>
+                        } @else {
+                          <input
+                            class="posinp posinp--num"
+                            type="text"
+                            inputmode="decimal"
+                            [value]="zahlEingabe(l.unit_price, 2)"
+                            [attr.aria-label]="'Einzelpreis von „' + l.description + '“ in Euro'"
+                            (change)="zeileFeld(l, 'unit_price', $any($event.target))"
+                          />
+                        }
+                      </span>
+                      <span class="poscell poscell--num posrow__betrag">
+                        @if (l.netAmount !== null) {
+                          @if (istNebenposition(l.line_kind)) {
+                            <span class="posrow__net posrow__net--neben">({{ euro(l.netAmount) }})</span>
+                          } @else {
+                            <span class="posrow__net">{{ euro(l.netAmount) }}</span>
+                          }
+                        } @else {
+                          <span class="posrow__net posrow__net--leer" title="Betrag wird nach dem Speichern vom Server berechnet">nach Speichern</span>
+                        }
+                      </span>
+                    }
 
                     @if (!readonly()) {
-                      <div class="posrow__akt">
-                        <button type="button" class="ibtn" (click)="zeileOeffnen(l)" aria-label="Position bearbeiten">
+                      <div class="poscell poscell--akt posrow__akt">
+                        <button type="button" class="ibtn" (click)="zeileOeffnen(l)" [attr.aria-label]="'Position „' + l.description + '“ im Detail bearbeiten'">
                           <span aria-hidden="true">✎</span>
                         </button>
-                        <button
-                          type="button"
-                          class="ibtn"
-                          [disabled]="li === 0"
-                          (click)="zeileVerschieben(l, -1)"
-                          aria-label="Position nach oben"
-                        >
-                          <span aria-hidden="true">▲</span>
-                        </button>
-                        <button
-                          type="button"
-                          class="ibtn"
-                          [disabled]="li >= g.lines.length - 1"
-                          (click)="zeileVerschieben(l, 1)"
-                          aria-label="Position nach unten"
-                        >
-                          <span aria-hidden="true">▼</span>
-                        </button>
-                        <label class="posrow__seclabel">
-                          <span class="sr-only">Abschnitt der Position</span>
-                          <!--
-                            `selected` je Option statt `[value]` am <select>:
-                            das Property-Binding am <select> greift, bevor die
-                            @for-Optionen existieren, und der Wert verpufft —
-                            jede Zeile stünde dann auf „Ohne Abschnitt", obwohl
-                            sie einem Abschnitt zugeordnet ist.
-                          -->
-                          <select
-                            class="feld-gruppe__input feld-gruppe__select posrow__secsel"
-                            (change)="zeileAbschnittWechseln(l, $any($event.target).value)"
+                        <!--
+                          Überlaufmenü (Aufklapper, KEIN role=menu): die selteneren
+                          Aktionen — Reihenfolge, Abschnittswechsel, Entfernen.
+                          Alles bleibt tastaturbedienbar (Tab), Escape schließt und
+                          gibt den Fokus an den Auslöser zurück.
+                        -->
+                        <div class="posmenu">
+                          <button
+                            type="button"
+                            class="ibtn"
+                            [attr.aria-expanded]="menuUid() === l.uid"
+                            [attr.aria-label]="'Weitere Aktionen für Position „' + l.description + '“'"
+                            (click)="menuUmschalten(l.uid, $event)"
                           >
-                            <option value="" [selected]="!l.rubrikUid">Ohne Abschnitt</option>
-                            @for (r of rubriken(); track r.uid; let ri = $index) {
-                              <option [value]="r.uid" [selected]="r.uid === l.rubrikUid">
-                                {{ ri + 1 }}. {{ r.title }}
-                              </option>
-                            }
-                          </select>
-                        </label>
-                        <button type="button" class="ibtn ibtn--weg" (click)="zeileEntfernen(l)" aria-label="Position entfernen">
-                          <span aria-hidden="true">✕</span>
-                        </button>
+                            <span aria-hidden="true">⋯</span>
+                          </button>
+                          @if (menuUid() === l.uid) {
+                            <div class="posmenu__pop">
+                              <button
+                                type="button"
+                                class="posmenu__item"
+                                [disabled]="li === 0"
+                                (click)="zeileVerschieben(l, -1); menuSchliessen(true)"
+                              >
+                                <span aria-hidden="true">▲</span> Nach oben
+                              </button>
+                              <button
+                                type="button"
+                                class="posmenu__item"
+                                [disabled]="li >= g.lines.length - 1"
+                                (click)="zeileVerschieben(l, 1); menuSchliessen(true)"
+                              >
+                                <span aria-hidden="true">▼</span> Nach unten
+                              </button>
+                              <label class="posmenu__feld">
+                                <span class="feld-gruppe__label">Abschnitt</span>
+                                <!--
+                                  `selected` je Option statt `[value]` am <select>:
+                                  das Property-Binding am <select> greift, bevor die
+                                  @for-Optionen existieren, und der Wert verpufft —
+                                  jede Zeile stünde dann auf „Ohne Abschnitt", obwohl
+                                  sie einem Abschnitt zugeordnet ist.
+                                -->
+                                <select
+                                  class="feld-gruppe__input feld-gruppe__select posmenu__sel"
+                                  (change)="zeileAbschnittWechseln(l, $any($event.target).value); menuSchliessen(true)"
+                                >
+                                  <option value="" [selected]="!l.rubrikUid">Ohne Abschnitt</option>
+                                  @for (r of rubriken(); track r.uid; let ri = $index) {
+                                    <option [value]="r.uid" [selected]="r.uid === l.rubrikUid">
+                                      {{ ri + 1 }}. {{ r.title }}
+                                    </option>
+                                  }
+                                </select>
+                              </label>
+                              <button
+                                type="button"
+                                class="posmenu__item posmenu__item--weg"
+                                (click)="zeileEntfernen(l); menuSchliessen(false)"
+                              >
+                                <span aria-hidden="true">✕</span> Position entfernen
+                              </button>
+                            </div>
+                          }
+                        </div>
                       </div>
                     }
 
@@ -508,16 +602,24 @@
                           <span aria-hidden="true">⣿</span>
                         </button>
                         <div class="paloption__text">
-                          <p class="paloption__z1">{{ t.zeile1 }}</p>
+                          <p class="paloption__z1" [title]="t.zeile1">{{ t.zeile1 }}</p>
                           <p class="paloption__z2">{{ t.zeile2 }}</p>
                         </div>
+                        <!--
+                          Kompakter Übernehmen-Knopf: der frühere Textknopf war
+                          `flex: none` und fraß die halbe Kartenbreite — der
+                          Artikelname (flex:1, min-width:0) bekam nur noch 62 px
+                          und riss über sieben Zeilen. Beschriftung steckt in
+                          aria-label + title (Ziehen bleibt die Alternative).
+                        -->
                         <button
                           type="button"
-                          class="btn paloption__add"
+                          class="ibtn paloption__add"
                           (click)="uebernehmenAusPalette(t.id)"
+                          [title]="'„' + t.zeile1 + '“ übernehmen'"
                           [attr.aria-label]="'„' + t.zeile1 + '“ übernehmen'"
                         >
-                          Übernehmen
+                          <span aria-hidden="true">＋</span>
                         </button>
                         <div class="paloption__ph" *cdkDragPlaceholder aria-hidden="true"></div>
                       </li>
@@ -532,8 +634,74 @@
         <!-- ===================== Kalkulationsleiste ===================== -->
         @if (!kalkVerborgen()) {
           @if (kalk(); as k) {
-            <section class="kalk" aria-label="Kalkulationsübersicht (Einkauf, Deckungsbeitrag, Marge)">
-              <div class="kalk__scroll">
+            <!--
+              Die Leiste klebt am unteren Rand. Voll ausgeklappt maß sie bei
+              1280×800 rund 240 px = 30 % der Viewport-Höhe — dauerhaft, sodass
+              zwischen Kopf-Card und Leiste eine einzige Positionszeile übrig
+              blieb. Standard ist deshalb die kompakte Zeile (Netto/DB/Marge);
+              die Tabelle je Abschnitt klappt auf Wunsch auf. Der Zustand wird
+              gemerkt (localStorage).
+            -->
+            <!--
+              Die Zahlen kommen ausschließlich vom Server (der Editor rechnet
+              kein Geld). Nach einer Änderung sind sie deshalb der Stand vom
+              letzten Speichern — das wird sichtbar zurückgenommen UND benannt,
+              nie nur über Farbe.
+            -->
+            <section
+              class="kalk"
+              [class.kalk--alt]="dirty()"
+              aria-label="Kalkulationsübersicht (Einkauf, Deckungsbeitrag, Marge)"
+            >
+              <div class="kalk__bar">
+                <button
+                  type="button"
+                  class="kalk__toggle"
+                  [attr.aria-expanded]="kalkOffen()"
+                  aria-controls="kalk-tabelle"
+                  (click)="kalkUmschalten()"
+                >
+                  <span class="kalk__chev" aria-hidden="true">{{ kalkOffen() ? '▾' : '▸' }}</span>
+                  Kalkulation
+                  <span class="sr-only">je Abschnitt {{ kalkOffen() ? 'einklappen' : 'aufklappen' }}</span>
+                </button>
+                <p class="kalk__kurz">
+                  <span class="kalk__kv">
+                    <span class="kalk__k">Netto</span>
+                    <span class="kalk__v">{{ euro(k.gesamt.netto) }}</span>
+                  </span>
+                  <span class="kalk__kv">
+                    <span class="kalk__k">Einkauf</span>
+                    <span class="kalk__v">{{ euro(k.gesamt.ek) }}</span>
+                  </span>
+                  @if (k.gesamt.ek_vollstaendig) {
+                    <span class="kalk__kv">
+                      <span class="kalk__k">Deckungsbeitrag</span>
+                      <span class="kalk__v">{{ euro(k.gesamt.deckungsbeitrag) }}</span>
+                    </span>
+                    <span class="kalk__kv">
+                      <span class="kalk__k">Marge</span>
+                      <span class="kalk__v">{{ prozent(k.gesamt.marge_prozent) }}</span>
+                    </span>
+                  } @else {
+                    <span class="kalk__kv kalk__unbekannt">
+                      <span class="kalk__k">Deckungsbeitrag / Marge</span>
+                      <span class="kalk__v">
+                        <span aria-hidden="true">—</span>
+                        {{ k.gesamt.positionen_ohne_ek }} ohne EK
+                        <span class="sr-only">unbekannt, {{ k.gesamt.positionen_ohne_ek }} Positionen ohne Einkaufspreis</span>
+                      </span>
+                    </span>
+                  }
+                </p>
+                @if (dirty()) {
+                  <p class="kalk__alt-hinweis" role="status">
+                    <span aria-hidden="true">⟳</span>
+                    Stand vom letzten Speichern — wird beim Speichern neu berechnet.
+                  </p>
+                }
+              </div>
+              <div class="kalk__scroll" id="kalk-tabelle" [hidden]="!kalkOffen()">
                 <table class="kalk__tab">
                   <caption class="sr-only">
                     Kalkulation je Abschnitt: Netto, Einkauf, Deckungsbeitrag, Marge und Arbeitszeit.
@@ -641,9 +809,12 @@
         <app-feld [control]="posForm.controls.tax_code" label="Steuersatz" typ="select" [optionen]="taxCodeOptionen" />
       </div>
       @if (markupVorschau(); as mv) {
+        <!-- &ngsp; erzwingt das Leerzeichen: Angular entfernt reine Whitespace-
+             Textknoten zwischen Elementen (sonst stünde da „63,2 %(Vorschau“). -->
         <p class="pos-markup" role="status">
-          Abgeleiteter Aufschlag: <strong>{{ mv }} %</strong>
-          <span class="pos-markup__hinw">(Vorschau — der Server bestätigt beim Speichern.)</span>
+          Abgeleiteter Aufschlag: <strong>{{ mv }} %</strong>&ngsp;<span class="pos-markup__hinw"
+            >(Vorschau — der Server bestätigt beim Speichern.)</span
+          >
         </p>
       }
     } @else {

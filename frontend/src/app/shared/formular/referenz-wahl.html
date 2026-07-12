@@ -7,10 +7,6 @@
     }
   </label>
 
-  @if (hinweis(); as h) {
-    <p class="feld-gruppe__hinweis" [id]="hinweisId">{{ h }}</p>
-  }
-
   @if (gewaehlt(); as g) {
     <div class="ref-wahl__chip">
       <span class="ref-wahl__chip-text">
@@ -77,6 +73,11 @@
         </ul>
       }
     </div>
+  }
+
+  <!-- Hinweis/Fehler stehen UNTER dem Feld — siehe Begründung in feld.html. -->
+  @if (hinweis(); as h) {
+    <p class="feld-gruppe__hinweis" [id]="hinweisId">{{ h }}</p>
   }
 
   @if (fehlerText(); as f) {

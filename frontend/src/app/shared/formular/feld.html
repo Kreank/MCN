@@ -35,10 +35,6 @@
       }
     </label>
 
-    @if (hinweis(); as h) {
-      <p class="feld-gruppe__hinweis" [id]="hinweisId">{{ h }}</p>
-    }
-
     @switch (typ()) {
       @case ('textarea') {
         <textarea
@@ -86,6 +82,19 @@
           (input)="serverFehlerLoeschen()"
         />
       }
+    }
+
+    <!--
+      Hinweis und Fehler stehen UNTER dem Eingabefeld (nicht zwischen Label und
+      Feld): nur so liegt die Oberkante jedes Eingabefelds in einer Zeile mit
+      Feldern OHNE Hinweis — sonst schiebt der Hinweis das Feld nach unten und
+      eine mehrspaltige Formularzeile fluchtet nicht mehr. `aria-describedby`
+      verweist unveraendert auf beide Absaetze (Reihenfolge: Hinweis, Fehler) —
+      das ist unabhaengig von der Dokumentreihenfolge, und die Reihenfolge im
+      DOM entspricht ihr trotzdem.
+    -->
+    @if (hinweis(); as h) {
+      <p class="feld-gruppe__hinweis" [id]="hinweisId">{{ h }}</p>
     }
 
     @if (fehlerText(); as f) {

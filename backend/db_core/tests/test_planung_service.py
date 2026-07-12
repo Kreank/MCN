@@ -5,12 +5,13 @@ Prüft Anlage/Validierung/Statusautomaten, den Schutzstandard (physisches DELETE
 scheitert am Trigger), die Kategorie-Zuordnung am Einsatz und die
 Doppelbelegungs-Warnung (KEIN EXCLUDE — offene Invariante, siehe Migration 0025).
 """
+import uuid
 from datetime import datetime, timezone as dt_timezone
 
 import pytest
 from django.db import Error, transaction
 
-from db_core.models import AppointmentCategory, JobResource, Resource
+from db_core.models import AppointmentCategory, AppUser, JobResource, Resource
 from db_core.services import einsatz as einsatz_service
 from db_core.services import planung as planung_service
 from db_core.services import property as property_service
@@ -328,3 +329,92 @@ def test_archivierte_ressource_nicht_zuordenbar(app_user):
         planung_service.assign_resource(
             app_user.id, service_job_id=job.id, resource_id=res.id
         )
+
+
+# ===========================================================================
+# Belegungs-Warnungen (Plantafel Drag & Drop) — Mitarbeiter UND Ressourcen
+# ===========================================================================
+# Weiche Invariante: Doppelbelegung ist NICHT physisch verhindert (der
+# maßgebliche Zeitraum liegt nullable am service_job). Der Service warnt; das
+# Umplanen geht trotzdem durch.
+
+def _app_user(name="Zweiter Monteur"):
+    return AppUser.objects.create(
+        id=uuid.uuid4(), display_name=name, status="ACTIVE", version=1
+    )
+
+
+@pytest.mark.django_db
+def test_belegung_warnt_bei_doppelt_verplantem_mitarbeiter(app_user):
+    order = _order(app_user)
+    job_a = _job(app_user, order, start=T0, end=T1)  # 08–12
+    job_b = _job(app_user, order, start=T2, end=T3)  # 10–14 (überlappt)
+    monteur = _app_user()
+    einsatz_service.assign_user(
+        app_user.id, service_job_id=job_a.id, assignee_user_id=monteur.id
+    )
+    einsatz_service.assign_user(
+        app_user.id, service_job_id=job_b.id, assignee_user_id=monteur.id
+    )
+    warnungen = planung_service.belegungs_warnungen(job_b.id)
+    assert len(warnungen) == 1
+    assert "Zweiter Monteur" in warnungen[0]
+    assert job_a.job_number in warnungen[0]
+    assert "Doppelbelegung" in warnungen[0]
+
+
+@pytest.mark.django_db
+def test_belegung_ohne_ueberlappung_keine_warnung(app_user):
+    """Umplanen aus der Kollision heraus → die Warnung verschwindet."""
+    order = _order(app_user)
+    job_a = _job(app_user, order, start=T0, end=T1)
+    job_b = _job(app_user, order, start=T2, end=T3)
+    monteur = _app_user()
+    for j in (job_a, job_b):
+        einsatz_service.assign_user(
+            app_user.id, service_job_id=j.id, assignee_user_id=monteur.id
+        )
+    assert planung_service.belegungs_warnungen(job_b.id)
+    einsatz_service.set_schedule(
+        app_user.id,
+        service_job_id=job_b.id,
+        scheduled_start=datetime(2026, 7, 20, 8, 0, tzinfo=dt_timezone.utc),
+        scheduled_end=datetime(2026, 7, 20, 12, 0, tzinfo=dt_timezone.utc),
+    )
+    assert planung_service.belegungs_warnungen(job_b.id) == []
+
+
+@pytest.mark.django_db
+def test_belegung_keine_warnung_ohne_zeitfenster(app_user):
+    """Ohne vollständig bekannten Zeitraum wird bewusst NICHT gewarnt (keine
+    erfundene Regel)."""
+    order = _order(app_user)
+    job_a = _job(app_user, order, start=T0, end=T1)
+    job_b = _job(app_user, order, start=T2)  # kein Ende
+    monteur = _app_user()
+    for j in (job_a, job_b):
+        einsatz_service.assign_user(
+            app_user.id, service_job_id=j.id, assignee_user_id=monteur.id
+        )
+    assert planung_service.belegungs_warnungen(job_b.id) == []
+    # Umgekehrt: job_a kennt sein Fenster, der Partner job_b nicht → auch dort
+    # keine Warnung.
+    assert planung_service.belegungs_warnungen(job_a.id) == []
+
+
+@pytest.mark.django_db
+def test_belegung_meldet_auch_ressourcen(app_user):
+    order = _order(app_user)
+    job_a = _job(app_user, order, start=T0, end=T1)
+    job_b = _job(app_user, order, start=T2, end=T3)
+    res = planung_service.create_resource(
+        app_user.id, name="VW Crafter", resource_type="FAHRZEUG"
+    )
+    for j in (job_a, job_b):
+        planung_service.assign_resource(
+            app_user.id, service_job_id=j.id, resource_id=res.id
+        )
+    warnungen = planung_service.belegungs_warnungen(job_b.id)
+    assert len(warnungen) == 1
+    assert "VW Crafter" in warnungen[0]
+    assert job_a.job_number in warnungen[0]

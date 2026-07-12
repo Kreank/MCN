@@ -284,8 +284,9 @@
         </div>
         <div class="feld-gruppe">
           <label class="feld-gruppe__label" for="termin-ende">Planende</label>
-          <p class="feld-gruppe__hinweis">Optional — muss nach dem Planbeginn liegen.</p>
           <input id="termin-ende" class="feld-gruppe__input" type="datetime-local" [formControl]="terminForm.controls.scheduled_end" />
+          <!-- Hinweis unter dem Feld (Feldflucht) — siehe shared/formular/feld.html. -->
+          <p class="feld-gruppe__hinweis">Optional — muss nach dem Planbeginn liegen.</p>
         </div>
       </form>
       <div dialog-aktionen class="dialog__aktionen">

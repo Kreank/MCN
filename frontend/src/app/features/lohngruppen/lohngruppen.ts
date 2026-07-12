@@ -4,16 +4,18 @@ import { LohngruppeService } from '../../core/lohngruppe.service';
 import { AuthService } from '../../core/auth.service';
 import { WageGroup, WageGroupKind } from '../../core/lohngruppe.model';
 import { Feld, FeldOption } from '../../shared/formular/feld';
-import { apiZuDeDezimal, deZuApiDezimal, dezimalValidator } from '../../shared/formular/dezimal';
+import {
+  apiZuDeAnzeige,
+  apiZuDeEingabe,
+  deZuApiDezimal,
+  dezimalValidator,
+} from '../../shared/formular/dezimal';
 import { EinstellungenNav } from '../einstellungen-nav/einstellungen-nav';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { VerbotenState, fehlerDetail, fehlerState } from '../../shared/http-fehler';
 
 type ViewState =
-  | { kind: 'loading' }
-  | { kind: 'ready'; data: WageGroup[] }
-  | VerbotenState
-  | { kind: 'error' };
+  { kind: 'loading' } | { kind: 'ready'; data: WageGroup[] } | VerbotenState | { kind: 'error' };
 
 /**
  * Lohn-/Maschinengruppen (pricing.wage_group) — anlegen, bearbeiten,
@@ -73,7 +75,7 @@ export class Lohngruppen {
   /** Betrag als „65,00 €" bzw. „—", wenn nicht hinterlegt (z. B. Kostensatz). */
   protected euro(wert: string | null): string {
     if (wert == null || String(wert).trim() === '') return '—';
-    return `${apiZuDeDezimal(wert, 2)} €`;
+    return `${apiZuDeAnzeige(wert, 2)} €`;
   }
 
   neu(): void {
@@ -89,8 +91,8 @@ export class Lohngruppen {
     this.form.reset({
       name: g.name,
       kind: g.kind,
-      hourly_rate: apiZuDeDezimal(g.hourly_rate, 2),
-      cost_rate: apiZuDeDezimal(g.cost_rate, 2),
+      hourly_rate: apiZuDeEingabe(g.hourly_rate, 2),
+      cost_rate: apiZuDeEingabe(g.cost_rate, 2),
     });
     this.modus.set(g.id);
   }
@@ -115,8 +117,7 @@ export class Lohngruppen {
     };
     const modus = this.modus();
     this.laedt.set(true);
-    const request$ =
-      modus === 'neu' ? this.svc.create(payload) : this.svc.update(modus!, payload);
+    const request$ = modus === 'neu' ? this.svc.create(payload) : this.svc.update(modus!, payload);
     request$.subscribe({
       next: () => {
         this.laedt.set(false);

@@ -46,7 +46,7 @@
       }
 
       <fieldset class="mail-abschnitt">
-        <legend>SMTP-Server</legend>
+        <legend class="legende">SMTP-Server</legend>
         <div class="mail-grid">
           <app-feld [control]="form.controls.label" label="Bezeichnung" [pflicht]="true"
                     hinweis="Interner Name, z. B. Postausgang Kanzlei" />
@@ -60,7 +60,7 @@
       </fieldset>
 
       <fieldset class="mail-abschnitt">
-        <legend>Zugangsdaten</legend>
+        <legend class="legende">Zugangsdaten</legend>
         <div class="mail-grid">
           <app-feld [control]="form.controls.username" label="Benutzer"
                     autocomplete="username" hinweis="Oft die volle E-Mail-Adresse" />
@@ -72,7 +72,7 @@
       </fieldset>
 
       <fieldset class="mail-abschnitt">
-        <legend>Absender</legend>
+        <legend class="legende">Absender</legend>
         <div class="mail-grid">
           <app-feld [control]="form.controls.from_address" label="Absender-Adresse"
                     typ="email" [pflicht]="true" hinweis="Erscheint als Absender der E-Mail" />

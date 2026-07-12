@@ -103,7 +103,6 @@
             <span class="feld-gruppe__stern" aria-hidden="true">*</span>
             <span class="sr-only">(Pflichtfeld)</span>
           </label>
-          <p class="feld-gruppe__hinweis" id="pw-neu-hinweis">Mindestens 12 Zeichen.</p>
           <input
             id="pw-neu"
             class="feld-gruppe__input"
@@ -117,6 +116,8 @@
             "
             (input)="serverFehlerLoeschen('new_password')"
           />
+          <!-- Hinweis unter dem Feld (Feldflucht) — siehe shared/formular/feld.html. -->
+          <p class="feld-gruppe__hinweis" id="pw-neu-hinweis">Mindestens 12 Zeichen.</p>
           @if (fehler('new_password'); as f) {
             <p class="feld-gruppe__fehler" id="pw-neu-fehler" role="alert">
               <span class="feld-gruppe__fehler-mark" aria-hidden="true">▲</span>{{ f }}
