@@ -1,13 +1,15 @@
 // Vertrag zu /api/workflow/site_reports (workflow.site_report in der DB).
-// Ein Baustellenbericht gehört zu genau einem Auftrag (work_order); Fotos hängen
-// über die Datei-Ablage (site_report_id) daran. Die Kundenunterschrift besiegelt
-// den Bericht (ENTWURF → UNTERZEICHNET); danach ist er unveränderlich.
+// Ein Baustellenbericht hängt an einem ANKER: am Auftrag (work_order), am Einsatz
+// (service_job) oder an beidem — nie im Leeren. Beim **freien Termin** (Einsatz
+// ohne Auftrag) ist `work_order_id` null: das ist das Begehungsprotokoll. Fotos
+// hängen über die Datei-Ablage (site_report_id) daran. Die Kundenunterschrift
+// besiegelt den Bericht (ENTWURF → UNTERZEICHNET); danach ist er unveränderlich.
 
 export type SiteReportStatus = 'ENTWURF' | 'UNTERZEICHNET';
 
 export interface SiteReport {
   id: string;
-  work_order_id: string;
+  work_order_id: string | null;
   service_job_id: string | null;
   report_date: string;
   author_id: string | null;
@@ -30,11 +32,13 @@ export interface SiteReportListe {
   total: number;
 }
 
-// POST /api/workflow/site_reports
+// POST /api/workflow/site_reports — mindestens eines von work_order_id und
+// service_job_id ist Pflicht (Anker). Beim freien Termin nur service_job_id; der
+// Server leitet den Auftrag aus dem Einsatz ab.
 export interface SiteReportCreate {
-  work_order_id: string;
   report_date: string;
   activity_text: string;
+  work_order_id?: string | null;
   service_job_id?: string | null;
   weather?: string | null;
   hours_worked?: string | null;

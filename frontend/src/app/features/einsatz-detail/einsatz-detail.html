@@ -235,6 +235,10 @@
         }
       }
 
+      @if (tab() === 'berichte') {
+        <app-berichte [serviceJobId]="daten()!.id" />
+      }
+
       @if (tab() === 'verlauf') {
         @if (daten()!.history.length === 0) {
           <div class="tab-platzhalter"><p>Für diesen Einsatz ist noch kein Statusverlauf protokolliert.</p></div>

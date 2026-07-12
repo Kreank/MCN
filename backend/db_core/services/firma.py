@@ -49,6 +49,10 @@ _PROFILE_FIELDS = (
     "datev_debtor_account", "datev_revenue_account_full",
     "datev_revenue_account_reduced", "datev_revenue_account_free",
     "datev_revenue_account_reverse",
+    # Abschlags-Kontierung (0063)
+    "datev_advance_mode", "datev_advance_account_full",
+    "datev_advance_account_reduced", "datev_advance_account_free",
+    "datev_advance_account_reverse",
 )
 
 # Konto-Override-Felder: reine Ziffernfolgen (Sach-/Personenkonten). NULL = der
@@ -57,7 +61,13 @@ _DATEV_ACCOUNT_FIELDS = (
     "datev_debtor_account", "datev_revenue_account_full",
     "datev_revenue_account_reduced", "datev_revenue_account_free",
     "datev_revenue_account_reverse",
+    "datev_advance_account_full", "datev_advance_account_reduced",
+    "datev_advance_account_free", "datev_advance_account_reverse",
 )
+
+# Abschlags-Buchungsmodus (0063): ERLOES = Teilleistung (Default, Bestands-
+# verhalten), ANZAHLUNG = Verbindlichkeitskonto „Erhaltene Anzahlungen".
+DATEV_ADVANCE_MODES = ("ERLOES", "ANZAHLUNG")
 
 # Bankdaten sind Vier-Augen-pflichtig (security.four_eyes_action 'BANKDATEN'):
 # eine ÄNDERUNG an einem bestehenden Profil wird nicht direkt geschrieben,
@@ -95,6 +105,19 @@ def _validate_datev(values):
             raise ValueError("Kontenrahmen muss SKR03 oder SKR04 sein.")
         values["datev_chart_of_accounts"] = skr
 
+    # datev_advance_mode ist NOT NULL (DB-Default 'ERLOES'): ein geleertes Feld
+    # bedeutet „unverändert", NIE NULL — sonst 500 statt 422.
+    if "datev_advance_mode" in values:
+        if values["datev_advance_mode"] is None:
+            del values["datev_advance_mode"]
+        else:
+            modus = values["datev_advance_mode"].upper()
+            if modus not in DATEV_ADVANCE_MODES:
+                raise ValueError(
+                    "Buchung der Abschlagsrechnungen muss ERLOES oder ANZAHLUNG sein."
+                )
+            values["datev_advance_mode"] = modus
+
     berater = values.get("datev_consultant_number")
     if berater is not None:
         if not re.fullmatch(r"[0-9]{4,7}", berater) or not (1001 <= int(berater) <= 9_999_999):
@@ -117,6 +140,42 @@ def _validate_datev(values):
             raise ValueError(
                 "Kontonummern dürfen nur aus Ziffern bestehen (3–9 Stellen)."
             )
+
+
+def _abschlagsmodus_wechsel_pruefen(profile, neuer_modus):
+    """Der DATEV-Abschlagsmodus darf nur an einem SAUBEREN SCHNITT wechseln.
+
+    Der Modus wirkt zum Zeitpunkt des **Exports**, nicht des Belegs. Wird
+    umgestellt, während veröffentlichte Abschläge noch auf ihre Schlussrechnung
+    warten, löste die spätere Schlussrechnung eine Anzahlung auf, die nie als
+    Anzahlung gebucht wurde (bzw. umgekehrt) — auf dem Anzahlungskonto bliebe ein
+    Saldo stehen, den niemand mehr zuordnen kann. Ein bloßer UI-Warnhinweis ist
+    dafür die schwächste Form: der Server kennt die Bedingung, also setzt er sie
+    durch (→ 422).
+
+    Erlaubt bleibt jedes Speichern OHNE Moduswechsel (auch mit unverändert
+    mitgesendetem Modus) — sonst wäre das Firmenprofil nicht mehr pflegbar,
+    solange ein Abschlag offen ist.
+    """
+    if neuer_modus is None or neuer_modus == profile.datev_advance_mode:
+        return
+    # Import lokal: `beleg` zieht die halbe Belegwelt nach (Zirkelbezug vermeiden).
+    from db_core.services import beleg as beleg_service
+
+    offen = beleg_service.offene_abschlaege_gesamt()
+    if not offen:
+        return
+    nummern = ", ".join(i.invoice_number or "ENTWURF" for i in offen[:5])
+    if len(offen) > 5:
+        nummern += f" … (+{len(offen) - 5})"
+    raise ValueError(
+        f"Die Buchung der Abschlagsrechnungen lässt sich derzeit nicht umstellen: "
+        f"{len(offen)} veröffentlichte Abschlags-/Teilrechnung(en) warten noch auf "
+        f"ihre Schlussrechnung ({nummern}). Deren Schlussrechnung würde sonst eine "
+        "Anzahlung auflösen, die nie als Anzahlung gebucht wurde — auf dem "
+        "Anzahlungskonto bliebe ein Saldo stehen. Stellen Sie erst die offenen "
+        "Schlussrechnungen, dann den Modus um."
+    )
 
 
 def update_company_profile(actor_app_user_id, **fields):
@@ -168,6 +227,8 @@ def update_company_profile(actor_app_user_id, **fields):
 
     if "company_name" in values and not values["company_name"]:
         raise ValueError("Firmenname darf nicht leer sein.")
+
+    _abschlagsmodus_wechsel_pruefen(profile, values.get("datev_advance_mode"))
 
     # Bankdaten heraustrennen: nur die tatsächlich geänderten Felder lösen einen
     # Vier-Augen-Antrag aus (unveränderte Werte nicht).

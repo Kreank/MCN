@@ -23,7 +23,8 @@ from db_core.models import (
     AppointmentCategory, AppUser, Article, ArticleSalePrice, Assembly,
     DunningNotice, Employee, Invoice, MaintenanceContract, Party, Payment,
     Project, ProjectLog, Property, Quote, Resource, SalePriceGroup,
-    ServiceJob, SupplierConnection, Task, UserRole, WageGroup, WorkOrder,
+    ServiceJob, SiteReport, SupplierConnection, Task, UserRole, WageGroup,
+    WorkOrder,
 )
 from db_core.services import artikel as artikel_service
 from db_core.services import aufgabe as aufgabe_service
@@ -39,6 +40,7 @@ from db_core.services import identity as identity_service
 from db_core.services import mitarbeiter as mitarbeiter_service
 from db_core.services import projekt as projekt_service
 from db_core.services import property as property_service
+from db_core.services import site_report as site_report_service
 
 # Fester Namespace → wiederholbare Aufrufe treffen denselben Demo-Benutzer.
 DEMO_APP_USER_ID = uuid.UUID("00000000-0000-4000-8000-000000000001")
@@ -930,7 +932,8 @@ class Command(BaseCommand):
         # nachgetragen). Damit zeigt die Plantafel beide Spielarten nebeneinander.
         # Idempotent über den Titel (Einsätze tragen sonst nur eine E-Nummer).
         BEGEHUNG_TITEL = "Begehung Kellerabdichtung (Interessent)"
-        if not ServiceJob.objects.filter(title=BEGEHUNG_TITEL).exists():
+        frei = ServiceJob.objects.filter(title=BEGEHUNG_TITEL).first()
+        if frei is None:
             frei_obj = Property.objects.filter(
                 name="Geschäftshaus Rheinpassage"
             ).first()
@@ -958,6 +961,36 @@ class Command(BaseCommand):
             angelegt += 1
             self.stdout.write(
                 f"Freier Termin angelegt: {frei.job_number} ({frei.title})"
+            )
+
+        # Begehungsprotokoll AM FREIEN TERMIN (Migration 0064): der Bericht hängt
+        # allein am Einsatz — ohne Auftrag. Bewusst als ENTWURF: die
+        # Kundenunterschrift besiegelt ihn unwiderruflich (und bräuchte den
+        # Objektspeicher), der Seed darf keinen unumkehrbaren Zustand erzeugen und
+        # nicht von MinIO abhängen. Fotos hängt man im UI an. Idempotent über den
+        # Einsatzbezug.
+        if not SiteReport.objects.filter(service_job_id=frei.id).exists():
+            protokoll = site_report_service.create_report(
+                actor.id,
+                service_job_id=frei.id,
+                report_date=date(2026, 7, 15),
+                activity_text=(
+                    "Kellergeschoss begangen. Feuchte Stellen an der Nordwand "
+                    "(ca. 3 m²), Salzausblühungen unterhalb der Fensterbank. "
+                    "Außenabdichtung vermutlich schadhaft."
+                ),
+                weather="bedeckt, 17 °C",
+                hours_worked=Decimal("1.50"),
+                remarks=(
+                    "Interessent bittet um ein Angebot für die Außenabdichtung. "
+                    "Noch kein Auftrag — dieser Bericht dokumentiert den Zustand "
+                    "vor der Beauftragung."
+                ),
+            )
+            angelegt += 1
+            self.stdout.write(
+                f"Begehungsprotokoll angelegt (freier Termin {frei.job_number}): "
+                f"{protokoll.report_date}"
             )
 
         # Buchhaltung: Teilzahlung + erste Mahnstufe auf der veröffentlichten

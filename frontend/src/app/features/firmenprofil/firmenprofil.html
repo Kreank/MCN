@@ -171,6 +171,106 @@
         </div>
       </fieldset>
 
+      <fieldset class="profil-abschnitt">
+        <legend>DATEV-Export</legend>
+        <p class="profil-hinweis">
+          Diese Angaben braucht der Buchungsstapel (Buchhaltung →
+          „DATEV-Export"). Berater- und Mandantennummer nennt Ihnen Ihr
+          Steuerberater. Die Konten sind <strong>optional</strong>: bleiben sie
+          leer, verwendet MCN die Standardkonten des gewählten Kontenrahmens.
+        </p>
+        <div class="profil-grid">
+          <app-feld [control]="form.controls.datev_consultant_number"
+                    label="Beraternummer" inputmode="numeric"
+                    hinweis="4–7 Ziffern, z. B. 1234567" />
+          <app-feld [control]="form.controls.datev_client_number"
+                    label="Mandantennummer" inputmode="numeric"
+                    hinweis="1–5 Ziffern, z. B. 1001" />
+          <app-feld [control]="form.controls.datev_chart_of_accounts"
+                    label="Kontenrahmen" typ="select"
+                    platzhalter="Bitte wählen" [optionen]="skrOptionen" />
+          <app-feld [control]="form.controls.datev_account_length"
+                    label="Sachkontenlänge" inputmode="numeric"
+                    hinweis="4 bis 8 Stellen (Standard: 4)" />
+          <app-feld [control]="form.controls.datev_fiscal_year_start_month"
+                    label="Wirtschaftsjahr beginnt im Monat" inputmode="numeric"
+                    hinweis="1 = Januar (Kalenderjahr), z. B. 4 für April" />
+        </div>
+
+        <div class="profil-grid">
+          <app-feld [control]="form.controls.datev_debtor_account"
+                    label="Sammeldebitor" inputmode="numeric"
+                    hinweis="Forderungen aLuL — Standard: 1400 (SKR03) / 1200 (SKR04)" />
+          <app-feld [control]="form.controls.datev_revenue_account_full"
+                    label="Erlöskonto 19 % USt" inputmode="numeric"
+                    hinweis="Standard: 8400 (SKR03) / 4400 (SKR04)" />
+          <app-feld [control]="form.controls.datev_revenue_account_reduced"
+                    label="Erlöskonto 7 % USt" inputmode="numeric"
+                    hinweis="Standard: 8300 (SKR03) / 4300 (SKR04)" />
+          <app-feld [control]="form.controls.datev_revenue_account_free"
+                    label="Erlöskonto steuerfrei" inputmode="numeric"
+                    hinweis="Standard: 8200 (SKR03) / 4200 (SKR04)" />
+          <app-feld [control]="form.controls.datev_revenue_account_reverse"
+                    label="Erlöskonto §13b" inputmode="numeric"
+                    hinweis="Standard: 8337 (SKR03) / 4337 (SKR04)" />
+        </div>
+      </fieldset>
+
+      <fieldset class="profil-abschnitt">
+        <legend>Abschlagsrechnungen buchen</legend>
+        <p class="profil-hinweis">
+          Wie sollen <strong>Abschlags- und Teilrechnungen</strong> im DATEV-Export
+          kontiert werden?
+        </p>
+        <ul class="profil-erklaerung">
+          <li>
+            <strong>Erlös (Teilleistung):</strong> Der Abschlag rechnet einen
+            abgrenzbaren, abgenommenen Leistungsteil endgültig ab. Der Umsatz
+            erscheint schon im Monat der Abschlagsrechnung. Das ist die bisherige
+            Einstellung.
+          </li>
+          <li>
+            <strong>Erhaltene Anzahlung:</strong> Es wird Geld verlangt,
+            <em>bevor</em> die Leistung erbracht ist. Der Betrag ist dann eine
+            Verbindlichkeit (Konto „Erhaltene, versteuerte Anzahlungen"); die
+            Umsatzsteuer entsteht trotzdem sofort. Die <strong>Schlussrechnung
+            löst die Anzahlung wieder auf</strong> — der Ertrag entsteht erst dort.
+          </li>
+        </ul>
+        <p class="note profil-warnung" role="note">
+          <strong>Bitte mit dem Steuerberater abstimmen.</strong> Beide Wege
+          ergeben in der Summe denselben Umsatz und dieselbe Umsatzsteuer, aber sie
+          verteilen den Ertrag auf unterschiedliche Monate. Umstellen geht nur an
+          einem sauberen Schnitt: Solange veröffentlichte Abschlagsrechnungen noch
+          auf ihre Schlussrechnung warten, lehnt der Server die Umstellung ab.
+        </p>
+        <div class="profil-grid">
+          <app-feld [control]="form.controls.datev_advance_mode"
+                    label="Buchung der Abschlags-/Teilrechnungen" typ="select"
+                    [optionen]="abschlagsModi" />
+        </div>
+
+        @if (anzahlungAktiv()) {
+          <p class="profil-hinweis">
+            Anzahlungskonten (optional — leer = Standard des Kontenrahmens):
+          </p>
+          <div class="profil-grid">
+            <app-feld [control]="form.controls.datev_advance_account_full"
+                      label="Anzahlungen 19 % USt" inputmode="numeric"
+                      hinweis="Standard: 1718 (SKR03) / 3272 (SKR04)" />
+            <app-feld [control]="form.controls.datev_advance_account_reduced"
+                      label="Anzahlungen 7 % USt" inputmode="numeric"
+                      hinweis="Standard: 1711 (SKR03) / 3260 (SKR04)" />
+            <app-feld [control]="form.controls.datev_advance_account_free"
+                      label="Anzahlungen steuerfrei" inputmode="numeric"
+                      hinweis="Standard: 1710 (SKR03) / 3250 (SKR04)" />
+            <app-feld [control]="form.controls.datev_advance_account_reverse"
+                      label="Anzahlungen §13b" inputmode="numeric"
+                      hinweis="Ohne eigenes Konto wie „steuerfrei“ — mit dem Steuerberater klären" />
+          </div>
+        }
+      </fieldset>
+
       @if (darfAendern()) {
         <div class="profil-aktionen">
           <button type="submit" class="btn btn--primary" [disabled]="laedt()">

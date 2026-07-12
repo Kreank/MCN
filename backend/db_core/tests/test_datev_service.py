@@ -9,7 +9,9 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
+from django.db import connection
 
+from db_core.models import Invoice
 from db_core.services import auftrag as auftrag_service
 from db_core.services import beleg as beleg_service
 from db_core.services import datev as datev_service
@@ -18,6 +20,13 @@ from db_core.services import identity as identity_service
 from db_core.services import property as property_service
 
 _HEUTE = date.today()
+
+
+def _force_deferred_checks():
+    """Wertet die DEFERRED Constraint-Trigger sofort aus (Veröffentlichungstore
+    scharf; Muster aus test_schlussrechnung_service.py)."""
+    with connection.cursor() as cur:
+        cur.execute("SET CONSTRAINTS ALL IMMEDIATE")
 
 
 def _config(app_user, **overrides):
@@ -270,3 +279,404 @@ def test_konto_override_wird_verwendet(app_user):
     f = _booking_rows(inhalt)[0].split(";")
     assert f[6] == "10001"    # Debitor-Override
     assert f[7] == "8401"     # Erlöskonto-Override
+
+
+# --- Abschlagsrechnungen: Erlös vs. Anzahlungskonto (Migration 0063) ---------
+# Die Falle ist die Summe: über Abschlag UND Schlussrechnung müssen beide Modi
+# denselben Erlös und dieselbe Umsatzsteuer ergeben, und je Beleg muss die Summe
+# der Buchungssätze cent-genau `gross_total` treffen.
+
+def _auftrag_mit_kunde(app_user):
+    obj = _property(app_user)
+    kunde = identity_service.create_person(
+        app_user.id, first_name="Sabine", last_name="Krüger"
+    )
+    return obj, kunde, _gepruefter_auftrag(app_user, obj, kunde)
+
+
+def _beleg(app_user, obj, kunde, order, *, typ, lines, advances=None):
+    """Legt einen Beleg an und veröffentlicht ihn."""
+    inv = beleg_service.create_invoice(
+        app_user.id, property_id=obj.id, invoice_type=typ, work_order_id=order.id,
+        invoice_date=_HEUTE, lines=lines,
+        advance_invoice_ids=[a.id for a in advances] if advances else None,
+    )
+    for role in ("INVOICE_DEBTOR", "INVOICE_RECIPIENT"):
+        beleg_service.add_invoice_party(
+            app_user.id, invoice_id=inv.id, party_id=kunde.id,
+            role=role, is_primary=True,
+        )
+    beleg_service.publish_invoice(app_user.id, invoice_id=inv.id)
+    inv.refresh_from_db()
+    return inv
+
+
+def _pauschale(betrag, tax="DE_19", text="Leistung"):
+    return {"line_type": "PAUSCHALE", "description": text, "quantity": 1,
+            "unit_price": betrag, "tax_code": tax}
+
+
+def _abschlag_und_schlussrechnung(app_user, *, abschlag, leistung, tax="DE_19"):
+    obj, kunde, order = _auftrag_mit_kunde(app_user)
+    ar = _beleg(app_user, obj, kunde, order, typ="ABSCHLAGSRECHNUNG",
+                lines=[_pauschale(abschlag, tax, "1. Abschlag")])
+    sr = _beleg(app_user, obj, kunde, order, typ="SCHLUSSRECHNUNG",
+                lines=[_pauschale(leistung, tax, "Gesamtleistung")], advances=[ar])
+    return ar, sr
+
+
+def _saetze(inhalt):
+    """Buchungssätze als Dicts: {konto, gegenkonto, sh, umsatz(Decimal), beleg1}."""
+    saetze = []
+    for row in _booking_rows(inhalt):
+        f = row.split(";")
+        saetze.append({
+            "umsatz": Decimal(f[0].replace(",", ".")),
+            "sh": f[1].strip('"'),
+            "konto": f[6],
+            "gegenkonto": f[7],
+            "beleg1": f[10].strip('"'),
+            "beleg2": f[11],
+            "text": f[13].strip('"'),
+        })
+    return saetze
+
+
+def _saldo(saetze, konto):
+    """Saldo eines Gegenkontos aus Sicht des Kontos (S = Soll, H = Haben).
+
+    Rückgabe positiv = das Konto steht im HABEN (so entsteht Erlös bzw. eine
+    Anzahlungs-Verbindlichkeit), negativ = im Soll.
+    """
+    summe = Decimal("0.00")
+    for s in saetze:
+        if s["gegenkonto"] != konto:
+            continue
+        # Konto (Debitor) im Soll → Gegenkonto im Haben.
+        summe += s["umsatz"] if s["sh"] == "S" else -s["umsatz"]
+    return summe
+
+
+def _beleg_summe(saetze, nummer):
+    """Vorzeichenbehaftete Summe der Buchungssätze eines Belegs (S = +, H = −).
+
+    Das ist die Bewegung auf dem Debitor — sie muss `gross_total` treffen.
+    """
+    return sum(
+        (s["umsatz"] if s["sh"] == "S" else -s["umsatz"])
+        for s in saetze if s["beleg1"] == nummer
+    )
+
+
+@pytest.mark.django_db
+def test_default_ist_erloes_abschlag_bucht_erlöskonto(app_user):
+    """Bestandsverhalten: ohne Umstellung bucht der Abschlag auf Erlös."""
+    _config(app_user)
+    profil = firma_service.get_company_profile()
+    assert profil.datev_advance_mode == "ERLOES"
+    ar, _sr = _abschlag_und_schlussrechnung(
+        app_user, abschlag="1000.00", leistung="5000.00"
+    )
+    saetze = _saetze(datev_service.build_datev_export(_HEUTE, _HEUTE)[1])
+    ar_saetze = [s for s in saetze if s["beleg1"] == ar.invoice_number]
+    assert len(ar_saetze) == 1
+    assert ar_saetze[0]["gegenkonto"] == "8400"     # Erlöse 19 % (SKR03)
+    assert ar_saetze[0]["umsatz"] == Decimal("1190.00")
+    assert ar_saetze[0]["sh"] == "S"
+    # Kein Anzahlungskonto im Spiel.
+    assert all(s["gegenkonto"] != "1718" for s in saetze)
+
+
+@pytest.mark.django_db
+def test_anzahlung_abschlag_auf_anzahlungskonto(app_user):
+    _config(app_user, datev_advance_mode="ANZAHLUNG")
+    ar, _sr = _abschlag_und_schlussrechnung(
+        app_user, abschlag="1000.00", leistung="5000.00"
+    )
+    saetze = _saetze(datev_service.build_datev_export(_HEUTE, _HEUTE)[1])
+    ar_saetze = [s for s in saetze if s["beleg1"] == ar.invoice_number]
+    assert len(ar_saetze) == 1
+    # Debitor an „Erhaltene, versteuerte Anzahlungen 19 % USt" (SKR03 1718).
+    assert ar_saetze[0]["konto"] == "1400"
+    assert ar_saetze[0]["gegenkonto"] == "1718"
+    assert ar_saetze[0]["sh"] == "S"
+    assert ar_saetze[0]["umsatz"] == Decimal("1190.00")
+
+
+@pytest.mark.django_db
+def test_anzahlung_schlussrechnung_loest_auf(app_user):
+    """Der Kern: die SR bucht Leistung auf Erlös und löst die Anzahlung auf."""
+    _config(app_user, datev_advance_mode="ANZAHLUNG")
+    ar, sr = _abschlag_und_schlussrechnung(
+        app_user, abschlag="1000.00", leistung="5000.00"
+    )
+    saetze = _saetze(datev_service.build_datev_export(_HEUTE, _HEUTE)[1])
+    sr_saetze = [s for s in saetze if s["beleg1"] == sr.invoice_number]
+    assert len(sr_saetze) == 2
+
+    anrechnung = next(s for s in sr_saetze if s["gegenkonto"] == "1718")
+    assert anrechnung["sh"] == "H"                    # Anzahlungskonto im SOLL
+    assert anrechnung["umsatz"] == Decimal("1190.00")
+    # Rückverweis auf den Abschlag im Buchungstext (Belegfeld 2 ist zu kurz und
+    # trägt konventionell die Fälligkeit — es bleibt leer).
+    assert ar.invoice_number in anrechnung["text"]
+    assert anrechnung["beleg2"] == ""
+
+    erloes = next(s for s in sr_saetze if s["gegenkonto"] == "8400")
+    assert erloes["sh"] == "S"
+    assert erloes["umsatz"] == Decimal("5950.00")     # 5000 netto + 19 %
+
+    # Anzahlungskonto ist nach Abschlag + Schlussrechnung wieder ausgeglichen.
+    assert _saldo(saetze, "1718") == Decimal("0.00")
+    # Erlös entsteht in voller Höhe genau einmal.
+    assert _saldo(saetze, "8400") == Decimal("5950.00")
+    # Reconciliation je Beleg: Debitorbewegung == gross_total.
+    assert _beleg_summe(saetze, ar.invoice_number) == ar.gross_total
+    assert _beleg_summe(saetze, sr.invoice_number) == sr.gross_total
+
+
+@pytest.mark.django_db
+def test_beide_modi_ergeben_dieselben_erloese(app_user):
+    """Die eigentliche Falle: die Summe über alle Belege muss identisch sein.
+
+    Zwei Steuersätze, krumme Beträge (Rundung je Steuergruppe), Abschlag +
+    Schlussrechnung. Erlöse, Umsatzsteuerbasis und Debitorbewegung sind in beiden
+    Modi gleich — nur der Weg dorthin unterscheidet sich.
+    """
+    _config(app_user)
+    obj, kunde, order = _auftrag_mit_kunde(app_user)
+    ar = _beleg(app_user, obj, kunde, order, typ="ABSCHLAGSRECHNUNG", lines=[
+        _pauschale("333.33", "DE_19", "Abschlag 19 %"),
+        _pauschale("111.11", "DE_7", "Abschlag 7 %"),
+    ])
+    sr = _beleg(app_user, obj, kunde, order, typ="SCHLUSSRECHNUNG", lines=[
+        _pauschale("1234.57", "DE_19", "Leistung 19 %"),
+        _pauschale("777.77", "DE_7", "Leistung 7 %"),
+    ], advances=[ar])
+
+    erloes = _saetze(datev_service.build_datev_export(_HEUTE, _HEUTE)[1])
+
+    firma_service.update_company_profile(app_user.id, datev_advance_mode="ANZAHLUNG")
+    anzahlung = _saetze(datev_service.build_datev_export(_HEUTE, _HEUTE)[1])
+
+    for konto in ("8400", "8300"):
+        assert _saldo(erloes, konto) == _saldo(anzahlung, konto)
+    # Anzahlungskonten gleichen sich vollständig aus (Modus ANZAHLUNG) …
+    for konto in ("1718", "1711"):
+        assert _saldo(anzahlung, konto) == Decimal("0.00")
+    # … und im Modus ERLOES kommen sie gar nicht vor.
+    assert all(s["gegenkonto"] not in ("1718", "1711") for s in erloes)
+    # Reconciliation cent-genau je Beleg, in BEIDEN Modi.
+    for saetze in (erloes, anzahlung):
+        assert _beleg_summe(saetze, ar.invoice_number) == ar.gross_total
+        assert _beleg_summe(saetze, sr.invoice_number) == sr.gross_total
+
+
+@pytest.mark.django_db
+def test_anzahlung_skr04_konten(app_user):
+    """SKR04: Anzahlungen 19 % = 3272 (NICHT 3270 — das ist der 16-%-Sondersatz)."""
+    _config(app_user, datev_chart_of_accounts="SKR04",
+            datev_advance_mode="ANZAHLUNG")
+    obj, kunde, order = _auftrag_mit_kunde(app_user)
+    ar = _beleg(app_user, obj, kunde, order, typ="ABSCHLAGSRECHNUNG", lines=[
+        _pauschale("100.00", "DE_19"), _pauschale("100.00", "DE_7"),
+    ])
+    sr = _beleg(app_user, obj, kunde, order, typ="SCHLUSSRECHNUNG", lines=[
+        _pauschale("500.00", "DE_19"), _pauschale("500.00", "DE_7"),
+    ], advances=[ar])
+    saetze = _saetze(datev_service.build_datev_export(_HEUTE, _HEUTE)[1])
+    konten = {s["gegenkonto"] for s in saetze}
+    assert konten == {"3272", "3260", "4400", "4300"}
+    assert all(s["konto"] == "1200" for s in saetze)   # Sammeldebitor SKR04
+    assert _saldo(saetze, "3272") == Decimal("0.00")
+    assert _saldo(saetze, "3260") == Decimal("0.00")
+    assert _saldo(saetze, "4400") == Decimal("595.00")  # 500 + 19 %
+    assert _saldo(saetze, "4300") == Decimal("535.00")  # 500 + 7 %
+    assert _beleg_summe(saetze, sr.invoice_number) == sr.gross_total
+    assert _beleg_summe(saetze, ar.invoice_number) == ar.gross_total
+
+
+@pytest.mark.django_db
+def test_anzahlung_konto_override(app_user):
+    _config(app_user, datev_advance_mode="ANZAHLUNG",
+            datev_advance_account_full="1799")
+    ar, _sr = _abschlag_und_schlussrechnung(
+        app_user, abschlag="1000.00", leistung="5000.00"
+    )
+    saetze = _saetze(datev_service.build_datev_export(_HEUTE, _HEUTE)[1])
+    assert all(s["gegenkonto"] != "1718" for s in saetze)
+    assert _saldo(saetze, "1799") == Decimal("0.00")
+    assert any(s["gegenkonto"] == "1799" for s in saetze)
+
+
+@pytest.mark.django_db
+def test_anzahlung_storno_des_abschlags(app_user):
+    """Der Storno einer Abschlagsrechnung gibt die Anzahlung zurück — nicht den
+    Erlös (sonst bliebe die Verbindlichkeit stehen)."""
+    _config(app_user, datev_advance_mode="ANZAHLUNG")
+    obj, kunde, order = _auftrag_mit_kunde(app_user)
+    ar = _beleg(app_user, obj, kunde, order, typ="ABSCHLAGSRECHNUNG",
+                lines=[_pauschale("1000.00")])
+    storno = beleg_service.create_cancellation(app_user.id, invoice_id=ar.id)
+    storno.refresh_from_db()
+
+    saetze = _saetze(datev_service.build_datev_export(_HEUTE, _HEUTE)[1])
+    st = [s for s in saetze if s["beleg1"] == storno.invoice_number]
+    assert len(st) == 1
+    assert st[0]["gegenkonto"] == "1718"
+    assert st[0]["sh"] == "H"                      # Anzahlungskonto im Soll
+    assert st[0]["umsatz"] == Decimal("1190.00")
+    assert _saldo(saetze, "1718") == Decimal("0.00")
+    assert _beleg_summe(saetze, storno.invoice_number) == storno.gross_total
+
+
+@pytest.mark.django_db
+def test_anzahlung_storno_der_schlussrechnung(app_user):
+    """Das Storno der Schlussrechnung dreht Erlös UND Anrechnung um: die Anzahlung
+    lebt wieder auf (der Abschlag ist danach erneut anrechenbar)."""
+    _config(app_user, datev_advance_mode="ANZAHLUNG")
+    ar, sr = _abschlag_und_schlussrechnung(
+        app_user, abschlag="1000.00", leistung="5000.00"
+    )
+    storno = beleg_service.create_cancellation(app_user.id, invoice_id=sr.id)
+    storno.refresh_from_db()
+
+    saetze = _saetze(datev_service.build_datev_export(_HEUTE, _HEUTE)[1])
+    st = [s for s in saetze if s["beleg1"] == storno.invoice_number]
+    assert len(st) == 2
+    anrechnung = next(s for s in st if s["gegenkonto"] == "1718")
+    assert anrechnung["sh"] == "S"                  # Anzahlung lebt wieder auf
+    assert anrechnung["umsatz"] == Decimal("1190.00")
+    erloes = next(s for s in st if s["gegenkonto"] == "8400")
+    assert erloes["sh"] == "H"                      # Erlös wieder heraus
+    assert erloes["umsatz"] == Decimal("5950.00")
+
+    # Nach dem Storno steht wieder genau die Anzahlung des Abschlags im Haben,
+    # und es ist kein Erlös übrig.
+    assert _saldo(saetze, "1718") == Decimal("1190.00")
+    assert _saldo(saetze, "8400") == Decimal("0.00")
+    assert _beleg_summe(saetze, storno.invoice_number) == storno.gross_total
+    assert _beleg_summe(saetze, ar.invoice_number) == ar.gross_total
+
+
+@pytest.mark.django_db
+def test_anzahlung_laesst_normale_kreditbelege_unveraendert(app_user):
+    """Storno einer normalen Rechnung bucht auch im Modus ANZAHLUNG gegen Erlös."""
+    _config(app_user, datev_advance_mode="ANZAHLUNG")
+    inv = _published(app_user, lines=[
+        {"line_type": "MATERIAL", "description": "Ziegel", "quantity": 100,
+         "unit": "Stk", "unit_price": "2.40", "tax_code": "DE_19"},
+    ])
+    storno = beleg_service.create_cancellation(app_user.id, invoice_id=inv.id)
+    storno.refresh_from_db()
+    saetze = _saetze(datev_service.build_datev_export(_HEUTE, _HEUTE)[1])
+    assert {s["gegenkonto"] for s in saetze} == {"8400"}
+    assert sorted(s["sh"] for s in saetze) == ["H", "S"]
+    assert _saldo(saetze, "8400") == Decimal("0.00")
+
+
+@pytest.mark.django_db
+def test_anzahlung_mehrere_abschlaege_und_teilrechnung(app_user):
+    """Zwei Abschläge + eine TEILRECHNUNG auf eine Schlussrechnung: je Abschlag ein
+    eigener Auflösungssatz, das Anzahlungskonto steht am Ende auf null."""
+    _config(app_user, datev_advance_mode="ANZAHLUNG")
+    obj, kunde, order = _auftrag_mit_kunde(app_user)
+    a1 = _beleg(app_user, obj, kunde, order, typ="ABSCHLAGSRECHNUNG",
+                lines=[_pauschale("1000.00", text="1. Abschlag")])
+    a2 = _beleg(app_user, obj, kunde, order, typ="ABSCHLAGSRECHNUNG",
+                lines=[_pauschale("2000.00", text="2. Abschlag")])
+    tr = _beleg(app_user, obj, kunde, order, typ="TEILRECHNUNG",
+                lines=[_pauschale("500.00", text="Teilrechnung Rohbau")])
+    sr = _beleg(app_user, obj, kunde, order, typ="SCHLUSSRECHNUNG",
+                lines=[_pauschale("9000.00", text="Gesamtleistung")],
+                advances=[a1, a2, tr])
+
+    saetze = _saetze(datev_service.build_datev_export(_HEUTE, _HEUTE)[1])
+    # Die Teilrechnung bucht wie ein Abschlag auf das Anzahlungskonto.
+    tr_satz = next(s for s in saetze if s["beleg1"] == tr.invoice_number)
+    assert tr_satz["gegenkonto"] == "1718" and tr_satz["sh"] == "S"
+
+    sr_saetze = [s for s in saetze if s["beleg1"] == sr.invoice_number]
+    aufloesungen = [s for s in sr_saetze if s["gegenkonto"] == "1718"]
+    assert len(aufloesungen) == 3                       # je angerechnetem Beleg einer
+    assert all(s["sh"] == "H" for s in aufloesungen)
+    assert sorted(s["umsatz"] for s in aufloesungen) == [
+        Decimal("595.00"), Decimal("1190.00"), Decimal("2380.00")
+    ]
+    for beleg in (a1, a2, tr):
+        assert any(beleg.invoice_number in s["text"] for s in aufloesungen)
+
+    erloes = next(s for s in sr_saetze if s["gegenkonto"] == "8400")
+    assert erloes["sh"] == "S"
+    assert erloes["umsatz"] == Decimal("10710.00")      # 9000 netto + 19 %
+    assert _saldo(saetze, "1718") == Decimal("0.00")
+    assert _saldo(saetze, "8400") == Decimal("10710.00")
+    for beleg in (a1, a2, tr, sr):
+        assert _beleg_summe(saetze, beleg.invoice_number) == beleg.gross_total
+
+
+@pytest.mark.django_db
+def test_anzahlung_storno_sr_danach_storno_des_abschlags(app_user):
+    """Nach dem Storno der Schlussrechnung ist der Abschlag wieder frei und kann
+    selbst storniert werden — das Anzahlungskonto endet trotzdem auf null."""
+    _config(app_user, datev_advance_mode="ANZAHLUNG")
+    ar, sr = _abschlag_und_schlussrechnung(
+        app_user, abschlag="1000.00", leistung="5000.00"
+    )
+    # Die Veröffentlichungstore sind DEFERRED Constraint-Trigger. In der einen
+    # Test-Transaktion würden sie am Ende ERNEUT laufen und dann den (später
+    # entstandenen) Storno der Abschlagsrechnung sehen — in der Wirklichkeit ist
+    # die Veröffentlichung längst committet. Hier also jetzt auswerten, wie in
+    # test_schlussrechnung_service.
+    _force_deferred_checks()
+    beleg_service.create_cancellation(app_user.id, invoice_id=sr.id)
+    # Erst jetzt zulässig: die Anrechnung ist mit dem SR-Storno erloschen.
+    beleg_service.create_cancellation(app_user.id, invoice_id=ar.id)
+
+    saetze = _saetze(datev_service.build_datev_export(_HEUTE, _HEUTE)[1])
+    # AR (+1190 H auf 1718), SR-Auflösung (−1190), SR-Storno (+1190), AR-Storno (−1190)
+    assert _saldo(saetze, "1718") == Decimal("0.00")
+    assert _saldo(saetze, "8400") == Decimal("0.00")
+    for inv in Invoice.objects.filter(status="VEROEFFENTLICHT"):
+        assert _beleg_summe(saetze, inv.invoice_number) == inv.gross_total
+
+
+@pytest.mark.django_db
+def test_moduswechsel_bei_offenem_abschlag_abgelehnt(app_user):
+    """Der Server verhindert den Wechsel am unsauberen Schnitt (sonst bliebe ein
+    Saldo auf dem Anzahlungskonto stehen)."""
+    _config(app_user)
+    obj, kunde, order = _auftrag_mit_kunde(app_user)
+    ar = _beleg(app_user, obj, kunde, order, typ="ABSCHLAGSRECHNUNG",
+                lines=[_pauschale("1000.00")])
+    with pytest.raises(ValueError) as exc:
+        firma_service.update_company_profile(
+            app_user.id, datev_advance_mode="ANZAHLUNG"
+        )
+    assert ar.invoice_number in str(exc.value)
+
+    # Andere Profilfelder bleiben pflegbar (der Modus wird unverändert mitgesendet).
+    firma_service.update_company_profile(
+        app_user.id, city="Musterstadt", datev_advance_mode="ERLOES"
+    )
+    assert firma_service.get_company_profile().city == "Musterstadt"
+
+    # Nach der Schlussrechnung ist der Schnitt sauber → Wechsel erlaubt.
+    _beleg(app_user, obj, kunde, order, typ="SCHLUSSRECHNUNG",
+           lines=[_pauschale("5000.00")], advances=[ar])
+    firma_service.update_company_profile(app_user.id, datev_advance_mode="ANZAHLUNG")
+    assert firma_service.get_company_profile().datev_advance_mode == "ANZAHLUNG"
+
+
+@pytest.mark.django_db
+def test_anzahlung_reine_rechnung_bleibt_erloes(app_user):
+    """Eine normale RECHNUNG bucht auch im Modus ANZAHLUNG auf Erlös."""
+    _config(app_user, datev_advance_mode="ANZAHLUNG")
+    inv = _published(app_user, lines=[
+        {"line_type": "MATERIAL", "description": "Ziegel", "quantity": 1,
+         "unit": "Stk", "unit_price": "100.00", "tax_code": "DE_19"},
+    ])
+    saetze = _saetze(datev_service.build_datev_export(_HEUTE, _HEUTE)[1])
+    assert len(saetze) == 1
+    assert saetze[0]["gegenkonto"] == "8400"
+    assert _beleg_summe(saetze, inv.invoice_number) == inv.gross_total

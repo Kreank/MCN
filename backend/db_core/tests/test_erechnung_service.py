@@ -358,7 +358,13 @@ def test_skonto_steht_als_zahlungsbedingung_im_xml(app_user, firmenprofil):
     bedingung = _wert(
         baum, "//ram:SpecifiedTradePaymentTerms/ram:Description"
     )
-    klartext, maschine = bedingung.split("\n")
+    # Der ABSCHLIESSENDE Zeilenumbruch ist Pflicht: BR-DE-18 verlangt hinter dem
+    # letzten #…#-Block einen Umbruch. Ohne ihn verwirft der Referenz-Validator
+    # die Konventionszeile — deshalb steht er hier ausdrücklich in der Zusicherung
+    # (gegengeprüft in test_erechnung_konformitaet.py).
+    assert bedingung.endswith("#\n")
+    klartext, maschine, rest = bedingung.split("\n")
+    assert rest == ""
     # Erste Zeile: wörtlich derselbe Text wie im PDF (der Mensch liest ihn).
     assert klartext == beleg_pdf.zahlungsbedingungen_text(inv)
     assert "Skonto" in klartext

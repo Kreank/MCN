@@ -32,14 +32,22 @@
     @if (darfAnlegen()) {
       <div class="tab-toolbar">
         <button type="button" class="btn btn--primary" (click)="neuOeffnen()">
-          <span aria-hidden="true">＋</span> Neuer Bericht
+          <span aria-hidden="true">＋</span>
+          {{ amEinsatz() ? 'Neues Protokoll' : 'Neuer Bericht' }}
         </button>
       </div>
     }
 
     @if (berichte().length === 0) {
       <div class="tab-platzhalter">
-        <p>Für diesen Auftrag ist noch kein Baustellenbericht erfasst.</p>
+        <p>
+          @if (amEinsatz()) {
+            Zu diesem Termin ist noch kein Bericht erfasst. Halten Sie den Zustand
+            vor Ort fest — mit Fotos und der Unterschrift des Kunden.
+          } @else {
+            Für diesen Auftrag ist noch kein Baustellenbericht erfasst.
+          }
+        </p>
       </div>
     } @else {
       <div class="berichte">
@@ -79,6 +87,15 @@
                 </div>
               }
             </header>
+
+            @if (amEinsatz() && !r.work_order_id) {
+              <p class="bericht__hinweis">
+                <span class="stamp">Freier Termin</span>
+                Dieser Bericht gehört zu einem Termin ohne Auftrag
+                (Begehung/Besichtigung) — er dokumentiert den Zustand vor der
+                Beauftragung.
+              </p>
+            }
 
             <dl class="feld-raster">
               <div class="feld"><dt class="feld__label">Datum</dt><dd class="feld__wert">{{ datum(r.report_date) }}</dd></div>
@@ -129,7 +146,11 @@
 <!-- ------------------------------ Neu/Bearbeiten-Dialog ------------------- -->
 <app-dialog
   [offen]="dialogOffen() === 'neu' || dialogOffen() === 'bearbeiten'"
-  [titel]="dialogOffen() === 'bearbeiten' ? 'Bericht bearbeiten' : 'Neuer Baustellenbericht'"
+  [titel]="
+    dialogOffen() === 'bearbeiten'
+      ? 'Bericht bearbeiten'
+      : (amEinsatz() ? 'Neues Protokoll zum Termin' : 'Neuer Baustellenbericht')
+  "
   (schliessen)="dialogSchliessen()"
 >
   <form
@@ -145,19 +166,21 @@
       </div>
     }
     <app-feld [control]="berichtForm.controls.report_date" label="Berichtsdatum" typ="datum" [pflicht]="true" />
-    <app-referenz-wahl
-      [control]="berichtForm.controls.service_job_id"
-      label="Einsatz (optional)"
-      platzhalter="Einsatz suchen"
-      [suche]="einsatzSuche"
-    />
+    @if (!amEinsatz()) {
+      <app-referenz-wahl
+        [control]="berichtForm.controls.service_job_id"
+        label="Einsatz (optional)"
+        platzhalter="Einsatz suchen"
+        [suche]="einsatzSuche"
+      />
+    }
     <app-feld
       [control]="berichtForm.controls.activity_text"
       label="Tätigkeiten"
       typ="textarea"
       [zeilen]="4"
       [pflicht]="true"
-      hinweis="Was wurde vor Ort ausgeführt?"
+      [hinweis]="amEinsatz() ? 'Was wurde vor Ort festgestellt oder ausgeführt?' : 'Was wurde vor Ort ausgeführt?'"
     />
     <app-feld [control]="berichtForm.controls.weather" label="Wetter" hinweis="Optional, z. B. „sonnig, 18 °C“" />
     <app-feld
@@ -191,8 +214,8 @@
       </div>
     }
     <p class="dialog-hinweis">
-      Mit der Unterschrift nimmt der Kunde die Leistung ab. Der Bericht wird
-      dadurch <strong>besiegelt und unveränderlich</strong>.
+      Mit der Unterschrift bestätigt der Kunde den Bericht. Er wird dadurch
+      <strong>besiegelt und unveränderlich</strong>.
     </p>
     <app-feld
       [control]="unterschriftForm.controls.signed_by_name"

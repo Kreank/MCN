@@ -231,10 +231,47 @@ def test_nur_lesen_darf_lesen(admin_client, projekt, fake_storage):
 
 
 @pytest.mark.django_db
-def test_monteur_darf_hochladen(projekt, fake_storage):
-    """MONTEUR hat content/ANLEGEN (Fotos von der Baustelle)."""
+def test_monteur_darf_am_eigenen_einsatz_hochladen(fake_storage):
+    """MONTEUR hat content/ANLEGEN — aber mit row_scope EIGENE. Seine Fotos von
+    der Baustelle gehören an den **eigenen Einsatz** (bzw. dessen Bericht).
+
+    Vorher stand hier: „Monteur lädt an ein beliebiges Projekt hoch → 201". Genau
+    das war der Fehler (Review B1): `require_create` wertet den Scope nicht aus,
+    und das Ziel steht im Payload — er konnte Bildmaterial an fremde Objekte
+    hängen. Der Endpunkt ist jetzt `require_scoped` + Ziel-Guard."""
+    from django.core.files.uploadedfile import SimpleUploadedFile
+    from django.test import Client
+
+    from db_core.services import einsatz as einsatz_service
+
+    from .conftest import make_app_user, make_role_user
+
+    dispo = make_app_user("Dispo")
+    user, monteur_user = make_role_user("MONTEUR")
+    monteur = Client()
+    monteur.force_login(user)
+    job = einsatz_service.create_service_job(dispo.id, title="Begehung")
+    einsatz_service.assign_user(
+        dispo.id, service_job_id=job.id, assignee_user_id=monteur_user.id
+    )
+
+    r = monteur.post(
+        f"{BASE}/files",
+        data={
+            "datei": SimpleUploadedFile("vorher.jpg", b"\xff\xd8\xff",
+                                        content_type="image/jpeg"),
+            "service_job_id": str(job.id),
+            "link_category": "FOTO_VORHER",
+        },
+    )
+    assert r.status_code == 201, r.content
+    assert r.json()["link_category"] == "FOTO_VORHER"
+
+
+@pytest.mark.django_db
+def test_monteur_darf_nicht_an_fremdes_projekt_hochladen(projekt, fake_storage):
+    """Fail-closed: ein Projekt ist keine Zeile, die dem Monteur „gehört"."""
     monteur = logged_in_client("MONTEUR")
     r = _upload(monteur, projekt, name="vorher.jpg", inhalt=b"\xff\xd8\xff",
                 kategorie="FOTO_VORHER")
-    assert r.status_code == 201, r.content
-    assert r.json()["link_category"] == "FOTO_VORHER"
+    assert r.status_code == 403, r.content

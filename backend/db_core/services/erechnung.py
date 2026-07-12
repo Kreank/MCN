@@ -29,15 +29,34 @@ Datenquelle: **ausschließlich der eingefrorene ``billing_snapshot``**
 Live-Fallback — ein nachträgliches Umschreiben des Snapshots wäre eine Änderung
 am festgeschriebenen Beleg (B-30) und ist ausgeschlossen.
 
-Ehrliche Grenzen (siehe auch der Slice-Bericht):
-- Validiert wird gegen die **XSD**. Die **Schematron**-Regeln (BR-*/BR-CO-*) des
-  EN16931-Profils prüft die Bibliothek nur mit einem externen Saxon-Server; der
-  läuft hier nicht. Arithmetik und Pflichtfelder sichern stattdessen eigene
-  Tests ab (Steuergruppen cent-genau gegen die Kopfsummen).
-- **PDF/A-3B ist nicht mit veraPDF gegengeprüft.** Wir verlassen uns auf fpdf2s
-  ``enforce_compliance`` (OutputIntent, XMP, eingebettete Schriften) und
-  factur-x' XMP-Extension. Das ist der Stand der Technik dieser Bibliotheken,
-  aber keine unabhängig zertifizierte Konformitätsaussage.
+Konformität — was BELEGT ist
+---------------------------
+Extern gegengeprüft mit den Referenz-Validatoren (nicht nur mit eigenen Tests):
+
+- **PDF/A-3B: bestätigt.** veraPDF 1.30.2 (Referenzimplementierung der PDF
+  Association), Flavour ``3b``, meldet ``isCompliant=true`` für alle geprüften
+  Belegformen — inklusive der Rechnung mit Firmenlogo (PNG mit Alphakanal → SMask,
+  die klassische Transparenz-Falle).
+- **EN16931: bestätigt.** Mustang 2.24.0 (``--action validate``, ZUGFeRD-Projekt)
+  fährt XSD **und** das EN16931-Schematron (``FACTUR-X_EN16931.xslt``): kein
+  einziger BR-/BR-CO-Verstoß. Geprüft an sechs Belegformen (Skonto, ohne Skonto,
+  zwei Steuersätze, Schlussrechnung mit negativen Anrechnungspositionen, Storno
+  mit negativen Summen, Logo).
+
+Reproduzierbar: ``db_core/tests/test_erechnung_konformitaet.py`` (überspringt
+sauber, wenn die Validatoren fehlen). Installation: ``docs/erechnung-validierung.md``.
+
+Ehrliche Grenzen, die BLEIBEN
+-----------------------------
+- **XRechnung/PEPPOL (B2G) ist NICHT erfüllt** — und soll es nicht sein. Mustang
+  feuert zusätzlich die XRechnung-CIUS-Regeln und meldet sie als *Hinweise* (nicht
+  als Fehler, denn unser Profil ist EN16931, nicht XRechnung): BT-10 (Buyer
+  reference), BT-41 (Seller contact point), BT-24 = XRechnung-Kennung, sowie die
+  PEPPOL-Regeln zu Business-Process und elektronischen Adressen. Für B2G bräuchte
+  es einen eigenen Slice (Leitweg-ID); dort gehören diese Felder hin.
+- **BT-72 (Lieferdatum) fehlt** bewusst: die Rechnung führt keines, und ein
+  erfundenes Datum wäre eine falsche Tatsachenbehauptung (XRechnung mahnt das als
+  BR-DE-TMP-32 an — ebenfalls nur ein Hinweis).
 """
 import logging
 from collections import OrderedDict
@@ -476,6 +495,14 @@ def _zahlungsbedingungen_bt20(invoice):
     Der Klartext steht in der ersten Zeile (den liest der Mensch, und er ist
     wörtlich derselbe wie im PDF), die Konventionszeile darunter (die liest die
     Software). Ohne Skonto bleibt es beim Klartext.
+
+    **Der abschließende Zeilenumbruch ist Pflicht, nicht Kosmetik.** Die Regel
+    BR-DE-18 prüft die Konvention zweistufig: jede mit ``#`` beginnende Zeile muss
+    dem Skonto-Muster entsprechen UND hinter dem letzten ``#…#``-Block muss ein
+    Zeilenumbruch stehen (``tokenize(., '#.+#')[last()]`` gegen ``^\\s*\\n``).
+    Ohne das ``\\n`` verwirft der Referenz-Validator (Mustang/KoSIT) die Zeile —
+    die maschinenlesbare Skonto-Angabe wäre wertlos, obwohl sie dasteht.
+    Gegengeprüft in ``db_core/tests/test_erechnung_konformitaet.py``.
     """
     klartext = beleg_pdf.zahlungsbedingungen_text(invoice)
     if not klartext:
@@ -488,7 +515,7 @@ def _zahlungsbedingungen_bt20(invoice):
         f"#PROZENT={_prozent(zb['discount_percent'])}"
         f"#BASISBETRAG={_betrag(invoice.gross_total)}#"
     )
-    return f"{klartext}\n{maschine}"
+    return f"{klartext}\n{maschine}\n"
 
 
 def _bt_dict(invoice):

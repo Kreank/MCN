@@ -750,6 +750,33 @@ def _gebundene_abschlaege(advance_ids, *, exclude_final_id=None):
     return dict(qs.values_list("advance_invoice_id", "final_invoice_id"))
 
 
+def offene_abschlaege_gesamt():
+    """Alle **noch nicht schlussgerechneten** Abschlags-/Teilrechnungen (auftrags-
+    übergreifend).
+
+    Also: veröffentlicht, mit anrechenbarem Betrag (> 0,00 €), nicht storniert/
+    gutgeschrieben und von keiner veröffentlichten (nicht stornierten)
+    Schlussrechnung angerechnet — exakt die Menge, die eine spätere
+    Schlussrechnung noch anrechnen WIRD.
+
+    Genutzt vom DATEV-Abschlagsmodus (0063): solange solche Abschläge offen sind,
+    darf die Kontierung nicht umgestellt werden. Sonst löste die Schlussrechnung
+    eine Anzahlung auf, die nie als Anzahlung gebucht wurde (bzw. umgekehrt), und
+    auf dem Anzahlungskonto bliebe ein Saldo stehen.
+    """
+    kandidaten = list(
+        Invoice.objects.filter(
+            invoice_type__in=ADVANCE_TYPES,
+            status="VEROEFFENTLICHT",
+            gross_total__gt=0,
+        )
+        .exclude(id__in=_korrigierte_belege())
+        .order_by("invoice_date", "invoice_number")
+    )
+    gebunden = _gebundene_abschlaege([i.id for i in kandidaten])
+    return [i for i in kandidaten if i.id not in gebunden]
+
+
 def anrechenbare_abschlaege(work_order_id, *, final_invoice_id=None):
     """Die anrechenbaren Abschlags-/Teilrechnungen eines Auftrags (für das UI).
 

@@ -1,9 +1,22 @@
-"""Baustellenbericht-Service (workflow.site_report, Migration 0054).
+"""Baustellenbericht-Service (workflow.site_report, Migration 0054/0064).
 
-Tätigkeitsnachweis vor Ort zu einem Auftrag (optional Einsatz). Anlegen/Ändern nur
-im ENTWURF; die Kundenunterschrift besiegelt den Bericht (ENTWURF →
-UNTERZEICHNET) und macht ihn unveränderlich (DB-Trigger `protect_site_report`).
-Fotos hängen als content.file_link (site_report_id) über den Datei-Service daran.
+Tätigkeitsnachweis vor Ort. Anlegen/Ändern nur im ENTWURF; die Kundenunterschrift
+besiegelt den Bericht (ENTWURF → UNTERZEICHNET) und macht ihn unveränderlich
+(DB-Trigger `protect_site_report`). Fotos hängen als content.file_link
+(site_report_id) über den Datei-Service daran.
+
+**Anker (0064): Auftrag ODER Einsatz.** Ein Bericht hängt am Auftrag (Baustelle),
+am Einsatz (Termin) oder an beidem — nie im Leeren (DB-CHECK). Damit trägt auch der
+**freie Termin** (Einsatz ohne Auftrag, 0062) ein Begehungsprotokoll. Ist ein
+Einsatz angegeben, **leitet der Service den Auftrag daraus ab**: der Bericht am
+auftragsgebundenen Einsatz erscheint dadurch zwingend auch in der Auftragsliste,
+der Bericht am freien Termin trägt keinen Auftrag. Ein widersprüchlich
+mitgeschickter `work_order_id` ist ein Fachfehler (422), keine stille Korrektur.
+Die DB setzt dieselbe Regel unabhängig durch (`check_site_report_anchor`).
+
+Die Bezeichnung des Berichts entsteht aus Datum + Tätigkeit; den Kontext liefert
+der Anker (`work_order.title` bzw. `service_job.title` — Letzteres ist beim freien
+Termin Pflichtfeld, 0062). Der Bericht führt deshalb kein eigenes Titelfeld.
 
 Alle Writes über business_transaction. Fachfehler → ValueError (API übersetzt in
 422). Die Unterschrift wird als PNG im Objektspeicher abgelegt (content.file,
@@ -56,36 +69,75 @@ def _hours(value):
     return h
 
 
-def list_reports(work_order_id):
-    """Berichte eines Auftrags, neueste zuerst."""
-    return (
+def list_reports(work_order_id=None, service_job_id=None):
+    """Berichte eines Auftrags ODER eines Einsatzes, neueste zuerst.
+
+    Genau eine der beiden Angaben ist zu setzen. Die Auftragsliste enthält dank
+    der Ableitung (s. Modulkopf) auch die Berichte aller Einsätze des Auftrags.
+    """
+    if (work_order_id is None) == (service_job_id is None):
+        raise SiteReportError(
+            "Genau eines von Auftrag oder Einsatz ist anzugeben."
+        )
+    qs = (
         SiteReport.objects.filter(work_order_id=work_order_id)
-        .select_related("author")
-        .order_by("-report_date", "-created_at")
+        if service_job_id is None
+        else SiteReport.objects.filter(service_job_id=service_job_id)
     )
+    return qs.select_related("author").order_by("-report_date", "-created_at")
 
 
 def get_report(report_id):
     return SiteReport.objects.filter(id=report_id).select_related("author").first()
 
 
-def create_report(actor_app_user_id, *, work_order_id, report_date, activity_text,
-                  service_job_id=None, weather=None, hours_worked=None,
-                  materials_note=None, remarks=None):
-    """Legt einen Baustellenbericht (Status ENTWURF) an. `report_date` und
-    `activity_text` sind Pflicht; der Autor ist der Akteur."""
-    ensure_exists(WorkOrder, work_order_id, "Auftrag")
+def _anker(work_order_id, service_job_id):
+    """Prüft den Anker und leitet den Auftrag aus dem Einsatz ab.
+
+    Rückgabe: der zu speichernde `work_order_id` (beim freien Termin None).
+    Der Einsatz ist die stärkere Angabe — er trägt seinen Auftrag (oder eben
+    keinen). Ein davon abweichend mitgeschickter Auftrag wird NICHT stillschweigend
+    überschrieben, sondern als Fachfehler abgelehnt: der Aufrufer meint etwas
+    anderes, als er sagt.
+    """
+    if work_order_id is None and service_job_id is None:
+        raise SiteReportError(
+            "Ein Bericht braucht einen Bezug: Auftrag oder Einsatz."
+        )
+    if service_job_id is None:
+        ensure_exists(WorkOrder, work_order_id, "Auftrag")
+        return work_order_id
+
+    job = ServiceJob.objects.filter(id=service_job_id).only(
+        "id", "work_order_id"
+    ).first()
+    if job is None:
+        raise SiteReportError("Der angegebene Einsatz existiert nicht.")
+    if work_order_id is not None and str(job.work_order_id or "") != str(work_order_id):
+        if job.work_order_id is None:
+            raise SiteReportError(
+                "Der Einsatz ist ein freier Termin (ohne Auftrag) — ein Bericht "
+                "daran kann keinem Auftrag zugeordnet werden."
+            )
+        raise SiteReportError("Der Einsatz gehört nicht zu diesem Auftrag.")
+    return job.work_order_id
+
+
+def create_report(actor_app_user_id, *, report_date, activity_text,
+                  work_order_id=None, service_job_id=None, weather=None,
+                  hours_worked=None, materials_note=None, remarks=None):
+    """Legt einen Baustellenbericht (Status ENTWURF) an.
+
+    Anker: Auftrag und/oder Einsatz — mindestens eins (freier Termin: nur der
+    Einsatz). `report_date` und `activity_text` sind Pflicht; der Autor ist der
+    Akteur.
+    """
+    work_order_id = _anker(work_order_id, service_job_id)
     if report_date is None:
         raise SiteReportError("Das Berichtsdatum ist erforderlich.")
     activity = _clean(activity_text)
     if not activity:
         raise SiteReportError("Die Tätigkeitsbeschreibung darf nicht leer sein.")
-    if service_job_id is not None:
-        job = ServiceJob.objects.filter(id=service_job_id).first()
-        if job is None:
-            raise SiteReportError("Der angegebene Einsatz existiert nicht.")
-        if str(job.work_order_id) != str(work_order_id):
-            raise SiteReportError("Der Einsatz gehört nicht zu diesem Auftrag.")
     with as_business_error():
         with business_transaction(actor_app_user_id):
             report = SiteReport.objects.create(
@@ -134,12 +186,24 @@ def update_report(actor_app_user_id, *, report_id, **fields):
         changed.append("activity_text")
     if "service_job_id" in fields:
         sj = fields["service_job_id"]
-        if sj is not None:
-            job = ServiceJob.objects.filter(id=sj).first()
-            if job is None or str(job.work_order_id) != str(report.work_order_id):
-                raise SiteReportError("Der Einsatz gehört nicht zu diesem Auftrag.")
-        report.service_job_id = sj
-        changed.append("service_job_id")
+        if str(sj or "") != str(report.service_job_id or ""):
+            if report.work_order_id is None:
+                # Der Einsatz ist der einzige Anker des Berichts (freier Termin):
+                # Umhängen verfälschte den Nachweis, Leeren risse den Anker auf.
+                raise SiteReportError(
+                    "Der Bericht hängt am freien Termin — sein Einsatzbezug ist "
+                    "unveränderlich."
+                )
+            if sj is not None:
+                job = ServiceJob.objects.filter(id=sj).only(
+                    "id", "work_order_id"
+                ).first()
+                if job is None or str(job.work_order_id or "") != str(report.work_order_id):
+                    raise SiteReportError(
+                        "Der Einsatz gehört nicht zu diesem Auftrag."
+                    )
+            report.service_job_id = sj
+            changed.append("service_job_id")
     if "weather" in fields:
         report.weather = _clean(fields["weather"])
         changed.append("weather")
@@ -182,9 +246,14 @@ def sign_report(actor_app_user_id, *, report_id, signed_by_name, signature_png):
     if signature_png[:8] != b"\x89PNG\r\n\x1a\n":
         raise SiteReportError("Die Unterschrift muss ein PNG-Bild sein.")
 
-    # Unterschrift ablegen (Dedup über SHA-256 wie beim Firmenlogo).
+    # Unterschrift ablegen (Dedup über SHA-256 wie beim Firmenlogo). Der
+    # Objektspeicher-Write muss vor der Transaktion liegen (er ist nicht
+    # transaktional), der DATENBANK-Teil gehört aber in DIESELBE Transaktion wie
+    # der Statuswechsel: scheitert das Besiegeln am Tor, bleibt sonst eine
+    # verwaiste content.file-Zeile ohne Bericht zurück.
     digest = hashlib.sha256(signature_png).hexdigest()
     datei = File.objects.filter(sha256=digest, size_bytes=len(signature_png)).first()
+    storage_key = None
     if datei is None:
         storage_key = f"signature/{uuid.uuid4()}"
         try:
@@ -193,20 +262,20 @@ def sign_report(actor_app_user_id, *, report_id, signed_by_name, signature_png):
             )
         except storage_module.StorageError as exc:
             raise SiteReportError(f"Die Unterschrift konnte nicht gespeichert werden: {exc}")
-        with business_transaction(actor_app_user_id):
-            datei = File.objects.create(
-                id=uuid.uuid4(),
-                storage_key=storage_key,
-                original_filename="unterschrift.png",
-                mime_type="image/png",
-                size_bytes=len(signature_png),
-                sha256=digest,
-                media_metadata={},
-                uploaded_by_id=actor_app_user_id,
-            )
 
     with as_business_error():
         with business_transaction(actor_app_user_id):
+            if datei is None:
+                datei = File.objects.create(
+                    id=uuid.uuid4(),
+                    storage_key=storage_key,
+                    original_filename="unterschrift.png",
+                    mime_type="image/png",
+                    size_bytes=len(signature_png),
+                    sha256=digest,
+                    media_metadata={},
+                    uploaded_by_id=actor_app_user_id,
+                )
             report.signed_by_name = name
             report.signed_at = datetime.now(dt_timezone.utc)
             report.signature_file_id = datei.id

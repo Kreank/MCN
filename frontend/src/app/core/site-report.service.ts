@@ -15,9 +15,18 @@ export class SiteReportService {
   private readonly http = inject(HttpClient);
   private readonly base = '/api/workflow/site_reports';
 
-  /** Berichte eines Auftrags (neueste zuerst; Recht workflow.LESEN). */
+  /** Berichte eines Auftrags (neueste zuerst; Recht workflow.LESEN).
+   * Enthält auch die Berichte der Einsätze dieses Auftrags. Für Rollen mit
+   * row_scope EIGENE (Monteur) ist diese Sicht gesperrt (403) — sie nutzen
+   * `listAmEinsatz`. */
   list(workOrderId: string): Observable<SiteReportListe> {
     const params = new HttpParams().set('work_order_id', workOrderId);
+    return this.http.get<SiteReportListe>(this.base, { params });
+  }
+
+  /** Berichte eines Einsatzes — auch beim freien Termin (ohne Auftrag). */
+  listAmEinsatz(serviceJobId: string): Observable<SiteReportListe> {
+    const params = new HttpParams().set('service_job_id', serviceJobId);
     return this.http.get<SiteReportListe>(this.base, { params });
   }
 

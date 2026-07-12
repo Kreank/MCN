@@ -1,15 +1,29 @@
 """Baustellenbericht-API (workflow.site_report).
 
-Berichte hängen an einem Auftrag (`work_order`); Fotos werden über die Datei-API
-(`/content/files` mit `site_report_id`) angehängt. Die Kundenunterschrift wird als
-Base64-PNG entgegengenommen, im Objektspeicher abgelegt und besiegelt den Bericht
+Ein Bericht hängt an einem **Anker**: am Auftrag (`work_order`), am Einsatz
+(`service_job`) oder an beidem — nie im Leeren (DB-CHECK, Migration 0064). Damit
+trägt auch der **freie Termin** (Einsatz ohne Auftrag, 0062) ein
+Begehungsprotokoll. Fotos werden über die Datei-API (`/content/files` mit
+`site_report_id`) angehängt. Die Kundenunterschrift wird als Base64-PNG
+entgegengenommen, im Objektspeicher abgelegt und besiegelt den Bericht
 (ENTWURF → UNTERZEICHNET); danach ist er unveränderlich.
 
-Rechte-Tore (Modul `workflow`, wie beim Auftrag, zu dem der Bericht gehört):
+Rechte-Tore (Modul `workflow`):
   * Lesen:      `LESEN`
   * Anlegen:    `ANLEGEN`
   * Ändern:     `AENDERN`
   * Unterschreiben (Abnahme): `AENDERN`
+
+**row_scope 'EIGENE' (Monteur)** ist hier echt umgesetzt — der Bericht ist genau
+das, was der Monteur vor Ort schreibt und unterschreiben lässt. Die Grenze hängt
+(wie überall bei Einsätzen) allein an `workflow.job_assignment`:
+
+  * Berichte **seines** Einsatzes: lesen, anlegen, ändern, unterschreiben lassen.
+  * Bericht ohne Einsatzbezug oder an einem fremden Einsatz: **404** — die
+    Existenz fremder Berichte wird nicht verraten (Muster `api/planung.py`).
+  * Die **Auftragssicht** (`?work_order_id=…`) ist eine Dispositionssicht über
+    alle Berichte der Baustelle und lässt sich nicht auf eigene Zeilen begrenzen:
+    Scope 'EIGENE' → 403 (fail-closed). Der Monteur nimmt den Einsatzweg.
 """
 import base64
 import binascii
@@ -22,8 +36,8 @@ from ninja.errors import HttpError
 from ninja.responses import Status
 from ninja.security import django_auth
 
-from api.permissions import require
-from db_core.models import WorkOrder
+from api.permissions import require_scoped
+from db_core.models import JobAssignment, ServiceJob, WorkOrder
 from db_core.services import site_report as report_service
 
 router = Router()
@@ -33,7 +47,7 @@ router = Router()
 
 class SiteReportOut(Schema):
     id: UUID
-    work_order_id: UUID
+    work_order_id: UUID | None = None
     service_job_id: UUID | None = None
     report_date: date
     author_id: UUID | None = None
@@ -57,9 +71,10 @@ class SiteReportListOut(Schema):
 
 
 class SiteReportIn(Schema):
-    work_order_id: UUID
     report_date: date
     activity_text: str
+    # Anker: mindestens eines von beiden. Beim freien Termin nur der Einsatz.
+    work_order_id: UUID | None = None
     service_job_id: UUID | None = None
     weather: str | None = None
     hours_worked: Decimal | None = None
@@ -119,45 +134,120 @@ def _dekodiere_signatur(base64_wert: str) -> bytes:
         raise HttpError(422, "Die Unterschrift ist kein gültiges Base64-PNG.")
 
 
+# --- Zeilenbegrenzung ('EIGENE') -------------------------------------------
+
+def _guard_own_job(job_id, actor, scope):
+    """Scope 'EIGENE': nur ein Einsatz, dem der Akteur zugewiesen ist. Sonst 404.
+    Muster: `api/planung.py::_guard_own_job`."""
+    if scope != "EIGENE":
+        return
+    if not JobAssignment.objects.filter(
+        service_job_id=job_id, assignee_id=actor
+    ).exists():
+        raise HttpError(404, "Einsatz nicht gefunden.")
+
+
+def _guard_own_report(report, actor, scope):
+    """Scope 'EIGENE': nur Berichte an einem Einsatz, dem der Akteur zugewiesen
+    ist. Ein reiner Auftragsbericht (ohne Einsatz) ist für ihn **nicht** sichtbar
+    — er hat keine Zuweisung, an der die Sicht hängen könnte. 404 statt 403."""
+    if scope != "EIGENE":
+        return
+    if report.service_job_id is None:
+        raise HttpError(404, "Bericht nicht gefunden.")
+    if not JobAssignment.objects.filter(
+        service_job_id=report.service_job_id, assignee_id=actor
+    ).exists():
+        raise HttpError(404, "Bericht nicht gefunden.")
+
+
+def _auftragssicht_verboten(scope):
+    """Die Auftragssicht zeigt alle Berichte der Baustelle — sie lässt sich nicht
+    auf eigene Zeilen begrenzen. Scope 'EIGENE' → 403 (fail-closed)."""
+    if scope == "EIGENE":
+        raise HttpError(
+            403,
+            "Ihre Rolle erlaubt nur den Zugriff auf eigene Datensätze; "
+            "Berichte sind für Sie über den eigenen Einsatz erreichbar.",
+        )
+
+
 # --- Endpoints -------------------------------------------------------------
 
 @router.get("/site_reports", response=SiteReportListOut)
-def list_site_reports(request, work_order_id: UUID | None = None):
-    """Baustellenberichte eines Auftrags (neueste zuerst)."""
-    # Rechteprüfung VOR der Parametervalidierung: `work_order_id` ist bewusst
+def list_site_reports(
+    request,
+    work_order_id: UUID | None = None,
+    service_job_id: UUID | None = None,
+):
+    """Baustellenberichte eines Auftrags ODER eines Einsatzes (neueste zuerst).
+
+    Genau einer der beiden Filter ist zu setzen. Die Auftragsliste enthält auch
+    die Berichte der Einsätze dieses Auftrags (der Bericht am auftragsgebundenen
+    Einsatz trägt zwingend dessen Auftrag).
+    """
+    # Rechteprüfung VOR der Parametervalidierung: die Filter sind bewusst
     # optional, damit ein rollenloser Aufruf 403 (nicht 422) bekommt und die
-    # Existenz des Auftrags nicht durchsickert.
-    require(request, "workflow", "LESEN")
-    if work_order_id is None:
-        raise HttpError(422, "work_order_id ist erforderlich.")
-    if not WorkOrder.objects.filter(id=work_order_id).exists():
-        raise HttpError(404, "Auftrag nicht gefunden.")
-    reports = report_service.list_reports(work_order_id)
+    # Existenz von Auftrag/Einsatz nicht durchsickert.
+    actor, scope = require_scoped(request, "workflow", "LESEN")
+    if (work_order_id is None) == (service_job_id is None):
+        raise HttpError(
+            422, "Genau eines von work_order_id oder service_job_id ist erforderlich."
+        )
+    if service_job_id is not None:
+        if not ServiceJob.objects.filter(id=service_job_id).exists():
+            raise HttpError(404, "Einsatz nicht gefunden.")
+        _guard_own_job(service_job_id, actor, scope)
+    else:
+        _auftragssicht_verboten(scope)
+        if not WorkOrder.objects.filter(id=work_order_id).exists():
+            raise HttpError(404, "Auftrag nicht gefunden.")
+    reports = report_service.list_reports(
+        work_order_id=work_order_id, service_job_id=service_job_id
+    )
     items = [_out(r) for r in reports]
     return SiteReportListOut(items=items, total=len(items))
 
 
 @router.get("/site_reports/{report_id}", response=SiteReportOut)
 def get_site_report(request, report_id: UUID):
-    """Ein Baustellenbericht im Detail."""
-    require(request, "workflow", "LESEN")
+    """Ein Baustellenbericht im Detail. Fremder Bericht (Scope 'EIGENE') → 404."""
+    actor, scope = require_scoped(request, "workflow", "LESEN")
     report = report_service.get_report(report_id)
     if report is None:
         raise HttpError(404, "Bericht nicht gefunden.")
+    _guard_own_report(report, actor, scope)
     return _out(report)
 
 
 @router.post("/site_reports", response={201: SiteReportOut}, auth=django_auth)
 def create_site_report(request, payload: SiteReportIn):
-    """Neuen Baustellenbericht (Status ENTWURF) anlegen."""
-    actor, _ = require(request, "workflow", "ANLEGEN")
+    """Neuen Baustellenbericht (Status ENTWURF) anlegen.
+
+    `require_scoped` statt `require_create`: Der Bericht hängt an einem
+    **fremden Elternobjekt** (Auftrag/Einsatz). Ein Monteur (Scope 'EIGENE') darf
+    ihn nur an einem Einsatz anlegen, dem er zugewiesen ist — sonst schriebe er
+    Nachweise an Baustellen, die er nie gesehen hat. Der Auftrag wird aus dem
+    Einsatz abgeleitet (Service); ein widersprüchlicher `work_order_id` → 422.
+    """
+    actor, scope = require_scoped(request, "workflow", "ANLEGEN")
+    if scope == "EIGENE":
+        if payload.service_job_id is None:
+            raise HttpError(
+                403,
+                "Ihre Rolle erlaubt nur den Zugriff auf eigene Datensätze; "
+                "ein Bericht ist nur an einem Ihnen zugewiesenen Einsatz möglich.",
+            )
+        if not ServiceJob.objects.filter(id=payload.service_job_id).exists():
+            raise HttpError(404, "Einsatz nicht gefunden.")
+        _guard_own_job(payload.service_job_id, actor, scope)
     try:
         report = report_service.create_report(
             actor,
             work_order_id=payload.work_order_id,
+            service_job_id=payload.service_job_id,
             report_date=payload.report_date,
             activity_text=payload.activity_text,
-            service_job_id=payload.service_job_id,
             weather=payload.weather,
             hours_worked=payload.hours_worked,
             materials_note=payload.materials_note,
@@ -171,8 +261,23 @@ def create_site_report(request, payload: SiteReportIn):
 @router.put("/site_reports/{report_id}", response=SiteReportOut, auth=django_auth)
 def update_site_report(request, report_id: UUID, payload: SiteReportUpdateIn):
     """Einen Bericht ändern — nur im ENTWURF. Nur gesetzte Felder werden geändert."""
-    actor, _ = require(request, "workflow", "AENDERN")
+    actor, scope = require_scoped(request, "workflow", "AENDERN")
+    report = report_service.get_report(report_id)
+    if report is None:
+        raise HttpError(404, "Bericht nicht gefunden.")
+    _guard_own_report(report, actor, scope)
     fields = payload.dict(exclude_unset=True)
+    if scope == "EIGENE" and "service_job_id" in fields:
+        # Ein UMhängen ist verboten (sonst schriebe der Monteur an einem fremden
+        # Einsatz). Den unveränderten Wert mitzuschicken ist dagegen harmlos —
+        # Formulare senden ihre Felder vollständig; das darf kein 403 auslösen.
+        if str(fields["service_job_id"] or "") != str(report.service_job_id or ""):
+            raise HttpError(
+                403,
+                "Der Einsatzbezug des Berichts ist Dispositionsdatum und für Ihre "
+                "Rolle nicht änderbar.",
+            )
+        fields.pop("service_job_id")
     try:
         report = report_service.update_report(actor, report_id=report_id, **fields)
     except ValueError as exc:
@@ -182,8 +287,16 @@ def update_site_report(request, report_id: UUID, payload: SiteReportUpdateIn):
 
 @router.post("/site_reports/{report_id}/sign", response=SiteReportOut, auth=django_auth)
 def sign_site_report(request, report_id: UUID, payload: SiteReportSignIn):
-    """Bericht mit der Kundenunterschrift besiegeln (ENTWURF → UNTERZEICHNET)."""
-    actor, _ = require(request, "workflow", "AENDERN")
+    """Bericht mit der Kundenunterschrift besiegeln (ENTWURF → UNTERZEICHNET).
+
+    Die Abnahme geschieht **vor Ort** — der Monteur (Scope 'EIGENE') lässt sie am
+    eigenen Einsatz unterschreiben; ein fremder Bericht ist mit 404 abgeriegelt.
+    """
+    actor, scope = require_scoped(request, "workflow", "AENDERN")
+    report = report_service.get_report(report_id)
+    if report is None:
+        raise HttpError(404, "Bericht nicht gefunden.")
+    _guard_own_report(report, actor, scope)
     signature = _dekodiere_signatur(payload.signature_png_base64)
     try:
         report = report_service.sign_report(

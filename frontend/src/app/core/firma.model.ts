@@ -23,6 +23,33 @@ export interface CompanyProfile {
   logo_file_id: string | null;
   /** Ob ein Firmenlogo hinterlegt ist (die Bytes holt GET /company/profile/logo). */
   has_logo: boolean;
+
+  // --- DATEV-Export (Migration 0051/0063) -----------------------------------
+  /** Beraternummer des Steuerberaters (1001–9999999). */
+  datev_consultant_number: string | null;
+  /** Mandantennummer beim Steuerberater (1–99999). */
+  datev_client_number: string | null;
+  /** 'SKR03' | 'SKR04'. */
+  datev_chart_of_accounts: string | null;
+  datev_account_length: number | null;
+  /** Wirtschaftsjahresbeginn als Monat (1–12). */
+  datev_fiscal_year_start_month: number | null;
+  /** Konto-Overrides; leer = SKR-Standard des Servers. */
+  datev_debtor_account: string | null;
+  datev_revenue_account_full: string | null;
+  datev_revenue_account_reduced: string | null;
+  datev_revenue_account_free: string | null;
+  datev_revenue_account_reverse: string | null;
+  /**
+   * Wie Abschlags-/Teilrechnungen gebucht werden:
+   * 'ERLOES' (Teilleistung, Default) oder 'ANZAHLUNG' (erhaltene Anzahlung —
+   * die Schlussrechnung löst sie wieder auf).
+   */
+  datev_advance_mode: string | null;
+  datev_advance_account_full: string | null;
+  datev_advance_account_reduced: string | null;
+  datev_advance_account_free: string | null;
+  datev_advance_account_reverse: string | null;
 }
 
 /** Änderungs-Payload des Firmenprofils (nur gesetzte Felder werden gesendet). */

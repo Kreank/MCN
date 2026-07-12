@@ -56,6 +56,12 @@ class CompanyProfileOut(Schema):
     datev_revenue_account_reduced: str | None = None
     datev_revenue_account_free: str | None = None
     datev_revenue_account_reverse: str | None = None
+    # Abschlags-Kontierung (0063): ERLOES (Teilleistung, Default) | ANZAHLUNG
+    datev_advance_mode: str | None = None
+    datev_advance_account_full: str | None = None
+    datev_advance_account_reduced: str | None = None
+    datev_advance_account_free: str | None = None
+    datev_advance_account_reverse: str | None = None
     # Additiv: OB ein Firmenlogo hinterlegt ist (die Bytes holt GET /profile/logo).
     has_logo: bool = False
     # Gesetzt, wenn eine Bankdaten-Änderung einen Vier-Augen-Antrag ausgelöst hat
@@ -94,6 +100,11 @@ class CompanyProfileIn(Schema):
     datev_revenue_account_reduced: str | None = None
     datev_revenue_account_free: str | None = None
     datev_revenue_account_reverse: str | None = None
+    datev_advance_mode: str | None = None
+    datev_advance_account_full: str | None = None
+    datev_advance_account_reduced: str | None = None
+    datev_advance_account_free: str | None = None
+    datev_advance_account_reverse: str | None = None
 
 
 class BranchOut(Schema):
@@ -205,6 +216,11 @@ def _profile_out(p, pending_bank_approval=None):
         datev_revenue_account_reduced=p.datev_revenue_account_reduced,
         datev_revenue_account_free=p.datev_revenue_account_free,
         datev_revenue_account_reverse=p.datev_revenue_account_reverse,
+        datev_advance_mode=p.datev_advance_mode,
+        datev_advance_account_full=p.datev_advance_account_full,
+        datev_advance_account_reduced=p.datev_advance_account_reduced,
+        datev_advance_account_free=p.datev_advance_account_free,
+        datev_advance_account_reverse=p.datev_advance_account_reverse,
         has_logo=p.logo_file_id is not None,
         pending_bank_approval=pending_bank_approval,
     )

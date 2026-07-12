@@ -2464,6 +2464,14 @@ class CompanyProfile(models.Model):
     datev_revenue_account_reduced = models.TextField(null=True, blank=True)
     datev_revenue_account_free = models.TextField(null=True, blank=True)
     datev_revenue_account_reverse = models.TextField(null=True, blank=True)
+    # Abschlags-Kontierung (Migration 0063): 'ERLOES' (Teilleistung, Default und
+    # Bestandsverhalten) oder 'ANZAHLUNG' (Vorauszahlung → Verbindlichkeitskonto
+    # „Erhaltene, versteuerte Anzahlungen", von der Schlussrechnung aufgelöst).
+    datev_advance_mode = models.TextField(db_default="ERLOES")
+    datev_advance_account_full = models.TextField(null=True, blank=True)
+    datev_advance_account_reduced = models.TextField(null=True, blank=True)
+    datev_advance_account_free = models.TextField(null=True, blank=True)
+    datev_advance_account_reverse = models.TextField(null=True, blank=True)
     version = models.IntegerField(db_default=models.Value(1))
     created_at = models.DateTimeField(db_default=Now())
     updated_at = models.DateTimeField(db_default=Now())
@@ -2883,19 +2891,26 @@ class FileLink(models.Model):
 
 
 class SiteReport(models.Model):
-    """workflow.site_report — Baustellenbericht (Migration 0054).
+    """workflow.site_report — Baustellenbericht (Migration 0054/0064).
 
-    Tätigkeitsnachweis vor Ort zu einem Auftrag (optional Einsatz). Fotos hängen
-    als content.file_link (site_report_id) daran; die Kundenunterschrift
-    (`signature_file_id`, PNG im Objektspeicher) besiegelt den Bericht
-    (ENTWURF → UNTERZEICHNET). Ein unterzeichneter Bericht ist unveränderlich
-    (Trigger `protect_site_report`); kein Löschen (GoBD-Schutzstandard).
+    Tätigkeitsnachweis vor Ort. Fotos hängen als content.file_link
+    (site_report_id) daran; die Kundenunterschrift (`signature_file_id`, PNG im
+    Objektspeicher) besiegelt den Bericht (ENTWURF → UNTERZEICHNET). Ein
+    unterzeichneter Bericht ist unveränderlich (Trigger `protect_site_report`);
+    kein Löschen (GoBD-Schutzstandard).
+
+    Anker (Migration 0064): Auftrag ODER Einsatz — mindestens eins von beiden
+    (DB-CHECK). `work_order` ist NULL beim **Begehungsprotokoll am freien
+    Termin** (Einsatz ohne Auftrag, Migration 0062). Ist ein Einsatz gesetzt,
+    muss der Auftrag des Berichts der Auftrag dieses Einsatzes sein — auch, wenn
+    das „kein Auftrag" bedeutet (Trigger `check_site_report_anchor`). Die
+    Liegenschaft trägt der Bericht bewusst nicht selbst; sie kommt vom Anker.
     """
 
     id = models.UUIDField(primary_key=True)
     work_order = models.ForeignKey(
         "WorkOrder", models.DO_NOTHING, db_column="work_order_id",
-        related_name="site_reports",
+        null=True, blank=True, related_name="site_reports",
     )
     service_job = models.ForeignKey(
         "ServiceJob", models.DO_NOTHING, db_column="service_job_id",

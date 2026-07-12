@@ -16,8 +16,8 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 > und Freigaben laufen aus dem UI durch Rechte, Statusautomaten und DB-Trigger.
 > Dazu **Vier-Augen-Freigaben**, **Belegerfassung** (Eingangsrechnungen) und die
 > **Rechtematrix-Pflege** als UI.
-> **1937 Backend-Tests grün** (1 skipped), db_core-Migrationen bis **0062**,
-> accounts bis **0002**. Arbeitsbaum sauber, alles committet.
+> **1981 Backend-Tests grün** (13 skipped: 12 E-Rechnungs-Validatortests ohne Java,
+> 1 MinIO-E2E), db_core-Migrationen bis **0065**, accounts bis **0002**.
 > Stand 2026-07-11 (Hero-Paritäts-Ausbau, 20 Slices an einem Tag — Details in
 > `git log`): Artikelstamm nach Hero (Felder/VK-Gruppen/Lieferant/Bild,
 > Suchoperatoren + · | · *, Spaltenwahl, Kopieren), **Marge/Deckungsbeitrag** in
@@ -41,7 +41,7 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 > von mir eingecheckt), **Erste-Schritte-Checkliste** auf der Übersicht,
 > **Akquisekanäle/Quellen** (`/company/acquisition-sources` + Quelle am Kontakt,
 > Migration 0049/0050).
-> **Migrations-Graph ist frei** (`0062_freier_termin` ist einziges Leaf).
+> **Migrations-Graph ist frei** (`0065_bericht_anhaenge_versiegeln` ist einziges Leaf).
 > **Neu (2026-07-11, diese Session):** **DATEV-EXTF-Export** (Buchungsstapel aus
 > veröffentlichten Rechnungen, `GET /buchhaltung/datev-export.csv`, Config am
 > Firmenprofil, Migration 0051; Dialog in der Buchhaltung). v1-Grenzen dokumentiert
@@ -57,8 +57,12 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 > **vier priorisierten Slices aus den Grundsatzentscheidungen — alle vier gebaut**:
 > **Skonto** (`ae4d241`, 0058), **E-Rechnung ZUGFeRD/Factur-X** (`12e4f7f`, 0059),
 > **Abschlags-/Teil-/Schlussrechnung** (`5c66561`, 0060/0061), **freier Termin ohne
-> Auftrag** (`eb215f3`, 0062). Details unten in „★ NÄCHSTE SCHRITTE" und in den
-> Commit-Messages. Grundsatzentscheidungen: Memory `grundsatz-entscheidungen-2026-07`.
+> Auftrag** (`eb215f3`, 0062). Danach drei weitere Slices: **E-Rechnung extern
+> gegengeprüft** (veraPDF + Mustang/Schematron, 6/6 PASS — die frühere Warnung
+> „nicht zertifiziert" ist erledigt), **DATEV-Abschläge auf Anzahlungskonto**
+> (0063, Schalter am Firmenprofil) und **Baustellenbericht am freien Termin**
+> (0064/0065, dabei zwei Sicherheitslücken in der Datei-API geschlossen). Details
+> unten. Grundsatzentscheidungen: Memory `grundsatz-entscheidungen-2026-07`.
 
 ---
 
@@ -155,7 +159,8 @@ wiederhergestellt + **Rechnungs-Editor** (Artikel-Palette), **Plantafel Vollbrei
 **Baustellenberichte** (`workflow.site_report`, Migration 0054/0055): Bericht +
 Fotos (`content.file_link.site_report_id`) + Kunden­unterschrift (Canvas-Pad → PNG
 im Objektspeicher, besiegelt ENTWURF→UNTERZEICHNET, danach per Trigger
-unveränderlich). Reiter „Berichte" im Auftrags-Detail.
+unveränderlich — **inklusive der Anhänge**, siehe 0065). Reiter „Berichte" im
+Auftrags-Detail **und im Einsatz-Detail** (auch am freien Termin, siehe 0064).
 
 Danach der **IDS-Connect Warenkorb-Roundtrip** (`pricing.punchout_session`,
 Migration 0056/0057): „Bei Händler bestellen" aus dem Angebots-Editor →
@@ -216,10 +221,8 @@ die vier daraus abgeleiteten Slices sind umgesetzt, reviewed und committet:
    maschinenlesbar in BT-20 (`#SKONTO#TAGE=..#PROZENT=..#BASISBETRAG=..#`).
    Endpunkte `GET /invoicing/invoices/{id}/zugferd.pdf` und `.../zugferd.xml`,
    Archivierung in MinIO (`link_category='E_RECHNUNG'`).
-   **Offen/ehrlich:** PDF/A-3B ist **nicht mit veraPDF gegengeprüft** (Marker
-   gesetzt, Konformität nicht zertifiziert), und es läuft nur die **XSD**-, keine
-   **Schematron**-Prüfung — ein Lauf gegen KoSIT/Mustang steht **vor dem Live-Gang**
-   aus. XRechnung (B2G) bleibt offen und optional.
+   **Inzwischen extern gegengeprüft — siehe „E-Rechnung ist belegt" weiter unten.**
+   XRechnung (B2G) bleibt offen und optional.
 3. ✔ **Abschlags-, Teil- und Schlussrechnung** (`5c66561`, Migration 0060/0061) —
    der Kernprozess des Users. `invoicing.invoice_advance` friert Netto/Steuer/Brutto
    je (Schlussrechnung, Abschlag, Steuercode) ein, `invoice_line.advance_invoice_id`
@@ -250,12 +253,83 @@ die vier daraus abgeleiteten Slices sind umgesetzt, reviewed und committet:
    EIGENE-Sicht hängt bei Einsätzen allein an der Zuweisung, nie am Auftrag: ein
    freier Termin wird also nicht öffentlich. `PATCH /einsaetze/{id}` lässt den
    Monteur am eigenen **freien** Termin nur Kontakt und Zugangshinweise nachtragen.
-   `seed_demo` legt eine Begehung an. **Grenze:** `site_report` bleibt
-   auftragsgebunden (`work_order_id` NOT NULL) — ein Begehungsprotokoll geht darüber
-   noch nicht.
+   `seed_demo` legt eine Begehung an. Der Baustellenbericht am freien Termin ist
+   inzwischen nachgezogen (siehe unten).
 
 Dazu ✔ **DATEV-Export** (EXTF-Buchungsstapel, Migration 0051, `services/datev.py`,
 UI in der Buchhaltung; Memory `datev-export`).
+
+### Drei weitere Slices (2026-07-12, im Anschluss)
+
+5. ✔ **E-Rechnung ist belegt, nicht mehr nur behauptet** (Migration nicht nötig).
+   Werkzeuge: Temurin JDK 21, **veraPDF 1.30.2** (PDF/A) und **Mustang CLI 2.24.0**
+   (ZUGFeRD/Factur-X: XSD **plus** EN16931-Schematron). Ergebnis: **6/6 PASS bei
+   veraPDF (Flavour 3b)** und **6/6 PASS bei Mustang** über sechs Belegformen —
+   Rechnung mit Skonto, ohne Skonto, zwei Steuersätze, Schlussrechnung mit negativer
+   Anrechnung, Kreditbeleg mit negativen Summen, Rechnung mit Firmenlogo (PNG mit
+   Alphakanal/SMask). **Negativkontrollen gefahren:** ein Nicht-PDF/A wird korrekt
+   abgelehnt, ein manipulierter Bruttobetrag als **BR-CO-15** gemeldet — die
+   Prüfkette greift wirklich, sie nickt nicht bloß ab.
+   Dabei ein **echter Fehler gefunden und behoben: BR-DE-18** — die maschinenlesbare
+   Skonto-Zeile `#SKONTO#…#` braucht einen **abschließenden Zeilenumbruch**, sonst
+   verwirft der Validator sie. Die Skonto-Angabe hätte im PDF gestanden und wäre
+   maschinell trotzdem wertlos gewesen.
+   Neu: `backend/db_core/tests/test_erechnung_konformitaet.py` fährt beide
+   Validatoren gegen alle sechs Formen und **skippt sauber**, wenn `MCN_VERAPDF`/
+   `MCN_MUSTANG_JAR` oder Java fehlen (daher 12 der 13 Skips). Anleitung:
+   `docs/erechnung-validierung.md`. Mit `MCN_ERECHNUNG_DUMP=<dir>` fallen die Belege
+   zur manuellen Prüfung ab.
+   **Aussage jetzt:** „PDF/A-3B konform" und „EN16931 konform" sind **belegt**.
+   **Weiterhin bewusst NICHT konform** (B2G/XRechnung-Terrain, war nie Teil des
+   Slices): **BT-10** (Buyer reference), **BT-41** (Seller contact point), **BT-24**
+   (XRechnung-Kennung), **BR-DE-TMP-32** (Lieferdatum BT-72) und die PEPPOL-Regeln.
+   **BT-72 bleibt bewusst leer** — die Rechnung führt kein Lieferdatum, ein
+   erfundenes wäre eine falsche Tatsachenbehauptung. Nebenbefund: **BG-6** (Seller
+   contact) entsteht nur, wenn im Firmenprofil Telefon/E-Mail gepflegt sind.
+6. ✔ **DATEV: Abschlagsrechnungen konfigurierbar auf Anzahlungskonto**
+   (Migration 0063). Schalter `datev_advance_mode` (`ERLOES`|`ANZAHLUNG`) am
+   Firmenprofil, **Default ERLOES** — Bestandsverhalten unverändert, der
+   ERLOES-Export ist nachweislich **byte-identisch** zum bisherigen.
+   Im Modus **ANZAHLUNG**: Abschlags-/Teilrechnung bucht Debitor an
+   **Anzahlungskonto**; die **Schlussrechnung löst auf** (Leistungsteil auf Erlös,
+   Anrechnungsteil gegen das Anzahlungskonto). **Der Leistungsteil wird als REST
+   ermittelt** (Gruppensumme − eingefrorene Anrechnung aus
+   `invoicing.invoice_advance`), **nie neu gerechnet** — sonst ginge die Kette bei
+   ungünstiger Rundung um einen Cent nicht auf. Das Anzahlungskonto saldiert nach
+   Abschlag + Schlussrechnung auf **null**; die Erlöse sind in Summe identisch zu
+   Modus ERLOES.
+   **Standardkonten:** 19 % → SKR03 **1718** / SKR04 **3272** (NICHT 3270 — das ist
+   der 16-%-Corona-Satz); 7 % → SKR03 **1711** / SKR04 **3260**; steuerfrei und
+   § 13b teilen sich das neutrale **1710/3250** — **begründete Annahme, kein
+   DATEV-Standard, mit dem Steuerberater klären.** Alle vier per Override am
+   Firmenprofil änderbar.
+   **Ein Moduswechsel wird vom Server abgelehnt (422)**, solange veröffentlichte,
+   nicht schlussgerechnete Abschläge offen sind — sonst bliebe ein Saldo auf dem
+   Anzahlungskonto stehen. Der saubere Schnitt ist **erzwungen**, nicht nur
+   empfohlen.
+   Nebenbei: Die DATEV-Konfiguration ist jetzt **überhaupt erst im UI pflegbar**
+   (Firmenprofil: Berater-/Mandantennummer, SKR, Kontenlänge, WJ-Monat,
+   Konten-Overrides, Abschlagsmodus).
+7. ✔ **Baustellenbericht am freien Termin** (Migrationen 0064/0065).
+   `site_report.work_order_id` ist **nullable**; **Anker-CHECK** (Auftrag ODER
+   Einsatz), **Konsistenz per Trigger** — nicht per zusammengesetztem FK: MATCH
+   SIMPLE prüft gar nicht, sobald eine Spalte NULL ist, MATCH FULL verböte den
+   freien Termin. **Kein `property_id` am Bericht** (die Liegenschaft steht am
+   Anker). Berichte sind jetzt auch aus dem **Einsatz-Detail** erreichbar (Komponente
+   nach `shared/berichte` verschoben — ein Baustein für beide Einstiege).
+   **Dabei zwei Sicherheitslücken im Bestandscode geschlossen:**
+   - Die **Datei-API nutzte `require_create`** für den Upload — damit konnte ein
+     Monteur (`row_scope EIGENE`) ein Foto an einen **fremden** Bericht oder Auftrag
+     hängen (verifiziert: 201). Jetzt **`require_scoped` + Ziel-Guard für JEDE
+     Zielart**: bei EIGENE ist `service_job_id` nur der eigene Einsatz und
+     `site_report_id` nur ein Bericht daran (sonst 404); alle anderen Ziele → 403,
+     fail-closed. Lesen und Download hängen an derselben Grenze — vorher sah der
+     Monteur seine **eigenen** Fotos gar nicht (403).
+   - Der **unterzeichnete Bericht war nicht wirklich versiegelt**: Fotos ließen sich
+     danach noch anhängen oder lösen. Neuer Trigger
+     `content.protect_signed_site_report_links` auf `content.file_link`
+     (INSERT/UPDATE/DELETE, OLD **und** NEW). Die Race gegen `sign_report` ist
+     serialisiert (nachgewiesen).
 
 **★ NÄCHSTE SCHRITTE (offen).** Zuerst das, was auf Externe wartet, sichtbar halten:
 
@@ -264,12 +338,10 @@ UI in der Buchhaltung; Memory `datev-export`).
   Bis dahin reicht DATEV.
 - **OAuth-Absenderkonten** für den Mailversand — wartet auf Chef-Entscheidung
   (App-Registrierung); SMTP reicht vorerst.
-- **veraPDF-/Schematron-Gegenprüfung der E-Rechnung** — muss **vor dem Live-Gang**
-  laufen (KoSIT-Validator/Mustang gegen `zugferd.xml`, veraPDF gegen `zugferd.pdf`).
 - **DATEV-Roundtrip beim Steuerberater** (echter Import des Buchungsstapels),
   Personenkonten/OPOS.
-- **Abschläge auf „Erhaltene Anzahlungen" statt Erlös** — Kontierungsfrage an den
-  Steuerberater; aktuell laufen sie wie normale Erlöse.
+- **Anzahlungskonto für steuerfrei und § 13b bestätigen lassen** — aktuell das
+  neutrale 1710/3250 (begründete Annahme, kein DATEV-Standard). Steuerberater.
 - **Gewerke-Firmenzuordnung** — **Semantik erst klären:** „welche Gewerke bietet die
   Firma" (fast redundant zum `company.trade`-Katalog) vs. je Niederlassung
   (`branch_trade`-Link) vs. je Auftrag/Projekt. Wahrscheinlichste Auslegung: je
@@ -281,9 +353,6 @@ UI in der Buchhaltung; Memory `datev-export`).
 - **Vier-Augen auf weitere Aktionen ausrollen** (Dubletten-Merge, Massenexport,
   KI-Massenaktionen): Applier in `_APPLIERS` bzw. `claim()` — Flow steht.
 - **Plantafel Drag & Drop** (`POST /planung/einsaetze/{id}/schedule` existiert).
-- **Baustellenbericht am freien Termin** — braucht Migration:
-  `site_report.work_order_id` ist NOT NULL, das Begehungsprotokoll ist genau der
-  Fall, für den der freie Termin gebaut wurde.
 - **Mailversand-Reste:** persönliche Absenderkonten, E-Mail-Templates-Verwaltung.
 
 **Bewusst NICHT gebaut:** „Freien Termin zum Auftrag hochstufen". Der Auftragsbezug
@@ -301,9 +370,19 @@ Scratch-Daten; bei Bedarf auf INAKTIV setzen.
   sonst gilt **fail-closed**: `require()` wirft 403. Ein MONTEUR sieht Projekte,
   Aufträge, Wartung und Plantafel deshalb gar nicht. Wer das ändern will, setzt
   EIGENE dort **echt** um und stellt auf `require_scoped` — niemals einfach auf
-  `require` zurückfallen, das wäre ein stiller Datenleak. Zwei Reviews haben hier
-  je ein Loch gefunden (`create_task`, `create_service_case`); beide sind
-  geschlossen, das Muster bleibt gefährlich.
+  `require` zurückfallen, das wäre ein stiller Datenleak. Drei Reviews haben hier
+  je ein Loch gefunden (`create_task`, `create_service_case`, **Datei-Upload**);
+  alle drei sind geschlossen, das Muster bleibt gefährlich.
+- **`require_create` ist NUR zulässig, wenn die erzeugte Zeile kein Feld trägt, mit
+  dem der Erzeuger sie einem FREMDEN Elternobjekt zuordnen kann.** Die Datei-API war
+  genau dieser Fall (Upload an fremden Bericht/Auftrag, verifiziert 201) — das ist
+  der **dritte Fund dieser Art**. Wo ein Ziel-/Eltern-Feld im Payload steht, gehört
+  ein **Ziel-Guard je Zielart** dazu: erlaubte Ziele bei EIGENE positiv aufzählen,
+  alles andere fail-closed ablehnen.
+- **Ein unterzeichneter Baustellenbericht ist versiegelt — auch seine Anhänge.**
+  Trigger `content.protect_signed_site_report_links` (INSERT/UPDATE/DELETE, OLD und
+  NEW). Ohne den war der Bericht nur scheinbar unveränderlich: die Fotos, auf die er
+  sich beruft, ließen sich danach noch tauschen.
 - **Ressourcen-Doppelbelegung ist nicht physisch verhindert.** Der maßgebliche
   Zeitraum liegt auf `service_job` und ist dort nullable; ein EXCLUDE käme nur
   mit Denormalisierung plus Synchron-Trigger zustande und griffe an NULL-Rändern
@@ -378,6 +457,16 @@ mehr entschlüsseln → dann das Mailkonto unter Einstellungen → Mailversand e
 speichern. Für Verifikation dient der lokale SMTP-Fänger `scratchpad/smtp_sink.py`
 (Port 1025).
 
+**E-Rechnungs-Validatoren** (optional, nur für `test_erechnung_konformitaet.py`):
+veraPDF 1.30.2 und Mustang CLI 2.24.0 brauchen Java (Temurin JDK 21). Ohne die
+Variablen **skippen** die 12 Konformitätstests sauber — sie fallen nicht um.
+```bash
+export MCN_VERAPDF=/pfad/zu/verapdf        # PDF/A-3B, Flavour 3b
+export MCN_MUSTANG_JAR=/pfad/zu/Mustang-CLI-2.24.0.jar   # XSD + EN16931-Schematron
+export MCN_ERECHNUNG_DUMP=/pfad/zum/dump   # optional: Belege zur Sichtprüfung ablegen
+```
+Anleitung: `docs/erechnung-validierung.md`.
+
 **`MCN_DEBUG=1` ist seit dem Auth-Slice Pflicht für die Entwicklung.** Der Default
 steht bewusst auf `0` (fail-safe: Produktion muss DEBUG nicht ausschalten, die
 Entwicklung muss es einschalten). An `DEBUG` hängen die `Secure`-Flags von
@@ -398,8 +487,8 @@ Default `mcn-dev-passwort-2026`):
 **Backend** (`cd backend`, uv):
 ```bash
 uv run python manage.py check
-uv run pytest -p no:cacheprovider -q          # aktuell 1937 grün, 1 skipped
-uv run python manage.py migrate               # Migrationskopf: 0062_freier_termin
+uv run pytest -p no:cacheprovider -q          # aktuell 1981 grün, 13 skipped
+uv run python manage.py migrate               # Migrationskopf: 0065_bericht_anhaenge_versiegeln
 uv run python manage.py runserver 127.0.0.1:8000 --noreload
 uv run python manage.py seed_demo             # idempotenter Demo-Datensatz
 ```
@@ -463,16 +552,17 @@ Anmeldung. Nicht verwechseln.
     die Rolle nur `EIGENE` sehen darf, der Endpunkt das aber nicht umsetzt.
     `EIGENE` wird **nie** stillschweigend zu `ALLE`.
   - `require_scoped(...)` — nur für Endpunkte, die wirklich auf eigene Zeilen
-    filtern (aktuell: Aufgaben, Einsätze inkl. Zeit-/Materialbuchung). Wer das
-    nutzt, **muss** filtern, sonst ist die Begrenzung wirkungslos.
+    filtern (aktuell: Aufgaben, Einsätze inkl. Zeit-/Materialbuchung, **Dateien**).
+    Wer das nutzt, **muss** filtern, sonst ist die Begrenzung wirkungslos.
   - `require_create(...)` — für ANLEGEN, **aber nur bei Zeilen ohne setzbares
     Owner-Feld UND ohne fremdes Elternobjekt.**
-- **Faustregel (aus zwei Review-Befunden gelernt):** Hängt die neue Zeile an einem
+- **Faustregel (aus drei Review-Befunden gelernt):** Hängt die neue Zeile an einem
   Elternobjekt, das der Akteur womöglich nicht sehen darf, oder trägt sie ein Feld,
   mit dem er sie jemand anderem zuordnen kann → **`require`** (bzw.
   `require_scoped` und den Akteur als Owner erzwingen). Über `create_task` ließ
   sich sonst eine Aufgabe fremd zuweisen, über `create_service_case` ein
-  nummerierter Vorgang an einem fremden Projekt anlegen.
+  nummerierter Vorgang an einem fremden Projekt anlegen — und über den
+  **Datei-Upload** ein Foto an einen fremden Baustellenbericht/Auftrag hängen.
 - **Fremde Zeilen → 404, nicht 403** (Detail/Schreibzugriff), damit ihre Existenz
   nicht verraten wird.
 - **Zwei Ebenen nicht verwechseln:** Recht (403, `permissions.py`) vs. fachliches

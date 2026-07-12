@@ -4,7 +4,7 @@ import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { FirmaService } from '../../core/firma.service';
 import { AuthService } from '../../core/auth.service';
 import { CompanyProfile, CompanyProfileInput } from '../../core/firma.model';
-import { Feld } from '../../shared/formular/feld';
+import { Feld, FeldOption } from '../../shared/formular/feld';
 import { EinstellungenNav } from '../einstellungen-nav/einstellungen-nav';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { Bestaetigung } from '../../shared/bestaetigung/bestaetigung';
@@ -21,11 +21,24 @@ type ViewState =
   | VerbotenState
   | { kind: 'error' };
 
+/** Ganze Zahl aus einem Textfeld (leer → null). Der Server prüft die Grenzen. */
+function ganzzahlOderNull(wert: string): number | null {
+  const t = (wert ?? '').trim();
+  if (!t) return null;
+  const n = Number(t);
+  return Number.isFinite(n) ? Math.trunc(n) : null;
+}
+
 /**
  * Firmenprofil (Singleton) — ganzseitiges Bearbeitungsformular, gegliedert in
  * Abschnitte (Allgemein, Anschrift, Kontakt, Steuer & Register, Bank,
- * Geschäftsführung). Ohne `company/AENDERN` ist das Formular schreibgeschützt
- * (Read-Ansicht); der Server setzt das ohnehin durch.
+ * Geschäftsführung, DATEV-Export). Ohne `company/AENDERN` ist das Formular
+ * schreibgeschützt (Read-Ansicht); der Server setzt das ohnehin durch.
+ *
+ * DATEV: Die Konten sind reine Overrides — leer bedeutet „SKR-Standard des
+ * Servers". Der Abschlags-Buchungsmodus entscheidet, ob Abschlags-/Teilrechnungen
+ * als Erlös (Teilleistung) oder als erhaltene Anzahlung gebucht werden; das ist
+ * eine Frage an den Steuerberater, deshalb steht sie erklärt im Formular.
  */
 @Component({
   selector: 'app-firmenprofil',
@@ -79,10 +92,82 @@ export class Firmenprofil {
     managing_director: this.fb.control('', { nonNullable: true }),
     managing_director_title: this.fb.control('', { nonNullable: true }),
     default_language: this.fb.control('de', { nonNullable: true }),
+
+    // --- DATEV-Export --------------------------------------------------------
+    datev_consultant_number: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.pattern(/^\d{4,7}$/)],
+    }),
+    datev_client_number: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.pattern(/^\d{1,5}$/)],
+    }),
+    datev_chart_of_accounts: this.fb.control('', { nonNullable: true }),
+    datev_account_length: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.pattern(/^[4-8]$/)],
+    }),
+    datev_fiscal_year_start_month: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.pattern(/^(1[0-2]|[1-9])$/)],
+    }),
+    datev_debtor_account: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.pattern(/^\d{3,9}$/)],
+    }),
+    datev_revenue_account_full: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.pattern(/^\d{3,9}$/)],
+    }),
+    datev_revenue_account_reduced: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.pattern(/^\d{3,9}$/)],
+    }),
+    datev_revenue_account_free: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.pattern(/^\d{3,9}$/)],
+    }),
+    datev_revenue_account_reverse: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.pattern(/^\d{3,9}$/)],
+    }),
+    datev_advance_mode: this.fb.control('ERLOES', { nonNullable: true }),
+    datev_advance_account_full: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.pattern(/^\d{3,9}$/)],
+    }),
+    datev_advance_account_reduced: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.pattern(/^\d{3,9}$/)],
+    }),
+    datev_advance_account_free: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.pattern(/^\d{3,9}$/)],
+    }),
+    datev_advance_account_reverse: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.pattern(/^\d{3,9}$/)],
+    }),
   });
+
+  protected readonly skrOptionen: FeldOption[] = [
+    { wert: 'SKR03', label: 'SKR03' },
+    { wert: 'SKR04', label: 'SKR04' },
+  ];
+
+  protected readonly abschlagsModi: FeldOption[] = [
+    { wert: 'ERLOES', label: 'Erlös (Teilleistung)' },
+    { wert: 'ANZAHLUNG', label: 'Erhaltene Anzahlung (Verbindlichkeit)' },
+  ];
+
+  /** Anzahlungskonten sind nur im Modus ANZAHLUNG wirksam. */
+  protected readonly anzahlungAktiv = signal(false);
 
   constructor() {
     this.laden();
+    this.form.controls.datev_advance_mode.valueChanges
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((m) => this.anzahlungAktiv.set(m === 'ANZAHLUNG'));
     // Angezeigte Object-URL beim Zerstören freigeben (kein Speicherleck).
     this.destroyRef.onDestroy(() => this.logoUrlSetzen(null));
   }
@@ -208,7 +293,23 @@ export class Firmenprofil {
       managing_director: p.managing_director ?? '',
       managing_director_title: p.managing_director_title ?? '',
       default_language: p.default_language ?? 'de',
+      datev_consultant_number: p.datev_consultant_number ?? '',
+      datev_client_number: p.datev_client_number ?? '',
+      datev_chart_of_accounts: p.datev_chart_of_accounts ?? '',
+      datev_account_length: p.datev_account_length?.toString() ?? '',
+      datev_fiscal_year_start_month: p.datev_fiscal_year_start_month?.toString() ?? '',
+      datev_debtor_account: p.datev_debtor_account ?? '',
+      datev_revenue_account_full: p.datev_revenue_account_full ?? '',
+      datev_revenue_account_reduced: p.datev_revenue_account_reduced ?? '',
+      datev_revenue_account_free: p.datev_revenue_account_free ?? '',
+      datev_revenue_account_reverse: p.datev_revenue_account_reverse ?? '',
+      datev_advance_mode: p.datev_advance_mode ?? 'ERLOES',
+      datev_advance_account_full: p.datev_advance_account_full ?? '',
+      datev_advance_account_reduced: p.datev_advance_account_reduced ?? '',
+      datev_advance_account_free: p.datev_advance_account_free ?? '',
+      datev_advance_account_reverse: p.datev_advance_account_reverse ?? '',
     });
+    this.anzahlungAktiv.set((p.datev_advance_mode ?? 'ERLOES') === 'ANZAHLUNG');
   }
 
   absenden(): void {
@@ -219,7 +320,16 @@ export class Firmenprofil {
     felderAlsBeruehrtMarkieren(this.form);
     if (this.form.invalid) return;
 
-    const payload = this.form.getRawValue() as CompanyProfileInput;
+    const roh = this.form.getRawValue();
+    const payload: CompanyProfileInput = {
+      ...roh,
+      // Zahlenfelder: leer → null (Feld löschen), sonst Ganzzahl. Der Server
+      // erwartet hier int|null, kein Leerstring.
+      datev_account_length: ganzzahlOderNull(roh.datev_account_length),
+      datev_fiscal_year_start_month: ganzzahlOderNull(
+        roh.datev_fiscal_year_start_month,
+      ),
+    };
     this.laedt.set(true);
     this.svc.updateProfile(payload).subscribe({
       next: (p) => {

@@ -31,6 +31,7 @@ from pathlib import PurePosixPath
 
 from db_core import storage as storage_module
 from db_core.db_context import business_transaction
+from db_core.gate_errors import as_business_error
 from db_core.models import File, FileLink
 
 # 50 MB. Größere Dateien gehören nicht durch ein Formular, sondern in einen
@@ -104,6 +105,14 @@ LINK_KATEGORIEN = (
 
 class DateiFehler(ValueError):
     """Der Upload ist fachlich unzulässig (→ 422)."""
+
+
+class VerknuepfungGesperrt(DateiFehler):
+    """Ein DB-Tor verbietet das Lösen der Verknüpfung (→ 422, nicht 404).
+
+    Eigener Typ, weil `verknuepfung_loesen` sonst nicht mehr unterscheidbar wäre:
+    „Verknüpfung nicht gefunden" ist 404, „der Bericht ist besiegelt" ist 422.
+    """
 
 
 def _sicherer_name(name):
@@ -198,14 +207,20 @@ def datei_hochladen(
     else:
         datei = vorhanden
 
-    with business_transaction(actor_app_user_id):
-        link = FileLink.objects.create(
-            id=uuid.uuid4(),
-            file_id=datei.id,
-            link_category=link_category,
-            created_by_id=actor_app_user_id,
-            **ziel_spalte,
-        )
+    # Die DB kann die Verknüpfung fachlich verweigern (z. B. Anhang an einem
+    # UNTERZEICHNETEN Baustellenbericht, Migration 0065) → 422 statt 500.
+    try:
+        with as_business_error():
+            with business_transaction(actor_app_user_id):
+                link = FileLink.objects.create(
+                    id=uuid.uuid4(),
+                    file_id=datei.id,
+                    link_category=link_category,
+                    created_by_id=actor_app_user_id,
+                    **ziel_spalte,
+                )
+    except ValueError as exc:
+        raise DateiFehler(str(exc))
     return datei, link
 
 
@@ -241,5 +256,11 @@ def verknuepfung_loesen(actor_app_user_id, *, link_id):
     link = FileLink.objects.filter(id=link_id).first()
     if link is None:
         raise DateiFehler("Verknüpfung nicht gefunden.")
-    with business_transaction(actor_app_user_id):
-        link.delete()
+    # Am UNTERZEICHNETEN Baustellenbericht ist auch das Lösen gesperrt (0065) —
+    # der Trigger meldet sich fachlich; hier als 422 weiterreichen, nicht als 500.
+    try:
+        with as_business_error():
+            with business_transaction(actor_app_user_id):
+                link.delete()
+    except ValueError as exc:
+        raise VerknuepfungGesperrt(str(exc))

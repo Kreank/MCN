@@ -5,6 +5,27 @@ Rechte-Tore (Modul `content`):
   * Auflisten und Herunterladen: `LESEN`
   * Verknüpfung lösen: `AENDERN` (die Datei selbst bleibt bestehen)
 
+**row_scope 'EIGENE' (Monteur) — echt umgesetzt, nicht mehr ignoriert.**
+Eine Verknüpfung trägt ihr **Zielobjekt im Payload** (`site_report_id`,
+`work_order_id`, `project_id` …). Damit ist sie genau der Fall, für den
+`api/permissions.require_create` laut eigenem Docstring NICHT gedacht ist: Der
+Erzeuger kann die Zeile einem fremden Elternobjekt zuordnen. Vorher konnte ein
+Monteur ein Foto in den GoBD-relevanten Nachweis einer Baustelle einschleusen,
+die er nie gesehen hat (Review-Befund).
+
+Deshalb hier `require_scoped` + Ziel-Guard. Der Monteur hat genau eine Grenze —
+die **Einsatzzuweisung** (`workflow.job_assignment`), wie überall sonst auch:
+
+  * `service_job_id`: nur ein Einsatz, dem er zugewiesen ist → sonst **404**.
+  * `site_report_id`: nur ein Bericht an einem solchen Einsatz → sonst **404**.
+  * jedes andere Ziel (Projekt, Auftrag, Kontakt, Beleg …): **403** — für diese
+    Objekte gibt es keine „eigene Zeile", an der die Sicht hängen könnte
+    (fail-closed; `EIGENE` wird nie zu `ALLE` aufgeweitet).
+
+Der Download ist an dieselbe Grenze gebunden: eine Datei ist für den Monteur nur
+abrufbar, wenn **mindestens eine** ihrer Verknüpfungen auf einen eigenen Einsatz
+oder einen Bericht daran zeigt — sonst 404.
+
 Der Download läuft bewusst **durch die Anwendung** und nicht über eine
 vorsignierte URL des Objektspeichers. Eine solche URL wäre nach dem Erzeugen für
 jeden gültig, der sie besitzt — die Rechteprüfung liefe ins Leere, und die URL
@@ -18,6 +39,7 @@ wird.
 from urllib.parse import quote
 from uuid import UUID
 
+from django.db.models import Q
 from django.http import HttpResponse
 from ninja import File as NinjaFile
 from ninja import Form, Query, Router, Schema
@@ -26,10 +48,68 @@ from ninja.files import UploadedFile
 from ninja.responses import Status
 from ninja.security import django_auth
 
-from api.permissions import require, require_create
+from api.permissions import require, require_scoped
+from db_core.models import FileLink, JobAssignment, SiteReport
 from db_core.services import dateien as dateien_service
 
 router = Router()
+
+
+# --- Zeilenbegrenzung ('EIGENE') -------------------------------------------
+
+def _eigener_job(job_id, actor):
+    return JobAssignment.objects.filter(
+        service_job_id=job_id, assignee_id=actor
+    ).exists()
+
+
+def _ziel_guard(ziele: dict, actor, scope):
+    """Setzt die 'EIGENE'-Grenze auf dem Zielobjekt der Verknüpfung durch.
+
+    `ziele` ist das bereits auf gesetzte Werte reduzierte Ziel-Dict. Bei Scope
+    'ALLE' passiert nichts. Bei 'EIGENE' sind nur der eigene Einsatz und Berichte
+    daran zulässig (404 bei fremden, 403 bei nicht scopebaren Zielarten).
+    """
+    if scope != "EIGENE":
+        return
+    if len(ziele) != 1:
+        # Genau-ein-Ziel prüft der Service (422). Hier nichts durchlassen.
+        raise HttpError(422, "Eine Datei hängt an genau einem Objekt.")
+    art, wert = next(iter(ziele.items()))
+    if art == "service_job_id":
+        if not _eigener_job(wert, actor):
+            raise HttpError(404, "Einsatz nicht gefunden.")
+        return
+    if art == "site_report_id":
+        report = SiteReport.objects.filter(id=wert).only(
+            "id", "service_job_id"
+        ).first()
+        if report is None or report.service_job_id is None:
+            raise HttpError(404, "Bericht nicht gefunden.")
+        if not _eigener_job(report.service_job_id, actor):
+            raise HttpError(404, "Bericht nicht gefunden.")
+        return
+    raise HttpError(
+        403,
+        "Ihre Rolle erlaubt nur den Zugriff auf eigene Datensätze; Dateien sind "
+        "für Sie am eigenen Einsatz und an dessen Berichten möglich.",
+    )
+
+
+def _datei_guard(file_id, actor, scope):
+    """Download-Grenze: mindestens eine Verknüpfung der Datei muss auf einen
+    eigenen Einsatz (oder einen Bericht daran) zeigen. Sonst 404."""
+    if scope != "EIGENE":
+        return
+    eigene_jobs = JobAssignment.objects.filter(assignee_id=actor).values(
+        "service_job_id"
+    )
+    sichtbar = FileLink.objects.filter(file_id=file_id).filter(
+        Q(service_job_id__in=eigene_jobs)
+        | Q(site_report__service_job_id__in=eigene_jobs)
+    ).exists()
+    if not sichtbar:
+        raise HttpError(404, "Datei nicht gefunden.")
 
 
 class DateiOut(Schema):
@@ -93,8 +173,9 @@ def datei_hochladen(
     Der Dateityp wird aus der Endung gegen eine Whitelist geprüft, nicht aus dem
     vom Browser gemeldeten Content-Type übernommen.
     """
-    actor = require_create(request, "content", "ANLEGEN")
+    actor, scope = require_scoped(request, "content", "ANLEGEN")
     ziele = {k: v for k, v in ziel.dict().items() if v}
+    _ziel_guard(ziele, actor, scope)
     try:
         _, link = dateien_service.datei_hochladen(
             actor,
@@ -114,8 +195,9 @@ def datei_hochladen(
 @router.get("/files", response=DateiListeOut)
 def dateien_auflisten(request, ziel: ZielFilter = Query(...)):
     """Alle Dateien an einem Zielobjekt (Projekt, Liegenschaft, Kontakt …)."""
-    require(request, "content", "LESEN")
+    actor, scope = require_scoped(request, "content", "LESEN")
     ziele = {k: v for k, v in ziel.dict().items() if v}
+    _ziel_guard(ziele, actor, scope)
     try:
         links = dateien_service.dateien_am_ziel(**ziele)
     except dateien_service.DateiFehler as exc:
@@ -127,7 +209,8 @@ def dateien_auflisten(request, ziel: ZielFilter = Query(...)):
 @router.get("/files/{file_id}/download")
 def datei_herunterladen(request, file_id: UUID):
     """Liefert den Dateiinhalt aus — durch die Anwendung, nicht per Direkt-URL."""
-    require(request, "content", "LESEN")
+    actor, scope = require_scoped(request, "content", "LESEN")
+    _datei_guard(file_id, actor, scope)
     try:
         datei, inhalt = dateien_service.datei_inhalt(file_id)
     except dateien_service.DateiFehler as exc:
@@ -160,10 +243,18 @@ def _dateiname_kopfteil(dateiname: str) -> str:
 
 @router.delete("/links/{link_id}", response={204: None}, auth=django_auth)
 def verknuepfung_loesen(request, link_id: UUID):
-    """Entfernt die Verknüpfung. Die Datei selbst bleibt (unveränderlich)."""
+    """Entfernt die Verknüpfung. Die Datei selbst bleibt (unveränderlich).
+
+    `require` (fail-closed): Das Lösen ist Dispositions-/Bürotätigkeit; Scope
+    'EIGENE' → 403. Der Monteur hat ohnehin kein `content/AENDERN`. Am
+    **unterzeichneten** Baustellenbericht verbietet die DB das Lösen (0065) — das
+    kommt als 422 zurück, nicht als 404.
+    """
     actor, _ = require(request, "content", "AENDERN")
     try:
         dateien_service.verknuepfung_loesen(actor, link_id=link_id)
+    except dateien_service.VerknuepfungGesperrt as exc:
+        raise HttpError(422, str(exc))
     except dateien_service.DateiFehler as exc:
         raise HttpError(404, str(exc))
     return Status(204, None)

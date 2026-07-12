@@ -11,30 +11,30 @@ import {
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { map } from 'rxjs';
-import { AuthService } from '../../../core/auth.service';
-import { EinsatzService } from '../../../core/einsatz.service';
-import { SiteReportService } from '../../../core/site-report.service';
+import { AuthService } from '../../core/auth.service';
+import { EinsatzService } from '../../core/einsatz.service';
+import { SiteReportService } from '../../core/site-report.service';
 import {
   SiteReport,
   SiteReportCreate,
   SiteReportUpdate,
   siteReportStatusClass,
   siteReportStatusLabel,
-} from '../../../core/site-report.model';
-import { ZielFilter } from '../../../core/datei.model';
-import { Dialog } from '../../../shared/dialog/dialog';
-import { Feld } from '../../../shared/formular/feld';
-import { ReferenzWahl, RefSuche } from '../../../shared/formular/referenz-wahl';
-import { UnterschriftPad } from '../../../shared/unterschrift-pad/unterschrift-pad';
-import { Dateien } from '../../../shared/dateien/dateien';
-import { VerbotenState, fehlerDetail, fehlerState } from '../../../shared/http-fehler';
-import { KeinZugriff } from '../../../shared/kein-zugriff/kein-zugriff';
-import { apiFehlerZuweisen } from '../../../shared/formular/api-fehler';
-import { deZuApiDezimal, dezimalValidator } from '../../../shared/formular/dezimal';
+} from '../../core/site-report.model';
+import { ZielFilter } from '../../core/datei.model';
+import { Dialog } from '../dialog/dialog';
+import { Feld } from '../formular/feld';
+import { ReferenzWahl, RefSuche } from '../formular/referenz-wahl';
+import { UnterschriftPad } from '../unterschrift-pad/unterschrift-pad';
+import { Dateien } from '../dateien/dateien';
+import { VerbotenState, fehlerDetail, fehlerState } from '../http-fehler';
+import { KeinZugriff } from '../kein-zugriff/kein-zugriff';
+import { apiFehlerZuweisen } from '../formular/api-fehler';
+import { deZuApiDezimal, dezimalValidator } from '../formular/dezimal';
 import {
   felderAlsBeruehrtMarkieren,
   serverFehlerZuruecksetzen,
-} from '../../../shared/formular/formular.util';
+} from '../formular/formular.util';
 
 type Zustand =
   | { kind: 'loading' }
@@ -45,18 +45,27 @@ type Zustand =
 type Meldung = { art: 'erfolg' | 'fehler'; text: string };
 type DialogArt = 'neu' | 'bearbeiten' | 'unterschrift';
 
+/** Der Bezug, an dem die Berichte hängen — genau einer von beiden. */
+type Anker = { art: 'auftrag' | 'einsatz'; id: string };
+
 /**
- * Baustellenberichte eines Auftrags: Liste, Anlegen/Ändern (nur im ENTWURF),
- * Fotos (über die Datei-Ablage mit `site_report_id`) und die Kundenunterschrift,
- * die den Bericht besiegelt (ENTWURF → UNTERZEICHNET). Danach ist er
- * unveränderlich — das setzt die Datenbank durch; das UI spiegelt es nur.
+ * Baustellenberichte an einem **Anker**: an einem Auftrag (Baustelle) oder an
+ * einem Einsatz (Termin — auch am **freien Termin** ohne Auftrag, dem
+ * Begehungsprotokoll). Liste, Anlegen/Ändern (nur im ENTWURF), Fotos (über die
+ * Datei-Ablage mit `site_report_id`) und die Kundenunterschrift, die den Bericht
+ * besiegelt (ENTWURF → UNTERZEICHNET). Danach ist er unveränderlich — das setzt
+ * die Datenbank durch; das UI spiegelt es nur.
  *
- * Eigenständige Mappe im Auftrags-Detail, damit die Auftrags-Komponente schlank
- * bleibt. Rechte werden hier nur für die Sichtbarkeit geprüft (der Server setzt
- * sie ohnehin durch): ANLEGEN/AENDERN aus dem Modul `workflow`.
+ * **Ein** Baustein für beide Einstiege (Auftrags-Mappe und Einsatz-Mappe): der
+ * Bericht ist derselbe, nur sein Bezug wechselt. Am Einsatz entfällt die Auswahl
+ * „Einsatz" im Formular (er steht ja fest), und beim freien Termin gibt es keinen
+ * Auftrag — also auch keinen toten Verweis darauf.
+ *
+ * Rechte werden hier nur für die Sichtbarkeit geprüft (der Server setzt sie
+ * ohnehin durch): ANLEGEN/AENDERN aus dem Modul `workflow`.
  */
 @Component({
-  selector: 'app-auftrag-berichte',
+  selector: 'app-berichte',
   imports: [
     ReactiveFormsModule,
     Dialog,
@@ -66,18 +75,30 @@ type DialogArt = 'neu' | 'bearbeiten' | 'unterschrift';
     Dateien,
     KeinZugriff,
   ],
-  templateUrl: './auftrag-berichte.html',
-  styleUrl: './auftrag-berichte.scss',
+  templateUrl: './berichte.html',
+  styleUrl: './berichte.scss',
 })
-export class AuftragBerichte {
+export class Berichte {
   private readonly svc = inject(SiteReportService);
   private readonly einsatzSvc = inject(EinsatzService);
   private readonly auth = inject(AuthService);
   private readonly fb = inject(FormBuilder);
   private readonly destroyRef = inject(DestroyRef);
 
-  /** Auftrag, dessen Berichte gezeigt werden (stabile ID). */
-  readonly workOrderId = input.required<string>();
+  /** Auftrag, dessen Berichte gezeigt werden (Auftrags-Mappe). */
+  readonly workOrderId = input<string | null>(null);
+  /** Einsatz, dessen Berichte gezeigt werden (Einsatz-Mappe). Hat Vorrang. */
+  readonly serviceJobId = input<string | null>(null);
+
+  /** Genau ein Bezug. Der Einsatz gewinnt: er ist die genauere Angabe. */
+  protected readonly anker = computed<Anker | null>(() => {
+    const job = this.serviceJobId();
+    if (job) return { art: 'einsatz', id: job };
+    const order = this.workOrderId();
+    return order ? { art: 'auftrag', id: order } : null;
+  });
+
+  protected readonly amEinsatz = computed(() => this.anker()?.art === 'einsatz');
 
   private ladeReqId = 0;
   private geladenFuer: string | null = null;
@@ -124,48 +145,50 @@ export class AuftragBerichte {
     signed_by_name: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
   });
 
-  /** Einsätze dieses Auftrags als optionale Zuordnung (Referenzsuche). */
+  /** Einsätze dieses Auftrags als optionale Zuordnung (nur in der Auftragssicht). */
   protected readonly einsatzSuche: RefSuche = (q) =>
     this.einsatzSvc
-      .list({ page: 1, page_size: 20, q, work_order_id: this.workOrderId() })
+      .list({ page: 1, page_size: 20, q, work_order_id: this.workOrderId() ?? undefined })
       .pipe(map((p) => p.items.map((x) => ({ id: x.id, label: `${x.job_number}` }))));
 
   constructor() {
-    // Lädt (neu), sobald sich der Auftrag ändert. `workOrderId` als stabile ID.
+    // Lädt (neu), sobald sich der Anker ändert.
     effect(() => {
-      const id = this.workOrderId();
-      if (id && this.geladenFuer !== id) {
-        this.geladenFuer = id;
+      const a = this.anker();
+      if (!a) return;
+      const key = `${a.art}:${a.id}`;
+      if (this.geladenFuer !== key) {
+        this.geladenFuer = key;
         this.ausgewaehltId.set(null);
-        this.laden(id);
+        this.laden(a);
       }
     });
   }
 
-  private laden(workOrderId: string): void {
+  private laden(anker: Anker): void {
     const rid = ++this.ladeReqId;
     this.zustand.set({ kind: 'loading' });
-    this.svc
-      .list(workOrderId)
-      .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe({
-        next: (l) => {
-          if (rid !== this.ladeReqId) return;
-          this.zustand.set({ kind: 'ready', items: l.items });
-          // Auswahl beibehalten, falls noch vorhanden; sonst ersten wählen.
-          const cur = this.ausgewaehltId();
-          if (!cur || !l.items.some((r) => r.id === cur)) {
-            this.ausgewaehltId.set(l.items[0]?.id ?? null);
-          }
-        },
-        error: (err) => {
-          if (rid === this.ladeReqId) this.zustand.set(fehlerState(err));
-        },
-      });
+    const quelle =
+      anker.art === 'einsatz' ? this.svc.listAmEinsatz(anker.id) : this.svc.list(anker.id);
+    quelle.pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: (l) => {
+        if (rid !== this.ladeReqId) return;
+        this.zustand.set({ kind: 'ready', items: l.items });
+        // Auswahl beibehalten, falls noch vorhanden; sonst ersten wählen.
+        const cur = this.ausgewaehltId();
+        if (!cur || !l.items.some((r) => r.id === cur)) {
+          this.ausgewaehltId.set(l.items[0]?.id ?? null);
+        }
+      },
+      error: (err) => {
+        if (rid === this.ladeReqId) this.zustand.set(fehlerState(err));
+      },
+    });
   }
 
   neuLaden(): void {
-    this.laden(this.workOrderId());
+    const a = this.anker();
+    if (a) this.laden(a);
   }
 
   waehlen(id: string): void {
@@ -255,18 +278,25 @@ export class AuftragBerichte {
   }
 
   neuAbsenden(): void {
-    if (this.nichtBereit(this.berichtForm)) return;
+    const a = this.anker();
+    if (!a || this.nichtBereit(this.berichtForm)) return;
     const v = this.berichtForm.getRawValue();
     const payload: SiteReportCreate = {
-      work_order_id: this.workOrderId(),
       report_date: v.report_date,
       activity_text: v.activity_text.trim(),
-      service_job_id: v.service_job_id || null,
       weather: v.weather.trim() || null,
       hours_worked: deZuApiDezimal(v.hours_worked) || null,
       materials_note: v.materials_note.trim() || null,
       remarks: v.remarks.trim() || null,
     };
+    if (a.art === 'einsatz') {
+      // Der Auftrag (falls es einen gibt) wird vom Server aus dem Einsatz
+      // abgeleitet — beim freien Termin gibt es keinen.
+      payload.service_job_id = a.id;
+    } else {
+      payload.work_order_id = a.id;
+      payload.service_job_id = v.service_job_id || null;
+    }
     this.dialogLaedt.set(true);
     this.svc.create(payload).subscribe({
       next: (r) => {
@@ -288,13 +318,15 @@ export class AuftragBerichte {
     const v = this.berichtForm.getRawValue();
     const payload: SiteReportUpdate = {
       report_date: v.report_date,
-      service_job_id: v.service_job_id || null,
       activity_text: v.activity_text.trim(),
       weather: v.weather.trim() || null,
       hours_worked: deZuApiDezimal(v.hours_worked) || null,
       materials_note: v.materials_note.trim() || null,
       remarks: v.remarks.trim() || null,
     };
+    // Der Einsatzbezug ist in der Einsatzsicht nicht verhandelbar (und beim
+    // freien Termin ohnehin unveränderlich): dort gar nicht erst mitschicken.
+    if (!this.amEinsatz()) payload.service_job_id = v.service_job_id || null;
     this.dialogLaedt.set(true);
     this.svc.update(r.id, payload).subscribe({
       next: (res) => {

@@ -76,6 +76,43 @@ def test_profil_anlegen_und_lesen(admin_client):
 
 
 @pytest.mark.django_db
+def test_datev_abschlagsmodus_default_und_umstellen(admin_client):
+    """Der Abschlags-Buchungsmodus (0063) ist am Firmenprofil pflegbar; Default
+    bleibt ERLOES (Bestandsverhalten), ein unbekannter Wert ist 422."""
+    r = admin_client.put(
+        "/api/company/profile",
+        data={"company_name": "Mitra Sanitär GmbH"},
+        content_type="application/json",
+    )
+    assert r.json()["datev_advance_mode"] == "ERLOES"
+
+    r = admin_client.put(
+        "/api/company/profile",
+        data={"datev_advance_mode": "ANZAHLUNG",
+              "datev_advance_account_full": "1718"},
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    assert r.json()["datev_advance_mode"] == "ANZAHLUNG"
+    assert r.json()["datev_advance_account_full"] == "1718"
+
+    r = admin_client.put(
+        "/api/company/profile",
+        data={"datev_advance_mode": "IRGENDWAS"},
+        content_type="application/json",
+    )
+    assert r.status_code == 422
+    # Ein geleertes Feld bedeutet „unverändert" (die Spalte ist NOT NULL) — kein 500.
+    r = admin_client.put(
+        "/api/company/profile",
+        data={"datev_advance_mode": ""},
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    assert r.json()["datev_advance_mode"] == "ANZAHLUNG"
+
+
+@pytest.mark.django_db
 def test_profil_lesen_fuer_nur_lesen_erlaubt(client_with_role):
     c = client_with_role("NUR_LESEN")
     r = c.get("/api/company/profile")

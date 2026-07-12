@@ -91,6 +91,22 @@
   gap: var(--space-2);
 }
 
+// Hinweis „freier Termin" (Bericht ohne Auftrag). Der Stempel trägt die Aussage
+// als Text — nie nur über Farbe (WCAG 2.2 AA, 1.4.1).
+.bericht__hinweis {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: baseline;
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-left: 3px solid var(--accent, var(--line-strong));
+  background: var(--surface-sunken, transparent);
+  border-radius: var(--radius);
+  color: var(--ink-muted);
+  font-size: var(--step--1);
+}
+
 .bericht__block {
   display: flex;
   flex-direction: column;
