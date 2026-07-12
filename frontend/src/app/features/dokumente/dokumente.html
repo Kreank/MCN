@@ -222,6 +222,59 @@
         />
       }
 
+      <!-- Anrechnung der Abschläge (nur Schlussrechnung) -->
+      @if (istSchlussrechnung()) {
+        <fieldset class="anrechnung">
+          <legend class="anrechnung__legende">Abschlagsrechnungen anrechnen</legend>
+          @if (!neuForm.controls.work_order_id.value) {
+            <p class="anrechnung__hinweis">
+              Bitte zuerst den <strong>Auftrag</strong> wählen — die anrechenbaren
+              Abschlagsrechnungen hängen an ihm.
+            </p>
+          } @else if (abschlaegeLaedt()) {
+            <p class="anrechnung__hinweis" aria-live="polite">Abschlagsrechnungen werden geladen …</p>
+          } @else if (abschlaege().length === 0) {
+            <p class="anrechnung__hinweis">
+              Zu diesem Auftrag gibt es keine anrechenbaren Abschlags- oder
+              Teilrechnungen. Die Schlussrechnung rechnet dann die volle Leistung ab.
+            </p>
+          } @else {
+            <p class="anrechnung__hinweis">
+              Die gewählten Belege werden <strong>je Steuersatz</strong> abgezogen; der
+              Zahlbetrag ist die Differenz. Der Server rechnet verbindlich.
+            </p>
+            <ul class="anrechnung__liste">
+              @for (a of abschlaege(); track a.id) {
+                <li class="anrechnung__zeile">
+                  <label class="anrechnung__wahl">
+                    <input
+                      type="checkbox"
+                      [checked]="abschlagGewaehlt(a.id)"
+                      (change)="abschlagUmschalten(a.id, $any($event.target).checked)"
+                    />
+                    <span class="anrechnung__text">
+                      <span class="anrechnung__nr">{{ belegNummer(a.invoice_number) }}</span>
+                      <span class="anrechnung__meta">
+                        {{ invoiceTypeLabel(a.invoice_type) }} ·
+                        {{ a.invoice_date ? (a.invoice_date | date: 'dd.MM.yyyy') : 'ohne Datum' }}
+                        @if (a.vorgemerkt) {
+                          · <span class="anrechnung__warn">in einem anderen Entwurf vorgemerkt</span>
+                        }
+                      </span>
+                    </span>
+                  </label>
+                  <span class="anrechnung__betrag">{{ euro(a.gross_total) }}</span>
+                </li>
+              }
+            </ul>
+            <p class="anrechnung__summe">
+              Anrechnung gewählt:
+              <strong>{{ euro(anrechnungBrutto().toFixed(2)) }}</strong> (brutto)
+            </p>
+          }
+        </fieldset>
+      }
+
       <div class="datum-paar">
         @if (neuArt() === 'angebot') {
           <app-feld [control]="neuForm.controls.quote_date" label="Angebotsdatum" typ="datum" hinweis="Optional." />

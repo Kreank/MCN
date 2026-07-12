@@ -178,6 +178,16 @@
               }
             </div>
 
+            @if (anrechnungPositionen() > 0) {
+              <p class="note" role="note">
+                Diese Schlussrechnung rechnet
+                <strong>{{ anrechnungPositionen() }}</strong> Abschlagsposition(en) an.
+                Sie werden hier <strong>nicht bearbeitet</strong>: der Server erzeugt
+                sie aus der Verkettung und hängt sie beim Speichern wieder an. Zu sehen
+                sind sie in der Rechnungsmappe.
+              </p>
+            }
+
             <div class="pos-scroll">
               <!--
                 Abschnitte: eigene DropList (nur echte Rubriken sind ziehbar).

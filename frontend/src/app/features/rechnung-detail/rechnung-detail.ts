@@ -162,6 +162,24 @@ export class RechnungDetail {
     return isoDatumDe(iso);
   }
 
+  /** ISO-Datum deutsch (oder „—"), für die Verkettungs-Stempel. */
+  isoDatum(iso: string | null): string {
+    return iso ? isoDatumDe(iso) : '—';
+  }
+
+  /**
+   * Angerechnete Summe (brutto) einer Schlussrechnung — reine ANZEIGE aus den vom
+   * Server eingefrorenen Beträgen. Der Zahlbetrag selbst wird NICHT hier
+   * gerechnet: er steht als `gross_total` am Beleg (der Server ist die
+   * verbindliche Rechenstelle).
+   */
+  protected readonly anrechnungBrutto = computed<string | null>(() => {
+    const d = this.daten();
+    if (!d || d.advances.length === 0) return null;
+    const summe = d.advances.reduce((s, a) => s + Number(a.gross_amount), 0);
+    return summe.toFixed(2);
+  });
+
   constructor() {
     this.route.paramMap.pipe(takeUntilDestroyed()).subscribe((pm) => {
       const id = pm.get('id');

@@ -1106,6 +1106,13 @@ class InvoiceLine(models.Model):
         "Assembly", models.DO_NOTHING, db_column="source_assembly_id",
         null=True, blank=True, related_name="invoice_lines",
     )
+    # Anrechnungsposition einer Schlussrechnung (Migration 0060): diese Position
+    # rechnet die genannte Abschlags-/Teilrechnung an. Immer ein NEGATIVER Betrag,
+    # je Steuersatz eine Position (DB-CHECK invoice_line_advance_is_deduction).
+    advance_invoice = models.ForeignKey(
+        Invoice, models.DO_NOTHING, db_column="advance_invoice_id",
+        null=True, blank=True, related_name="deduction_lines",
+    )
     created_at = models.DateTimeField(db_default=Now())
     updated_at = models.DateTimeField(db_default=Now())
 
@@ -1115,6 +1122,49 @@ class InvoiceLine(models.Model):
 
     def __str__(self):
         return f"{self.position_number}. {self.description}"
+
+
+class InvoiceAdvance(models.Model):
+    """invoicing.invoice_advance — Schlussrechnung rechnet Abschlagsrechnung an
+    (Migration 0060).
+
+    Eine Zeile je (Schlussrechnung, Abschlags-/Teilrechnung, Steuercode) mit dem
+    **eingefrorenen** angerechneten Betrag. Die Beträge sind positiv (sie sagen,
+    WAS angerechnet wurde); das Vorzeichen des Abzugs trägt die zugehörige
+    Anrechnungsposition (`InvoiceLine.advance_invoice`, negativer net_amount).
+
+    Physisch abgesichert (siehe Migration 0060): nur eine Schlussrechnung kann
+    anrechnen, nur veröffentlichte und nicht stornierte Abschläge desselben
+    Auftrags sind anrechenbar, dieselbe Abschlagsrechnung nie zweimal, und beim
+    Veröffentlichen müssen Verkettung und Positionen deckungsgleich sein.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    final_invoice = models.ForeignKey(
+        Invoice, models.DO_NOTHING, db_column="final_invoice_id",
+        related_name="advances",
+    )
+    advance_invoice = models.ForeignKey(
+        Invoice, models.DO_NOTHING, db_column="advance_invoice_id",
+        related_name="angerechnet_in",
+    )
+    tax_code = models.ForeignKey(
+        TaxCode, models.DO_NOTHING, db_column="tax_code",
+        related_name="invoice_advances",
+    )
+    tax_rate_percent = models.DecimalField(max_digits=5, decimal_places=2)
+    net_amount = models.DecimalField(max_digits=15, decimal_places=2)
+    tax_amount = models.DecimalField(max_digits=15, decimal_places=2)
+    gross_amount = models.DecimalField(max_digits=15, decimal_places=2)
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'invoicing"."invoice_advance'
+
+    def __str__(self):
+        return f"Anrechnung {self.gross_amount} ({self.tax_code_id})"
 
 
 class BelegRubrik(models.Model):

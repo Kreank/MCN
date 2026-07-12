@@ -206,6 +206,10 @@ export class AngebotEditor {
   // --- Editier-Zustand -----------------------------------------------------
   protected readonly rubriken = signal<EditorRubrik[]>([]);
   protected readonly lines = signal<EditorLine[]>([]);
+  /** Anzahl der Anrechnungspositionen (Schlussrechnung). Sie werden hier NICHT
+   *  bearbeitet — der Server erzeugt sie aus der Verkettung; der Editor weist
+   *  nur darauf hin, damit die fehlende Zeile nicht wie ein Datenverlust wirkt. */
+  protected readonly anrechnungPositionen = signal(0);
   protected readonly dirty = signal(false);
   protected readonly meldung = signal<Meldung | null>(null);
   /** Screenreader-Ansage für Verschiebe-/Struktur-Aktionen. */
@@ -516,7 +520,16 @@ export class AngebotEditor {
       .sort((a, b) => a.position_number - b.position_number)
       .forEach((r, i) => nummerZuUid.set(r.position_number, rubriken[i].uid));
 
+    // Anrechnungspositionen einer Schlussrechnung gehören NICHT in den Editor:
+    // sie sind negative Abzüge, die der Server aus der Verkettung erzeugt (und
+    // beim Speichern neu anhängt). Lägen sie hier, schickte der Editor sie als
+    // gewöhnliche Positionen zurück — der Server wiese den negativen Einzelpreis
+    // ab (422), und die Anrechnung wäre doppelt. Sie stehen in der
+    // Rechnungsmappe (Positionen + Verkettung), wo sie hingehören.
+    const anzahlAnrechnung = data.lines.filter((l) => l.advance_invoice_id).length;
+    this.anrechnungPositionen.set(anzahlAnrechnung);
     const lines = [...data.lines]
+      .filter((l) => !l.advance_invoice_id)
       .sort((a, b) => a.position_number - b.position_number)
       .map<EditorLine>((l) => this.zuEditorLine(l, nummerZuUid));
 

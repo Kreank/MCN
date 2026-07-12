@@ -399,3 +399,87 @@
 .pos-editor__add {
   align-self: flex-start;
 }
+
+/* --- Anrechnung der Abschlagsrechnungen (Schlussrechnung) ------------------
+   Bewusst als Liste mit Häkchen und Betrag rechts: der Nutzer muss auf einen
+   Blick sehen, WELCHER Beleg mit WELCHEM Betrag abgezogen wird (Nummer + Datum
+   stehen daneben, nicht nur eine UUID). Status („vorgemerkt") steht als Text da,
+   nie nur als Farbe (WCAG 2.2). */
+.anrechnung {
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.anrechnung__legende {
+  font-weight: 600;
+  padding: 0 var(--space-2);
+}
+.anrechnung__hinweis {
+  margin: 0;
+  font-size: 0.86rem;
+  color: var(--ink-muted);
+}
+.anrechnung__liste {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.anrechnung__zeile {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2);
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.anrechnung__wahl {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+
+  input {
+    min-width: 20px;
+    min-height: 20px;
+    accent-color: var(--accent-strong, var(--accent));
+  }
+  &:focus-within {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+    border-radius: var(--radius);
+  }
+}
+.anrechnung__text {
+  display: flex;
+  flex-direction: column;
+}
+.anrechnung__nr {
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+.anrechnung__meta {
+  font-size: 0.8rem;
+  color: var(--ink-muted);
+}
+.anrechnung__warn {
+  color: var(--warn-ink);
+  font-weight: 600;
+}
+.anrechnung__betrag {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.anrechnung__summe {
+  margin: 0;
+  text-align: right;
+  font-size: 0.9rem;
+}

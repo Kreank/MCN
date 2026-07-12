@@ -1,3 +1,4 @@
+import { DatePipe } from '@angular/common';
 import { Component, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { RouterLink } from '@angular/router';
@@ -15,6 +16,7 @@ import { ProjektService } from '../../core/projekt.service';
 import { AuftragService } from '../../core/auftrag.service';
 import { AuthService } from '../../core/auth.service';
 import {
+  AnrechenbarerAbschlag,
   InvoiceCreate,
   InvoicePage,
   InvoiceStatus,
@@ -51,7 +53,15 @@ const TEXT_LINE_TYPES: LineType[] = ['TEXT', 'ZWISCHENSUMME'];
 
 @Component({
   selector: 'app-dokumente',
-  imports: [RouterLink, KeinZugriff, ReactiveFormsModule, Dialog, Feld, ReferenzWahl],
+  imports: [
+    DatePipe,
+    RouterLink,
+    KeinZugriff,
+    ReactiveFormsModule,
+    Dialog,
+    Feld,
+    ReferenzWahl,
+  ],
   templateUrl: './dokumente.html',
   styleUrl: './dokumente.scss',
 })
@@ -138,6 +148,26 @@ export class Dokumente {
     lines: this.fb.array<FormGroup>([]),
   });
 
+  // --- Anrechnung der Abschläge (nur SCHLUSSRECHNUNG) ----------------------
+  // Die Schlussrechnung zieht die bereits gestellten Abschläge desselben Auftrags
+  // ab. Die anrechenbaren Belege liefert der Server (veröffentlicht, nicht
+  // storniert, noch nicht in einer veröffentlichten Schlussrechnung); der
+  // Regelfall ist „alle anrechnen", deshalb sind sie vorausgewählt. Die
+  // negativen Anrechnungspositionen erzeugt der Server — hier wird nichts
+  // gerechnet (der Server ist die verbindliche Rechenstelle).
+  protected readonly abschlaege = signal<AnrechenbarerAbschlag[]>([]);
+  protected readonly abschlaegeLaedt = signal(false);
+  protected readonly gewaehlteAbschlaege = signal<string[]>([]);
+  protected readonly istSchlussrechnung = signal(false);
+  private abschlagReqId = 0;
+
+  protected readonly anrechnungBrutto = computed(() => {
+    const gewaehlt = new Set(this.gewaehlteAbschlaege());
+    return this.abschlaege()
+      .filter((a) => gewaehlt.has(a.id))
+      .reduce((s, a) => s + Number(a.gross_total ?? 0), 0);
+  });
+
   private readonly searchInput$ = new Subject<string>();
   private reqId = 0;
 
@@ -166,7 +196,54 @@ export class Dokumente {
         this.page.set(1);
         this.fetch();
       });
+    // Belegart oder Auftrag geändert → anrechenbare Abschläge neu ermitteln.
+    this.neuForm.controls.invoice_type.valueChanges
+      .pipe(takeUntilDestroyed())
+      .subscribe(() => this.abschlaegeLaden());
+    this.neuForm.controls.work_order_id.valueChanges
+      .pipe(takeUntilDestroyed())
+      .subscribe(() => this.abschlaegeLaden());
     this.fetch();
+  }
+
+  private abschlaegeLaden(): void {
+    const typ = this.neuForm.controls.invoice_type.value;
+    const auftrag = this.neuForm.controls.work_order_id.value;
+    const istSr = this.neuArt() === 'rechnung' && typ === 'SCHLUSSRECHNUNG';
+    this.istSchlussrechnung.set(istSr);
+    const id = ++this.abschlagReqId;
+    this.abschlaege.set([]);
+    this.gewaehlteAbschlaege.set([]);
+    if (!istSr || !auftrag) {
+      this.abschlaegeLaedt.set(false);
+      return;
+    }
+    this.abschlaegeLaedt.set(true);
+    this.svc.anrechenbareAbschlaege(auftrag).subscribe({
+      next: (liste) => {
+        if (id !== this.abschlagReqId) return;
+        this.abschlaege.set(liste);
+        // Vorauswahl: alle. Wer schlussrechnet, rechnet die offenen Abschläge
+        // desselben Auftrags an; Ausnahmen hakt man ab.
+        this.gewaehlteAbschlaege.set(liste.map((a) => a.id));
+        this.abschlaegeLaedt.set(false);
+      },
+      error: () => {
+        if (id !== this.abschlagReqId) return;
+        this.abschlaege.set([]);
+        this.abschlaegeLaedt.set(false);
+      },
+    });
+  }
+
+  abschlagGewaehlt(id: string): boolean {
+    return this.gewaehlteAbschlaege().includes(id);
+  }
+
+  abschlagUmschalten(id: string, gewaehlt: boolean): void {
+    this.gewaehlteAbschlaege.update((ids) =>
+      gewaehlt ? [...new Set([...ids, id])] : ids.filter((x) => x !== id),
+    );
   }
 
   onSearch(value: string): void {
@@ -277,6 +354,7 @@ export class Dokumente {
     this.zeileHinzufuegen();
     this.formularMeldung.set(null);
     this.neuArt.set(art);
+    this.abschlaegeLaden();
   }
 
   neuSchliessen(): void {
@@ -367,6 +445,10 @@ export class Dokumente {
         invoice_date: v.invoice_date || null,
         due_date: v.due_date || null,
         lines,
+        // Nur die Schlussrechnung rechnet an; sonst lehnt der Server ab (422).
+        ...(v.invoice_type === 'SCHLUSSRECHNUNG'
+          ? { advance_invoice_ids: this.gewaehlteAbschlaege() }
+          : {}),
       };
       this.svc.createInvoice(payload).subscribe({
         next: (inv) => {

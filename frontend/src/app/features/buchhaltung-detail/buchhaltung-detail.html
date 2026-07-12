@@ -333,6 +333,16 @@
         </p>
         @if (korrekturLinesLaden()) {
           <p class="lade-hinweis" role="status">Positionen werden geladen …</p>
+        } @else if (korrekturNurStorno()) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text">
+              <strong>Nicht möglich:</strong> Diese Schlussrechnung rechnet
+              Abschlagsrechnungen an. Eine Teilgutschrift ließe die Anrechnung stehen —
+              der Beleg wäre in sich falsch. Stornieren Sie die Schlussrechnung
+              vollständig und stellen Sie sie neu.
+            </span>
+          </div>
         } @else if (korrekturLines().length === 0) {
           <p class="dialog-hinweis">Keine korrigierbaren Positionen vorhanden.</p>
         } @else {
@@ -356,7 +366,7 @@
       </form>
       <div dialog-aktionen class="dialog__aktionen">
         <button type="button" class="btn" [disabled]="korrekturLaedt()" (click)="korrekturSchliessen()">Abbrechen</button>
-        <button type="submit" form="korrektur-form" class="btn btn--gefahr" [disabled]="korrekturLaedt() || korrekturLinesLaden()" [attr.aria-busy]="korrekturLaedt()">
+        <button type="submit" form="korrektur-form" class="btn btn--gefahr" [disabled]="korrekturLaedt() || korrekturLinesLaden() || korrekturNurStorno()" [attr.aria-busy]="korrekturLaedt()">
           {{ korrekturLaedt() ? 'Wird erzeugt …' : 'Gutschrift erzeugen' }}
         </button>
       </div>

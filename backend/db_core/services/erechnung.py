@@ -46,8 +46,10 @@ from decimal import ROUND_HALF_UP, Decimal
 from db_core.models import Invoice, TaxCode
 from db_core.services import beleg_pdf
 from db_core.services.beleg import (
+    FINAL_TYPE,
     SUMMENWIRKSAM,
     TEXT_TYPES,
+    anrechnungen,
     anzeige_menge_preis,
     beleg_stammdaten,
     beteiligter,
@@ -79,11 +81,30 @@ PROFIL = "en16931"
 # --- UNTDID 1001 (Belegart) -------------------------------------------------
 # 380 = Commercial invoice, 381 = Credit note, 384 = Corrected invoice.
 #
-# ABSCHLAGS-/TEIL-/SCHLUSSRECHNUNG bleiben bewusst 380: es sind echte Rechnungen
-# über eine Teilleistung, keine eigene UNTDID-Art. (386 „Prepayment invoice" wäre
-# denkbar, sobald der Abschlags-/Schlussrechnungs-Slice die Anrechnung bereits
-# gezahlter Abschläge — BT-113 „Vorauszahlung" — wirklich abbildet. Solange die
-# Anrechnung fehlt, wäre 386 eine Zusage, die der Beleg nicht einlöst.)
+# ABSCHLAGS-/TEIL-/SCHLUSSRECHNUNG bleiben bewusst 380: es sind echte, zahlbare
+# Rechnungen über eine (Teil-)Leistung. 386 („Prepayment invoice") wäre die Art
+# für eine reine VORAUSzahlungsanforderung ohne erbrachte Leistung — das ist die
+# Abschlagsrechnung nach VOB/BGB gerade nicht: sie rechnet bereits erbrachte
+# Leistung ab, ist offener Posten und mahnbar.
+#
+# ANRECHNUNG DER ABSCHLÄGE IN DER SCHLUSSRECHNUNG → NEGATIVE POSITIONEN,
+# ausdrücklich NICHT BT-113 (TotalPrepaidAmount). Zwei Gründe:
+#
+# 1. **BT-113 ist der GEZAHLTE Betrag** („Paid amount"), nicht der berechnete.
+#    Unsere Abschlagsrechnung ist ein eigener offener Posten und kann zum
+#    Zeitpunkt der Schlussrechnung unbezahlt sein — die Anrechnung erfolgt
+#    trotzdem (§ 14 Abs. 5 UStG). Stünde sie in BT-113, behauptete der Beleg eine
+#    Zahlung, die es nicht gab.
+# 2. **BT-113 mindert nur den Zahlbetrag, nicht die Steuer.** Der Beleg wiese
+#    dann die volle USt der Gesamtleistung aus, obwohl die Abschläge ihre USt
+#    bereits ausgewiesen (und abgeführt) haben — der Empfänger zöge die Vorsteuer
+#    doppelt. § 14 Abs. 5 UStG verlangt, die Teilentgelte UND die darauf
+#    entfallenden Steuerbeträge abzusetzen. Genau das leisten negative Positionen
+#    je Steuersatz: BG-23 (Steueraufteilung) trägt den geminderten Betrag, BT-110
+#    ist die tatsächlich geschuldete Steuer, BT-112 = BT-115 = Zahlbetrag.
+#
+# Damit sind Datenbank, PDF und XML cent- und vorzeichengleich. Die angerechneten
+# Belege stehen zusätzlich als BG-3 (Bezug auf vorausgegangene Rechnungen) im XML.
 #
 # **GUTSCHRIFT UND STORNO → beide 384 (corrected invoice).** Das ist eine bewusste
 # Festlegung, kein Versehen:
@@ -509,6 +530,11 @@ def _bt_dict(invoice):
     bedingungstext = _zahlungsbedingungen_bt20(invoice)
     if bedingungstext:
         daten["BT-20"] = bedingungstext
+    # BG-3: Bezug auf vorausgegangene Belege (BT-25/BT-26), Kardinalität 0..n.
+    # Kreditbeleg → der korrigierte Ursprungsbeleg; Schlussrechnung → jede
+    # angerechnete Abschlags-/Teilrechnung. Ohne diesen Bezug müsste der
+    # Empfänger den Abzug aus dem Positionstext raten.
+    bg3 = []
     if invoice.invoice_type in ("GUTSCHRIFT", "STORNO") and invoice.reference_invoice_id:
         ref = (
             Invoice.objects.filter(id=invoice.reference_invoice_id)
@@ -516,11 +542,20 @@ def _bt_dict(invoice):
             .first()
         )
         if ref and ref.invoice_number:
-            # BG-3: Bezug auf den vorausgegangenen Beleg (BT-25/BT-26).
             eintrag = {"BT-25": ref.invoice_number}
             if ref.invoice_date:
                 eintrag["BT-26"] = ref.invoice_date
-            daten["BG-3"] = [eintrag]
+            bg3.append(eintrag)
+    if invoice.invoice_type == FINAL_TYPE:
+        for posten in anrechnungen(invoice):
+            if not posten["invoice_number"]:
+                continue
+            eintrag = {"BT-25": posten["invoice_number"]}
+            if posten["invoice_date"]:
+                eintrag["BT-26"] = posten["invoice_date"]
+            bg3.append(eintrag)
+    if bg3:
+        daten["BG-3"] = bg3
     return daten
 
 

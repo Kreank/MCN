@@ -114,11 +114,20 @@
               </thead>
               <tbody>
                 @for (l of daten()!.lines; track l.position_number) {
-                  <tr [class.pos--text]="isText(l.line_type)">
+                  <tr
+                    [class.pos--text]="isText(l.line_type)"
+                    [class.pos--anrechnung]="!!l.advance_invoice_id"
+                  >
                     <td class="pos__nr">{{ l.position_number }}</td>
                     <td>
                       <span class="pos__desc">{{ l.description }}</span>
-                      <span class="pos__type">{{ lineTypeLabel(l.line_type) }}</span>
+                      <span class="pos__type">
+                        @if (l.advance_invoice_id) {
+                          Anrechnung Abschlagsrechnung
+                        } @else {
+                          {{ lineTypeLabel(l.line_type) }}
+                        }
+                      </span>
                     </td>
                     <td class="pos__num">{{ menge(l.quantity, l.unit) }}</td>
                     <td class="pos__num">{{ euro(l.unit_price) }}</td>
@@ -213,6 +222,63 @@
             </a>
           }
         </div>
+
+        <!-- Verkettung Schlussrechnung ↔ Abschlag, in BEIDE Richtungen ------- -->
+        @if (daten()!.advances.length > 0) {
+          <section class="kette" aria-labelledby="kette-sr">
+            <h3 class="kette__titel" id="kette-sr">Angerechnete Abschlagsrechnungen</h3>
+            <p class="kette__hinweis">
+              Diese Schlussrechnung zieht die folgenden Belege je Steuersatz ab. Der
+              Gesamtbetrag oben ist der <strong>Zahlbetrag</strong> (Differenz).
+            </p>
+            <ul class="ref-liste">
+              @for (a of daten()!.advances; track a.advance_invoice_id) {
+                <li>
+                  <a class="ref" [routerLink]="['/rechnungen', a.advance_invoice_id]">
+                    <span class="ref__name">
+                      {{ a.invoice_number || 'ohne Nummer' }} · {{ typeLabel(a.invoice_type) }}
+                    </span>
+                    <span class="ref__stamps">
+                      <span class="stamp stamp--type">{{ isoDatum(a.invoice_date) }}</span>
+                      <span class="stamp">− {{ euro(a.gross_amount) }}</span>
+                    </span>
+                  </a>
+                </li>
+              }
+            </ul>
+            <dl class="feld-raster">
+              <div class="feld"><dt class="feld__label">Gesamtleistung (netto)</dt><dd class="feld__wert">{{ euro(daten()!.leistung_netto) }}</dd></div>
+              <div class="feld"><dt class="feld__label">Gesamtleistung (brutto)</dt><dd class="feld__wert">{{ euro(daten()!.leistung_brutto) }}</dd></div>
+              <div class="feld"><dt class="feld__label">Anrechnung (brutto)</dt><dd class="feld__wert">− {{ euro(anrechnungBrutto()) }}</dd></div>
+              <div class="feld"><dt class="feld__label">Verbleibender Zahlbetrag</dt><dd class="feld__wert">{{ euro(daten()!.gross_total) }}</dd></div>
+            </dl>
+          </section>
+        }
+        @if (daten()!.angerechnet_in; as sr) {
+          <section class="kette" aria-labelledby="kette-ar">
+            <h3 class="kette__titel" id="kette-ar">Angerechnet in</h3>
+            <p class="kette__hinweis">
+              Dieser Abschlag ist in einer Schlussrechnung angerechnet. Solange sie
+              <strong>veröffentlicht</strong> ist, lässt er sich weder stornieren noch
+              gutschreiben. Der Weg zurück führt allein über das <strong>Storno der
+              Schlussrechnung</strong> — danach ist der Abschlag wieder frei.
+            </p>
+            <ul class="ref-liste">
+              <li>
+                <a class="ref" [routerLink]="['/rechnungen', sr.id]">
+                  <span class="ref__name">{{ sr.invoice_number || 'Entwurf' }} · Schlussrechnung</span>
+                  <span class="ref__stamps">
+                    <span class="stamp stamp--type">{{ isoDatum(sr.invoice_date) }}</span>
+                    <span
+                      class="stamp"
+                      [class.stamp--positive]="sr.status === 'VEROEFFENTLICHT'"
+                    >{{ statusLabel(sr.status) }}</span>
+                  </span>
+                </a>
+              </li>
+            </ul>
+          </section>
+        }
       }
 
       @if (tab() === 'dateien') {

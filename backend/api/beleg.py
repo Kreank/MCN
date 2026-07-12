@@ -74,6 +74,9 @@ class QuoteLineOut(Schema):
     markup_percent: Decimal | None = None
     source_article_id: UUID | None = None
     source_assembly_id: UUID | None = None
+    # Anrechnungsposition einer Schlussrechnung (negativer Betrag). Read-only: der
+    # Editor darf sie nicht ändern — sie wird aus der Verkettung erzeugt.
+    advance_invoice_id: UUID | None = None
 
 
 class RubrikOut(Schema):
@@ -495,6 +498,48 @@ class InvoicePartyOut(Schema):
     allocation_percent: Decimal | None = None
 
 
+class AdvanceSteuergruppeOut(Schema):
+    tax_code: str
+    tax_rate_percent: Decimal
+    net_amount: Decimal
+    tax_amount: Decimal
+    gross_amount: Decimal
+
+
+class InvoiceAdvanceOut(Schema):
+    """Eine von dieser Schlussrechnung angerechnete Abschlags-/Teilrechnung."""
+    advance_invoice_id: UUID
+    invoice_number: str | None = None
+    invoice_type: str
+    invoice_date: date | None = None
+    net_amount: Decimal
+    tax_amount: Decimal
+    gross_amount: Decimal
+    steuergruppen: list[AdvanceSteuergruppeOut] = []
+
+
+class FinalInvoiceRefOut(Schema):
+    """Die Schlussrechnung, die diese Abschlagsrechnung anrechnet (Gegenrichtung)."""
+    id: UUID
+    invoice_number: str | None = None
+    invoice_date: date | None = None
+    status: str
+
+
+class AnrechenbarerAbschlagOut(Schema):
+    id: UUID
+    invoice_number: str | None = None
+    invoice_type: str
+    invoice_date: date | None = None
+    net_total: Decimal | None = None
+    tax_total: Decimal | None = None
+    gross_total: Decimal | None = None
+    # In einem ANDEREN Schlussrechnungs-Entwurf bereits vorgemerkt (bindet nicht).
+    vorgemerkt: bool = False
+    # Von DIESER Schlussrechnung bereits angerechnet (Häkchen im UI).
+    angerechnet: bool = False
+
+
 class InvoiceDetailOut(InvoiceOut):
     due_date: date | None = None
     tax_total: Decimal | None = None
@@ -520,6 +565,16 @@ class InvoiceDetailOut(InvoiceOut):
     parties: list[InvoicePartyOut] = []
     rubriken: list[RubrikOut] = []
     lines: list[QuoteLineOut]
+    # Schlussrechnung → angerechnete Abschläge (Verkettung, GoBD).
+    advances: list[InvoiceAdvanceOut] = []
+    # Abschlags-/Teilrechnung → die Schlussrechnung, die sie anrechnet
+    # (Gegenrichtung derselben Kette; die Rechnungsmappe zeigt beide Wege).
+    angerechnet_in: FinalInvoiceRefOut | None = None
+    # Nur bei Anrechnung: Leistung vor Abzug (Kopfsummen + Anrechnung). Der
+    # Zahlbetrag ist gross_total.
+    leistung_netto: Decimal | None = None
+    leistung_steuer: Decimal | None = None
+    leistung_brutto: Decimal | None = None
 
 
 class InvoiceIn(Schema):
@@ -535,6 +590,9 @@ class InvoiceIn(Schema):
     discount_days: int | None = None
     rubriken: list[RubrikIn] = []
     lines: list[QuoteLineIn] = []
+    # Nur SCHLUSSRECHNUNG: die anzurechnenden Abschlags-/Teilrechnungen. Die
+    # negativen Anrechnungspositionen je Steuersatz erzeugt der Server.
+    advance_invoice_ids: list[UUID] = []
 
 
 class InvoicePartyIn(Schema):
@@ -625,6 +683,7 @@ def _invoice_detail(invoice_id):
             markup_percent=l.markup_percent,
             source_article_id=l.source_article_id,
             source_assembly_id=l.source_assembly_id,
+            advance_invoice_id=l.advance_invoice_id,
         )
         for l in sorted(invoice.lines.all(), key=lambda l: l.position_number)
     ]
@@ -656,6 +715,38 @@ def _invoice_detail(invoice_id):
     )
     # Einzige Rechenstelle für Skonto (dieselbe, die das PDF nutzt).
     zb = beleg_service.zahlungsbedingungen(invoice) or {}
+
+    # Verkettung Abschlag ↔ Schlussrechnung in BEIDE Richtungen.
+    advances = (
+        beleg_service.anrechnungen(invoice)
+        if invoice.invoice_type == beleg_service.FINAL_TYPE
+        else []
+    )
+    spiegel = beleg_service.leistungssummen(invoice, advances) if advances else None
+    angerechnet_in = None
+    if invoice.invoice_type in beleg_service.ADVANCE_TYPES:
+        # Mehrere Kandidaten sind möglich, solange sie ENTWÜRFE sind (ein Entwurf
+        # bindet nichts). Die veröffentlichte Schlussrechnung ist die verbindliche
+        # Aussage — sie gewinnt.
+        # distinct(): eine Schlussrechnung trägt je Steuersatz eine Verkettungszeile
+        # — ohne distinct käme sie mehrfach zurück.
+        finals = list(
+            Invoice.objects.filter(advances__advance_invoice_id=invoice.id)
+            .only("id", "invoice_number", "invoice_date", "status")
+            .order_by("-published_at", "-created_at")
+            .distinct()
+        )
+        final = next(
+            (f for f in finals if f.status == "VEROEFFENTLICHT"),
+            finals[0] if finals else None,
+        )
+        if final is not None:
+            angerechnet_in = FinalInvoiceRefOut(
+                id=final.id,
+                invoice_number=final.invoice_number,
+                invoice_date=final.invoice_date,
+                status=final.status,
+            )
     return InvoiceDetailOut(
         id=invoice.id,
         invoice_number=invoice.invoice_number,
@@ -686,12 +777,23 @@ def _invoice_detail(invoice_id):
         parties=parties,
         rubriken=_rubriken_out(invoice),
         lines=lines,
+        advances=[InvoiceAdvanceOut(**a) for a in advances],
+        angerechnet_in=angerechnet_in,
+        leistung_netto=(spiegel or {}).get("leistung_net"),
+        leistung_steuer=(spiegel or {}).get("leistung_tax"),
+        leistung_brutto=(spiegel or {}).get("leistung_gross"),
     )
 
 
 @router.post("/invoices", response={201: InvoiceDetailOut}, auth=django_auth)
 def create_invoice(request, payload: InvoiceIn):
-    """Neue Rechnung/Gutschrift (Status ENTWURF) mit Positionen anlegen."""
+    """Neue Rechnung (Status ENTWURF) mit Positionen anlegen.
+
+    Belegart: RECHNUNG, ABSCHLAGSRECHNUNG, TEILRECHNUNG oder SCHLUSSRECHNUNG
+    (Gutschrift/Storno entstehen nur als Folgebeleg). Bei einer Schlussrechnung
+    rechnen `advance_invoice_ids` die genannten Abschläge an — die negativen
+    Anrechnungspositionen je Steuersatz erzeugt der Server.
+    """
     actor, _ = require(request, "invoicing", "ANLEGEN")
     try:
         invoice = beleg_service.create_invoice(
@@ -708,10 +810,63 @@ def create_invoice(request, payload: InvoiceIn):
             discount_days=payload.discount_days,
             rubriken=[r.dict() for r in payload.rubriken],
             lines=[line.dict() for line in payload.lines],
+            advance_invoice_ids=payload.advance_invoice_ids,
         )
     except ValueError as exc:
         raise HttpError(422, str(exc))
     return Status(201, _invoice_detail(invoice.id))
+
+
+@router.get("/invoices/anrechenbare-abschlaege", response=list[AnrechenbarerAbschlagOut])
+def anrechenbare_abschlaege(
+    request,
+    work_order_id: UUID | None = None,
+    final_invoice_id: UUID | None = None,
+):
+    """Die anrechenbaren Abschlags-/Teilrechnungen eines Auftrags.
+
+    Für die Schlussrechnung: veröffentlicht, nicht storniert/gutgeschrieben und
+    von keiner veröffentlichten Schlussrechnung angerechnet. `final_invoice_id`
+    markiert zusätzlich, was der genannte Schlussrechnungs-Entwurf schon anrechnet.
+
+    `work_order_id` ist fachlich Pflicht, technisch aber optional annotiert: eine
+    Pflicht-Query-Annotation ließe django-ninja schon VOR dem View validieren —
+    ein Aufruf ohne Recht bekäme dann 422 statt 403 und verriete damit, dass es
+    den Endpunkt gibt (test_endpoint_schutz prüft genau das). Erst Recht, dann
+    Eingabe.
+    """
+    require(request, "invoicing", "LESEN")
+    if work_order_id is None:
+        raise HttpError(422, "work_order_id ist erforderlich.")
+    try:
+        return beleg_service.anrechenbare_abschlaege(
+            work_order_id, final_invoice_id=final_invoice_id
+        )
+    except ValueError as exc:
+        raise HttpError(404, str(exc))
+
+
+class InvoiceAdvancesIn(Schema):
+    advance_invoice_ids: list[UUID] = []
+
+
+@router.put("/invoices/{invoice_id}/advances", response=InvoiceDetailOut, auth=django_auth)
+def set_invoice_advances(request, invoice_id: UUID, payload: InvoiceAdvancesIn):
+    """Setzt die angerechneten Abschläge eines Schlussrechnungs-ENTWURFS neu.
+
+    Ersetzt die Verkettung vollständig und baut die Anrechnungspositionen daraus
+    neu auf. Nach der Veröffentlichung ist die Anrechnung unveränderlich (422).
+    """
+    actor, _ = require(request, "invoicing", "AENDERN")
+    try:
+        beleg_service.set_invoice_advances(
+            actor,
+            invoice_id=invoice_id,
+            advance_invoice_ids=payload.advance_invoice_ids,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _invoice_detail(invoice_id)
 
 
 class InvoiceUpdateIn(Schema):

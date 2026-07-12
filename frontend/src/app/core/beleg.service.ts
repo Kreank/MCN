@@ -2,6 +2,7 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import {
+  AnrechenbarerAbschlag,
   InvoiceCreate,
   InvoiceUpdate,
   InvoiceDetail,
@@ -112,6 +113,36 @@ export class BelegService {
   /** Rechnungsentwurf ändern (Positionen/Abschnitte werden vollständig ersetzt). */
   updateInvoice(id: string, payload: InvoiceUpdate): Observable<InvoiceDetail> {
     return this.http.put<InvoiceDetail>(`/api/invoicing/invoices/${id}`, payload);
+  }
+
+  /**
+   * Die anrechenbaren Abschlags-/Teilrechnungen eines Auftrags (für die
+   * Schlussrechnung): veröffentlicht, nicht storniert und von keiner
+   * veröffentlichten Schlussrechnung angerechnet. `finalInvoiceId` markiert
+   * zusätzlich, was der genannte Entwurf schon anrechnet (`angerechnet`).
+   */
+  anrechenbareAbschlaege(
+    workOrderId: string,
+    finalInvoiceId?: string | null,
+  ): Observable<AnrechenbarerAbschlag[]> {
+    let params = new HttpParams().set('work_order_id', workOrderId);
+    if (finalInvoiceId) params = params.set('final_invoice_id', finalInvoiceId);
+    return this.http.get<AnrechenbarerAbschlag[]>(
+      '/api/invoicing/invoices/anrechenbare-abschlaege',
+      { params },
+    );
+  }
+
+  /**
+   * Setzt die angerechneten Abschläge eines Schlussrechnungs-ENTWURFS neu
+   * (vollständige Auswahl). Der Server baut die Anrechnungspositionen daraus neu
+   * auf und rechnet die Summen nach. 422 nach der Veröffentlichung.
+   */
+  setInvoiceAdvances(id: string, advanceInvoiceIds: string[]): Observable<InvoiceDetail> {
+    return this.http.put<InvoiceDetail>(
+      `/api/invoicing/invoices/${id}/advances`,
+      { advance_invoice_ids: advanceInvoiceIds },
+    );
   }
 
   /** Beteiligten (Schuldner/Empfänger …) am Rechnungsentwurf ergänzen. */

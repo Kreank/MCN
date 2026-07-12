@@ -157,6 +157,8 @@ export class BuchhaltungDetail {
   protected readonly korrekturLinesLaden = signal(false);
   protected readonly korrekturLines = signal<QuoteLine[]>([]);
   protected readonly korrekturAuswahl = signal<Set<number>>(new Set());
+  /** Schlussrechnung mit Anrechnung: nur Vollstorno zulässig (Server erzwingt es). */
+  protected readonly korrekturNurStorno = signal(false);
 
   private readonly dateFmt = new Intl.DateTimeFormat('de-DE', {
     day: '2-digit',
@@ -454,13 +456,20 @@ export class BuchhaltungDetail {
     this.meldung.set(null);
     this.korrekturAuswahl.set(new Set());
     this.korrekturLines.set([]);
+    this.korrekturNurStorno.set(false);
     this.korrekturOffen.set(true);
     // Positionen liegen nicht im offenen Posten — aus dem Rechnungsbeleg holen.
     this.korrekturLinesLaden.set(true);
     this.belege.getInvoice(d.id).subscribe({
       next: (inv) => {
         this.korrekturLinesLaden.set(false);
-        this.korrekturLines.set(inv.lines);
+        // Anrechnungspositionen einer Schlussrechnung sind NICHT korrigierbar:
+        // sie sind negative Abzüge. Eine „Gutschrift" darauf dreht das Vorzeichen
+        // um und fordert den Abschlag ein zweites Mal. Der Server lehnt das ab
+        // (422); hier stehen sie gar nicht erst zur Wahl. Eine Schlussrechnung mit
+        // Anrechnung lässt sich überhaupt nur vollständig stornieren.
+        this.korrekturLines.set(inv.lines.filter((l) => !l.advance_invoice_id));
+        this.korrekturNurStorno.set(inv.advances.length > 0);
       },
       error: () => {
         this.korrekturLinesLaden.set(false);

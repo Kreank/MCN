@@ -195,3 +195,32 @@ a.ref:focus-visible {
 .detail-melde {
   margin-bottom: var(--space-4);
 }
+
+/* --- Verkettung Schlussrechnung ↔ Abschlagsrechnung ------------------------
+   Beide Richtungen sind sichtbar: die Schlussrechnung listet, was sie anrechnet;
+   der Abschlag zeigt, in welcher Schlussrechnung er steckt (und damit, warum er
+   gesperrt ist). Der Zustand steht als Text da, nie nur als Farbe (WCAG 2.2). */
+.kette {
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: 1.5px solid var(--line);
+}
+.kette__titel {
+  margin: 0 0 var(--space-2);
+  font-size: 1rem;
+}
+.kette__hinweis {
+  margin: 0 0 var(--space-3);
+  font-size: 0.86rem;
+  color: var(--ink-muted);
+  max-width: 62ch;
+}
+/* Anrechnungsposition: negativer Betrag, klar abgesetzt — sie ist kein Umsatz,
+   sondern ein Abzug. Zusätzlich zur Farbe trägt sie das Wort „Anrechnung". */
+.pos--anrechnung {
+  background: color-mix(in srgb, var(--amber, var(--warn-ink)) 8%, transparent);
+
+  .pos__desc {
+    font-style: italic;
+  }
+}

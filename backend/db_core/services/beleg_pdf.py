@@ -54,10 +54,12 @@ from db_core import storage as storage_module
 from db_core.db_context import business_transaction
 from db_core.models import CompanyProfile, File, Invoice, Quote
 from db_core.services.beleg import (
+    FINAL_TYPE,
     anzeige_menge_preis,
     beleg_stammdaten,
     beteiligter,
     issuer_stammdaten,
+    leistungssummen,
     zahlungsbedingungen,
 )
 
@@ -383,6 +385,54 @@ def _render_totals(pdf, net_total, tax_total, gross_total):
                  border="T" if bold else 0, new_x="LMARGIN", new_y="NEXT")
 
 
+def _render_anrechnung(pdf, invoice):
+    """Anrechnungsspiegel der Schlussrechnung (Leistung − Abschläge = Zahlbetrag).
+
+    Die Anrechnung steht bereits als negative Position in der Tabelle — der
+    Summenblock zeigt deshalb schon den Zahlbetrag. Dieser Block macht die
+    Rechnung dennoch **explizit**, wie es die Praxis (und § 14 Abs. 5 UStG)
+    verlangt: volle Leistung, jede angerechnete Abschlagsrechnung mit **Nummer und
+    Datum**, verbleibender Zahlbetrag.
+
+    Rechnet nicht selbst: die Zahlen kommen aus `beleg.leistungssummen` — derselben
+    Quelle, die auch API und E-Rechnung nutzen.
+    """
+    if invoice.invoice_type != FINAL_TYPE:
+        return
+    spiegel = leistungssummen(invoice)
+    if not spiegel:
+        return
+
+    pdf.ln(4)
+    pdf.set_font(FONT_FAMILY, "B", 10)
+    pdf.cell(0, 6, "Anrechnung der Abschlagsrechnungen", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font(FONT_FAMILY, "", 9)
+    label_w, val_w = 150, 40
+
+    def zeile(label, betrag, *, bold=False, border=0):
+        pdf.set_font(FONT_FAMILY, "B" if bold else "", 10 if bold else 9)
+        pdf.multi_cell(label_w, 6, _txt(label), align="R", new_x="RIGHT", new_y="TOP",
+                       max_line_height=6)
+        pdf.cell(val_w, 6, _eur(betrag), align="R", border=border,
+                 new_x="LMARGIN", new_y="NEXT")
+
+    zeile("Gesamtleistung (netto)", spiegel["leistung_net"])
+    zeile("Umsatzsteuer auf die Gesamtleistung", spiegel["leistung_tax"])
+    zeile("Gesamtleistung (brutto)", spiegel["leistung_gross"])
+    for posten in spiegel["posten"]:
+        titel = (
+            "Abschlagsrechnung"
+            if posten["invoice_type"] == "ABSCHLAGSRECHNUNG"
+            else "Teilrechnung"
+        )
+        zeile(
+            f"abzüglich {titel} {posten['invoice_number']} "
+            f"vom {_de_date(posten['invoice_date'])} (brutto)",
+            -posten["gross_amount"],
+        )
+    zeile("Verbleibender Zahlbetrag", spiegel["zahlbetrag"], bold=True, border="T")
+
+
 def load_invoice_for_render(invoice_id):
     """Lädt eine Rechnung mit allem, was Layout und ZUGFeRD-XML brauchen.
 
@@ -446,6 +496,7 @@ def render_invoice_document(invoice, *, compliance=None):
     # Positionstabelle + Summen (gemeinsame Bausteine)
     _render_lines(pdf, invoice.lines.all())
     _render_totals(pdf, invoice.net_total, invoice.tax_total, invoice.gross_total)
+    _render_anrechnung(pdf, invoice)
 
     if invoice.invoice_type in ("GUTSCHRIFT", "STORNO") and invoice.reference_invoice_id:
         ref = Invoice.objects.filter(id=invoice.reference_invoice_id).first()

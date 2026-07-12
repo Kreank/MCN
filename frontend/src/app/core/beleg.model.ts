@@ -81,6 +81,13 @@ export interface QuoteLine {
   markup_percent: string | null;
   source_article_id: string | null;
   source_assembly_id: string | null;
+  /**
+   * Anrechnungsposition einer Schlussrechnung (negativer Betrag): sie rechnet die
+   * genannte Abschlags-/Teilrechnung an. **Read-only** — der Editor darf sie nicht
+   * ändern und schickt sie nicht zurück; der Server erzeugt sie aus der
+   * Verkettung. Bei allen anderen Positionen null.
+   */
+  advance_invoice_id?: string | null;
 }
 
 /** Abschnitt (Rubrik) eines Belegs — gliedert die Positionen. */
@@ -221,6 +228,62 @@ export interface InvoiceDetail extends Invoice {
   parties: InvoiceParty[];
   rubriken: Rubrik[];
   lines: QuoteLine[];
+  /** Schlussrechnung → die angerechneten Abschlags-/Teilrechnungen. */
+  advances: InvoiceAdvance[];
+  /** Abschlags-/Teilrechnung → die Schlussrechnung, die sie anrechnet. */
+  angerechnet_in: FinalInvoiceRef | null;
+  /** Nur bei Anrechnung: Leistung VOR Abzug. Der Zahlbetrag ist `gross_total`. */
+  leistung_netto: string | null;
+  leistung_steuer: string | null;
+  leistung_brutto: string | null;
+}
+
+// --- Abschlags-/Teil-/Schlussrechnung --------------------------------------
+// Die Schlussrechnung rechnet die bereits gestellten Abschläge desselben Auftrags
+// an: je Abschlag und Steuersatz eine negative Position. `gross_total` der SR ist
+// damit der ZAHLBETRAG (Differenz), nicht die Gesamtleistung.
+
+/** Eine angerechnete Abschlags-/Teilrechnung (Beträge positiv = was abgezogen wird). */
+export interface InvoiceAdvance {
+  advance_invoice_id: string;
+  invoice_number: string | null;
+  invoice_type: InvoiceType;
+  invoice_date: string | null;
+  net_amount: string;
+  tax_amount: string;
+  gross_amount: string;
+  steuergruppen: AdvanceSteuergruppe[];
+}
+
+export interface AdvanceSteuergruppe {
+  tax_code: string;
+  tax_rate_percent: string;
+  net_amount: string;
+  tax_amount: string;
+  gross_amount: string;
+}
+
+/** Gegenrichtung der Kette: die Schlussrechnung, die diesen Abschlag anrechnet. */
+export interface FinalInvoiceRef {
+  id: string;
+  invoice_number: string | null;
+  invoice_date: string | null;
+  status: InvoiceStatus;
+}
+
+/** Ein anrechenbarer Abschlag zur Auswahl in der Schlussrechnung. */
+export interface AnrechenbarerAbschlag {
+  id: string;
+  invoice_number: string | null;
+  invoice_type: InvoiceType;
+  invoice_date: string | null;
+  net_total: string | null;
+  tax_total: string | null;
+  gross_total: string | null;
+  /** In einem ANDEREN Schlussrechnungs-Entwurf vorgemerkt (bindet nicht). */
+  vorgemerkt: boolean;
+  /** Von DIESER Schlussrechnung bereits angerechnet. */
+  angerechnet: boolean;
 }
 
 /** Antwort des Rechnungsversands per E-Mail. */
@@ -293,6 +356,12 @@ export interface InvoiceCreate {
   discount_days?: number | null;
   rubriken?: RubrikInput[];
   lines: QuoteLineInput[];
+  /**
+   * Nur SCHLUSSRECHNUNG: die anzurechnenden Abschlags-/Teilrechnungen. Die
+   * negativen Anrechnungspositionen je Steuersatz erzeugt der Server — sie
+   * gehören NICHT in `lines`.
+   */
+  advance_invoice_ids?: string[];
 }
 
 /** Rechnungsentwurf ändern (Positionen/Abschnitte vollständig ersetzt; kein Titel). */

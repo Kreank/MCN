@@ -18,7 +18,7 @@ import hashlib
 import json
 import uuid
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
 
 from django.utils import timezone as dj_timezone
@@ -31,6 +31,7 @@ from db_core.models import (
     BelegRubrik,
     CompanyProfile,
     Invoice,
+    InvoiceAdvance,
     InvoiceLine,
     InvoiceParty,
     Organization,
@@ -78,6 +79,19 @@ INVOICE_TYPES = (
     "STORNO",
 )
 _CREDIT_TYPES = ("GUTSCHRIFT", "STORNO")
+# Abschlags-/Teil-/Schlussrechnung (Migration 0060). Abschlag und Teilrechnung
+# verhalten sich technisch identisch (gleiche Tore, gleiche Verkettung); der Typ
+# bleibt getrennt, weil er fachlich etwas anderes aussagt (Abschlag = Zwischen-
+# forderung während der Ausführung, Teilrechnung = endgültige Abrechnung eines
+# abgeschlossenen Leistungsteils).
+ADVANCE_TYPES = ("ABSCHLAGSRECHNUNG", "TEILRECHNUNG")
+FINAL_TYPE = "SCHLUSSRECHNUNG"
+# Positionsart der Anrechnungsposition. PAUSCHALE ist die neutrale Betragsart der
+# Codeliste (MATERIAL/ARBEITSZEIT/FAHRT wären fachlich falsch, ZUSCHLAG suggeriert
+# eine Erhöhung). Die Anrechnung ist ein Pauschalabzug — ein eigener line_type
+# wäre die Alternative gewesen, hätte aber die Codeliste (und damit jede
+# Auswertung, die auf ihr steht) für einen reinen Darstellungsfall erweitert.
+ANRECHNUNG_LINE_TYPE = "PAUSCHALE"
 # DB-Spaltenskalen (Migration 0018/0019): quantity numeric(15,3), unit_price
 # numeric(15,2), discount_percent numeric(7,4), net_amount numeric(15,2).
 _Q_QTY = Decimal("0.001")
@@ -342,8 +356,21 @@ def _prepare_lines(lines):
             row.update(_kalkulation_pruefen(idx, line, unit_price))
         prepared.append(row)
 
-    # Kopf-Summen: Steuer je Steuergruppe (tax_code, tax_rate_percent) gerundet.
-    # Alternativ-/Bedarfspositionen bleiben außen vor (Migration 0036).
+    net, tax, gross = _totals(prepared)
+    return prepared, net, tax, gross
+
+
+def _totals(prepared):
+    """Kopf-Summen (netto, steuer, brutto) aus vorbereiteten Positionszeilen.
+
+    Steuer je Steuergruppe (tax_code, tax_rate_percent) gerundet — exakt wie der
+    DB-CHECK `assert_invoice_totals` (B-19). Alternativ-/Bedarfspositionen und
+    Text-/Zwischensummenzeilen bleiben außen vor (Migration 0036).
+
+    Negative Positionsbeträge (Kreditbeleg, Anrechnung eines Abschlags) laufen
+    hier ohne Sonderfall durch: sie mindern die Gruppe, und die Steuer wird auf
+    dem geminderten Gruppennetto gerundet. Genau so rechnet auch die DB.
+    """
     net_total = Decimal("0.00")
     group_net = defaultdict(lambda: Decimal("0.00"))
     for row in prepared:
@@ -354,7 +381,7 @@ def _prepare_lines(lines):
     tax_total = Decimal("0.00")
     for (_code, rate), net in group_net.items():
         tax_total += _round2(net * rate / Decimal(100))
-    return prepared, net_total, tax_total, net_total + tax_total
+    return net_total, tax_total, net_total + tax_total
 
 
 def _prepare_rubriken(rubriken, prepared):
@@ -590,6 +617,33 @@ def update_invoice(
         rubriken_norm = _prepare_rubriken(rubriken, prepared)
         kopf.update(net_total=net_total, tax_total=tax_total, gross_total=gross_total)
 
+    # Die Anrechnung einer Schlussrechnung überlebt das Ersetzen der Positionen:
+    # sie steht in der Verkettungstabelle, nicht im Editor-Payload. Der Editor
+    # kann sie deshalb nicht verlieren (und auch nicht verfälschen — negative
+    # Einzelpreise weist `_prepare_lines` zurück). Sie wird aus der Verkettung
+    # neu erzeugt und wieder hinten angehängt.
+    abschlaege = anrechnung_rows = None
+    if prepared is not None and invoice.invoice_type == FINAL_TYPE:
+        anrechnung_rows = [
+            {
+                "advance_invoice_id": a.advance_invoice_id,
+                "tax_code_id": a.tax_code_id,
+                "tax_rate_percent": a.tax_rate_percent,
+                "net_amount": a.net_amount,
+                "tax_amount": a.tax_amount,
+                "gross_amount": a.gross_amount,
+            }
+            for a in InvoiceAdvance.objects.filter(final_invoice_id=invoice.id)
+            .select_related("advance_invoice")
+            .order_by("advance_invoice__invoice_date",
+                      "advance_invoice__invoice_number", "tax_rate_percent")
+        ]
+        abschlaege = list(
+            Invoice.objects.filter(
+                id__in={r["advance_invoice_id"] for r in anrechnung_rows}
+            )
+        )
+
     with as_business_error():
         with business_transaction(actor_app_user_id):
             if kopf:
@@ -606,8 +660,403 @@ def update_invoice(
                     for r in rubriken_norm
                 ]
                 _write_lines(prepared, rubrik_ids, model=InvoiceLine, invoice_id=invoice.id)
+                if anrechnung_rows:
+                    anrechnung_lines = _anrechnung_lines(
+                        anrechnung_rows, abschlaege, len(prepared)
+                    )
+                    for row in anrechnung_lines:
+                        InvoiceLine.objects.create(
+                            id=uuid.uuid4(), invoice_id=invoice.id, **row
+                        )
+                    net_total, tax_total, gross_total = _totals(
+                        prepared + anrechnung_lines
+                    )
+                    _anrechnung_pruefen(gross_total)
+                    Invoice.objects.filter(id=invoice.id).update(
+                        net_total=net_total,
+                        tax_total=tax_total,
+                        gross_total=gross_total,
+                    )
     invoice.refresh_from_db()
     return invoice
+
+
+# ---------------------------------------------------------------------------
+# Abschlags-/Teil-/Schlussrechnung (Migration 0060)
+# ---------------------------------------------------------------------------
+# Die Schlussrechnung listet die volle Leistung und zieht die bereits gestellten
+# Abschlags-/Teilrechnungen desselben Auftrags ab. Der Abzug entsteht als
+# **negative Position je Steuersatz** (nicht als Kopffeld): so trägt ihn die
+# GoBD-Summenkette (assert_invoice_totals), der offene Posten
+# (gross_total − Zahlungen) und das EN16931-XML ohne Umbau — und die USt-
+# Aufteilung stimmt, weil je Steuersatz abgezogen wird (§ 14 Abs. 5 UStG).
+#
+# Die Verkettung führt `invoicing.invoice_advance` (eingefrorene Beträge je
+# Steuersatz). Sie ist die Wahrheit: die Positionen werden aus ihr erzeugt, und
+# das Veröffentlichungstor verlangt, dass beide deckungsgleich sind.
+
+
+def _summenwirksame_gruppen(invoice):
+    """Nettobeträge einer Rechnung je Steuergruppe (tax_code, tax_rate_percent).
+
+    Nur summenwirksame Betragspositionen (wie assert_invoice_totals). Die Summe
+    über alle Gruppen ist damit exakt `net_total`.
+    """
+    gruppen = {}
+    for line in sorted(invoice.lines.all(), key=lambda l: l.position_number):
+        if line.line_type in TEXT_TYPES or line.line_kind != SUMMENWIRKSAM:
+            continue
+        key = (line.tax_code_id, line.tax_rate_percent)
+        gruppen[key] = gruppen.get(key, Decimal("0.00")) + line.net_amount
+    return gruppen
+
+
+def _stornierte_belege():
+    """IDs aller Belege, zu denen ein veröffentlichter STORNO existiert."""
+    return set(
+        Invoice.objects.filter(
+            invoice_type="STORNO", status="VEROEFFENTLICHT"
+        ).values_list("reference_invoice_id", flat=True)
+    )
+
+
+def _korrigierte_belege():
+    """IDs aller Belege mit veröffentlichtem STORNO **oder** GUTSCHRIFT.
+
+    Beide machen einen Abschlag unanrechenbar: der Betrag steht nicht mehr (bzw.
+    nicht mehr vollständig) in Rechnung, der eingefrorene Anrechnungsbetrag wäre
+    falsch.
+    """
+    return set(
+        Invoice.objects.filter(
+            invoice_type__in=_CREDIT_TYPES, status="VEROEFFENTLICHT"
+        ).values_list("reference_invoice_id", flat=True)
+    )
+
+
+def _gebundene_abschlaege(advance_ids, *, exclude_final_id=None):
+    """Abschläge, die eine veröffentlichte (nicht stornierte) SR bereits anrechnet.
+
+    Die Storno-Ausnahme ist wesentlich: wird eine Schlussrechnung storniert, wird
+    ihre Anrechnung wieder frei — sonst ließe sich der Auftrag nach dem Storno nie
+    wieder schlussrechnen. Dieselbe Regel setzt die DB durch
+    (`invoicing.advance_blocking_final`).
+    """
+    qs = InvoiceAdvance.objects.filter(
+        advance_invoice_id__in=list(advance_ids), final_invoice__status="VEROEFFENTLICHT"
+    ).exclude(final_invoice_id__in=_stornierte_belege())
+    if exclude_final_id is not None:
+        qs = qs.exclude(final_invoice_id=exclude_final_id)
+    return dict(qs.values_list("advance_invoice_id", "final_invoice_id"))
+
+
+def anrechenbare_abschlaege(work_order_id, *, final_invoice_id=None):
+    """Die anrechenbaren Abschlags-/Teilrechnungen eines Auftrags (für das UI).
+
+    Geliefert werden alle **veröffentlichten**, **nicht stornierten/gutgeschriebenen**
+    AR/TR des Auftrags, die noch **keine veröffentlichte Schlussrechnung** anrechnet.
+
+    Abschläge, die bereits in einem anderen Schlussrechnungs-ENTWURF vorgemerkt
+    sind, bleiben in der Liste (`vorgemerkt=True`) — ein Entwurf bindet nichts, und
+    zwei Entwürfe zum selben Auftrag sind ein legitimer Zwischenzustand. Erst die
+    Veröffentlichung entscheidet; die DB serialisiert sie (Zeilensperre auf dem
+    Abschlag).
+
+    `angerechnet=True` markiert die Abschläge, die die übergebene Schlussrechnung
+    (`final_invoice_id`) bereits anrechnet — das UI hakt sie an.
+    """
+    ensure_exists(WorkOrder, work_order_id, "Auftrag")
+    kandidaten = list(
+        Invoice.objects.filter(
+            work_order_id=work_order_id,
+            invoice_type__in=ADVANCE_TYPES,
+            status="VEROEFFENTLICHT",
+            # Ein Abschlag über 0,00 EUR trägt nichts zum Anrechnen bei (jede
+            # Anrechnungszeile müsste einen positiven Betrag haben, DB-CHECK
+            # net_amount > 0). Er ist deshalb weder anrechenbar noch blockierend —
+            # sonst wäre die Schlussrechnung unveröffentlichbar: nicht anrechenbar
+            # („kein anrechenbarer Betrag") und zugleich nicht übergehbar
+            # („übergeht 1 anrechenbare Rechnung"). Dieselbe Bedingung steht im
+            # DB-Tor (Migration 0060), damit beide dieselbe Menge meinen.
+            gross_total__gt=Decimal("0.00"),
+        )
+        .exclude(id__in=_korrigierte_belege())
+        .order_by("invoice_date", "invoice_number")
+    )
+    ids = [i.id for i in kandidaten]
+    gebunden = _gebundene_abschlaege(ids, exclude_final_id=final_invoice_id)
+    vorgemerkt = set(
+        InvoiceAdvance.objects.filter(
+            advance_invoice_id__in=ids, final_invoice__status="ENTWURF"
+        )
+        .exclude(final_invoice_id=final_invoice_id)
+        .values_list("advance_invoice_id", flat=True)
+    )
+    bereits = (
+        set(
+            InvoiceAdvance.objects.filter(
+                final_invoice_id=final_invoice_id
+            ).values_list("advance_invoice_id", flat=True)
+        )
+        if final_invoice_id
+        else set()
+    )
+    return [
+        {
+            "id": inv.id,
+            "invoice_number": inv.invoice_number,
+            "invoice_type": inv.invoice_type,
+            "invoice_date": inv.invoice_date,
+            "net_total": inv.net_total,
+            "tax_total": inv.tax_total,
+            "gross_total": inv.gross_total,
+            "vorgemerkt": inv.id in vorgemerkt,
+            "angerechnet": inv.id in bereits,
+        }
+        for inv in kandidaten
+        if inv.id not in gebunden
+    ]
+
+
+def _abschlaege_laden(final_work_order_id, advance_invoice_ids, *, final_invoice_id=None):
+    """Lädt die anzurechnenden Abschläge und prüft sie fachlich vor.
+
+    Alles, was die DB-Trigger ohnehin ablehnen würden, wird hier als klare
+    Fehlermeldung (→422) abgefangen — nicht als kryptischer Tor-Fehler.
+    """
+    ids = list(dict.fromkeys(advance_invoice_ids or []))
+    if not ids:
+        return []
+    if final_work_order_id is None:
+        raise ValueError(
+            "Eine Schlussrechnung mit Anrechnung braucht den Auftrag, zu dem die "
+            "Abschlagsrechnungen gehören."
+        )
+    gefunden = {
+        inv.id: inv
+        for inv in Invoice.objects.filter(id__in=ids).prefetch_related("lines")
+    }
+    korrigiert = _korrigierte_belege()
+    gebunden = _gebundene_abschlaege(ids, exclude_final_id=final_invoice_id)
+    abschlaege = []
+    for advance_id in ids:
+        inv = gefunden.get(advance_id)
+        if inv is None:
+            raise ValueError(f"Abschlagsrechnung {advance_id} nicht gefunden.")
+        bezeichnung = inv.invoice_number or str(inv.id)
+        if inv.invoice_type not in ADVANCE_TYPES:
+            raise ValueError(
+                f"Beleg {bezeichnung} ist keine Abschlags- oder Teilrechnung."
+            )
+        if inv.status != "VEROEFFENTLICHT":
+            raise ValueError(
+                f"Abschlagsrechnung {bezeichnung} ist nicht veröffentlicht und "
+                "kann nicht angerechnet werden."
+            )
+        if inv.work_order_id != final_work_order_id:
+            raise ValueError(
+                f"Abschlagsrechnung {bezeichnung} gehört zu einem anderen Auftrag."
+            )
+        if inv.id in korrigiert:
+            raise ValueError(
+                f"Abschlagsrechnung {bezeichnung} ist storniert oder gutgeschrieben "
+                "und kann nicht angerechnet werden."
+            )
+        if inv.id in gebunden:
+            raise ValueError(
+                f"Abschlagsrechnung {bezeichnung} ist bereits in einer "
+                "veröffentlichten Schlussrechnung angerechnet."
+            )
+        if (inv.gross_total or Decimal("0.00")) <= 0:
+            # 0-EUR-Beleg: nichts anzurechnen. Er ist auch nicht blockierend
+            # (anrechenbare_abschlaege und das DB-Tor blenden ihn aus) — die
+            # Schlussrechnung lässt sich also ohne ihn stellen.
+            raise ValueError(
+                f"Abschlagsrechnung {bezeichnung} trägt keinen anrechenbaren Betrag "
+                "(0,00 EUR) und muss nicht angerechnet werden."
+            )
+        abschlaege.append(inv)
+    return sorted(
+        abschlaege, key=lambda i: (i.invoice_date or date.max, i.invoice_number or "")
+    )
+
+
+def _anrechnung_rows(abschlaege):
+    """Verkettungszeilen (invoice_advance) für die übergebenen Abschläge.
+
+    Je Abschlag und Steuersatz eine Zeile mit dem eingefrorenen Betrag. Die
+    Steuer wird je Gruppe gerundet — dieselbe Regel wie `_totals` und der
+    DB-CHECK; die Summe über alle Gruppen eines Abschlags ist damit exakt sein
+    `tax_total`.
+    """
+    rows = []
+    for inv in abschlaege:
+        gruppen = _summenwirksame_gruppen(inv)
+        for (code, rate), netto in gruppen.items():
+            if netto == 0:
+                # Steuergruppe ohne Betrag (z. B. reine 0-EUR-Zeile): nichts
+                # anzurechnen, keine Zeile — sonst verletzte sie den DB-CHECK
+                # net_amount > 0.
+                continue
+            if netto < 0:
+                raise ValueError(
+                    f"Abschlagsrechnung {inv.invoice_number}: die Steuergruppe "
+                    f"{code} ist negativ und lässt sich nicht anrechnen."
+                )
+            steuer = _round2(netto * rate / Decimal(100))
+            rows.append(
+                {
+                    "advance_invoice_id": inv.id,
+                    "tax_code_id": code,
+                    "tax_rate_percent": rate,
+                    "net_amount": netto,
+                    "tax_amount": steuer,
+                    "gross_amount": netto + steuer,
+                }
+            )
+    if not rows and abschlaege:
+        raise ValueError(
+            "Die gewählten Abschlagsrechnungen tragen keinen anrechenbaren Betrag."
+        )
+    return rows
+
+
+def _anrechnung_lines(rows, abschlaege, start_position):
+    """Negative Anrechnungspositionen aus den Verkettungszeilen.
+
+    `quantity = 1`, `unit_price = −Netto` (die DB verlangt `quantity > 0`; der
+    Einzelpreis darf negativ sein). Für die AUSGABE (PDF/XML) legt
+    `anzeige_menge_preis` das Vorzeichen auf die Menge — EN16931 verbietet
+    negative Einzelpreise (BR-27), negative Mengen dagegen nicht.
+    """
+    namen = {i.id: i for i in abschlaege}
+    lines = []
+    pos = start_position
+    for row in rows:
+        inv = namen[row["advance_invoice_id"]]
+        pos += 1
+        netto = row["net_amount"]
+        datum = inv.invoice_date.strftime("%d.%m.%Y") if inv.invoice_date else "-"
+        titel = (
+            "Abschlagsrechnung"
+            if inv.invoice_type == "ABSCHLAGSRECHNUNG"
+            else "Teilrechnung"
+        )
+        lines.append(
+            {
+                "position_number": pos,
+                "line_type": ANRECHNUNG_LINE_TYPE,
+                "line_kind": SUMMENWIRKSAM,
+                "description": (
+                    f"Abzüglich {titel} {inv.invoice_number} vom {datum} "
+                    f"({_prozent_text(row['tax_rate_percent'])} % USt)"
+                ),
+                "quantity": Decimal("1.000"),
+                "unit": None,
+                "unit_price": -netto,
+                "discount_percent": None,
+                "tax_code_id": row["tax_code_id"],
+                "tax_rate_percent": row["tax_rate_percent"],
+                "net_amount": -netto,
+                "advance_invoice_id": inv.id,
+            }
+        )
+    return lines
+
+
+def _prozent_text(rate):
+    """Steuersatz in deutscher Schreibweise ohne unnötige Nachkommastellen."""
+    r = Decimal(rate).normalize()
+    return f"{r:f}".replace(".", ",")
+
+
+def _anrechnung_schreiben(invoice, rows, abschlaege, *, prepared_user_lines):
+    """Schreibt Verkettung + Anrechnungspositionen und gibt die Kopfsummen zurück.
+
+    Läuft innerhalb einer laufenden `business_transaction`. Die Anrechnungs-
+    positionen stehen IMMER hinter den Leistungspositionen (der Abzug schließt den
+    Beleg ab) und sind keinem Abschnitt zugeordnet.
+    """
+    for row in rows:
+        InvoiceAdvance.objects.create(
+            id=uuid.uuid4(), final_invoice_id=invoice.id, **row
+        )
+    lines = _anrechnung_lines(rows, abschlaege, len(prepared_user_lines))
+    for row in lines:
+        InvoiceLine.objects.create(id=uuid.uuid4(), invoice_id=invoice.id, **row)
+    return _totals(list(prepared_user_lines) + lines)
+
+
+def anrechnungen(invoice):
+    """Die Anrechnung einer Schlussrechnung, je angerechnetem Abschlag gebündelt.
+
+    Quelle ist die Verkettungstabelle (nach der Veröffentlichung unveränderlich).
+    Einzige Ableitungsstelle — PDF, API und E-Rechnung greifen hierauf zu.
+    """
+    rows = list(
+        InvoiceAdvance.objects.filter(final_invoice_id=invoice.id)
+        .select_related("advance_invoice")
+        .order_by("advance_invoice__invoice_date", "advance_invoice__invoice_number",
+                  "tax_rate_percent")
+    )
+    gebuendelt = {}
+    for row in rows:
+        adv = row.advance_invoice
+        eintrag = gebuendelt.setdefault(
+            adv.id,
+            {
+                "advance_invoice_id": adv.id,
+                "invoice_number": adv.invoice_number,
+                "invoice_type": adv.invoice_type,
+                "invoice_date": adv.invoice_date,
+                "net_amount": Decimal("0.00"),
+                "tax_amount": Decimal("0.00"),
+                "gross_amount": Decimal("0.00"),
+                "steuergruppen": [],
+            },
+        )
+        eintrag["net_amount"] += row.net_amount
+        eintrag["tax_amount"] += row.tax_amount
+        eintrag["gross_amount"] += row.gross_amount
+        eintrag["steuergruppen"].append(
+            {
+                "tax_code": row.tax_code_id,
+                "tax_rate_percent": row.tax_rate_percent,
+                "net_amount": row.net_amount,
+                "tax_amount": row.tax_amount,
+                "gross_amount": row.gross_amount,
+            }
+        )
+    return list(gebuendelt.values())
+
+
+def leistungssummen(invoice, anrechnung=None):
+    """(Leistung, Anrechnung) einer Schlussrechnung — oder None ohne Anrechnung.
+
+    Die Leistungssumme wird **aus den Kopfsummen plus Anrechnung** zurückgerechnet,
+    nicht aus den Leistungspositionen neu summiert. Grund: Steuer wird je
+    Steuergruppe gerundet, und `round(Leistung·r) − round(Abschlag·r)` kann um
+    einen Cent von `round((Leistung−Abschlag)·r)` abweichen. Der Beleg schuldet
+    aber genau `tax_total`; die ausgewiesene Kette
+    „Leistung − Anrechnung = Zahlbetrag" muss deshalb auf diesen Wert aufgehen und
+    nicht auf einen zweiten, unabhängig gerundeten.
+    """
+    posten = anrechnung if anrechnung is not None else anrechnungen(invoice)
+    if not posten:
+        return None
+    netto = sum((p["net_amount"] for p in posten), Decimal("0.00"))
+    steuer = sum((p["tax_amount"] for p in posten), Decimal("0.00"))
+    brutto = sum((p["gross_amount"] for p in posten), Decimal("0.00"))
+    return {
+        "leistung_net": (invoice.net_total or Decimal("0.00")) + netto,
+        "leistung_tax": (invoice.tax_total or Decimal("0.00")) + steuer,
+        "leistung_gross": (invoice.gross_total or Decimal("0.00")) + brutto,
+        "anrechnung_net": netto,
+        "anrechnung_tax": steuer,
+        "anrechnung_gross": brutto,
+        "zahlbetrag": invoice.gross_total,
+        "posten": posten,
+    }
 
 
 def create_invoice(
@@ -625,13 +1074,22 @@ def create_invoice(
     discount_days=None,
     lines=None,
     rubriken=None,
+    advance_invoice_ids=None,
 ):
-    """Legt eine Rechnung/Gutschrift (Status ENTWURF) mit Positionen an.
+    """Legt eine Rechnung (Status ENTWURF) mit Positionen an.
 
-    Gutschrift/Storno verlangen eine Referenzrechnung (DB-CHECK). Ein
-    work_order-Bezug ist für die spätere Veröffentlichung erforderlich (B-08),
-    beim Anlegen aber optional. Belegnummer und Veröffentlichung: siehe
-    publish_invoice.
+    `invoice_type` deckt RECHNUNG, ABSCHLAGSRECHNUNG, TEILRECHNUNG und
+    SCHLUSSRECHNUNG ab. Gutschrift/Storno entstehen ausschließlich als Folgebeleg
+    (create_cancellation/create_correction).
+
+    Bei einer SCHLUSSRECHNUNG rechnen `advance_invoice_ids` die genannten
+    Abschlags-/Teilrechnungen an: die Verkettung (invoicing.invoice_advance) und
+    die negativen Anrechnungspositionen je Steuersatz entstehen dabei automatisch.
+    Der Zahlbetrag (gross_total) ist damit die Differenz.
+
+    Ein work_order-Bezug ist für die spätere Veröffentlichung erforderlich (B-08),
+    beim Anlegen aber optional — außer bei einer Anrechnung (die Abschläge hängen
+    am Auftrag). Belegnummer und Veröffentlichung: siehe publish_invoice.
     """
     if invoice_type not in INVOICE_TYPES:
         raise ValueError(
@@ -645,6 +1103,10 @@ def create_invoice(
         raise ValueError(
             f"{invoice_type} wird nicht direkt angelegt, sondern über "
             "create_cancellation/create_correction erzeugt."
+        )
+    if advance_invoice_ids and invoice_type != FINAL_TYPE:
+        raise ValueError(
+            "Abschlagsrechnungen kann nur eine Schlussrechnung anrechnen."
         )
     ensure_exists(Property, property_id, "Liegenschaft")
     ensure_exists(Project, project_id, "Projekt")
@@ -661,6 +1123,8 @@ def create_invoice(
     )
     prepared, net_total, tax_total, gross_total = _prepare_lines(lines)
     rubriken_norm = _prepare_rubriken(rubriken, prepared)
+    abschlaege = _abschlaege_laden(work_order_id, advance_invoice_ids)
+    anrechnung_rows = _anrechnung_rows(abschlaege)
 
     with business_transaction(actor_app_user_id):
         invoice = Invoice.objects.create(
@@ -684,7 +1148,116 @@ def create_invoice(
             for r in rubriken_norm
         ]
         _write_lines(prepared, rubrik_ids, model=InvoiceLine, invoice_id=invoice.id)
+        if anrechnung_rows:
+            net_total, tax_total, gross_total = _anrechnung_schreiben(
+                invoice, anrechnung_rows, abschlaege, prepared_user_lines=prepared,
+            )
+            _anrechnung_pruefen(gross_total)
+            Invoice.objects.filter(id=invoice.id).update(
+                net_total=net_total, tax_total=tax_total, gross_total=gross_total
+            )
         invoice.refresh_from_db()
+    return invoice
+
+
+def _anrechnung_pruefen(gross_total):
+    """Die Anrechnung darf die Leistung nicht übersteigen.
+
+    Sonst wäre die „Rechnung" eine Erstattung — dafür gibt es die Gutschrift. Die
+    DB lehnt das beim Veröffentlichen ohnehin ab (Tor in Migration 0060); hier
+    kommt die Meldung schon beim Speichern, wo sie behebbar ist.
+    """
+    if gross_total is not None and gross_total < 0:
+        raise ValueError(
+            "Die Anrechnung der Abschlagsrechnungen übersteigt die abgerechnete "
+            "Leistung. Für eine Erstattung ist eine Gutschrift zu stellen, keine "
+            "Schlussrechnung."
+        )
+
+
+def _vergessene_anrechnung_pruefen(invoice):
+    """Eine Schlussrechnung darf keinen anrechenbaren Abschlag übergehen.
+
+    Der teuerste Bedienfehler der Domäne: Wer die Abschläge im Dialog abwählt (oder
+    `PUT /advances` mit leerer Liste schickt), stellt eine Schlussrechnung über die
+    **volle** Leistung — der Kunde zahlt den Abschlag ein zweites Mal, und der Beleg
+    ist danach unveränderlich (GoBD). Kein stiller Default, keine Übergehungs-
+    Option: gibt es zum Auftrag noch veröffentlichte, nicht stornierte und nicht
+    anderweitig gebundene AR/TR, wird die Veröffentlichung abgelehnt.
+
+    Eine bewusste Ausnahme wäre nur über einen eigenen, begründungspflichtigen
+    Vorgang vertretbar (Vier-Augen); bis es einen gibt, gilt: alles anrechnen.
+    Dieselbe Regel setzt die DB durch (Tor in Migration 0060) — hier kommt sie
+    mit Belegnummern statt UUIDs.
+    """
+    if invoice.invoice_type != FINAL_TYPE or invoice.work_order_id is None:
+        return
+    offen = [
+        a
+        for a in anrechenbare_abschlaege(
+            invoice.work_order_id, final_invoice_id=invoice.id
+        )
+        if not a["angerechnet"]
+    ]
+    if not offen:
+        return
+    nummern = ", ".join((a["invoice_number"] or str(a["id"])) for a in offen)
+    raise ValueError(
+        f"Diese Schlussrechnung übergeht {len(offen)} anrechenbare "
+        f"Abschlags-/Teilrechnung(en): {nummern}. Sie müssen angerechnet werden — "
+        "sonst wird der bereits berechnete Betrag ein zweites Mal gefordert."
+    )
+
+
+def set_invoice_advances(actor_app_user_id, *, invoice_id, advance_invoice_ids):
+    """Setzt die angerechneten Abschläge einer Schlussrechnung im ENTWURF neu.
+
+    Ersetzt die Verkettung vollständig (das UI schickt die ganze Auswahl) und baut
+    die Anrechnungspositionen daraus neu auf. Die Leistungspositionen bleiben
+    unangetastet; die Kopfsummen werden aus allen Positionen neu abgeleitet.
+    """
+    invoice = (
+        Invoice.objects.filter(id=invoice_id).prefetch_related("lines").first()
+    )
+    if invoice is None:
+        raise ValueError("Rechnung nicht gefunden.")
+    if invoice.invoice_type != FINAL_TYPE:
+        raise ValueError("Abschlagsrechnungen kann nur eine Schlussrechnung anrechnen.")
+    if invoice.status not in INVOICE_EDITIERBAR:
+        raise ValueError(
+            f"Rechnung im Status {invoice.status} ist unveränderlich (veröffentlicht)."
+        )
+    abschlaege = _abschlaege_laden(
+        invoice.work_order_id, advance_invoice_ids, final_invoice_id=invoice.id
+    )
+    rows = _anrechnung_rows(abschlaege)
+    # Leistungspositionen = alles, was keine Anrechnung ist. Sie behalten ihre
+    # Nummern; die Anrechnung hängt sich hinten an.
+    user_lines = [
+        {
+            "line_type": l.line_type,
+            "line_kind": l.line_kind,
+            "net_amount": l.net_amount,
+            "tax_code_id": l.tax_code_id,
+            "tax_rate_percent": l.tax_rate_percent,
+        }
+        for l in sorted(invoice.lines.all(), key=lambda l: l.position_number)
+        if l.advance_invoice_id is None
+    ]
+    with as_business_error():
+        with business_transaction(actor_app_user_id):
+            InvoiceLine.objects.filter(
+                invoice_id=invoice.id, advance_invoice__isnull=False
+            ).delete()
+            InvoiceAdvance.objects.filter(final_invoice_id=invoice.id).delete()
+            net_total, tax_total, gross_total = _anrechnung_schreiben(
+                invoice, rows, abschlaege, prepared_user_lines=user_lines,
+            )
+            _anrechnung_pruefen(gross_total)
+            Invoice.objects.filter(id=invoice.id).update(
+                net_total=net_total, tax_total=tax_total, gross_total=gross_total
+            )
+    invoice.refresh_from_db()
     return invoice
 
 
@@ -984,7 +1557,43 @@ def _line_snapshot(line, rubrik_nummern=None):
     }
 
 
-def _snapshot_and_hash(header, lines, parties=None, rubriken=None):
+def _advance_snapshot(posten):
+    """Die Anrechnung für den Beleg-Snapshot (nur Schlussrechnungen).
+
+    Sie gehört in den gehashten Beleg: sie steht auf dem Dokument, das der Kunde
+    bekommt („abzüglich Abschlagsrechnung RE-… vom …"), und ohne sie ließe sich
+    der Beleg aus dem Snapshot nicht rekonstruieren.
+    """
+    def s(v):
+        return None if v is None else str(v)
+
+    return [
+        {
+            "advance_invoice_id": str(p["advance_invoice_id"]),
+            "invoice_number": p["invoice_number"],
+            "invoice_type": p["invoice_type"],
+            "invoice_date": (
+                p["invoice_date"].isoformat() if p["invoice_date"] else None
+            ),
+            "net_amount": s(p["net_amount"]),
+            "tax_amount": s(p["tax_amount"]),
+            "gross_amount": s(p["gross_amount"]),
+            "steuergruppen": [
+                {
+                    "tax_code": g["tax_code"],
+                    "tax_rate_percent": s(g["tax_rate_percent"]),
+                    "net_amount": s(g["net_amount"]),
+                    "tax_amount": s(g["tax_amount"]),
+                    "gross_amount": s(g["gross_amount"]),
+                }
+                for g in p["steuergruppen"]
+            ],
+        }
+        for p in posten
+    ]
+
+
+def _snapshot_and_hash(header, lines, parties=None, rubriken=None, advances=None):
     """Baut einen unveränderlichen Beleg-Snapshot (dict) und dessen SHA-256-Hash.
 
     Der Hash läuft über die kanonische JSON-Serialisierung (sortierte Schlüssel,
@@ -1012,6 +1621,11 @@ def _snapshot_and_hash(header, lines, parties=None, rubriken=None):
         "lines": [_line_snapshot(l, rubrik_nummern) for l in lines],
         "parties": parties or [],
     }
+    # Nur setzen, wenn es eine Anrechnung gibt: sonst änderte sich der Hash jedes
+    # gewöhnlichen Belegs ohne inhaltlichen Grund (und Angebote trügen ein Feld,
+    # das es dort nicht gibt).
+    if advances:
+        snapshot["advances"] = advances
     canonical = json.dumps(snapshot, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     return snapshot, digest
@@ -1039,6 +1653,7 @@ def publish_invoice(actor_app_user_id, *, invoice_id):
         raise ValueError(
             "Veröffentlichung erfordert einen zugeordneten Auftrag (B-08)."
         )
+    _vergessene_anrechnung_pruefen(invoice)
 
     # Das Belegdatum wird IMMER hier festgeschrieben, wenn es fehlt — nicht erst
     # vom DB-Trigger (der bleibt das Sicherheitsnetz). Sonst trüge der gehashte
@@ -1115,8 +1730,10 @@ def publish_invoice(actor_app_user_id, *, invoice_id):
         for p in sorted(invoice.parties.all(), key=lambda p: (p.role, str(p.party_id)))
     ]
     lines = sorted(invoice.lines.all(), key=lambda l: l.position_number)
+    posten = anrechnungen(invoice) if invoice.invoice_type == FINAL_TYPE else []
     snapshot, digest = _snapshot_and_hash(
-        header, lines, parties, rubriken=list(invoice.rubriken.all())
+        header, lines, parties, rubriken=list(invoice.rubriken.all()),
+        advances=_advance_snapshot(posten),
     )
 
     with as_business_error():
@@ -1236,17 +1853,8 @@ def _negated_lines(origin_lines, positions=None):
             }
         )
 
-    net_total = Decimal("0.00")
-    group_net = defaultdict(lambda: Decimal("0.00"))
-    for row in prepared:
-        if row["line_type"] in TEXT_TYPES or row["line_kind"] != SUMMENWIRKSAM:
-            continue
-        net_total += row["net_amount"]
-        group_net[(row["tax_code_id"], row["tax_rate_percent"])] += row["net_amount"]
-    tax_total = Decimal("0.00")
-    for (_code, rate), net in group_net.items():
-        tax_total += _round2(net * rate / Decimal(100))
-    return prepared, net_total, tax_total, net_total + tax_total
+    net, tax, gross = _totals(prepared)
+    return prepared, net, tax, gross
 
 
 def _create_credit(actor_app_user_id, origin, *, invoice_type, positions):
@@ -1315,6 +1923,40 @@ def _create_credit(actor_app_user_id, origin, *, invoice_type, positions):
     return published
 
 
+def _anrechnung_sperre_pruefen(origin):
+    """Ein angerechneter Abschlag ist nicht korrigierbar (Migration 0060).
+
+    Solange eine veröffentlichte Schlussrechnung ihn anrechnet, wäre ein Storno
+    (oder eine Teilgutschrift) ein Widerspruch: die unveränderliche
+    Schlussrechnung wiese einen Abzug für einen Beleg aus, den es nicht mehr gibt
+    — der Kunde bekäme die Abschlagssumme geschenkt.
+
+    Der Weg zurück führt **ausschließlich über das STORNO der Schlussrechnung**.
+    Nur das Storno löst die Bindung (`invoicing.advance_blocking_final` prüft
+    genau darauf); eine Gutschrift lässt die Schlussrechnung bestehen — und wäre
+    auf einer Schlussrechnung MIT Anrechnung ohnehin unzulässig (siehe
+    create_correction). Die Meldung nennt deshalb nur das Storno: der frühere
+    Hinweis „Storno/Gutschrift" führte in eine Sackgasse (Gutschrift erstellt,
+    Abschlag bleibt trotzdem für immer gebunden).
+
+    Die DB lehnt es ohnehin ab (Tor im Veröffentlichungspfad des Kreditbelegs);
+    hier kommt die Meldung mit der Belegnummer der Schlussrechnung.
+    """
+    if origin.invoice_type not in ADVANCE_TYPES:
+        return
+    gebunden = _gebundene_abschlaege([origin.id])
+    final_id = gebunden.get(origin.id)
+    if final_id is None:
+        return
+    final = Invoice.objects.filter(id=final_id).only("invoice_number").first()
+    nummer = (final.invoice_number if final else None) or str(final_id)
+    raise ValueError(
+        f"Dieser Abschlag ist in der Schlussrechnung {nummer} angerechnet und "
+        "kann nicht storniert oder gutgeschrieben werden. Stornieren Sie zuerst "
+        "die Schlussrechnung — danach ist der Abschlag wieder frei."
+    )
+
+
 def create_cancellation(actor_app_user_id, *, invoice_id):
     """Storniert eine veröffentlichte Rechnung durch einen Stornobeleg (STORNO)
     mit vollständig invertierten Positionen."""
@@ -1329,6 +1971,7 @@ def create_cancellation(actor_app_user_id, *, invoice_id):
         raise ValueError("Nur veröffentlichte Rechnungen können storniert werden (B-21).")
     if origin.invoice_type in _CREDIT_TYPES:
         raise ValueError("Eine Gutschrift/Storno kann nicht erneut storniert werden.")
+    _anrechnung_sperre_pruefen(origin)
     if Invoice.objects.filter(
         reference_invoice_id=origin.id, invoice_type="STORNO", status="VEROEFFENTLICHT"
     ).exists():
@@ -1338,7 +1981,19 @@ def create_cancellation(actor_app_user_id, *, invoice_id):
 
 def create_correction(actor_app_user_id, *, invoice_id, positions):
     """Erzeugt eine Rechnungskorrektur (GUTSCHRIFT) über die angegebenen
-    Positionen (position_number) einer veröffentlichten Rechnung."""
+    Positionen (position_number) einer veröffentlichten Rechnung.
+
+    **Eine Schlussrechnung MIT Anrechnung ist nicht teilgutschriftfähig.** Ihre
+    Positionen sind kein unabhängiger Satz: die Anrechnungspositionen sind
+    negative Abzüge, die nur zusammen mit der Leistung Sinn ergeben. Wer
+    ausgerechnet den Abzug „gutschreibt", dreht ihn um — es entstünde eine
+    GUTSCHRIFT mit POSITIVEM Betrag, die den Abschlag ein zweites Mal einfordert
+    (Review-Befund). Und selbst eine korrekt gewählte Teilkorrektur ließe die
+    Anrechnung unangetastet, während der Abschlag gebunden bliebe. Zulässig ist
+    dort nur das **Storno** der Schlussrechnung (das dreht die Anrechnung
+    vollständig mit um und gibt den Abschlag frei); danach lässt sich die
+    Schlussrechnung neu und richtig stellen.
+    """
     if not positions:
         raise ValueError(
             "Rechnungskorrektur erfordert mindestens eine zu korrigierende Position."
@@ -1354,8 +2009,21 @@ def create_correction(actor_app_user_id, *, invoice_id, positions):
         raise ValueError("Nur veröffentlichte Rechnungen können korrigiert werden (B-21).")
     if origin.invoice_type in _CREDIT_TYPES:
         raise ValueError("Eine Gutschrift/Storno kann nicht korrigiert werden.")
+    _anrechnung_sperre_pruefen(origin)
+    if origin.invoice_type == FINAL_TYPE and InvoiceAdvance.objects.filter(
+        final_invoice_id=origin.id
+    ).exists():
+        raise ValueError(
+            "Eine Schlussrechnung mit angerechneten Abschlägen lässt sich nicht "
+            "teilweise gutschreiben — die Anrechnung bliebe dabei stehen. "
+            "Stornieren Sie die Schlussrechnung vollständig und stellen Sie sie neu."
+        )
     valid_positions = {
-        l.position_number for l in origin.lines.all() if l.line_type not in TEXT_TYPES
+        l.position_number
+        for l in origin.lines.all()
+        # Anrechnungspositionen sind NICHT korrigierbar: ihre Invertierung wäre
+        # eine Forderung, keine Gutschrift.
+        if l.line_type not in TEXT_TYPES and l.advance_invoice_id is None
     }
     unknown = set(positions) - valid_positions
     if unknown:
