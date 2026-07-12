@@ -145,6 +145,21 @@
                   <span class="ref__name">{{ a.display_name }}</span>
                   <span class="ref__stamps">
                     <span class="stamp stamp--type">{{ roleLabel(a.role) }}</span>
+                    @if (darfDispo()) {
+                      <!-- Gegenstück zum Zuweisen. Bisher ließ sich eine Zuweisung
+                           NUR per Drag & Drop in der Plantafel lösen — hier war sie
+                           eine Sackgasse. Nach Einsatzabschluss sperrt der
+                           DB-Trigger das Lösen (Historienschutz F-02) → 422. -->
+                      <button
+                        type="button"
+                        class="btn"
+                        [disabled]="aktionBusyId() === a.assignee_id"
+                        (click)="zuweisungEntfernen(a.assignee_id, a.display_name)"
+                        [attr.aria-label]="'Zuweisung von ' + a.display_name + ' aufheben'"
+                      >
+                        Entfernen
+                      </button>
+                    }
                   </span>
                 </div>
               </li>
@@ -212,7 +227,14 @@
                     <span class="stamp stamp--type">{{ timeTypeLabel(t.time_type) }}</span>
                     @if (t.user) { <span class="erfassung-zeile__akteur">{{ t.user }}</span> }
                   </span>
-                  <span class="erfassung-zeile__zeit">{{ dt(t.started_at) }} – {{ dt(t.ended_at) }}</span>
+                  <span class="erfassung-zeile__zeit">
+                    {{ dt(t.started_at) }} –
+                    @if (t.ended_at) {
+                      {{ dt(t.ended_at) }}
+                    } @else {
+                      <span class="stamp stamp--type">läuft</span>
+                    }
+                  </span>
                   @if (t.note) { <span class="erfassung-zeile__note">{{ t.note }}</span> }
                 </li>
               }

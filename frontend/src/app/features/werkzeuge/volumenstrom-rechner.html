@@ -1,0 +1,83 @@
+<div class="rechner">
+  <form class="rechner__eingabe" [formGroup]="form" (submit)="$event.preventDefault()">
+    <fieldset class="rechner__satz">
+      <legend class="rechner__legende">Eingabe</legend>
+
+      <app-feld
+        [control]="form.controls.leistung"
+        label="Heizleistung (kW)"
+        typ="zahl"
+        hinweis="Übertragene Leistung, z. B. 12"
+      />
+
+      <app-feld
+        [control]="form.controls.spreizung"
+        label="Spreizung ΔT (K)"
+        typ="zahl"
+        hinweis="Differenz Vorlauf minus Rücklauf"
+      />
+
+      <div>
+        <p class="rechner__legende" id="preset-label">Schnellwahl Spreizung</p>
+        <div class="rechner__presets" role="group" aria-labelledby="preset-label">
+          @for (p of presets; track p.wert) {
+            <button
+              type="button"
+              class="rechner__preset"
+              [attr.aria-pressed]="istPreset(p.wert)"
+              (click)="presetWaehlen(p.wert)"
+            >
+              {{ p.label }}
+            </button>
+          }
+        </div>
+      </div>
+    </fieldset>
+  </form>
+
+  <div class="rechner__ergebnis">
+    <p class="rechner__ergebnis-label" id="vol-label">Volumenstrom</p>
+    <output
+      class="rechner__wert"
+      [class.rechner__wert--leer]="!ergebnis()"
+      aria-labelledby="vol-label"
+      aria-live="polite"
+      >{{ lhText() }}</output
+    >
+    @if (m3hText()) {
+      <p class="rechner__zweitwert">{{ m3hText() }}</p>
+    }
+
+    @if (formelText()) {
+      <p class="rechner__formel">{{ formelText() }}</p>
+    } @else {
+      <p class="rechner__formel">Heizleistung und Spreizung eingeben (beide größer als 0).</p>
+    }
+
+    <div class="rechner__aktionen">
+      <button type="button" class="rechner__btn" [disabled]="!ergebnis()" (click)="kopieren()">
+        Ergebnis kopieren
+      </button>
+      @if (uebernahme()) {
+        <button
+          type="button"
+          class="rechner__btn rechner__btn--primary"
+          [disabled]="!ergebnis()"
+          (click)="uebernehmenKlick()"
+        >
+          Als Textposition übernehmen
+        </button>
+      }
+    </div>
+
+    @if (rueckmeldung()) {
+      <p class="rechner__rueckmeldung" role="status">{{ rueckmeldung() }}</p>
+    }
+  </div>
+</div>
+
+<p class="rechner__hinweis">
+  V̇ = Q / (c · ΔT) mit c = {{ cWasser }} Wh/(l·K) für Wasser — das ist ρ · c<sub>p</sub> in der im
+  Handwerk üblichen Schreibweise. Reine Physik: kein Normbezug, keine Annahme über die Anlage.
+  Für Gemische (z. B. Glykol) gilt der Wert nicht.
+</p>

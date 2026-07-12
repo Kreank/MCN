@@ -13,6 +13,12 @@ interface NavItem {
   recht?: readonly [string, string];
   /** Alternativ: sichtbar, sobald EINES dieser Rechte vorliegt (ODER-Logik). */
   rechtOder?: readonly (readonly [string, string])[];
+  /**
+   * Die Zielansicht wertet den row_scope NICHT aus (`permissions.require`) und
+   * antwortet bei Scope EIGENE mit 403 — der Punkt darf dann gar nicht
+   * erscheinen. Siehe `AuthService.darfAlle`.
+   */
+  nurAlle?: boolean;
 }
 
 @Component({
@@ -48,13 +54,32 @@ export class App {
     // Personal/HR liegt fachlich zwischen interner Arbeitsorganisation (Aufgaben)
     // und dem Stammdaten-Cluster (Artikel) → Zwischenschritt 65 statt
     // Renummerierung der Folgepunkte.
-    { path: '/mitarbeiter', label: 'Mitarbeiter', mark: '65', recht: ['hr', 'LESEN'] },
+    // `nurAlle`: seit Migration 0068 trägt MONTEUR hr/LESEN mit Scope EIGENE
+    // (für die eigene Zeiterfassung). Die Personalliste und die Verwaltungs-
+    // sicht der Zeiterfassung werten den Scope nicht aus und antworten mit 403
+    // — sie dürfen ihm deshalb gar nicht erst angeboten werden.
+    { path: '/mitarbeiter', label: 'Mitarbeiter', mark: '65', recht: ['hr', 'LESEN'], nurAlle: true },
+    // Zeiterfassung (Verwaltung): Arbeitstage prüfen, bestätigen, exportieren.
+    // Gesetzlicher Kern: § 17 MiLoG (Beginn/Ende/Dauer, 7 Tage, 2 Jahre, Zoll).
+    {
+      path: '/zeiterfassung',
+      label: 'Zeiterfassung',
+      mark: '66',
+      recht: ['hr', 'LESEN'],
+      nurAlle: true,
+    },
+    // „Meine Zeiten" ist die Stempeluhr — für JEDEN, der Zeit erfassen darf,
+    // also gerade auch für den Monteur mit Scope EIGENE.
+    { path: '/meine-zeiten', label: 'Meine Zeiten', mark: '67', recht: ['hr', 'AENDERN'] },
     { path: '/artikel', label: 'Artikel', mark: '70', recht: ['pricing', 'LESEN'] },
     { path: '/buchhaltung', label: 'Buchhaltung', mark: '80', recht: ['invoicing', 'LESEN'] },
     // Eingangsrechnungen (accounting.receipt): eigener Belegkreis EB-, eigenes
     // Rechte-Modul — deshalb neben, nicht unter der Buchhaltung.
     { path: '/belegerfassung', label: 'Belegerfassung', mark: '82', recht: ['accounting', 'LESEN'] },
     { path: '/auswertungen', label: 'Auswertungen', mark: '90', recht: ['invoicing', 'LESEN'] },
+    // Werkzeuge (Heizlast, Heizkörper, Volumenstrom, Einheiten): reine Rechner
+    // ohne Serverzugriff — kein Modulrecht, für jede angemeldete Rolle sichtbar.
+    { path: '/werkzeuge', label: 'Werkzeuge', mark: '92' },
     // Einstellungen: nur für Rollen, die etwas ändern dürfen (Firmenprofil/
     // Gewerke/Niederlassungen = company/AENDERN, Mahnstufen = invoicing/AENDERN).
     {
@@ -87,7 +112,12 @@ export class App {
   /** Nur Navigationspunkte, für die (mindestens) ein Recht vorliegt. */
   protected readonly sichtbareNav = computed(() =>
     this.nav.filter((n) => {
-      if (n.recht && !this.auth.darf(n.recht[0], n.recht[1])) return false;
+      if (n.recht) {
+        const ok = n.nurAlle
+          ? this.auth.darfAlle(n.recht[0], n.recht[1])
+          : this.auth.darf(n.recht[0], n.recht[1]);
+        if (!ok) return false;
+      }
       if (n.rechtOder && !n.rechtOder.some((r) => this.auth.darf(r[0], r[1]))) return false;
       return true;
     }),

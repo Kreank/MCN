@@ -1777,11 +1777,95 @@ class JobAssignment(models.Model):
         return f"{self.role} {self.assignee_id} @ {self.service_job_id}"
 
 
-class TimeEntry(models.Model):
-    """workflow.time_entry — Zeiterfassung am Einsatz (Migration 0017).
+class TimeCategory(models.Model):
+    """hr.time_category — Zeitkategorie (Migration 0066).
 
-    Zeitarten B-27; INTERNE_ZEIT darf ohne Einsatzbezug erfasst werden, sonst ist
-    service_job Pflicht. Korrekturfenster B-28 setzt die DB durch.
+    Loest das harte `time_type`-Enum aus 0017 ab. `is_work_time` ist das einzige
+    fachlich harte Attribut (ArbZG/MiLoG); alles andere ist Betriebssache.
+    Systemkategorien (`is_system`, mit `code`) sind nicht archivierbar, und
+    `PAUSE.is_work_time` ist nicht umschaltbar (Trigger).
+    """
+
+    id = models.UUIDField(primary_key=True)
+    code = models.TextField(null=True, blank=True)
+    name = models.TextField()
+    description = models.TextField(null=True, blank=True)
+    is_work_time = models.BooleanField()
+    is_system = models.BooleanField(db_default=False)
+    status = models.TextField(db_default=models.Value("AKTIV"))  # AKTIV|ARCHIVIERT
+    sort_order = models.IntegerField(db_default=models.Value(100))
+    version = models.IntegerField(db_default=models.Value(1))
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'hr"."time_category'
+
+    def __str__(self):
+        return self.name
+
+
+class WorkDay(models.Model):
+    """workflow.work_day — Tagesklammer der Zeiterfassung (Migration 0067).
+
+    Der gesetzliche Kern: § 17 MiLoG verlangt Beginn, Ende und Dauer der
+    TAEGLICHEN Arbeitszeit. Der Arbeitstag haengt an `security.app_user` (nicht
+    an `hr.employee`) — Begruendung im Migrationskopf. Ein Zeiteintrag wird dem
+    lokalen Kalendertag seines BEGINNS zugeordnet (Nachtschicht → Anfangstag).
+
+    Statusautomat ENTWURF → EINGEREICHT → BESTAETIGT|ABGELEHNT; eine Aenderung
+    an einem BESTAETIGTen Tag verlangt eine Begruendung und wirft ihn auf
+    ENTWURF zurueck. Vier-Augen: `decided_by <> user_id` (Trigger).
+    """
+
+    id = models.UUIDField(primary_key=True)
+    user = models.ForeignKey(
+        AppUser, models.DO_NOTHING, db_column="user_id", related_name="work_days"
+    )
+    day = models.DateField()
+    status = models.TextField(db_default=models.Value("ENTWURF"))
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    decided_by = models.ForeignKey(
+        AppUser,
+        models.DO_NOTHING,
+        db_column="decided_by",
+        null=True,
+        blank=True,
+        related_name="decided_work_days",
+    )
+    decided_at = models.DateTimeField(null=True, blank=True)
+    decision_note = models.TextField(null=True, blank=True)
+    note = models.TextField(null=True, blank=True)
+    version = models.IntegerField(db_default=models.Value(1))
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'workflow"."work_day'
+
+    def __str__(self):
+        return f"{self.day} ({self.status})"
+
+
+class TimeEntry(models.Model):
+    """workflow.time_entry — Zeiterfassung (Migration 0017, umgebaut in 0066/0067).
+
+    * Kategorie statt Enum (0066): `category` → hr.time_category. `time_type`
+      ist gedroppt; die gleichnamige **Property** liefert weiter den Code der
+      Systemkategorie, damit bestehende Ausgabepfade unveraendert lesen koennen.
+    * Einsatzbezug ist fuer JEDE Kategorie optional (Werkstatt-/Buero-/Fahrtzeit
+      haengt an keinem Termin).
+    * `ended_at IS NULL` = **laeuft gerade** (Stempeluhr). Genau eine laufende
+      Buchung je Mitarbeiter (partieller UNIQUE-Index). Der EXCLUDE gegen
+      Ueberlappung greift nur unter den ABGESCHLOSSENEN Buchungen
+      (`WHERE ended_at IS NOT NULL`) — eine laufende Buchung hat noch kein Ende
+      und darf keine spaeter geplante Zeit blockieren (0066).
+    * `work_day` (0067) setzt ein DB-Trigger selbst — jeder Eintrag haengt am
+      Arbeitstag seines Beginndatums.
+    * Zwei unabhaengige Schloesser: B-28 (kaufmaennisch, 0017) und das
+      Arbeitstag-Schloss (arbeitsrechtlich, 0067).
     """
 
     id = models.UUIDField(primary_key=True)
@@ -1796,10 +1880,21 @@ class TimeEntry(models.Model):
     user = models.ForeignKey(
         AppUser, models.DO_NOTHING, db_column="user_id", related_name="time_entries"
     )
-    # ARBEITSZEIT|FAHRTZEIT|PAUSE|BEREITSCHAFT|NACHARBEIT|INTERNE_ZEIT
-    time_type = models.TextField()
+    category = models.ForeignKey(
+        TimeCategory,
+        models.DO_NOTHING,
+        db_column="category_id",
+        related_name="time_entries",
+    )
+    work_day = models.ForeignKey(
+        WorkDay,
+        models.DO_NOTHING,
+        db_column="work_day_id",
+        related_name="time_entries",
+    )
     started_at = models.DateTimeField()
-    ended_at = models.DateTimeField()
+    ended_at = models.DateTimeField(null=True, blank=True)
+    auto_generated = models.BooleanField(db_default=False)
     note = models.TextField(null=True, blank=True)
     created_at = models.DateTimeField(db_default=Now())
     updated_at = models.DateTimeField(db_default=Now())
@@ -1807,6 +1902,17 @@ class TimeEntry(models.Model):
     class Meta:
         managed = False
         db_table = 'workflow"."time_entry'
+
+    @property
+    def time_type(self):
+        """Rueckwaertskompatible Anzeige: Code der Systemkategorie, sonst Name.
+
+        Bestandsausgaben (Einsatz-Mappe) sprechen weiter von „Zeitart"; die
+        Property haelt sie am Leben, ohne eine zweite Klassifikation in der DB
+        zu fuehren. **Kein Filterfeld** — ORM-Filter laufen ueber `category`.
+        """
+        cat = self.category
+        return (cat.code or cat.name) if cat else None
 
     def __str__(self):
         return f"{self.time_type} {self.started_at:%Y-%m-%d}"
@@ -2279,6 +2385,47 @@ class VacationBudget(models.Model):
 
     def __str__(self):
         return f"Urlaubskonto {self.year} ({self.employee_id})"
+
+
+class BreakRule(models.Model):
+    """hr.break_rule — Pausenregel des Betriebs, Singleton (Migration 0068).
+
+    KEINE | GESETZLICH (ArbZG § 4: >6 h → 30 min, >9 h → 45 min) | FESTE_ZEITEN
+    (Fenster in `fixed_breaks`: [{"von": "12:00", "bis": "12:30"}, …]).
+    """
+
+    id = models.UUIDField(primary_key=True)
+    is_singleton = models.BooleanField(db_default=True)
+    mode = models.TextField(db_default=models.Value("GESETZLICH"))
+    fixed_breaks = models.JSONField(db_default=models.Value("[]"))
+    version = models.IntegerField(db_default=models.Value(1))
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'hr"."break_rule'
+
+    def __str__(self):
+        return f"Pausenregel {self.mode}"
+
+
+class Holiday(models.Model):
+    """hr.holiday — Feiertag (Migration 0068). `region` NULL = bundesweit."""
+
+    id = models.UUIDField(primary_key=True)
+    day = models.DateField()
+    name = models.TextField()
+    region = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'hr"."holiday'
+
+    def __str__(self):
+        return f"{self.day} {self.name}"
 
 
 # ---------------------------------------------------------------------------

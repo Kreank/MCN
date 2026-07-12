@@ -385,21 +385,48 @@ def test_belegung_ohne_ueberlappung_keine_warnung(app_user):
 
 
 @pytest.mark.django_db
-def test_belegung_keine_warnung_ohne_zeitfenster(app_user):
-    """Ohne vollständig bekannten Zeitraum wird bewusst NICHT gewarnt (keine
-    erfundene Regel)."""
+def test_belegung_warnt_auch_bei_fehlendem_ende(app_user):
+    """Ein FEHLENDES Ende darf die Warnung nicht verstummen lassen.
+
+    Früher schwieg `belegungs_warnungen`, sobald irgendwo ein Ende fehlte — die
+    einzige Stelle, die vor Doppelbelegung warnt, war ausgerechnet an den
+    unsaubersten Daten blind. Jetzt gilt ein Termin ohne Ende als **Zeitpunkt**:
+    Er kollidiert, wenn sein Beginn im Zeitraum des anderen liegt. Geraten wird
+    nichts (keine erfundene Dauer) — stattdessen kommt zusätzlich der Hinweis
+    OFFENES_ENDE.
+    """
     order = _order(app_user)
-    job_a = _job(app_user, order, start=T0, end=T1)
-    job_b = _job(app_user, order, start=T2)  # kein Ende
+    job_a = _job(app_user, order, start=T0, end=T1)  # 08:00–12:00
+    job_b = _job(app_user, order, start=T2)          # 10:00, kein Ende
     monteur = _app_user()
     for j in (job_a, job_b):
         einsatz_service.assign_user(
             app_user.id, service_job_id=j.id, assignee_user_id=monteur.id
         )
-    assert planung_service.belegungs_warnungen(job_b.id) == []
-    # Umgekehrt: job_a kennt sein Fenster, der Partner job_b nicht → auch dort
-    # keine Warnung.
-    assert planung_service.belegungs_warnungen(job_a.id) == []
+    warn_b = planung_service.belegungs_warnungen(job_b.id)
+    assert any("Doppelbelegung" in w for w in warn_b)
+    assert any("kein Ende" in w for w in warn_b)
+    # Symmetrisch: auch der vollständig terminierte Einsatz kennt die Kollision.
+    assert any(
+        "Doppelbelegung" in w for w in planung_service.belegungs_warnungen(job_a.id)
+    )
+
+
+@pytest.mark.django_db
+def test_belegung_kein_fehlalarm_bei_getrennten_zeitpunkten(app_user):
+    """Zwei endlose Termine zu VERSCHIEDENEN Zeiten kollidieren nicht — die neue
+    Regel macht aus fehlenden Enden keine Dauerwarnung."""
+    order = _order(app_user)
+    job_a = _job(app_user, order, start=T0)  # 08:00, kein Ende
+    job_b = _job(app_user, order, start=T3)  # 14:00, kein Ende
+    monteur = _app_user()
+    for j in (job_a, job_b):
+        einsatz_service.assign_user(
+            app_user.id, service_job_id=j.id, assignee_user_id=monteur.id
+        )
+    warn = planung_service.belegungs_warnungen(job_a.id)
+    assert not any("Doppelbelegung" in w for w in warn)
+    assert any("kein Ende" in w for w in warn)
 
 
 @pytest.mark.django_db

@@ -165,7 +165,7 @@ export class PlanungKalender {
     // vielen Einsätzen. Fenster um je einen Tag geweitet für lokale Tagesgrenzen.
     const from = addDaysIso(this.gridStart(), -1);
     const to = addDaysIso(this.gridStart(), this.weeks().length * 7);
-    this.svc.plantafel(from, to).subscribe({
+    this.svc.plantafel({ date_from: from, date_to: to }).subscribe({
       next: (data) => {
         if (id === this.reqId) this.state.set({ kind: 'ready', jobs: data.jobs });
       },

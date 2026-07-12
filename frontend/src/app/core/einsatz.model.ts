@@ -76,6 +76,9 @@ export interface ServiceJobQuery {
   q?: string;
   status?: ServiceJobStatus | null;
   work_order_id?: string | null;
+  /** Zeitraumfilter der API (ISO-Datetime) — war bisher nicht verdrahtet. */
+  scheduled_from?: string | null;
+  scheduled_to?: string | null;
 }
 
 export interface JobAssignment {
@@ -114,7 +117,8 @@ export const ASSIGNMENT_ROLES: { wert: string; label: string }[] = [
 export interface TimeEntry {
   time_type: string;
   started_at: string;
-  ended_at: string;
+  // Eine laufende Stempelung hat noch kein Ende (seit der Zeiterfassung).
+  ended_at: string | null;
   note: string | null;
   user: string | null;
 }
@@ -188,16 +192,38 @@ export interface MaterialLogInput {
 }
 
 // --- Plantafel-Board -------------------------------------------------------
-export interface BoardResource {
-  id: string;
-  display_name: string;
+
+/**
+ * Konfliktart an einer Kachel. Doppelbelegung ist eine bewusst WEICHE Invariante
+ * (die DB verhindert sie nicht) — das Board macht sie sichtbar, blockiert aber
+ * nichts. `text` ist immer gesetzt: Der Konflikt wird als Text + Symbol gezeigt,
+ * nie nur über Farbe (WCAG 1.4.1).
+ */
+export type KonfliktArt = 'DOPPELBELEGUNG' | 'ABWESENHEIT' | 'FEIERTAG' | 'OFFENES_ENDE';
+
+export interface Konflikt {
+  kind: KonfliktArt;
+  text: string;
 }
 
-/** Bahn eines Betriebsmittels (Fahrzeug/Gerät/Raum) auf der Plantafel. */
-export interface BoardResourceLane {
+export type LaneKind = 'USER' | 'RESOURCE';
+
+/**
+ * Eine Schwimmbahn: Mitarbeiter oder Betriebsmittel. Der Server liefert ALLE
+ * aktiven Bahnen — auch die leeren; sonst könnte man nichts auf eine freie
+ * Person ziehen.
+ *
+ * `target_hours === null` heißt **unbekannt** (kein gültiger Arbeitsvertrag),
+ * NICHT „null Stunden Soll". Die Auslastung wird dann als „—" gezeigt, nie als
+ * 100 %.
+ */
+export interface BoardLane {
+  kind: LaneKind;
   id: string;
   display_name: string;
-  resource_type: ResourceType;
+  sub: string | null;
+  plan_hours: string | null;
+  target_hours: string | null;
 }
 
 export interface BoardJob {
@@ -213,21 +239,135 @@ export interface BoardJob {
   category: CategoryRef | null;
   assignee_ids: string[];
   resource_ids: string[];
+  conflicts: Konflikt[];
+}
+
+/** Ein UNGEPLANTER Einsatz aus dem Rückstand — das, was man ins Raster zieht. */
+export interface BacklogJob {
+  id: string;
+  job_number: string;
+  title: string;
+  status: ServiceJobStatus;
+  is_free: boolean;
+  property_name: string | null;
+  category: CategoryRef | null;
+  order_number: string | null;
+}
+
+/**
+ * Genehmigte Abwesenheit — Sperrfläche in der Mitarbeiter-Bahn.
+ *
+ * **Ohne Abwesenheitsart, mit Absicht.** Urlaub von Krankheit zu unterscheiden
+ * ist ein Gesundheitsdatum (DSGVO Art. 9); es hängt am `hr`-Recht, die Plantafel
+ * an `workflow`. Der Server liefert die Art hier gar nicht erst — das Board zeigt
+ * „abwesend, von–bis", mehr braucht die Disposition nicht.
+ */
+export interface BoardAbsence {
+  id: string;
+  app_user_id: string;
+  start_date: string;
+  end_date: string;
+}
+
+export interface BoardHoliday {
+  holiday_date: string;
+  name: string;
 }
 
 export interface Plantafel {
   date_from: string;
   date_to: string;
-  resources: BoardResource[];
-  resource_lanes: BoardResourceLane[];
+  lanes: BoardLane[];
   jobs: BoardJob[];
+  backlog: BacklogJob[];
+  backlog_total: number;
+  absences: BoardAbsence[];
+  holidays: BoardHoliday[];
   unassigned_count: number;
+}
+
+/** Abfrage des Boards (Zeitraum + Filter). */
+export interface PlantafelQuery {
+  date_from: string;
+  date_to: string;
+  q?: string | null;
+  category_id?: string | null;
+  backlog_q?: string | null;
+}
+
+// POST /api/planung/termine — Termin mit allem in EINEM Vorgang.
+export interface TerminCreate {
+  work_order_id?: string | null;
+  title?: string | null;
+  property_id?: string | null;
+  scheduled_start?: string | null;
+  scheduled_end?: string | null;
+  on_site_contact_party_id?: string | null;
+  access_instructions?: string | null;
+  appointment_category_id?: string | null;
+  assignee_ids?: string[];
+  resource_ids?: string[];
+}
+
+// PATCH /api/planung/termine/{id} — Teil-Update; assignee_ids/resource_ids sind
+// eine VOLLERSETZUNG (was fehlt, wird gelöst). Der Auftragsbezug ist bewusst
+// nicht änderbar (in der DB unveränderlich).
+export interface TerminUpdate {
+  title?: string | null;
+  property_id?: string | null;
+  /** Ausdrückliches `null` legt den Termin ZURÜCK IN DEN RÜCKSTAND (Zeitraum weg,
+   * Status GEPLANT → UNGEPLANT). Dieser Wechsel ist begründungspflichtig — dann
+   * ist `reason` Pflicht. */
+  scheduled_start?: string | null;
+  scheduled_end?: string | null;
+  on_site_contact_party_id?: string | null;
+  access_instructions?: string | null;
+  appointment_category_id?: string | null;
+  assignee_ids?: string[];
+  resource_ids?: string[];
+  /** Begründung für den Statuswechsel GEPLANT → UNGEPLANT. */
+  reason?: string | null;
+}
+
+/** Antwort auf Anlegen/Ändern eines Termins — mit weichen Belegungshinweisen. */
+export interface TerminResult extends ServiceJob {
+  warnings: string[];
+}
+
+const KONFLIKT_LABELS: Record<KonfliktArt, string> = {
+  DOPPELBELEGUNG: 'Doppelbelegung',
+  ABWESENHEIT: 'Abwesenheit',
+  FEIERTAG: 'Feiertag',
+  OFFENES_ENDE: 'Kein Ende',
+};
+
+export function konfliktLabel(k: KonfliktArt): string {
+  return KONFLIKT_LABELS[k] ?? k;
+}
+
+/** Symbol je Konfliktart (immer ZUSÄTZLICH zum Text, nie statt seiner). */
+const KONFLIKT_SYMBOLE: Record<KonfliktArt, string> = {
+  DOPPELBELEGUNG: '⚠',
+  ABWESENHEIT: '⛱',
+  FEIERTAG: '★',
+  OFFENES_ENDE: '⧖',
+};
+
+export function konfliktSymbol(k: KonfliktArt): string {
+  return KONFLIKT_SYMBOLE[k] ?? '⚠';
 }
 
 export interface ServiceJobDetail extends ServiceJob {
   access_instructions: string | null;
   completion_notes: string | null;
+  /** Anzeigename des Vor-Ort-Kontakts. */
   on_site_contact: string | null;
+  /** Seine ID — was ein Bearbeiten-Formular braucht, um ihn zu ERHALTEN. */
+  on_site_contact_party_id: string | null;
+  /** Der EIGENE Titel (darf null sein). `title` ist der aufgelöste Anzeigetitel:
+   * beim Auftragstermin der Auftragstitel. Wer den zurückschriebe, brennte ihn in
+   * den Einsatz ein — er folgte einer späteren Auftragsumbenennung nicht mehr. */
+  own_title: string | null;
   created_at: string;
   assignments: JobAssignment[];
   resources: ResourceRef[];

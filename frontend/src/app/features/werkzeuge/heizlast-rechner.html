@@ -1,0 +1,75 @@
+<div class="rechner">
+  <form class="rechner__eingabe" [formGroup]="form" (submit)="$event.preventDefault()">
+    <fieldset class="rechner__satz">
+      <legend class="rechner__legende">Eingabe</legend>
+
+      <app-feld
+        [control]="form.controls.flaeche"
+        label="Beheizte Fläche (m²)"
+        typ="zahl"
+        hinweis="Die beheizte Fläche des Raums oder des Gebäudes, z. B. 120"
+      />
+
+      <app-feld
+        [control]="form.controls.typ"
+        label="Gebäude / Dämmung"
+        typ="select"
+        [optionen]="typOptionen"
+        hinweis="Belegt den Kennwert vor — er bleibt überschreibbar."
+      />
+
+      <app-feld
+        [control]="form.controls.kennwert"
+        label="Spezifische Heizlast (W/m²)"
+        typ="zahl"
+        hinweis="Erfahrungswert aus der Auswahl oben; bei Bedarf eigenen Wert eintragen."
+      />
+    </fieldset>
+  </form>
+
+  <div class="rechner__ergebnis">
+    <p class="rechner__ergebnis-label" id="heizlast-label">Überschlägige Heizlast</p>
+    <output
+      class="rechner__wert"
+      [class.rechner__wert--leer]="!ergebnis()"
+      aria-labelledby="heizlast-label"
+      aria-live="polite"
+      >{{ kwText() }}</output
+    >
+
+    @if (formelText()) {
+      <p class="rechner__formel">{{ formelText() }}</p>
+    } @else {
+      <p class="rechner__formel">Beheizte Fläche und Kennwert eingeben (beide größer als 0).</p>
+    }
+
+    <div class="rechner__aktionen">
+      <button type="button" class="rechner__btn" [disabled]="!ergebnis()" (click)="kopieren()">
+        Ergebnis kopieren
+      </button>
+      @if (uebernahme()) {
+        <button
+          type="button"
+          class="rechner__btn rechner__btn--primary"
+          [disabled]="!ergebnis()"
+          (click)="uebernehmenKlick()"
+        >
+          Als Textposition übernehmen
+        </button>
+      }
+    </div>
+
+    @if (rueckmeldung()) {
+      <p class="rechner__rueckmeldung" role="status">{{ rueckmeldung() }}</p>
+    }
+  </div>
+</div>
+
+<p class="rechner__haftung">
+  <span class="rechner__haftung-mark" aria-hidden="true">!</span>
+  <span>
+    <strong>Überschlag — kein Nachweis.</strong>
+    {{ haftung }} Der Wert dient der schnellen Einschätzung im Gespräch (Gerätegröße,
+    Größenordnung) und ersetzt keine Berechnung.
+  </span>
+</p>

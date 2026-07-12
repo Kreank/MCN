@@ -1,0 +1,356 @@
+@switch (state().kind) {
+  @case ('loading') {
+    <p class="lade-hinweis">Zeiterfassung wird geladen …</p>
+  }
+  @case ('forbidden') {
+    <app-kein-zugriff />
+  }
+  @case ('error') {
+    <div class="note note--error" role="alert">
+      <p>Die Zeiterfassung konnte nicht geladen werden.</p>
+      <button type="button" class="btn" (click)="laden()">Erneut versuchen</button>
+    </div>
+  }
+  @case ('ready') {
+    <header class="kopf">
+      <div>
+        <p class="kicker">Personal · Aufzeichnungspflicht</p>
+        <h1>Zeiterfassung</h1>
+      </div>
+      @if (darfExportieren()) {
+        <button type="button" class="btn" (click)="exportieren()">
+          Stundenliste (CSV)
+        </button>
+      }
+    </header>
+
+    <p class="hinweis">
+      § 17 MiLoG verlangt für Baugewerbe und Gebäudedienstleistung Beginn, Ende und
+      Dauer der täglichen Arbeitszeit — aufgezeichnet binnen sieben Kalendertagen,
+      zwei Jahre aufbewahrt, der Zollbehörde vorzulegen.
+    </p>
+
+    <p class="sr-only" aria-live="polite" role="status">{{ meldung() }}</p>
+    @if (fehler(); as f) {
+      <div class="note note--error" role="alert">{{ f }}</div>
+    }
+
+    <!-- ================= FILTER ================= -->
+    <section class="filter" aria-label="Filter">
+      <fieldset class="segment">
+        <legend class="sr-only">Zeitraum</legend>
+        @for (z of zeitraeume; track z.wert) {
+          <button
+            type="button"
+            class="segment__knopf"
+            [class.is-active]="zeitraum() === z.wert"
+            [attr.aria-pressed]="zeitraum() === z.wert"
+            (click)="zeitraum.set(z.wert); filterSetzen()"
+          >
+            {{ z.label }}
+          </button>
+        }
+      </fieldset>
+
+      <label class="filter__feld">
+        <span>Mitarbeiter</span>
+        <select
+          [value]="userFilter()"
+          (change)="userFilter.set($any($event.target).value); filterSetzen()"
+        >
+          <option value="">Alle</option>
+          @for (m of mitarbeiter(); track m.user_id) {
+            <option [value]="m.user_id">{{ m.name }} ({{ m.employee_number }})</option>
+          }
+        </select>
+      </label>
+
+      <label class="filter__feld">
+        <span>Status</span>
+        <select
+          [value]="statusFilter()"
+          (change)="statusFilter.set($any($event.target).value); filterSetzen()"
+        >
+          @for (s of statusOptionen; track s.wert) {
+            <option [value]="s.wert">{{ s.label }}</option>
+          }
+        </select>
+      </label>
+    </section>
+
+    <!-- ================= STUNDENKONTO ================= -->
+    @if (konto(); as k) {
+      <section class="kacheln" aria-label="Stundenkonto (laufender Monat)">
+        <div class="kachel">
+          <p class="kachel__label">Soll</p>
+          <p class="kachel__wert">{{ k.soll }} h</p>
+        </div>
+        <div class="kachel">
+          <p class="kachel__label">Ist</p>
+          <p class="kachel__wert">{{ k.ist }} h</p>
+        </div>
+        <div class="kachel">
+          <p class="kachel__label">Abwesend</p>
+          <p class="kachel__wert">{{ k.abwesend }} h</p>
+        </div>
+        <div class="kachel" [class.kachel--minus]="+k.saldo < 0">
+          <p class="kachel__label">Saldo</p>
+          <p class="kachel__wert">
+            {{ +k.saldo > 0 ? '+' : '' }}{{ k.saldo }} h
+            <span class="kachel__zusatz">
+              {{ +k.saldo < 0 ? 'Minusstunden' : +k.saldo > 0 ? 'Mehrarbeit' : 'ausgeglichen' }}
+            </span>
+          </p>
+        </div>
+        <div class="kachel">
+          <p class="kachel__label">Tage offen</p>
+          <p class="kachel__wert">{{ k.tage_offen }} / {{ k.tage_gesamt }}</p>
+        </div>
+      </section>
+      <p class="hinweis hinweis--klein">
+        Soll = Vertragsraster minus Feiertage minus genehmigte Abwesenheiten.
+        Ist = alle Buchungen mit Arbeitszeit-Kennzeichen (auch Fahrt- und
+        Bereitschaftszeit). Nichts davon ist gespeichert — alles wird abgeleitet.
+        Zeitraum: laufender Monat.
+      </p>
+    }
+
+    <div class="spalten">
+      <!-- ================= TAGESLISTE ================= -->
+      <section class="liste" aria-labelledby="liste-titel">
+        <h2 id="liste-titel">Arbeitstage</h2>
+        @if (tage().length === 0) {
+          <p class="tab-platzhalter">Keine Arbeitstage im gewählten Zeitraum.</p>
+        } @else {
+          <table class="tabelle">
+            <caption class="sr-only">Arbeitstage im gewählten Zeitraum</caption>
+            <thead>
+              <tr>
+                <th scope="col">Mitarbeiter</th>
+                <th scope="col">Tag</th>
+                <th scope="col">Arbeit</th>
+                <th scope="col">Pause</th>
+                <th scope="col">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (t of tage(); track t.id) {
+                <tr [class.is-aktiv]="detail()?.id === t.id">
+                  <td>
+                    <button type="button" class="zeile-knopf" (click)="tagOeffnen(t)">
+                      {{ t.user }}
+                    </button>
+                  </td>
+                  <td>{{ tagText(t.day) }}</td>
+                  <td class="num">{{ dauerText(t.arbeit_sekunden) }}</td>
+                  <td class="num">{{ dauerText(t.pause_sekunden) }}</td>
+                  <td>
+                    <span [class]="tagStatusClass(t.status)">
+                      <span aria-hidden="true">{{ TAG_STATUS_ZEICHEN[t.status] }}</span>
+                      {{ TAG_STATUS_LABEL[t.status] }}
+                    </span>
+                    @if (t.laeuft) {
+                      <span class="stamp stamp--warn">läuft</span>
+                    }
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        }
+      </section>
+
+      <!-- ================= EINZELANSICHT ================= -->
+      <section class="detail" aria-labelledby="detail-titel">
+        <h2 id="detail-titel">Tagesdetail</h2>
+        @if (detail(); as d) {
+          <div class="detail__kopf">
+            <p class="detail__titel">
+              <strong>{{ d.user }}</strong> · {{ tagText(d.day) }}
+            </p>
+            <span [class]="tagStatusClass(d.status)">
+              <span aria-hidden="true">{{ TAG_STATUS_ZEICHEN[d.status] }}</span>
+              {{ TAG_STATUS_LABEL[d.status] }}
+            </span>
+          </div>
+
+          @if (d.status === 'BESTAETIGT') {
+            <p class="note">
+              Bestätigt von {{ d.decided_by }}. Eine nachträgliche Änderung ist möglich,
+              verlangt aber eine Begründung und setzt die Bestätigung zurück (Audit).
+            </p>
+          }
+          @if (d.status === 'ABGELEHNT' && d.decision_note) {
+            <p class="note note--error"><strong>Abgelehnt:</strong> {{ d.decision_note }}</p>
+          }
+          @if (d.status === 'EINGEREICHT' && eigenerTag()) {
+            <p class="note note--warnung">
+              Das ist Ihr eigener Arbeitstag. Er kann nicht von Ihnen selbst bestätigt
+              oder abgelehnt werden (Vier-Augen-Prinzip).
+            </p>
+          }
+
+          <ul class="eintraege">
+            @for (e of d.eintraege; track e.id) {
+              <li class="eintrag" [class.eintrag--pause]="!e.is_work_time">
+                <span class="eintrag__zeit">
+                  {{ uhrzeit(e.started_at) }} –
+                  @if (e.ended_at) { {{ uhrzeit(e.ended_at) }} } @else { <em>läuft</em> }
+                </span>
+                <span class="eintrag__kat">
+                  {{ e.kategorie }}
+                  @if (e.auto_generated) {
+                    <span class="stamp stamp--warn">automatisch</span>
+                  }
+                  @if (e.einsatz) {
+                    <span class="eintrag__einsatz">Einsatz {{ e.einsatz }}</span>
+                  }
+                </span>
+                <span class="eintrag__dauer">{{ dauerText(e.dauer_sekunden) }}</span>
+                @if (darfAendern() && e.ended_at) {
+                  <button
+                    type="button"
+                    class="btn btn--klein"
+                    [disabled]="laeuftAktion()"
+                    (click)="loeschenOffen.set(e)"
+                    [attr.aria-label]="'Zeitbuchung ' + e.kategorie + ' löschen'"
+                  >
+                    Löschen
+                  </button>
+                } @else {
+                  <span></span>
+                }
+                @if (e.note) {
+                  <span class="eintrag__notiz">{{ e.note }}</span>
+                }
+              </li>
+            } @empty {
+              <li class="tab-platzhalter">Keine Zeitbuchung an diesem Tag.</li>
+            }
+          </ul>
+
+          <div class="detail__aktionen">
+            @if (kannBestaetigen()) {
+              <button
+                type="button"
+                class="btn btn--primary"
+                [disabled]="laeuftAktion()"
+                (click)="bestaetigenOffen.set(true)"
+              >
+                Bestätigen
+              </button>
+              <button
+                type="button"
+                class="btn btn--gefahr"
+                [disabled]="laeuftAktion()"
+                (click)="ablehnenOffen.set(true)"
+              >
+                Ablehnen
+              </button>
+            }
+            @if (darfAendern()) {
+              <button
+                type="button"
+                class="btn"
+                [disabled]="laeuftAktion()"
+                (click)="eintragDialogOeffnen()"
+              >
+                Zeit erfassen
+              </button>
+              <button
+                type="button"
+                class="btn"
+                [disabled]="laeuftAktion() || d.laeuft"
+                (click)="pausenAnwenden()"
+              >
+                Pflichtpausen einrechnen
+              </button>
+            }
+          </div>
+        } @else {
+          <p class="tab-platzhalter">Wählen Sie links einen Arbeitstag.</p>
+        }
+      </section>
+    </div>
+
+    <!-- ================= DIALOGE ================= -->
+    <app-bestaetigung
+      [offen]="bestaetigenOffen()"
+      titel="Arbeitstag bestätigen"
+      text="Sie bestätigen die aufgezeichnete Arbeitszeit dieses Tages als Arbeitgeber.
+            Eine spätere Änderung bleibt möglich, verlangt aber eine Begründung und
+            setzt diese Bestätigung zurück."
+      bestaetigenLabel="Bestätigen"
+      [laedt]="laeuftAktion()"
+      (bestaetigen)="bestaetigen()"
+      (abbrechen)="bestaetigenOffen.set(false)"
+    />
+
+    <app-bestaetigung
+      [offen]="ablehnenOffen()"
+      titel="Arbeitstag ablehnen"
+      text="Der Mitarbeiter kann den Tag nach der Korrektur erneut einreichen."
+      bestaetigenLabel="Ablehnen"
+      [gefahr]="true"
+      [begruendungPflicht]="true"
+      begruendungLabel="Grund der Ablehnung"
+      [laedt]="laeuftAktion()"
+      (bestaetigen)="ablehnen($event)"
+      (abbrechen)="ablehnenOffen.set(false)"
+    />
+
+    <app-bestaetigung
+      [offen]="!!loeschenOffen()"
+      titel="Zeitbuchung löschen"
+      text="Die Buchung wird entfernt. Das Vorher-Bild bleibt im Audit erhalten.
+            Bei einem bestätigten Arbeitstag ist eine Begründung nötig; die
+            Bestätigung fällt dann weg."
+      bestaetigenLabel="Löschen"
+      [gefahr]="true"
+      [begruendungPflicht]="detail()?.status === 'BESTAETIGT'"
+      begruendungLabel="Begründung der Korrektur"
+      [laedt]="laeuftAktion()"
+      (bestaetigen)="eintragLoeschen($event)"
+      (abbrechen)="loeschenOffen.set(null)"
+    />
+
+    <app-dialog
+      [offen]="eintragDialogOffen()"
+      titel="Zeit erfassen"
+      (schliessen)="eintragDialogOffen.set(false)"
+    >
+      <form [formGroup]="eintragForm" (ngSubmit)="eintragSpeichern()">
+        <app-feld
+          [control]="$any(eintragForm.controls.category_id)"
+          label="Kategorie"
+          typ="select"
+          [pflicht]="true"
+          [optionen]="kategorieOptionen()"
+        />
+        <app-feld
+          [control]="$any(eintragForm.controls.datum)"
+          label="Datum"
+          typ="datum"
+          [pflicht]="true"
+        />
+        <app-feld [control]="$any(eintragForm.controls.von)" label="Von" typ="zeit" [pflicht]="true" />
+        <app-feld [control]="$any(eintragForm.controls.bis)" label="Bis" typ="zeit" [pflicht]="true" />
+        <app-feld [control]="$any(eintragForm.controls.note)" label="Notiz" typ="textarea" />
+        <app-feld
+          [control]="$any(eintragForm.controls.correction_reason)"
+          label="Begründung (bei bestätigtem Tag Pflicht)"
+          typ="text"
+          hinweis="Ein bestätigter Arbeitstag fällt durch die Änderung auf Entwurf zurück."
+        />
+        <div class="dialog-aktionen">
+          <button type="button" class="btn" (click)="eintragDialogOffen.set(false)">
+            Abbrechen
+          </button>
+          <button type="submit" class="btn btn--primary" [disabled]="laeuftAktion()">
+            Speichern
+          </button>
+        </div>
+      </form>
+    </app-dialog>
+  }
+}

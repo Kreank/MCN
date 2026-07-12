@@ -931,3 +931,525 @@ button {
   border-radius: var(--radius);
   background: var(--surface-sunken);
 }
+
+/* ===========================================================================
+   Formular-Bausteine, die mehrere Bereiche teilen
+   ===========================================================================
+   `.feldchen` ist das kompakte Steuerfeld (Label über Select/Input) für
+   Werkzeugleisten; `.terminart`/`.wahl` sind Fieldset-Muster (Einfach- bzw.
+   Mehrfachauswahl mit sichtbarem Fokus). Sie stehen global, weil sie kein
+   Plantafel-Detail sind — jeder Bereich mit Werkzeugleiste oder
+   Mehrfachauswahl benutzt sie. */
+.feldchen {
+  display: grid;
+  gap: 0.2rem;
+}
+.feldchen--weit {
+  min-width: 14rem;
+}
+.feldchen__label {
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.feldchen__select,
+.feldchen__input {
+  padding: 0.4rem 0.55rem;
+  font: inherit;
+  font-size: var(--step--1);
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+}
+.feldchen__select:focus-visible,
+.feldchen__input:focus-visible {
+  outline: 2.5px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.btn--klein {
+  padding: 0.15rem 0.45rem;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+}
+
+.terminart,
+.wahl {
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.terminart__legend,
+.wahl__legend {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: 0 var(--space-2);
+  font-size: var(--step--1);
+  font-weight: 600;
+  color: var(--ink-muted);
+}
+.wahl__zahl {
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  color: var(--accent-ink);
+}
+.terminart__optionen {
+  display: grid;
+  gap: var(--space-2);
+}
+.terminart__opt,
+.wahl__opt {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.terminart__opt:hover,
+.wahl__opt:hover {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.terminart__opt:focus-within,
+.wahl__opt:focus-within {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.terminart__opt input,
+.wahl__opt input {
+  margin-top: 0.2rem;
+  accent-color: var(--accent);
+}
+.terminart__text {
+  display: grid;
+  gap: 0.15rem;
+}
+.terminart__titel {
+  font-weight: 600;
+  color: var(--ink);
+}
+.terminart__hint {
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+.wahl__liste {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
+  gap: 0.1rem;
+  max-height: 12rem;
+  overflow: auto;
+}
+.wahl__opt {
+  align-items: center;
+  padding: 0.25rem var(--space-2);
+  font-size: var(--step--1);
+}
+.wahl__opt em {
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  font-style: normal;
+  color: var(--ink-faint);
+}
+.wahl__leer {
+  margin: 0;
+  padding: var(--space-2);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+/* Mini-Knopf: gestrichelter, unaufdringlicher Knopf in dichten Rastern
+   (Plantafel-Zellen, Kachel-Aktionen). Immer tastaturbedienbar und mit
+   sichtbarem Fokus — er ist der Ersatzweg für Drag & Drop. */
+.minibtn {
+  padding: 0.15rem 0.3rem;
+  overflow: hidden;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  color: var(--ink-muted);
+  background: transparent;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.minibtn:hover:not(:disabled),
+.minibtn:focus-visible {
+  color: var(--accent-ink);
+  border-color: var(--accent);
+}
+.minibtn:focus-visible {
+  outline: 2.5px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+.minibtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ===========================================================================
+   Seitenkopf, Werkzeugleiste, Rückstandsleiste, Hinweise, Termin-Dialog
+   ===========================================================================
+   Aus `plantafel.scss` hierher gezogen. Grund: Es sind KEINE Plantafel-Eigen-
+   heiten, sondern Bausteine, die jede Arbeitsfläche mit Kopfzeile, Filterleiste
+   oder Ablage-/Hinweisleiste benutzt — und die Komponenten-Budgets (8/10 kB)
+   sind die Leitplanke, die genau das erzwingt: Was mehrere Bereiche brauchen,
+   gehört ins globale Blatt, nicht in EINE Komponente. Das Budget zu lockern,
+   um eine Datei durchzulassen, hätte die Leitplanke entfernt. */
+// ============================== Seitenkopf ==================================
+.page-head {
+  margin-bottom: var(--space-4);
+}
+.page-head__kicker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+}
+.page-head__scale {
+  width: 2.5rem;
+  height: 0.5rem;
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--line-strong) 0,
+    var(--line-strong) 1px,
+    transparent 1px,
+    transparent 0.5rem
+  );
+  border-bottom: 1.5px solid var(--line-strong);
+}
+.page-head__titel {
+  font-size: var(--step-3);
+}
+
+// ============================== Steuerleiste ================================
+// `.feldchen*` (kompaktes Steuerfeld), `.terminart*`, `.wahl*` und `.btn--klein`
+// liegen global in styles.scss — es sind wiederverwendbare Formular-Bausteine,
+// keine Plantafel-Eigenheiten.
+.leiste {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.leiste__zeit,
+.leiste__filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3);
+}
+.zeitnav {
+  display: inline-flex;
+  gap: var(--space-2);
+}
+.zeitraum {
+  margin: 0 0 0.35rem;
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+// ============================== Rückstand ===================================
+.pool {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-height: calc(100dvh - 18rem);
+  padding: var(--space-3);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+}
+/* Die Rückstandsleiste ist auch ein ABLAGEZIEL (Kachel zurücknehmen). Der Zustand
+   wird zusätzlich im Text angesagt — Farbe allein trägt nie die Information. */
+.pool--dropziel {
+  border-color: var(--accent);
+  border-left-width: 6px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  outline: 2px dashed var(--accent);
+  outline-offset: -4px;
+}
+.pool__kopf {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.pool__titel {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--step-0);
+}
+.pool__zahl {
+  padding: 0.05rem 0.45rem;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--accent-ink);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border-radius: 999px;
+}
+.pool__hinweis,
+.pool__leer,
+.pool__mehr {
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+.pool__liste {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pkarte {
+  display: grid;
+  gap: 0.2rem;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+
+  &[draggable='true'] {
+    cursor: grab;
+  }
+}
+.pkarte--bewegt {
+  opacity: 0.45;
+  border-style: dashed;
+}
+.pkarte__kopf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.pkarte__nr,
+.pkarte__auftrag {
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  color: var(--ink-muted);
+}
+.pkarte__titel {
+  font-size: var(--step--1);
+  font-weight: 600;
+  color: var(--ink);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+
+  &:hover {
+    text-decoration: underline;
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+.pkarte__ort {
+  font-size: 0.7rem;
+  color: var(--ink-muted);
+}
+.pkarte__aktionen {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: 0.25rem;
+}
+
+// ===================== Verschieben: Statusleiste & Hinweise ==================
+.griff-leiste {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1.5px solid var(--accent);
+  border-left-width: 5px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+.griff-leiste__text {
+  flex: 1 1 20rem;
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--ink);
+}
+.note--umplanen {
+  margin-bottom: var(--space-3);
+}
+.note--warnung {
+  border-color: var(--warn);
+  background: color-mix(in srgb, var(--warn-tint) 60%, var(--surface));
+}
+.note__liste {
+  margin: 0 0 var(--space-3);
+  padding-left: var(--space-5);
+  font-size: var(--step--1);
+}
+
+// ============================== Dialog ======================================
+// Nur der Zuschnitt; `.terminart*` und `.wahl*` (Mehrfachauswahl) sind global.
+.termin-form {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+.termin-form__zeiten {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+}
+.termin-form__hinweis {
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+/* Bereits hinterlegter Wert eines Referenzfeldes — als TEXT, nicht als Chip:
+   Die Suchbox zeigt nur selbst getroffene Auswahlen an; das Feld sähe sonst leer
+   aus, obwohl ein Wert gesetzt IST. */
+.termin-form__aktuell {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--step--1);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+}
+.termin-form__aktuell-label {
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+/* Auslastungsbalken: Fortschritts-/Lastanzeige mit IMMER sichtbarem Text daneben
+   (`.last__text`). Der Balken ist die Zugabe, nie der Träger der Information —
+   WCAG 1.4.1. Global, weil jede Kapazitätsansicht ihn braucht. */
+.last {
+  display: grid;
+  gap: 0.15rem;
+  margin-top: 0.2rem;
+}
+.last__balken {
+  position: relative;
+  height: 0.3rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--line) 60%, transparent);
+  overflow: hidden;
+
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: min(100%, var(--fuell, 0%));
+    background: var(--command);
+  }
+}
+.last--voll .last__balken::after {
+  background: var(--warn);
+}
+.last--ueber .last__balken::after {
+  background: var(--warn-ink);
+  width: 100%;
+}
+.last--unbekannt .last__balken::after {
+  width: 0;
+}
+.last__text {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  color: var(--ink-faint);
+}
+.last--ueber .last__text {
+  color: var(--warn-ink);
+  font-weight: 600;
+}
+
+/* Konfliktliste an einer Karte/Kachel: Symbol + Label + Text, je Konflikt eine
+   Zeile. Der Konflikt wird IMMER ausgeschrieben — Farbe und Symbol sind Zugabe
+   (WCAG 1.4.1). Global, weil derselbe Hinweis an der Plantafel-Kachel und im
+   Einsatz-Detail steht. */
+// ============================== Konflikte ===================================
+.konflikte {
+  display: grid;
+  gap: 0.1rem;
+  margin: 0.25rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+.konflikt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem;
+  padding: 0.1rem 0.3rem;
+  font-size: 0.64rem;
+  line-height: 1.25;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--warn-tint) 70%, var(--surface));
+  border-left: 2px solid var(--warn-ink);
+  border-radius: var(--radius-sm);
+}
+.konflikt__sym {
+  color: var(--warn-ink);
+}
+.konflikt__label {
+  font-weight: 700;
+}
+.konflikt__text {
+  flex: 1 1 8rem;
+  color: var(--ink-muted);
+  // Höchstens zwei Zeilen je Konflikt — die Kachel darf nicht zur Textwand
+  // werden. Der volle Text steht im title und im aria-label.
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+// Abwesenheit und Feiertag sind eigene Aussagen — eigene Tönung, aber immer mit
+// Symbol UND Text (Farbe allein trägt nie die Information).
+.konflikt--abwesenheit {
+  background: color-mix(in srgb, var(--command) 10%, var(--surface));
+  border-left-color: var(--command);
+}
+.konflikt--abwesenheit .konflikt__sym {
+  color: var(--command);
+}
+.konflikt--offenes_ende {
+  background: var(--surface-sunken);
+  border-left-color: var(--line-strong);
+}
+.konflikt--offenes_ende .konflikt__sym {
+  color: var(--ink-muted);
+}

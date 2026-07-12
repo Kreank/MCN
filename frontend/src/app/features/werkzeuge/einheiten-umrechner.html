@@ -1,0 +1,98 @@
+<div class="rechner">
+  <form class="rechner__eingabe" [formGroup]="form" (submit)="$event.preventDefault()">
+    <fieldset class="rechner__satz">
+      <legend class="rechner__legende">Eingabe</legend>
+
+      <app-feld
+        [control]="form.controls.kategorie"
+        label="Größe"
+        typ="select"
+        [optionen]="kategorieOptionen"
+      />
+
+      <div class="rechner__paar">
+        <app-feld [control]="form.controls.wert" label="Wert" typ="zahl" />
+        <app-feld
+          [control]="form.controls.einheit"
+          label="Einheit"
+          typ="select"
+          [optionen]="einheitOptionen()"
+        />
+      </div>
+    </fieldset>
+
+    @if (zeigtGewinde()) {
+      <div class="rechner__nachschlag">
+        <p class="rechner__nachschlag-titel">Gewindegröße → Nennweite</p>
+        <ul class="rechner__dn">
+          @for (g of gewindeDn; track g.dn) {
+            <li>{{ g.zoll }} = {{ g.dn }}</li>
+          }
+        </ul>
+        <p class="rechner__hinweis">
+          Gebräuchliche Zuordnung (Verkehrsbezeichnung), <strong>keine Maßtabelle</strong>: Die
+          Zollangabe am Rohrgewinde ist kein Durchmesser. Außendurchmesser und Wandstärken stehen
+          im Datenblatt bzw. in der jeweiligen Produktnorm.
+        </p>
+      </div>
+    }
+  </form>
+
+  <div class="rechner__ergebnis">
+    <p class="rechner__ergebnis-label">{{ kategorie().name }}</p>
+
+    <!-- Die Live-Region steht DAUERHAFT im DOM; nur ihr Inhalt wechselt. Würde
+         sie erst mit dem Ergebnis eingefügt, sagten Screenreader das erste
+         Ergebnis nicht an (WCAG 2.2 AA, SC 4.1.3). -->
+    <div aria-live="polite">
+      @if (zeilen().length) {
+        <dl class="rechner__liste">
+          @for (z of zeilen(); track z.name) {
+            <div class="rechner__zeile" [class.rechner__zeile--quelle]="z.istQuelle">
+              <dt>
+                {{ z.name }}
+                @if (z.istQuelle) {
+                  <span class="rechner__quelle-mark">Eingabe</span>
+                }
+              </dt>
+              <dd>{{ z.wert }}</dd>
+            </div>
+          }
+        </dl>
+      } @else {
+        <p class="rechner__formel">
+          Wert eingeben — das Ergebnis erscheint in allen Einheiten dieser Größe.
+        </p>
+      }
+    </div>
+
+    @if (kategorie().hinweis; as h) {
+      <p class="rechner__formel">{{ h }}</p>
+    }
+
+    <div class="rechner__aktionen">
+      <button
+        type="button"
+        class="rechner__btn"
+        [disabled]="!zeilen().length"
+        (click)="kopieren()"
+      >
+        Ergebnis kopieren
+      </button>
+      @if (uebernahme()) {
+        <button
+          type="button"
+          class="rechner__btn rechner__btn--primary"
+          [disabled]="!zeilen().length"
+          (click)="uebernehmenKlick()"
+        >
+          Als Textposition übernehmen
+        </button>
+      }
+    </div>
+
+    @if (rueckmeldung()) {
+      <p class="rechner__rueckmeldung" role="status">{{ rueckmeldung() }}</p>
+    }
+  </div>
+</div>

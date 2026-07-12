@@ -29,6 +29,15 @@
     </div>
   }
   @case ('ready') {
+    <!-- Zeitbuchungen für DIESEN Termin. Ausdrücklicher Wunsch des
+         Auftraggebers: „Zeitbuchungen für den einzelnen Termin im
+         Baustellenbericht". Die Buchung landet im selben Zeitstrahl wie die
+         Stempeluhr (workflow.time_entry) — derselbe Arbeitstag, dieselbe
+         Freigabe, kein zweiter Datenbestand. -->
+    @if (serviceJobId(); as jobId) {
+      <app-einsatz-zeiten [serviceJobId]="jobId" />
+    }
+
     @if (darfAnlegen()) {
       <div class="tab-toolbar">
         <button type="button" class="btn btn--primary" (click)="neuOeffnen()">

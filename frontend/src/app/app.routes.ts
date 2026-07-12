@@ -53,6 +53,27 @@ export const routes: Routes = [
           ),
       },
       {
+        // Die Stempeluhr. Recht hr/AENDERN — row_scope EIGENE ist hier genau
+        // richtig: der Server bucht immer auf den Akteur und nimmt gar keine
+        // fremde user_id entgegen.
+        path: 'meine-zeiten',
+        title: 'Meine Zeiten — MCN Leitstand',
+        canActivate: [darfGuard('hr', 'AENDERN')],
+        loadComponent: () =>
+          import('./features/meine-zeiten/meine-zeiten').then((m) => m.MeineZeiten),
+      },
+      {
+        // Verwaltungssicht der Zeiterfassung. `darfGuard` kennt den row_scope
+        // nicht; ein Konto mit EIGENE käme durch den Guard und liefe in den
+        // 403 des Servers — die Komponente zeigt dann „Kein Zugriff". Die
+        // Navigation blendet den Punkt ohnehin aus (AuthService.darfAlle).
+        path: 'zeiterfassung',
+        title: 'Zeiterfassung — MCN Leitstand',
+        canActivate: [darfGuard('hr', 'LESEN')],
+        loadComponent: () =>
+          import('./features/zeiterfassung/zeiterfassung').then((m) => m.Zeiterfassung),
+      },
+      {
         path: 'kein-zugriff',
         title: 'Kein Zugriff — MCN Leitstand',
         loadComponent: () =>
@@ -67,6 +88,21 @@ export const routes: Routes = [
         canActivate: [darfGuard('workflow', 'ANLEGEN')],
         loadComponent: () =>
           import('./features/schnellerfassung/schnellerfassung').then((m) => m.Schnellerfassung),
+      },
+      // Werkzeuge (Rechner). Bewusst OHNE darfGuard: die Rechner sprechen mit
+      // keinem Server und lesen keine Fachdaten — jede angemeldete Rolle darf
+      // rechnen. Der Query-Parameter `objekt` trägt einen Kontext (Liegenschaft)
+      // auf die Ausgabe. Die parameterlose Route zeigt das erste Werkzeug.
+      {
+        path: 'werkzeuge',
+        pathMatch: 'full',
+        title: 'Werkzeuge — MCN Leitstand',
+        loadComponent: () => import('./features/werkzeuge/werkzeuge').then((m) => m.Werkzeuge),
+      },
+      {
+        path: 'werkzeuge/:werkzeug',
+        title: 'Werkzeuge — MCN Leitstand',
+        loadComponent: () => import('./features/werkzeuge/werkzeuge').then((m) => m.Werkzeuge),
       },
       {
         path: 'kontakte',
@@ -447,6 +483,16 @@ export const routes: Routes = [
         title: 'Akquisekanäle — MCN Leitstand',
         canActivate: [darfGuard('company', 'LESEN')],
         loadComponent: () => import('./features/quellen/quellen').then((m) => m.Quellen),
+      },
+      {
+        // Zeitkategorien + Pausenregel. `hr/LESEN` genügt für die Ansicht;
+        // Anlegen/Ändern gatet der Server (hr/ANLEGEN bzw. hr/AENDERN, jeweils
+        // row_scope ALLE — `require`, nicht `require_scoped`).
+        path: 'einstellungen/zeiterfassung',
+        title: 'Zeiterfassung — MCN Leitstand',
+        canActivate: [darfGuard('hr', 'LESEN')],
+        loadComponent: () =>
+          import('./features/zeitkategorien/zeitkategorien').then((m) => m.Zeitkategorien),
       },
       {
         // Rechtematrix & Rollenzuordnungen. Lesen genügt für die Ansicht; das

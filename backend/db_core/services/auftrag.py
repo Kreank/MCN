@@ -17,6 +17,7 @@ Constraint-Trigger durch; sie greifen am Transaktionsende.
 """
 import uuid
 
+from django.db import IntegrityError
 from django.utils import timezone
 
 from db_core.db_context import business_transaction
@@ -188,20 +189,39 @@ def add_work_order_party(
         raise ValueError(
             f"Ungültige source '{source}'. Erlaubt: {', '.join(PARTY_SOURCES)}."
         )
+    # Anteil außerhalb (0, 100] verletzt sonst work_order_party_allocation_percent_check
+    # (IntegrityError → 500); vorab als klaren 422 abweisen.
+    if allocation_percent is not None and not (0 < allocation_percent <= 100):
+        raise ValueError(
+            "Der Anteil muss größer als 0 und höchstens 100 Prozent sein."
+        )
     ensure_exists(WorkOrder, work_order_id, "Auftrag")
     # party_id muss existieren und darf nicht MERGED sein (trg_work_order_party_no_merged).
     ensure_party_usable(party_id, "Partei")
-    with business_transaction(actor_app_user_id):
-        party = WorkOrderParty.objects.create(
-            id=uuid.uuid4(),
-            work_order_id=work_order_id,
-            party_id=party_id,
-            role=role,
-            source=source,
-            source_reference_id=source_reference_id,
-            is_primary=is_primary,
-            allocation_percent=allocation_percent,
-        )
+    try:
+        with business_transaction(actor_app_user_id):
+            party = WorkOrderParty.objects.create(
+                id=uuid.uuid4(),
+                work_order_id=work_order_id,
+                party_id=party_id,
+                role=role,
+                source=source,
+                source_reference_id=source_reference_id,
+                is_primary=is_primary,
+                allocation_percent=allocation_percent,
+            )
+    except IntegrityError as exc:
+        msg = str(exc)
+        if "uq_work_order_party_primary" in msg:
+            raise ValueError(
+                "Für diese Rolle ist bereits ein primärer Beteiligter gesetzt; "
+                "es kann nur einen geben."
+            ) from exc
+        if "work_order_party_work_order_id_role_party_id_key" in msg:
+            raise ValueError(
+                "Diese Partei ist dem Auftrag in dieser Rolle bereits zugeordnet."
+            ) from exc
+        raise
     return party
 
 

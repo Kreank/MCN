@@ -11,6 +11,7 @@ import os
 import uuid
 from datetime import date, datetime, timedelta, timezone as dt_timezone
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -20,11 +21,11 @@ from django.db.models import Q
 
 from db_core.db_context import business_transaction
 from db_core.models import (
-    AppointmentCategory, AppUser, Article, ArticleSalePrice, Assembly,
+    Absence, AppointmentCategory, AppUser, Article, ArticleSalePrice, Assembly,
     DunningNotice, Employee, Invoice, MaintenanceContract, Party, Payment,
     Project, ProjectLog, Property, Quote, Resource, SalePriceGroup,
-    ServiceJob, SiteReport, SupplierConnection, Task, UserRole, WageGroup,
-    WorkOrder,
+    ServiceJob, SiteReport, SupplierConnection, Task, TimeCategory, TimeEntry,
+    UserRole, WageGroup, WorkDay, WorkOrder,
 )
 from db_core.services import artikel as artikel_service
 from db_core.services import aufgabe as aufgabe_service
@@ -41,6 +42,7 @@ from db_core.services import mitarbeiter as mitarbeiter_service
 from db_core.services import projekt as projekt_service
 from db_core.services import property as property_service
 from db_core.services import site_report as site_report_service
+from db_core.services import zeiterfassung as zeit_service
 
 # Fester Namespace → wiederholbare Aufrufe treffen denselben Demo-Benutzer.
 DEMO_APP_USER_ID = uuid.UUID("00000000-0000-4000-8000-000000000001")
@@ -274,6 +276,20 @@ DEMO_EMPLOYEES = [
         "hired_on": date(2022, 9, 1),
         "hours": TEILZEIT_HOURS,
         "vacation_days": Decimal("18"),
+        "status": "AKTIV",
+        "absences": [],
+    },
+    {
+        # Der Monteur — Zielperson der Stempeluhr (Rolle MONTEUR, row_scope
+        # EIGENE). Er sieht ausschließlich seine eigenen Einsätze, Aufgaben und
+        # Zeiten; die Verwaltungssicht der Zeiterfassung bleibt für ihn 403.
+        "person": {"salutation": "Herr", "first_name": "Timo", "last_name": "Kalinski"},
+        "account_id": uuid.UUID("00000000-0000-4000-8000-000000000104"),
+        "login_email": "timo.kalinski@mitra-sanitaer.de",
+        "role": "MONTEUR",
+        "hired_on": date(2023, 5, 2),
+        "hours": VOLLZEIT_HOURS,
+        "vacation_days": Decimal("28"),
         "status": "AKTIV",
         "absences": [],
     },
@@ -1141,6 +1157,66 @@ class Command(BaseCommand):
                 f"({employee.status})"
             )
 
+        # Zeiterfassung (workflow.time_entry/work_day, Migrationen 0066–0068):
+        # zwei gestempelte Arbeitstage des Monteurs — einer bestätigt, einer
+        # eingereicht und damit im Freigabekorb der Leitung. Idempotent: liegt
+        # schon eine Zeitbuchung des Monteurs vor, wird der Block übersprungen.
+        monteur_id = uuid.UUID("00000000-0000-4000-8000-000000000104")
+        if (
+            AppUser.objects.filter(id=monteur_id).exists()
+            and not TimeEntry.objects.filter(user_id=monteur_id).exists()
+        ):
+            tz = ZoneInfo("Europe/Berlin")
+            arbeit = TimeCategory.objects.get(code="ARBEITSZEIT")
+            fahrt = TimeCategory.objects.get(code="FAHRTZEIT")
+
+            def _t(tag, hh, mm=0):
+                return datetime(tag.year, tag.month, tag.day, hh, mm, tzinfo=tz)
+
+            werktage = []
+            d = date.today() - timedelta(days=1)
+            while len(werktage) < 2:
+                if d.weekday() < 5:
+                    werktage.append(d)
+                d -= timedelta(days=1)
+            werktage.sort()
+
+            for i, tag in enumerate(werktage):
+                zeit_service.zeiteintrag_anlegen(
+                    monteur_id, user_id=monteur_id, category_id=fahrt.id,
+                    started_at=_t(tag, 7, 15), ended_at=_t(tag, 8),
+                    note="Anfahrt Baustelle",
+                )
+                zeit_service.zeiteintrag_anlegen(
+                    monteur_id, user_id=monteur_id, category_id=arbeit.id,
+                    started_at=_t(tag, 8), ended_at=_t(tag, 12),
+                )
+                zeit_service.zeiteintrag_anlegen(
+                    monteur_id, user_id=monteur_id, category_id=arbeit.id,
+                    started_at=_t(tag, 12, 30), ended_at=_t(tag, 16, 30),
+                )
+                work_day = WorkDay.objects.get(user_id=monteur_id, day=tag)
+                # Gesetzliche Pause einrechnen (ArbZG § 4) und einreichen.
+                zeit_service.pausen_regel_anwenden(
+                    monteur_id, work_day_id=work_day.id
+                )
+                zeit_service.arbeitstag_einreichen(
+                    monteur_id, work_day_id=work_day.id
+                )
+                if i == 0:
+                    # Vier-Augen: der Akteur (Administration) ist nicht der
+                    # Monteur — er darf bestätigen.
+                    zeit_service.arbeitstag_bestaetigen(
+                        actor.id, work_day_id=work_day.id
+                    )
+                angelegt += 1
+                self.stdout.write(
+                    f"Arbeitstag angelegt: {tag} "
+                    f"({'BESTAETIGT' if i == 0 else 'EINGEREICHT'})"
+                )
+        else:
+            uebersprungen += 1
+
         # Login-Konten (accounts.User) für die Seed-Mitarbeiter und ein Admin-
         # Konto. Jedes Konto ist über app_user_id mit einem security.app_user
         # verknüpft; die fachliche Rolle kommt über security.user_role. Passwörter
@@ -1180,11 +1256,158 @@ class Command(BaseCommand):
             else:
                 uebersprungen += 1
 
+        # ===================================================================
+        # Plantafel-Demodaten (Disposition)
+        # ===================================================================
+        # Die Plantafel zeigt standardmäßig die LAUFENDE Woche — feste Datums-
+        # angaben (wie im übrigen Seed) lägen dort nie im Bild. Diese Daten sind
+        # deshalb RELATIV zu heute und decken genau die drei Dinge ab, die man am
+        # Board sehen können muss:
+        #   * Rückstand   — ungeplante Einsätze, die man ins Raster zieht,
+        #   * Mehrtages-Balken — ein Einsatz über drei Tage,
+        #   * Sperrfläche — eine genehmigte Abwesenheit im sichtbaren Zeitraum.
+        # Idempotent über die Titel (der Einsatztitel ist im Demo-Datensatz
+        # eindeutig).
+        angelegt += self._seed_plantafel(actor)
+
         self.stdout.write(
             self.style.SUCCESS(
                 f"seed_demo fertig: {angelegt} angelegt, {uebersprungen} übersprungen."
             )
         )
+
+    def _seed_plantafel(self, actor):
+        """Rückstand, Mehrtages-Einsatz und Abwesenheit im Board-Zeitraum."""
+        angelegt = 0
+        order = (
+            WorkOrder.objects.filter(status="IN_AUSFUEHRUNG")
+            .order_by("created_at")
+            .first()
+        )
+        if order is None:
+            return 0
+
+        # Der Board-Anker ist der Montag DIESER Woche (wie im Frontend).
+        heute = date.today()
+        montag = heute - timedelta(days=heute.weekday())
+
+        def _utc(tag, stunde, minute=0):
+            return datetime(
+                tag.year, tag.month, tag.day, stunde, minute, tzinfo=dt_timezone.utc
+            )
+
+        # --- Rückstand: ungeplante Einsätze (kein scheduled_start) -----------
+        rueckstand = [
+            ("Heizungswartung Dachgeschoss (noch zu terminieren)", "Wartung"),
+            ("Silikonfugen Bad 3. OG erneuern", None),
+            ("Rückstau-Klappe prüfen — Keller", None),
+        ]
+        for titel, kat_name in rueckstand:
+            if ServiceJob.objects.filter(title=titel).exists():
+                continue
+            kat = (
+                AppointmentCategory.objects.filter(name=kat_name, status="AKTIV").first()
+                if kat_name
+                else None
+            )
+            job = einsatz_service.create_service_job(
+                actor.id,
+                work_order_id=order.id,
+                title=titel,
+                appointment_category_id=kat.id if kat else None,
+            )
+            angelegt += 1
+            self.stdout.write(
+                f"Rückstand (ungeplant): {job.job_number} — {titel}"
+            )
+
+        # --- Mehrtägiger Einsatz (Mi–Fr dieser Woche) ------------------------
+        MEHRTAGES_TITEL = "Gerüst stellen und Fassade reinigen (3 Tage)"
+        if not ServiceJob.objects.filter(title=MEHRTAGES_TITEL).exists():
+            mittwoch = montag + timedelta(days=2)
+            freitag = montag + timedelta(days=4)
+            lang = planung_service.create_termin(
+                actor.id,
+                work_order_id=order.id,
+                title=MEHRTAGES_TITEL,
+                scheduled_start=_utc(mittwoch, 7),
+                scheduled_end=_utc(freitag, 16),
+                assignee_ids=[actor.id],
+            )
+            angelegt += 1
+            self.stdout.write(
+                f"Mehrtägiger Einsatz: {lang.job_number} "
+                f"({mittwoch} 07:00 – {freitag} 16:00)"
+            )
+
+        # --- Termin OHNE Ende (zeigt den Konflikt „Kein Ende gepflegt") ------
+        OFFEN_TITEL = "Kurzeinsatz ohne Endzeit (Beispiel)"
+        if not ServiceJob.objects.filter(title=OFFEN_TITEL).exists():
+            offen = planung_service.create_termin(
+                actor.id,
+                work_order_id=order.id,
+                title=OFFEN_TITEL,
+                scheduled_start=_utc(montag + timedelta(days=1), 13),
+                assignee_ids=[actor.id],
+            )
+            angelegt += 1
+            self.stdout.write(f"Termin ohne Ende: {offen.job_number}")
+
+        # --- Genehmigte Abwesenheit IM Board-Zeitraum ------------------------
+        # Ohne sie plant der Disponent auf einen Urlauber — bei Hero steht die
+        # Abwesenheit im Board, deshalb muss sie auch hier sichtbar sein.
+        # Bevorzugt der Monteur (Timo Kalinski); notfalls der Seed-Akteur selbst,
+        # damit die Sperrfläche IMMER in einer Bahn liegt, die auch Termine trägt
+        # (sonst sähe man die Sperre, aber nie den Konflikt).
+        monteur = Employee.objects.filter(
+            app_user_id=uuid.UUID("00000000-0000-4000-8000-000000000104")
+        ).first() or Employee.objects.filter(app_user_id=actor.id).first()
+        if monteur is not None:
+            von = montag + timedelta(days=3)   # Donnerstag
+            bis = montag + timedelta(days=4)   # Freitag
+            schon_da = Absence.objects.filter(
+                employee_id=monteur.id, start_date=von, end_date=bis
+            ).exists()
+            if not schon_da:
+                ab = mitarbeiter_service.create_absence(
+                    actor.id,
+                    employee_id=monteur.id,
+                    absence_type="URLAUB",
+                    start_date=von,
+                    end_date=bis,
+                    reason="Brückentage (Demo).",
+                )
+                mitarbeiter_service.submit_absence(actor.id, absence_id=ab.id)
+                mitarbeiter_service.approve_absence(
+                    actor.id, absence_id=ab.id, note="Genehmigt (Demo)."
+                )
+                angelegt += 1
+                self.stdout.write(
+                    f"Abwesenheit im Board-Zeitraum: {von} – {bis} (Timo Kalinski)"
+                )
+
+                # Und ein Termin GENAU DARAUF — so ist der Konflikt „Termin auf
+                # Abwesenheit" im Board sofort sichtbar (er blockiert nichts).
+                # Der Titel nennt die Abwesenheits-ART bewusst NICHT: Er steht im
+                # Board-Payload, den auch ein Disponent ohne hr-Recht liest — und
+                # er wäre der einzige Weg, auf dem die Art (Gesundheitsdatum,
+                # DSGVO Art. 9) doch noch dort landet. Was das Board zeigen soll,
+                # ist der Konflikt selbst, nicht sein Grund.
+                KONFLIKT_TITEL = "Nachkontrolle (kollidiert mit Abwesenheit — Demo)"
+                if not ServiceJob.objects.filter(title=KONFLIKT_TITEL).exists():
+                    kollision = planung_service.create_termin(
+                        actor.id,
+                        work_order_id=order.id,
+                        title=KONFLIKT_TITEL,
+                        scheduled_start=_utc(von, 9),
+                        scheduled_end=_utc(von, 12),
+                        assignee_ids=[monteur.app_user_id],
+                    )
+                    angelegt += 1
+                    self.stdout.write(
+                        f"Konflikt-Demo (Termin auf Abwesenheit): {kollision.job_number}"
+                    )
+        return angelegt
 
     def _ensure_demo_user(self):
         """Idempotenter Demo-app_user über feste UUID; kein Trigger verlangt hier

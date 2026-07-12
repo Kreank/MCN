@@ -45,8 +45,15 @@ def is_retryable(exc):
 
 
 @contextmanager
-def business_transaction(app_user_id, *, status_reason=None):
-    """Eine fachliche Transaktion: atomic + SET LOCAL Benutzerkontext."""
+def business_transaction(app_user_id, *, status_reason=None, correction_reason=None):
+    """Eine fachliche Transaktion: atomic + SET LOCAL Benutzerkontext.
+
+    `correction_reason` (`app.correction_reason`) ist die Begründung für eine
+    Korrektur AUSSERHALB eines Statuswechsels — Beschluss B-28 (Zeit-/
+    Materialänderung nach Einsatzabschluss) und das Arbeitstag-Schloss
+    (Migration 0067). Anders als `status_reason` wird sie von den Triggern nicht
+    verbraucht; sie gilt für die ganze Transaktion.
+    """
     if app_user_id is None:
         raise ValueError(
             "Fachliche Schreiboperation ohne app_user_id: dem Login-Konto ist "
@@ -62,6 +69,11 @@ def business_transaction(app_user_id, *, status_reason=None):
                 cur.execute(
                     "SELECT set_config('app.status_reason', %s, true)",
                     [status_reason],
+                )
+            if correction_reason is not None:
+                cur.execute(
+                    "SELECT set_config('app.correction_reason', %s, true)",
+                    [correction_reason],
                 )
         yield
 

@@ -519,6 +519,36 @@ export class EinsatzDetail {
     });
   }
 
+  /** Zuweisung eines Mitarbeiters aufheben.
+   *
+   * Gegenstück zu „+ Zuweisung". Bisher ließ sich eine Zuweisung ausschließlich
+   * per Drag & Drop in der Plantafel lösen — wer den Einsatz über die Liste
+   * öffnete, saß in einer Sackgasse. Der DB-Trigger sperrt das Lösen nach
+   * Einsatzabschluss (Historienschutz F-02); das kommt als 422 zurück und wird
+   * als Fehlermeldung gezeigt.
+   */
+  zuweisungEntfernen(assigneeId: string, name: string): void {
+    const d = this.daten();
+    if (!d || this.aktionBusyId()) return;
+    this.aktionBusyId.set(assigneeId);
+    this.meldung.set(null);
+    this.svc.unassign(d.id, assigneeId).subscribe({
+      next: () => {
+        this.aktionBusyId.set(null);
+        this.meldung.set({ art: 'erfolg', text: `Zuweisung von ${name} aufgehoben.` });
+        this.load(d.id);
+      },
+      error: (err) => {
+        this.aktionBusyId.set(null);
+        const text = istVerboten(err)
+          ? (fehlerDetail(err) ?? 'Keine Berechtigung für diese Aktion.')
+          : (fehlerDetail(err) ??
+            'Die Zuweisung ließ sich nicht aufheben. Bitte erneut versuchen.');
+        this.meldung.set({ art: 'fehler', text });
+      },
+    });
+  }
+
   ressourceEntfernen(resourceId: string): void {
     const d = this.daten();
     if (!d || this.aktionBusyId()) return;

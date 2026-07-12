@@ -226,6 +226,19 @@ def test_add_building_leere_nummer_422(admin_client, seeded):
 
 
 @pytest.mark.django_db
+def test_add_building_doppelte_nummer_422(admin_client, seeded):
+    # Gebäude "A" existiert bereits an der WEG (seeded). Die UNIQUE-Verletzung
+    # muss als 422 mit klarer Meldung enden, nicht als 500.
+    r = admin_client.post(
+        f"/api/property/properties/{seeded['weg'].id}/buildings",
+        data={"building_number": "A", "name": "Doppelgänger"},
+        content_type="application/json",
+    )
+    assert r.status_code == 422, r.content
+    assert "bereits" in r.json()["detail"]
+
+
+@pytest.mark.django_db
 def test_add_building_unbekannte_liegenschaft_404(admin_client, seeded):
     r = admin_client.post(
         f"/api/property/properties/{uuid.uuid4()}/buildings",
@@ -309,6 +322,24 @@ def test_add_party_role_ungueltige_rolle_422(admin_client, seeded):
         content_type="application/json",
     )
     assert r.status_code == 422
+
+
+@pytest.mark.django_db
+def test_add_party_role_ende_vor_beginn_422(admin_client, seeded):
+    # valid_until vor valid_from verletzt property_party_role_check; die
+    # Vorabprüfung muss das als 422 abweisen, nicht als 500 durchschlagen lassen.
+    r = admin_client.post(
+        f"/api/property/properties/{seeded['weg'].id}/parties",
+        data={
+            "party_id": str(seeded["eigentuemer"].id),
+            "role": "PROPERTY_OWNER",
+            "valid_from": "2021-06-01",
+            "valid_until": "2021-03-01",
+        },
+        content_type="application/json",
+    )
+    assert r.status_code == 422, r.content
+    assert "nach dem Gültig-ab-Datum" in r.json()["detail"]
 
 
 @pytest.mark.django_db

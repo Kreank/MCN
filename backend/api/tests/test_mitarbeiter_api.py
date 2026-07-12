@@ -420,9 +420,19 @@ def test_self_ohne_mitarbeiterdatensatz_404(admin_client):
 
 @pytest.mark.django_db
 def test_self_ohne_hr_recht_403(client_with_role):
-    """MONTEUR hat kein hr/LESEN → 403 (kein Zugriff auf HR-Selbstauskunft)."""
-    c = client_with_role("MONTEUR")
+    """DISPOSITION hat kein hr/LESEN → 403 (kein Zugriff auf HR-Selbstauskunft)."""
+    c = client_with_role("DISPOSITION")
     assert c.get("/api/hr/self").status_code == 403
+
+
+@pytest.mark.django_db
+def test_self_monteur_erreichbar_aber_ohne_personalsatz_404(client_with_role):
+    """Seit Migration 0068 hat der MONTEUR `hr/LESEN` mit row_scope EIGENE (er
+    braucht es für die eigene Zeiterfassung). `/hr/self` ist damit erreichbar —
+    aber es liefert ausschließlich den EIGENEN Personalsatz. Ohne Personalsatz:
+    404, nicht 403 und erst recht nicht fremde Daten."""
+    c = client_with_role("MONTEUR")
+    assert c.get("/api/hr/self").status_code == 404
 
 
 @pytest.mark.django_db

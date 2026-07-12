@@ -1,0 +1,70 @@
+@if (!verboten()) {
+  <section class="zeiten" aria-labelledby="zeiten-titel">
+    <div class="zeiten__kopf">
+      <h3 id="zeiten-titel">Zeiten an diesem Termin</h3>
+      <div class="zeiten__rechts">
+        <p class="zeiten__summe">
+          <span class="zeiten__summe-label">Arbeitszeit</span>
+          <strong>{{ dauerText(summe()) }}</strong>
+        </p>
+        @if (darfBuchen()) {
+          <button type="button" class="btn btn--klein" (click)="dialogOeffnen()">
+            Zeit buchen
+          </button>
+        }
+      </div>
+    </div>
+
+    <p class="sr-only" aria-live="polite" role="status">{{ meldung() }}</p>
+    @if (fehler(); as f) {
+      <p class="note note--error" role="alert">{{ f }}</p>
+    }
+
+    @if (laedt()) {
+      <p class="lade-hinweis">Zeiten werden geladen …</p>
+    } @else if (eintraege().length === 0) {
+      <p class="tab-platzhalter">Für diesen Termin ist noch keine Zeit gebucht.</p>
+    } @else {
+      <ul class="zeiten__liste">
+        @for (e of eintraege(); track e.id) {
+          <li class="zeit" [class.zeit--pause]="!e.is_work_time">
+            <span class="zeit__spanne">
+              {{ uhrzeit(e.started_at) }} –
+              @if (e.ended_at) { {{ uhrzeit(e.ended_at) }} } @else { <em>läuft</em> }
+            </span>
+            <span class="zeit__kat">{{ e.kategorie }}</span>
+            <span class="zeit__wer">{{ e.user }}</span>
+            <span class="zeit__dauer">{{ dauerText(e.dauer_sekunden) }}</span>
+            @if (e.note) {
+              <span class="zeit__notiz">{{ e.note }}</span>
+            }
+          </li>
+        }
+      </ul>
+    }
+  </section>
+
+  <app-dialog
+    [offen]="dialogOffen()"
+    titel="Zeit am Termin buchen"
+    (schliessen)="dialogOffen.set(false)"
+  >
+    <form [formGroup]="form" (ngSubmit)="speichern()">
+      <app-feld
+        [control]="$any(form.controls.category_id)"
+        label="Kategorie"
+        typ="select"
+        [pflicht]="true"
+        [optionen]="kategorieOptionen()"
+      />
+      <app-feld [control]="$any(form.controls.datum)" label="Datum" typ="datum" [pflicht]="true" />
+      <app-feld [control]="$any(form.controls.von)" label="Von" typ="zeit" [pflicht]="true" />
+      <app-feld [control]="$any(form.controls.bis)" label="Bis" typ="zeit" [pflicht]="true" />
+      <app-feld [control]="$any(form.controls.note)" label="Notiz" typ="textarea" />
+      <div class="dialog-aktionen">
+        <button type="button" class="btn" (click)="dialogOffen.set(false)">Abbrechen</button>
+        <button type="submit" class="btn btn--primary" [disabled]="speichert()">Buchen</button>
+      </div>
+    </form>
+  </app-dialog>
+}

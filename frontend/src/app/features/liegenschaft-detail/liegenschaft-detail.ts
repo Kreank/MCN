@@ -91,6 +91,19 @@ export class LiegenschaftDetail {
     property_id: this.daten()?.id ?? '',
   }));
 
+  /**
+   * Kontextzeile für die Werkzeuge (Heizlast/Heizkörper): Objektname + Adresse.
+   * Reine Anzeige — sie erscheint auf dem kopierten Ergebnis, damit ein
+   * Überschlag später noch zuzuordnen ist.
+   */
+  protected readonly werkzeugKontext = computed(() => {
+    const d = this.daten();
+    if (!d) return '';
+    const strasse = [d.address.street, d.address.house_number].filter(Boolean).join(' ');
+    const ort = [d.address.postal_code, d.address.city].filter(Boolean).join(' ');
+    return [d.name, strasse, ort].filter(Boolean).join(', ');
+  });
+
   protected readonly einheitenGesamt = computed(() => {
     const d = this.daten();
     if (!d) return 0;

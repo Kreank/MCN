@@ -10,6 +10,7 @@ damit Fehleingaben schon vor dem DB-CHECK eine klare Meldung bekommen.
 """
 import uuid
 
+from django.db import IntegrityError
 from django.db.models import Q
 
 from db_core.db_context import business_transaction
@@ -111,14 +112,22 @@ def add_building(
         raise ValueError("building_number darf nicht leer sein.")
     ensure_exists(Property, property_id, "Liegenschaft")
     ensure_exists(Address, address_id, "Adresse")
-    with business_transaction(actor_app_user_id):
-        building = Building.objects.create(
-            id=uuid.uuid4(),
-            property_id=property_id,
-            building_number=building_number.strip(),
-            name=name,
-            address_id=address_id,
-        )
+    try:
+        with business_transaction(actor_app_user_id):
+            building = Building.objects.create(
+                id=uuid.uuid4(),
+                property_id=property_id,
+                building_number=building_number.strip(),
+                name=name,
+                address_id=address_id,
+            )
+    except IntegrityError as exc:
+        if "building_property_id_building_number_key" in str(exc):
+            raise ValueError(
+                f"An dieser Liegenschaft existiert bereits ein Gebäude mit der "
+                f"Nummer '{building_number.strip()}'."
+            ) from exc
+        raise
     return building
 
 
@@ -184,6 +193,12 @@ def add_party_role(
         raise ValueError(
             f"Ungültige role '{role}'. Erlaubt: {', '.join(PARTY_ROLES)}."
         )
+    # Ende vor (oder gleich) Beginn verletzt sonst property_party_role_check
+    # (IntegrityError → 500); vorab als klaren 422 abweisen.
+    if valid_until is not None and valid_until <= valid_from:
+        raise ValueError(
+            "Das Gültig-bis-Datum der Rolle muss nach dem Gültig-ab-Datum liegen."
+        )
     ensure_exists(Property, property_id, "Liegenschaft")
     # party_id muss existieren und darf nicht MERGED sein (trg_property_role_no_merged).
     ensure_party_usable(party_id, "Partei")
@@ -199,13 +214,23 @@ def add_party_role(
             "Für diese Partei besteht in diesem Zeitraum bereits dieselbe Rolle "
             "an der Liegenschaft"
         )
-    with business_transaction(actor_app_user_id):
-        entry = PropertyPartyRole.objects.create(
-            id=uuid.uuid4(),
-            property_id=property_id,
-            party_id=party_id,
-            role=role,
-            valid_from=valid_from,
-            valid_until=valid_until,
-        )
+    try:
+        with business_transaction(actor_app_user_id):
+            entry = PropertyPartyRole.objects.create(
+                id=uuid.uuid4(),
+                property_id=property_id,
+                party_id=party_id,
+                role=role,
+                valid_from=valid_from,
+                valid_until=valid_until,
+            )
+    except IntegrityError as exc:
+        # Fällt nur bei einem nebenläufigen Insert an, das die Vorabprüfung
+        # oben nicht sehen konnte.
+        if "excl_property_party_role_dup" in str(exc):
+            raise ValueError(
+                "Für diese Partei besteht in diesem Zeitraum bereits dieselbe "
+                "Rolle an der Liegenschaft"
+            ) from exc
+        raise
     return entry

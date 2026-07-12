@@ -9,6 +9,7 @@ import {
   MaterialEntry,
   MaterialLogInput,
   Plantafel,
+  PlantafelQuery,
   ScheduleInput,
   ScheduleResult,
   ServiceJob,
@@ -17,6 +18,9 @@ import {
   ServiceJobPage,
   ServiceJobQuery,
   ServiceJobUpdate,
+  TerminCreate,
+  TerminResult,
+  TerminUpdate,
   TimeEntry,
   TimeLogInput,
 } from './einsatz.model';
@@ -35,6 +39,8 @@ export class EinsatzService {
     if (q) params = params.set('q', q);
     if (query.status) params = params.set('status', query.status);
     if (query.work_order_id) params = params.set('work_order_id', query.work_order_id);
+    if (query.scheduled_from) params = params.set('scheduled_from', query.scheduled_from);
+    if (query.scheduled_to) params = params.set('scheduled_to', query.scheduled_to);
     return this.http.get<ServiceJobPage>(this.base, { params });
   }
 
@@ -54,12 +60,35 @@ export class EinsatzService {
     return this.http.get<AssignableUser[]>('/api/planung/users', { params });
   }
 
-  /** Plantafel-Board für einen Zeitraum (Bahnen + verplante Einsätze). */
-  plantafel(dateFrom: string, dateTo: string): Observable<Plantafel> {
-    const params = new HttpParams()
-      .set('date_from', dateFrom)
-      .set('date_to', dateTo);
+  /**
+   * Plantafel-Board für einen Zeitraum: Bahnen (alle aktiven, auch leere),
+   * Kacheln (alle Einsätze, die den Zeitraum ÜBERLAPPEN), Rückstand
+   * (ungeplante Einsätze), Abwesenheiten, Feiertage und Konflikte.
+   */
+  plantafel(query: PlantafelQuery): Observable<Plantafel> {
+    let params = new HttpParams()
+      .set('date_from', query.date_from)
+      .set('date_to', query.date_to);
+    const q = query.q?.trim();
+    if (q) params = params.set('q', q);
+    if (query.category_id) params = params.set('category_id', query.category_id);
+    const bq = query.backlog_q?.trim();
+    if (bq) params = params.set('backlog_q', bq);
     return this.http.get<Plantafel>('/api/planung/plantafel', { params });
+  }
+
+  /**
+   * Termin anlegen — Einsatz, Kategorie, Mitarbeiter und Betriebsmittel in EINEM
+   * Vorgang (der Server klammert alles in eine Transaktion). Ohne
+   * `scheduled_start` landet der Termin bewusst im Rückstand.
+   */
+  createTermin(payload: TerminCreate): Observable<TerminResult> {
+    return this.http.post<TerminResult>('/api/planung/termine', payload);
+  }
+
+  /** Termin ändern (Vollersetzung der Zuweisungs-/Ressourcenlisten). */
+  updateTermin(id: string, payload: TerminUpdate): Observable<TerminResult> {
+    return this.http.patch<TerminResult>(`/api/planung/termine/${id}`, payload);
   }
 
   // --- Schreiben (Session-Auth Pflicht) ------------------------------------

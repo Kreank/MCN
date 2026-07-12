@@ -62,16 +62,48 @@ def test_row_scope_eigene_vs_alle():
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize("role", ["MONTEUR", "DISPOSITION", "BUCHHALTUNG", "NUR_LESEN"])
+@pytest.mark.parametrize("role", ["DISPOSITION", "BUCHHALTUNG", "NUR_LESEN"])
 def test_hr_modul_fuer_nicht_admin_gesperrt(role):
     """Personaldaten (Modul hr) sehen/pflegen nur ADMINISTRATION/GESCHAEFTSFUEHRUNG
     (DSGVO Art. 9). Alle übrigen Rollen haben auf hr KEIN Recht — auch NUR_LESEN
-    nicht (kein LESEN)."""
+    nicht (kein LESEN).
+
+    Ausnahme MONTEUR seit Migration 0068 — siehe den nächsten Test."""
     au = make_app_user()
     grant_role(au.id, role)
     perms = rechte_service.effective_permissions(au.id)
     assert ("hr", "LESEN") not in perms
     assert not any(module == "hr" for (module, _action) in perms)
+
+
+@pytest.mark.django_db
+def test_monteur_hr_nur_eigene(  # Migration 0068 (Zeiterfassung)
+):
+    """Der MONTEUR braucht `hr` für die EIGENE Zeiterfassung — aber nur EIGENE.
+
+    Ohne dieses Recht könnte er seine eigene Arbeitszeit nicht erfassen (die
+    Aufzeichnungspflicht nach § 17 MiLoG liefe ins Leere). `EIGENE` ist
+    fail-closed: alle `require`-gesicherten hr-Endpunkte (Personalliste,
+    Abwesenheiten aller, Verträge) antworten für ihn weiter mit 403.
+    FREIGEBEN (Arbeitstag bestätigen) bleibt Führungsaufgabe.
+    """
+    au = make_app_user()
+    grant_role(au.id, "MONTEUR")
+    perms = rechte_service.effective_permissions(au.id)
+    assert perms[("hr", "LESEN")] == "EIGENE"
+    assert perms[("hr", "AENDERN")] == "EIGENE"
+    assert ("hr", "FREIGEBEN") not in perms
+    assert ("hr", "ANLEGEN") not in perms
+    assert ("hr", "EXPORTIEREN") not in perms
+
+
+@pytest.mark.django_db
+def test_monteur_hr_verwaltungsendpunkte_403(client_with_role):
+    """fail-closed: `require` wirft bei EIGENE — die Personalliste bleibt zu."""
+    c = client_with_role("MONTEUR")
+    assert c.get("/api/hr/employees").status_code == 403
+    assert c.get("/api/hr/absences").status_code == 403
+    assert c.get("/api/zeiterfassung").status_code == 403
 
 
 @pytest.mark.django_db

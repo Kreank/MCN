@@ -154,11 +154,124 @@ def test_plantafel(admin_client, seeded):
     assert r.status_code == 200
     body = r.json()
     assert len(body["jobs"]) == 2
-    assert [res["display_name"] for res in body["resources"]] == ["Test Sachbearbeiter"]
+    # Bahnen sind ALLE aktiven Mitarbeiter — nicht nur die bereits verplanten.
+    namen = [lane["display_name"] for lane in body["lanes"] if lane["kind"] == "USER"]
+    assert "Test Sachbearbeiter" in namen
     assert body["unassigned_count"] == 1
     vor_ort = next(j for j in body["jobs"] if j["status"] == "VOR_ORT")
     assert len(vor_ort["assignee_ids"]) == 1
     assert vor_ort["title"] == "Sockelrisse setzen"
+    assert "conflicts" in vor_ort
+    assert body["backlog"] == []
+    assert body["holidays"] == []
+
+
+@pytest.mark.django_db
+def test_plantafel_rueckstand_und_konflikte(admin_client, seeded, app_user):
+    """Der Rückstand trägt die UNGEPLANTEN Einsätze; ein doppelt belegter
+    Mitarbeiter erzeugt einen (nicht blockierenden) Konflikt an der Kachel."""
+    ungeplant = einsatz_service.create_service_job(
+        app_user.id, work_order_id=seeded["order"].id, title="Noch zu terminieren"
+    )
+    # Zweiter Einsatz im selben Fenster für denselben Monteur → Doppelbelegung.
+    kollision = einsatz_service.create_service_job(
+        app_user.id, work_order_id=seeded["order"].id,
+        scheduled_start=T0, scheduled_end=T1,
+    )
+    einsatz_service.assign_user(
+        app_user.id, service_job_id=kollision.id, assignee_user_id=app_user.id
+    )
+    r = admin_client.get("/api/planung/plantafel?date_from=2026-07-13&date_to=2026-07-13")
+    body = r.json()
+    assert [j["id"] for j in body["backlog"]] == [str(ungeplant.id)]
+    assert body["backlog_total"] == 1
+    kachel = next(j for j in body["jobs"] if j["id"] == str(kollision.id))
+    assert "DOPPELBELEGUNG" in {k["kind"] for k in kachel["conflicts"]}
+    # Text ist immer dabei — das UI zeigt nie nur Farbe (WCAG 1.4.1).
+    assert all(k["text"] for k in kachel["conflicts"])
+
+
+@pytest.mark.django_db
+def test_plantafel_verraet_die_abwesenheitsart_nicht(client_with_role, seeded, app_user):
+    """DSGVO Art. 9: Ein Disponent (workflow, KEIN hr) darf im Board nirgends
+    erfahren, WARUM jemand fehlt — nur DASS er fehlt.
+
+    Das Repo zieht diese Grenze bereits bewusst: `api/mitarbeiter.py` verlangt für
+    genau diese Daten `require(request, "hr", "LESEN")`. Die Plantafel hängt an
+    `workflow`/LESEN und darf das Tor nicht umgehen; sonst sähe jeder Disponent
+    für den gesamten Personalbestand, wer krank ist.
+    """
+    from db_core.services import mitarbeiter as hr_service
+
+    konto = AppUser.objects.create(
+        id=uuid4(), display_name="Kranker Kollege", status="ACTIVE", version=1
+    )
+    person = identity_service.create_person(
+        app_user.id, first_name="Karl", last_name="Krank"
+    )
+    emp = hr_service.create_employee(
+        app_user.id, app_user_id=konto.id, party_id=person.id,
+        hired_on=datetime(2024, 1, 1).date(),
+    )
+    hr_service.create_contract(
+        app_user.id, employee_id=emp.id, valid_from=datetime(2024, 1, 1).date(),
+        hours={
+            "hours_monday": 8, "hours_tuesday": 8, "hours_wednesday": 8,
+            "hours_thursday": 8, "hours_friday": 8,
+        },
+        vacation_days_per_year=30,
+    )
+    ab = hr_service.create_absence(
+        app_user.id, employee_id=emp.id, absence_type="KRANKHEIT",
+        start_date=datetime(2026, 7, 13).date(),
+        end_date=datetime(2026, 7, 13).date(),
+    )
+    hr_service.submit_absence(app_user.id, absence_id=ab.id)
+    hr_service.approve_absence(app_user.id, absence_id=ab.id)
+    # Der Kranke ist auf den Termin eingeplant → auch der KONFLIKTTEXT an der
+    # Kachel und die `warnings` dürfen die Art nicht ausplaudern.
+    einsatz_service.assign_user(
+        app_user.id, service_job_id=seeded["j2"].id, assignee_user_id=konto.id
+    )
+
+    dispo = client_with_role("DISPOSITION")
+    r = dispo.get("/api/planung/plantafel?date_from=2026-07-13&date_to=2026-07-13")
+    assert r.status_code == 200
+    roh = r.content.decode()
+    # Die Sperrfläche IST da (der Disponent muss sehen, dass er nicht planen kann) …
+    body = r.json()
+    assert len(body["absences"]) == 1
+    assert body["absences"][0]["app_user_id"] == str(konto.id)
+    kachel = next(j for j in body["jobs"] if j["id"] == str(seeded["j2"].id))
+    assert "ABWESENHEIT" in {k["kind"] for k in kachel["conflicts"]}
+    # … aber nirgends im GESAMTEN Payload steht, warum.
+    assert "KRANKHEIT" not in roh.upper()
+    assert "absence_type" not in roh
+
+    # Dasselbe für die `warnings` jeder Schreibantwort (/termine, /schedule,
+    # /assignments) — sie kommen aus derselben Quelle.
+    r = dispo.patch(
+        f"/api/planung/termine/{seeded['j2'].id}",
+        data={"scheduled_start": "2026-07-13T08:00:00Z"},
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    warnungen = " ".join(r.json()["warnings"])
+    assert "abwesend" in warnungen
+    assert "KRANKHEIT" not in warnungen.upper()
+
+
+@pytest.mark.django_db
+def test_plantafel_suche_und_kategoriefilter(admin_client, seeded):
+    r = admin_client.get(
+        "/api/planung/plantafel?date_from=2026-07-13&date_to=2026-07-13&q=Sockelrisse"
+    )
+    assert r.status_code == 200
+    assert len(r.json()["jobs"]) == 2  # beide hängen am selben Auftrag
+    r = admin_client.get(
+        "/api/planung/plantafel?date_from=2026-07-13&date_to=2026-07-13&q=gibtsnicht"
+    )
+    assert r.json()["jobs"] == []
 
 
 @pytest.mark.django_db
@@ -171,6 +284,178 @@ def test_plantafel_range_invalid(admin_client, db):
 def test_plantafel_range_zu_gross(admin_client, db):
     r = admin_client.get("/api/planung/plantafel?date_from=2026-01-01&date_to=2026-12-31")
     assert r.status_code == 422
+
+
+# --- Termin anlegen/ändern in EINEM Vorgang --------------------------------
+
+@pytest.mark.django_db
+def test_termin_anlegen_mit_mehreren_mitarbeitern_und_ressourcen(
+    admin_client, seeded, app_user
+):
+    from db_core.services import planung as planung_service
+
+    zweiter = AppUser.objects.create(
+        id=uuid4(), display_name="Zweiter Monteur", status="ACTIVE", version=1
+    )
+    kat = planung_service.create_category(app_user.id, name="Vor-Ort-Termin")
+    res = planung_service.create_resource(
+        app_user.id, name="VW Crafter", resource_type="FAHRZEUG"
+    )
+    r = admin_client.post(
+        "/api/planung/termine",
+        data={
+            "work_order_id": str(seeded["order"].id),
+            "scheduled_start": "2026-07-14T08:00:00Z",
+            "scheduled_end": "2026-07-14T16:00:00Z",
+            "appointment_category_id": str(kat.id),
+            "assignee_ids": [str(app_user.id), str(zweiter.id)],
+            "resource_ids": [str(res.id)],
+        },
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    body = r.json()
+    assert body["status"] == "GEPLANT"
+    assert body["assignee_count"] == 2
+    assert body["category"]["name"] == "Vor-Ort-Termin"
+    assert "warnings" in body
+
+
+@pytest.mark.django_db
+def test_termin_ohne_zeit_landet_im_rueckstand(admin_client, seeded):
+    r = admin_client.post(
+        "/api/planung/termine",
+        data={"work_order_id": str(seeded["order"].id), "title": "Später planen"},
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    assert r.json()["status"] == "UNGEPLANT"
+
+
+@pytest.mark.django_db
+def test_termin_aendern_ersetzt_zuweisungen(admin_client, seeded, app_user):
+    job = seeded["j2"]
+    zweiter = AppUser.objects.create(
+        id=uuid4(), display_name="Neuer Monteur", status="ACTIVE", version=1
+    )
+    r = admin_client.patch(
+        f"/api/planung/termine/{job.id}",
+        data={"assignee_ids": [str(zweiter.id)], "title": "Umbenannt"},
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    assert r.json()["title"] == "Umbenannt"
+    ids = set(
+        JobAssignment.objects.filter(service_job_id=job.id).values_list(
+            "assignee_id", flat=True
+        )
+    )
+    assert ids == {zweiter.id}
+
+
+@pytest.mark.django_db
+def test_termin_patch_laesst_nicht_mitgeschickte_felder_in_ruhe(admin_client, seeded):
+    """Ein PATCH ist ein TEIL-Update: Was nicht mitkommt, bleibt stehen.
+
+    Der Fall, der weh tut: Der Disponent ändert auf der Plantafel nur die Uhrzeit.
+    Schickt der Dialog dabei `on_site_contact_party_id`/`access_instructions` blind
+    als leer mit, sind Ansprechpartner und Zutrittscode weg — und der Monteur steht
+    ohne Code vor der Tür.
+    """
+    job = seeded["j1"]  # hat Kontakt „Petra Prinzipal" und Zutrittshinweis
+    r = admin_client.patch(
+        f"/api/planung/termine/{job.id}",
+        data={
+            "scheduled_start": "2026-07-13T09:00:00Z",
+            "scheduled_end": "2026-07-13T13:00:00Z",
+        },
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    job.refresh_from_db()
+    assert job.on_site_contact_party_id is not None
+    assert job.access_instructions == "Schlüssel Hausmeister."
+
+    # Und das Detail liefert die ROHEN Werte, die ein Formular zum Vorbelegen
+    # braucht — sonst kann es sie gar nicht erhalten.
+    d = admin_client.get(f"/api/planung/einsaetze/{job.id}").json()
+    assert d["on_site_contact_party_id"] == str(job.on_site_contact_party_id)
+    # `title` ist der aufgelöste Auftragstitel, `own_title` der (hier leere) eigene.
+    assert d["title"] == "Sockelrisse setzen"
+    assert d["own_title"] is None
+
+
+@pytest.mark.django_db
+def test_termin_zurueck_in_den_rueckstand(admin_client, seeded):
+    """`scheduled_start: null` ist die Gegenbewegung zum Ziehen ins Raster —
+    kein stiller No-Op mehr."""
+    job = seeded["j2"]
+    r = admin_client.patch(
+        f"/api/planung/termine/{job.id}",
+        data={"scheduled_start": None, "reason": "Kunde hat abgesagt"},
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    assert r.json()["status"] == "UNGEPLANT"
+    job.refresh_from_db()
+    assert job.scheduled_start is None
+    assert job.scheduled_end is None
+
+    board = admin_client.get(
+        "/api/planung/plantafel?date_from=2026-07-13&date_to=2026-07-13"
+    ).json()
+    assert str(job.id) in {j["id"] for j in board["backlog"]}
+
+
+@pytest.mark.django_db
+def test_termin_zurueck_in_den_rueckstand_ohne_begruendung_422(admin_client, seeded):
+    """GEPLANT → UNGEPLANT ist begründungspflichtig — ohne Grund: klarer 422,
+    keine halbe Änderung."""
+    job = seeded["j2"]
+    r = admin_client.patch(
+        f"/api/planung/termine/{job.id}",
+        data={"scheduled_start": None},
+        content_type="application/json",
+    )
+    assert r.status_code == 422
+    job.refresh_from_db()
+    assert job.status == "GEPLANT"
+    assert job.scheduled_start is not None
+
+
+@pytest.mark.django_db
+def test_termin_doppelte_ids_sind_kein_500er(admin_client, seeded, app_user):
+    """Dieselbe Person zweimal im Payload meint sie einmal (war ein 500er)."""
+    r = admin_client.post(
+        "/api/planung/termine",
+        data={
+            "work_order_id": str(seeded["order"].id),
+            "scheduled_start": "2026-07-14T08:00:00Z",
+            "scheduled_end": "2026-07-14T16:00:00Z",
+            "assignee_ids": [str(app_user.id), str(app_user.id)],
+        },
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    assert r.json()["assignee_count"] == 1
+
+
+@pytest.mark.django_db
+def test_termin_endpunkte_sind_dispositionssache(client_with_role, seeded):
+    """Ein MONTEUR (row_scope EIGENE) plant nicht — fail-closed 403."""
+    monteur = client_with_role("MONTEUR")
+    r = monteur.post(
+        "/api/planung/termine",
+        data={"work_order_id": str(seeded["order"].id)},
+        content_type="application/json",
+    )
+    assert r.status_code == 403
+    r = monteur.patch(
+        f"/api/planung/termine/{seeded['j2'].id}",
+        data={"title": "Umwidmen"},
+        content_type="application/json",
+    )
+    assert r.status_code == 403
 
 
 # --- Schreibende Endpoints -------------------------------------------------

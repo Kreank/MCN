@@ -567,6 +567,12 @@
                 Bei Händler bestellen
               </button>
 
+              <!-- Rechner (Heizlast, Heizkörper, Volumenstrom, Einheiten). Das
+                   Ergebnis kommt als TEXTZEILE zurück — nie als Preis/Menge. -->
+              <button type="button" class="btn palette__ids" (click)="werkzeugeOffen.set(true)">
+                Werkzeuge / Rechner
+              </button>
+
               <div class="palette__liste" aria-live="polite">
                 @if (paletteLaedt()) {
                   <p class="palette__hinweis">Wird gesucht …</p>
@@ -888,4 +894,11 @@
   [quoteId]="idsQuoteId()"
   [(offen)]="idsOffen"
   (uebernehmen)="idsPositionenUebernehmen($event)"
+/>
+
+<!-- ===================== Werkzeuge: rechnen ohne den Beleg zu verlassen ======== -->
+<app-werkzeuge-dialog
+  [(offen)]="werkzeugeOffen"
+  [kontext]="werkzeugKontext()"
+  (uebernehmen)="werkzeugErgebnisUebernehmen($event)"
 />

@@ -1,0 +1,341 @@
+// Stempeluhr — mobil zuerst. Der Monteur bedient das im Auto, mit klammen
+// Fingern, bei Sonnenlicht: grosse Ziele, hoher Kontrast, wenig Text.
+//
+// WCAG: Der Zustand steht IMMER als Text + Symbol da; Farbe ist Zugabe.
+// Das reine Orange (--accent, 2,7:1 auf Weiss) traegt hier nirgends Text —
+// dafuer sind --accent-ink/--warn-ink da.
+
+.kopf {
+  margin-bottom: var(--space-5);
+
+  h1 {
+    margin: 0;
+    font-family: var(--font-display);
+  }
+}
+
+.kicker {
+  margin: 0 0 var(--space-1);
+  font-size: var(--step--1);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+// ---------------------------------------------------------------------------
+// Die Uhr
+// ---------------------------------------------------------------------------
+.uhr {
+  border: 2px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  text-align: center;
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+  transition: border-color 120ms ease-out;
+
+  &--laeuft {
+    border-color: var(--positive-ink);
+    background: var(--positive-tint);
+  }
+
+  &--pause {
+    border-color: var(--warn-ink);
+    background: var(--warn-tint);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .uhr {
+    transition: none;
+  }
+}
+
+.uhr__zustand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-2);
+  font-size: var(--step-0);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.uhr__zeichen {
+  font-size: var(--step-1);
+  line-height: 1;
+}
+
+.uhr__zeit {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: clamp(2.75rem, 12vw, 4.5rem);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.05;
+  color: var(--ink);
+}
+
+.uhr__detail {
+  margin: var(--space-1) 0 0;
+  color: var(--ink-muted);
+}
+
+.uhr__warnung {
+  margin-top: var(--space-4);
+  text-align: left;
+}
+
+.note--warnung {
+  border-left: 4px solid var(--warn-ink);
+}
+
+.uhr__knoepfe {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}
+
+// Grosse Touch-Ziele: 64 px hoch — weit ueber der WCAG-2.2-Mindestgroesse (24 px)
+// und ueber der 44-px-Empfehlung. Auf schmalen Schirmen volle Breite.
+.knopf {
+  flex: 1 1 12rem;
+  min-height: 64px;
+  padding: var(--space-3) var(--space-4);
+  border: 2px solid transparent;
+  border-radius: var(--radius);
+  font-family: var(--font-body);
+  font-size: var(--step-1);
+  font-weight: 700;
+  cursor: pointer;
+
+  &:focus-visible {
+    outline: 3px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
+.knopf--start {
+  background: var(--navy);
+  color: var(--on-command);
+  border-color: var(--navy);
+
+  &:hover:not(:disabled) {
+    background: var(--command-2);
+  }
+}
+
+.knopf--pause {
+  background: var(--warn);
+  color: #2a1c05; // 8,3:1 auf #db9c4d
+  border-color: var(--warn-ink);
+}
+
+.knopf--stopp {
+  background: var(--surface);
+  color: var(--ink);
+  border-color: var(--line-strong);
+}
+
+.uhr__kategorie {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  align-items: center;
+  margin: var(--space-4) 0 0;
+
+  label {
+    font-size: var(--step--1);
+    color: var(--ink-muted);
+  }
+
+  select {
+    min-height: 44px;
+    min-width: 14rem;
+    padding: var(--space-2);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--ink);
+    font: inherit;
+
+    &:focus-visible {
+      outline: 2px solid var(--focus-ring);
+      outline-offset: 1px;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Kacheln
+// ---------------------------------------------------------------------------
+.summe {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: var(--space-3);
+  margin: var(--space-5) 0;
+}
+
+.kachel {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: var(--space-3);
+  background: var(--surface);
+}
+
+.kachel__label {
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+.kachel__wert {
+  margin: var(--space-1) 0 0;
+  font-size: var(--step-2);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+
+  &--klein {
+    font-size: var(--step-0);
+    font-weight: 500;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Timeline
+// ---------------------------------------------------------------------------
+.timeline,
+.letzte {
+  margin-top: var(--space-6);
+}
+
+.timeline__kopf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+
+  h2 {
+    margin: 0;
+    font-family: var(--font-display);
+  }
+}
+
+.timeline__aktionen {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.eintraege {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.eintrag {
+  display: grid;
+  grid-template-columns: 9.5rem 1fr auto auto;
+  gap: var(--space-2) var(--space-3);
+  align-items: center;
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--navy);
+  border-radius: var(--radius);
+  background: var(--surface);
+
+  // Pause traegt IMMER ihren Namen im Text — der gestrichelte Rand ist Zugabe.
+  &--pause {
+    border-left-style: dashed;
+    border-left-color: var(--warn-ink);
+    background: var(--surface-sunken);
+  }
+}
+
+.eintrag__zeit {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.eintrag__kat {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.eintrag__einsatz {
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+.eintrag__dauer {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.eintrag__notiz {
+  grid-column: 1 / -1;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+@media (max-width: 40rem) {
+  .eintrag {
+    grid-template-columns: 1fr auto;
+  }
+
+  .eintrag__zeit {
+    grid-column: 1 / -1;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Tabelle
+// ---------------------------------------------------------------------------
+.tabelle {
+  width: 100%;
+  border-collapse: collapse;
+
+  th,
+  td {
+    padding: var(--space-2) var(--space-3);
+    text-align: left;
+    border-bottom: 1px solid var(--line);
+  }
+
+  th {
+    font-size: var(--step--1);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--ink-muted);
+  }
+
+  .num {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.dialog-aktionen {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}

@@ -25,6 +25,8 @@ Auftragsprüfung gesperrt. Das setzt ausschließlich die DB durch.
 """
 import uuid
 
+from django.utils import timezone
+
 from db_core.db_context import business_transaction
 from db_core.gate_errors import as_business_error
 from db_core.models import (
@@ -34,6 +36,7 @@ from db_core.models import (
     MaterialEntry,
     Property,
     ServiceJob,
+    TimeCategory,
     TimeEntry,
     WorkOrder,
 )
@@ -44,6 +47,11 @@ from db_core.services._validation import ensure_exists, ensure_party_usable
 _UNSET = object()
 
 ASSIGNMENT_ROLES = ("TECHNICIAN", "LEAD")
+# Codes der Systemkategorien aus hr.time_category (Migration 0066). Sie lösen das
+# frühere CHECK-Enum `time_entry.time_type` ab. Der Bestandspfad (Zeitbuchung am
+# Einsatz) spricht weiter in diesen Codes; `log_time` löst sie auf die Kategorie
+# auf. Freie Kategorien (Werkstatt, Büro, …) laufen über `category_id` —
+# siehe services/zeiterfassung.py.
 TIME_TYPES = (
     "ARBEITSZEIT",
     "FAHRTZEIT",
@@ -241,6 +249,30 @@ def set_schedule(
     return ServiceJob.objects.get(id=service_job_id)
 
 
+def clear_schedule(actor_app_user_id, *, service_job_id):
+    """Nimmt den Planungszeitraum wieder weg (Termin zurück in den Rückstand).
+
+    OHNE Statuswechsel — den führt der Aufrufer VORHER durch: Der DB-CHECK (0014)
+    verlangt für GEPLANT/BESTAETIGT einen scheduled_start; ein Einsatz muss also
+    erst UNGEPLANT sein, bevor der Zeitraum fallen darf. Die zusammengesetzte
+    Klammer liegt in `planung.update_termin`.
+    """
+    job = ServiceJob.objects.filter(id=service_job_id).only("id", "status").first()
+    if job is None:
+        raise ValueError("Einsatz nicht gefunden.")
+    if job.status in ("GEPLANT", "BESTAETIGT"):
+        raise ValueError(
+            f"Ein Einsatz im Status {job.status} braucht einen Planbeginn; der "
+            "Zeitraum kann nicht entfernt werden."
+        )
+    with as_business_error():
+        with business_transaction(actor_app_user_id):
+            ServiceJob.objects.filter(id=service_job_id).update(
+                scheduled_start=None, scheduled_end=None
+            )
+    return ServiceJob.objects.get(id=service_job_id)
+
+
 def advance_status(actor_app_user_id, *, service_job_id, to_status, reason=None):
     """Führt einen Statuswechsel des Einsatzes durch.
 
@@ -262,13 +294,41 @@ def advance_status(actor_app_user_id, *, service_job_id, to_status, reason=None)
         raise ValueError(
             f"Übergang {job.status} → {to_status} erfordert eine Begründung."
         )
+    felder = {"status": to_status}
+    felder.update(_ist_zeiten(job, to_status))
     with as_business_error():
         with business_transaction(
             actor_app_user_id, status_reason=reason.strip() if reason else None
         ):
-            ServiceJob.objects.filter(id=service_job_id).update(status=to_status)
+            ServiceJob.objects.filter(id=service_job_id).update(**felder)
     job.refresh_from_db()
     return job
+
+
+def _ist_zeiten(job, to_status):
+    """Stempelt die IST-Zeiten des Einsatzes am Statuswechsel.
+
+    `actual_start`/`actual_end` existierten seit Migration 0014, wurden aber von
+    keinem Service je gesetzt — tote Struktur. Der Statusautomat ist die einzige
+    Stelle, an der das System sicher weiß, wann die Arbeit wirklich begann und
+    endete:
+
+    * **VOR_ORT** = Arbeitsbeginn vor Ort → `actual_start` (nicht UNTERWEGS: das
+      ist die Anfahrt; die Fahrtzeit ist eine eigene Zeitart in der Zeiterfassung).
+    * **ABGESCHLOSSEN** = Arbeitsende → `actual_end`.
+
+    Beide werden nur gesetzt, wenn sie noch leer sind: Ein Einsatz, der über
+    PAUSIERT zurück nach VOR_ORT geht, behält seinen ersten Arbeitsbeginn; eine
+    Nacharbeit überschreibt das Abschlussdatum des ersten Durchlaufs nicht. Die
+    Zeitbuchung (`workflow.time_entry`) bleibt davon unberührt — sie ist die
+    abrechnungsrelevante Erfassung, das hier ist der Verlaufsstempel.
+    """
+    jetzt = timezone.now()
+    if to_status == "VOR_ORT" and job.actual_start is None:
+        return {"actual_start": jetzt}
+    if to_status == "ABGESCHLOSSEN" and job.actual_end is None:
+        return {"actual_end": jetzt}
+    return {}
 
 
 def assign_user(actor_app_user_id, *, service_job_id, assignee_user_id, role="TECHNICIAN"):
@@ -324,21 +384,44 @@ def log_time(
     *,
     service_job_id,
     user_id,
-    time_type,
+    time_type=None,
+    category_id=None,
     started_at,
     ended_at,
     note=None,
 ):
-    """Erfasst eine Zeit am Einsatz (B-27). ended_at muss nach started_at liegen.
+    """Erfasst eine Zeit am Einsatz. ended_at muss nach started_at liegen.
 
-    Das Korrekturfenster (B-28) prüft die DB: bis Einsatzabschluss frei, danach
-    nur mit Begründung, nach kaufmännischer Auftragsprüfung gesperrt.
+    Zwei Wege zur Kategorie (hr.time_category, Migration 0066):
+      * `time_type` — der Code einer Systemkategorie (Bestandspfad, B-27).
+      * `category_id` — eine beliebige, auch betriebseigene Kategorie.
+    Genau einer von beiden muss gesetzt sein.
+
+    Zwei Schlösser prüft die DB:
+      * B-28 (kaufmännisch): bis Einsatzabschluss frei, danach nur mit
+        Begründung, nach kaufmännischer Auftragsprüfung gesperrt.
+      * Arbeitstag (0067): eine Buchung an einem bestätigten Tag verlangt eine
+        Begründung und wirft den Tag auf ENTWURF zurück. Der Arbeitstag selbst
+        wird vom Trigger gesetzt.
     """
-    if time_type not in TIME_TYPES:
-        raise ValueError(
-            f"Ungültige time_type '{time_type}'. Erlaubt: {', '.join(TIME_TYPES)}."
-        )
-    if ended_at <= started_at:
+    if (time_type is None) == (category_id is None):
+        raise ValueError("Genau eines von time_type oder category_id ist anzugeben.")
+    if time_type is not None:
+        if time_type not in TIME_TYPES:
+            raise ValueError(
+                f"Ungültige time_type '{time_type}'. Erlaubt: {', '.join(TIME_TYPES)}."
+            )
+        cat = TimeCategory.objects.filter(code=time_type).first()
+        if cat is None:  # pragma: no cover — Seed der Migration 0066
+            raise ValueError(f"Systemkategorie {time_type} fehlt.")
+        category_id = cat.id
+    else:
+        cat = TimeCategory.objects.filter(id=category_id).first()
+        if cat is None:
+            raise ValueError("Unbekannte Zeitkategorie.")
+        if cat.status != "AKTIV":
+            raise ValueError(f"Zeitkategorie '{cat.name}' ist archiviert.")
+    if ended_at is None or ended_at <= started_at:
         raise ValueError("ended_at muss nach started_at liegen.")
     ensure_exists(ServiceJob, service_job_id, "Einsatz")
     ensure_exists(AppUser, user_id, "Mitarbeiter")
@@ -348,12 +431,12 @@ def log_time(
                 id=uuid.uuid4(),
                 service_job_id=service_job_id,
                 user_id=user_id,
-                time_type=time_type,
+                category_id=category_id,
                 started_at=started_at,
                 ended_at=ended_at,
                 note=note,
             )
-    return entry
+    return TimeEntry.objects.select_related("category").get(id=entry.id)
 
 
 def log_material(

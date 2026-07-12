@@ -1,0 +1,112 @@
+.zeiten {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: var(--space-4);
+  margin-bottom: var(--space-5);
+  background: var(--surface);
+}
+
+.zeiten__kopf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+
+  h3 {
+    margin: 0;
+    font-family: var(--font-display);
+    font-size: var(--step-0);
+  }
+}
+
+.zeiten__rechts {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.zeiten__summe {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.2;
+
+  strong {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: var(--step-1);
+  }
+}
+
+.zeiten__summe-label {
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+.zeiten__liste {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.zeit {
+  display: grid;
+  grid-template-columns: 8.5rem 1fr 1fr auto;
+  gap: var(--space-1) var(--space-3);
+  align-items: center;
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--navy);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+
+  // Pause traegt ihren Namen im Text — der gestrichelte Rand ist Zugabe.
+  &--pause {
+    border-left-style: dashed;
+    border-left-color: var(--warn-ink);
+  }
+}
+
+.zeit__spanne,
+.zeit__dauer {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.zeit__dauer {
+  text-align: right;
+  font-weight: 600;
+}
+
+.zeit__wer {
+  color: var(--ink-muted);
+  font-size: var(--step--1);
+}
+
+.zeit__notiz {
+  grid-column: 1 / -1;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+@media (max-width: 44rem) {
+  .zeit {
+    grid-template-columns: 1fr auto;
+  }
+
+  .zeit__spanne {
+    grid-column: 1 / -1;
+  }
+}
+
+.dialog-aktionen {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}

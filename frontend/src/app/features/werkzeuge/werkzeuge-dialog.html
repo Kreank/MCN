@@ -1,0 +1,69 @@
+<app-dialog [offen]="offen()" titel="Werkzeuge" (schliessen)="offen.set(false)">
+  <p class="wzd__lead">
+    Rechnen, ohne den Beleg zu verlassen. Das Ergebnis lässt sich als
+    <strong>Textposition</strong> übernehmen — es dokumentiert die Annahme, es setzt keinen Preis
+    und keine Menge.
+  </p>
+
+  <div class="wzd__tabs" role="tablist" aria-label="Werkzeuge">
+    @for (t of tabs; track t.id; let i = $index) {
+      <button
+        type="button"
+        role="tab"
+        class="wzd__tab"
+        [id]="'wzd-tab-' + t.id"
+        [class.is-active]="aktiv() === t.id"
+        [attr.aria-selected]="aktiv() === t.id"
+        [attr.aria-controls]="'wzd-panel'"
+        [attr.tabindex]="aktiv() === t.id ? 0 : -1"
+        (click)="aktiv.set(t.id)"
+        (keydown)="onTabKey($event, i)"
+      >
+        {{ t.label }}
+      </button>
+    }
+  </div>
+
+  <div
+    class="wzd__body"
+    id="wzd-panel"
+    role="tabpanel"
+    tabindex="0"
+    [attr.aria-labelledby]="'wzd-tab-' + aktiv()"
+  >
+    @switch (aktiv()) {
+      @case ('heizlast') {
+        <app-heizlast-rechner
+          [kontext]="kontext()"
+          [uebernahme]="true"
+          (uebernehmen)="weitergeben($event)"
+        />
+      }
+      @case ('heizkoerper') {
+        <app-heizkoerper-rechner
+          [kontext]="kontext()"
+          [uebernahme]="true"
+          (uebernehmen)="weitergeben($event)"
+        />
+      }
+      @case ('volumenstrom') {
+        <app-volumenstrom-rechner
+          [kontext]="kontext()"
+          [uebernahme]="true"
+          (uebernehmen)="weitergeben($event)"
+        />
+      }
+      @case ('einheiten') {
+        <app-einheiten-umrechner
+          [kontext]="kontext()"
+          [uebernahme]="true"
+          (uebernehmen)="weitergeben($event)"
+        />
+      }
+    }
+  </div>
+
+  <div dialog-aktionen class="dialog__aktionen">
+    <button type="button" class="btn" (click)="offen.set(false)">Schließen</button>
+  </div>
+</app-dialog>

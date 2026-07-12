@@ -1,0 +1,336 @@
+// Gemeinsames Aussehen aller vier Rechner. Bewusst EINE Datei, die sich die
+// Rechner-Komponenten als `styleUrl` teilen — Angular scoped sie je Komponente,
+// aber die Optik bleibt identisch (ein Werkzeugkasten, nicht vier Inseln).
+
+:host {
+  display: block;
+}
+
+.rechner {
+  display: grid;
+  grid-template-columns: minmax(18rem, 24rem) minmax(0, 1fr);
+  gap: var(--space-5);
+  align-items: start;
+}
+@media (max-width: 60rem) {
+  .rechner {
+    grid-template-columns: 1fr;
+  }
+}
+
+// ---------------------------------------------------------------- Eingabe ---
+.rechner__eingabe {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-1);
+}
+
+.rechner__legende {
+  padding: 0;
+  margin: 0 0 var(--space-3);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+}
+
+fieldset.rechner__satz {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+// Feldpaar (z. B. Vorlauf / Rücklauf) nebeneinander, bricht sauber um.
+.rechner__paar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+  gap: var(--space-4);
+}
+
+// Schnellwahl-Knöpfe (Spreizungs-Presets). Immer mit Text — nie nur Farbe.
+.rechner__presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.rechner__preset {
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  border: 1.5px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: var(--step--1);
+  font-weight: 600;
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--ink);
+  }
+  &[aria-pressed='true'] {
+    background: var(--command);
+    color: var(--on-command);
+    border-color: var(--command);
+  }
+}
+
+// --------------------------------------------------------------- Ergebnis ---
+.rechner__ergebnis {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  // Navy-Feld: das Ergebnis ist der Held der Seite, nicht das Formular.
+  background: var(--command);
+  color: var(--on-command);
+}
+
+.rechner__ergebnis-label {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--on-command-muted);
+}
+
+.rechner__wert {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--step-3);
+  font-weight: 600;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  // Zahlen springen beim Tippen sonst in der Breite.
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.rechner__wert--leer {
+  color: var(--on-command-muted);
+}
+
+.rechner__zweitwert {
+  margin: 0;
+  font-size: var(--step-1);
+  font-weight: 600;
+  color: var(--on-command);
+  font-variant-numeric: tabular-nums;
+}
+
+.rechner__formel {
+  margin: 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--command-line);
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  line-height: 1.6;
+  color: var(--on-command-muted);
+  overflow-wrap: anywhere;
+}
+
+// Kennzahlen-Zeile (Heizkörper: Faktor, ΔΘ_ln).
+.rechner__kennzahlen {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-5);
+  margin: 0;
+}
+.rechner__kennzahl {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+.rechner__kennzahl dt {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--on-command-muted);
+}
+.rechner__kennzahl dd {
+  margin: 0;
+  font-size: var(--step-1);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+// --------------------------------------------------------------- Aktionen ---
+.rechner__aktionen {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+}
+// Knopf auf Navy — der globale .btn ist für helle Flächen gedacht.
+.rechner__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 var(--space-5);
+  border: 1.5px solid var(--on-command-muted);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--on-command);
+  font-weight: 600;
+  font-size: var(--step-0);
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    border-color: var(--accent);
+    background: var(--command-2);
+  }
+  &:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring-on-command);
+    outline-offset: 2px;
+  }
+}
+.rechner__btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  // #ef804e traegt dunklen Text (Navy) — auf Weiss waere der Kontrast zu gering.
+  color: #1c3244;
+
+  &:hover:not(:disabled) {
+    background: #f3966b;
+    border-color: #f3966b;
+  }
+}
+.rechner__rueckmeldung {
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--on-command);
+}
+
+// ---------------------------------------------------------------- Haftung ---
+// Unübersehbar, mit Textmarke „!" — Farbe ist nie alleiniger Träger.
+.rechner__haftung {
+  display: flex;
+  gap: var(--space-3);
+  margin: 0;
+  padding: var(--space-4);
+  border: 1.5px solid color-mix(in srgb, var(--warn-ink) 55%, var(--line-strong));
+  border-left-width: 5px;
+  border-radius: var(--radius);
+  background: var(--warn-tint);
+  color: var(--warn-ink);
+  font-size: var(--step--1);
+  line-height: 1.55;
+}
+.rechner__haftung-mark {
+  flex: none;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: var(--step-0);
+}
+.rechner__haftung strong {
+  display: block;
+  color: var(--warn-ink);
+}
+
+// Umrechner-Ergebnisliste.
+.rechner__liste {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 0;
+}
+.rechner__zeile {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--command-line);
+}
+.rechner__zeile:last-child {
+  border-bottom: 0;
+}
+.rechner__zeile dt {
+  font-size: var(--step-0);
+  color: var(--on-command-muted);
+}
+.rechner__zeile dd {
+  margin: 0;
+  font-size: var(--step-1);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+// Die Einheit, in der eingegeben wurde. Traeger ist der Text „(Eingabe)",
+// nicht die Schriftgroesse — Status nie nur ueber Optik.
+.rechner__zeile--quelle dt,
+.rechner__zeile--quelle dd {
+  color: var(--accent);
+}
+.rechner__zeile--quelle dd {
+  font-size: var(--step-2);
+}
+.rechner__quelle-mark {
+  margin-left: 0.4em;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+// Nachschlag-Tabelle (Gewinde → DN).
+.rechner__nachschlag {
+  margin: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  color: var(--ink-muted);
+  font-size: var(--step--1);
+}
+.rechner__nachschlag-titel {
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+.rechner__dn {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  list-style: none;
+}
+.rechner__dn li {
+  padding: 0.15em 0.5em;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.rechner__hinweis {
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--ink-hint);
+  line-height: 1.55;
+}

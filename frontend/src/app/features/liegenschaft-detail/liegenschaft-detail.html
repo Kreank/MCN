@@ -58,6 +58,29 @@
           <div class="feld"><dt class="feld__label">Land</dt><dd class="feld__wert">{{ daten()!.address.country_code }}</dd></div>
           <div class="feld"><dt class="feld__label">Gebäude / Einheiten</dt><dd class="feld__wert">{{ daten()!.buildings.length }} / {{ einheitenGesamt() }}</dd></div>
         </dl>
+
+        <!-- Werkzeuge am Objekt: der Heizlast-Überschlag ist der häufigste
+             Griff beim Ortstermin. Der Objektname geht als Kontext mit und
+             erscheint auf dem kopierten Ergebnis. -->
+        <div class="tab-aktionen tab-aktionen--werkzeuge">
+          <a
+            class="btn"
+            [routerLink]="['/werkzeuge', 'heizlast']"
+            [queryParams]="{ objekt: werkzeugKontext() }"
+          >
+            <span aria-hidden="true">🔥</span>&nbsp;Heizlast überschlagen
+          </a>
+          <a
+            class="btn"
+            [routerLink]="['/werkzeuge', 'heizkoerper']"
+            [queryParams]="{ objekt: werkzeugKontext() }"
+          >
+            Heizkörper umrechnen
+          </a>
+          <p class="tab-aktionen__hinweis">
+            Überschlagswerte für das Gespräch — kein Nachweis nach DIN EN 12831.
+          </p>
+        </div>
       }
 
       <!-- ------------------------------ Struktur -------------------------- -->

@@ -137,8 +137,9 @@ def test_ressource_am_einsatz_und_plantafel(admin_client, app_user, order):
     board = admin_client.get(
         "/api/planung/plantafel?date_from=2026-07-20&date_to=2026-07-20"
     ).json()
-    lanes = board["resource_lanes"]
-    assert any(l["id"] == str(res.id) for l in lanes)
+    # Bahnen sind jetzt EINE Liste (Mitarbeiter + Betriebsmittel, `kind` trennt).
+    lanes = [lane for lane in board["lanes"] if lane["kind"] == "RESOURCE"]
+    assert any(lane["id"] == str(res.id) for lane in lanes)
     job_row = next(j for j in board["jobs"] if j["id"] == str(job.id))
     assert str(res.id) in job_row["resource_ids"]
 

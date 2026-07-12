@@ -131,7 +131,10 @@ class StatusChangeOut(Schema):
 class TimeEntryOut(Schema):
     time_type: str
     started_at: datetime
-    ended_at: datetime
+    # Seit Migration 0066 ist `ended_at` nullbar: NULL = die Stempeluhr läuft
+    # noch. Ohne `| None` warf die Einsatz-Mappe für JEDEN Benutzer einen
+    # pydantic-ValidationError (500), sobald jemand am Einsatz eingestempelt war.
+    ended_at: datetime | None = None
     note: str | None = None
     user: str | None = None
 
@@ -166,6 +169,17 @@ class ServiceJobDetailOut(ServiceJobOut):
     access_instructions: str | None = None
     completion_notes: str | None = None
     on_site_contact: str | None = None
+    # Die ROHEN, bearbeitbaren Werte — Gegenstück zu den aufgelösten Anzeigefeldern
+    # oben. Ein Bearbeiten-Formular MUSS sie kennen, sonst schickt es beim
+    # Speichern zurück, was es gerade sieht, statt was gespeichert ist:
+    # * `on_site_contact` ist ein Anzeigename; wer den Kontakt behalten will,
+    #   braucht seine ID.
+    # * `title` ist der AUFGELÖSTE Titel (beim Auftragstermin der Auftragstitel).
+    #   Wer ihn zurückschriebe, brennte den Auftragstitel in den Einsatz ein — er
+    #   folgte einer späteren Auftragsumbenennung nicht mehr. `own_title` ist der
+    #   eigene Titel und darf NULL sein.
+    on_site_contact_party_id: UUID | None = None
+    own_title: str | None = None
     created_at: datetime
     assignments: list[AssignmentOut]
     resources: list[ResourceRefOut] = []
@@ -431,8 +445,10 @@ def _einsatz_detail(job_id):
         for c in changes
     ]
     times = (
+        # `category` mit laden: die `time_type`-Property (0066) liest die
+        # Kategorie — sonst eine Extra-Query je Zeile.
         TimeEntry.objects.filter(service_job_id=job.id)
-        .select_related("user")
+        .select_related("user", "category")
         .order_by("started_at")
     )
     time_entries = [
@@ -474,6 +490,8 @@ def _einsatz_detail(job_id):
         access_instructions=job.access_instructions,
         completion_notes=job.completion_notes,
         on_site_contact=contact,
+        on_site_contact_party_id=job.on_site_contact_party_id,
+        own_title=job.title,
         created_at=job.created_at,
         assignments=assignments,
         resources=resources,
@@ -808,7 +826,7 @@ def log_time(request, job_id: UUID, payload: TimeLogIn):
         )
     except ValueError as exc:
         raise HttpError(422, str(exc))
-    entry = TimeEntry.objects.select_related("user").get(id=entry.id)
+    entry = TimeEntry.objects.select_related("user", "category").get(id=entry.id)
     return Status(
         201,
         TimeEntryOut(
@@ -858,17 +876,34 @@ def log_material(request, job_id: UUID, payload: MaterialLogIn):
 
 # --- Plantafel-Board (Schwimmbahnen) ---------------------------------------
 
-class BoardResourceOut(Schema):
+class BoardLaneOut(Schema):
+    """Eine Schwimmbahn: Mitarbeiter ODER Betriebsmittel.
+
+    `plan_hours`/`target_hours` sind die Auslastung im angezeigten Zeitraum.
+    `target_hours` ist **null**, wenn kein gültiger Arbeitsvertrag existiert — das
+    heißt „unbekannt", NICHT „null Stunden Soll" (sonst sähe jeder Mitarbeiter
+    ohne Vertrag maximal überlastet aus). Betriebsmittel haben kein Soll.
+    """
+
+    kind: str  # USER | RESOURCE
     id: UUID
     display_name: str
+    sub: str | None = None
+    plan_hours: Decimal | None = None
+    target_hours: Decimal | None = None
 
 
-class BoardResourceLaneOut(Schema):
-    """Bahn einer Betriebsmittel-Ressource (Fahrzeug/Gerät/Raum)."""
+class KonfliktOut(Schema):
+    """Nicht-blockierender Konflikt an einer Kachel.
 
-    id: UUID
-    display_name: str
-    resource_type: str
+    `kind` ∈ DOPPELBELEGUNG | ABWESENHEIT | FEIERTAG | OFFENES_ENDE. Doppelbelegung
+    ist eine bewusst **weiche** Invariante (Migration 0025): Die Plantafel macht
+    sie sichtbar, die DB verbietet sie nicht. `text` ist immer gesetzt — das UI
+    zeigt Text + Symbol, nie nur Farbe (WCAG 1.4.1).
+    """
+
+    kind: str
+    text: str
 
 
 class BoardJobOut(Schema):
@@ -884,16 +919,54 @@ class BoardJobOut(Schema):
     category: CategoryRefOut | None = None
     assignee_ids: list[UUID]
     resource_ids: list[UUID]
+    conflicts: list[KonfliktOut] = []
+
+
+class BacklogJobOut(Schema):
+    """Ein UNGEPLANTER Einsatz — der Rückstand, den man ins Raster zieht."""
+
+    id: UUID
+    job_number: str
+    title: str
+    status: str
+    is_free: bool = False
+    property_name: str | None = None
+    category: CategoryRefOut | None = None
+    order_number: str | None = None
+
+
+class BoardAbsenceOut(Schema):
+    """Genehmigte Abwesenheit — Sperrfläche in der Mitarbeiter-Bahn.
+
+    **Ohne Abwesenheitsart.** Die Art (Urlaub/Krankheit/…) ist eine besondere
+    Kategorie nach DSGVO Art. 9 und hängt am `hr`-Tor (api/mitarbeiter.py). Die
+    Plantafel hängt an `workflow`/LESEN — ein Disponent OHNE hr-Recht darf hier
+    nicht erfahren, wer krank ist. Für die Disposition genügt „abwesend, von–bis":
+    Das Feld ist gesperrt, der Grund geht ihn nichts an.
+    """
+
+    id: UUID
+    app_user_id: UUID
+    start_date: date
+    end_date: date
+
+
+class BoardHolidayOut(Schema):
+    holiday_date: date
+    name: str
 
 
 class PlantafelOut(Schema):
     date_from: date
     date_to: date
-    # Mitarbeiter-Bahnen (aus job_assignment).
-    resources: list[BoardResourceOut]
-    # Ressourcen-Bahnen (Betriebsmittel aus resource.job_resource).
-    resource_lanes: list[BoardResourceLaneOut]
+    lanes: list[BoardLaneOut]
     jobs: list[BoardJobOut]
+    backlog: list[BacklogJobOut]
+    backlog_total: int
+    absences: list[BoardAbsenceOut]
+    # Aus `hr.holiday`; leer, solange der Betrieb dort nichts gepflegt hat — das
+    # Board erfindet keine Feiertage.
+    holidays: list[BoardHolidayOut] = []
     unassigned_count: int
 
 
@@ -902,50 +975,46 @@ def plantafel(
     request,
     date_from: date | None = Query(None),
     date_to: date | None = Query(None),
+    q: str | None = Query(None),
+    category_id: UUID | None = Query(None),
+    backlog_q: str | None = Query(None),
 ):
-    """Plantafel-Daten für einen Zeitraum: die Mitarbeiter-Bahnen (aus den
-    Zuweisungen der Einsätze im Fenster), die Ressourcen-Bahnen (Betriebsmittel
-    aus resource.job_resource) und die verplanten Einsätze mit ihren assignee_ids
-    und resource_ids. Nur Einsätze mit Planbeginn erscheinen; Mehrfachzuweisungen
-    tauchen in jeder betroffenen Bahn auf (n:m). Standardfenster: 7 Tage ab heute,
-    maximal 45 Tage."""
+    """Plantafel-Daten für einen Zeitraum — Bahnen, Kacheln, Rückstand, Sperrflächen.
+
+    * **Bahnen** sind ALLE aktiven Mitarbeiter und Betriebsmittel, nicht nur die
+      bereits verplanten: Auf eine leere Bahn muss man ziehen können.
+    * **Kacheln** sind alle Einsätze, deren Zeitraum das Fenster **überlappt** —
+      ein mehrtägiger Einsatz erscheint an jedem seiner Tage, nicht nur am Start.
+    * **Rückstand** (`backlog`) sind die UNGEPLANTEN Einsätze (ohne Planbeginn).
+    * **Sperrflächen** sind genehmigte Abwesenheiten und Feiertage.
+    * **Konflikte** hängen an der Kachel und blockieren nichts.
+
+    Standardfenster: 7 Tage ab heute, maximal 45 Tage."""
     require(request, "workflow", "LESEN")
     today = date.today()
     start = date_from or today
     end = date_to or (start + timedelta(days=6))
     if end < start:
         raise HttpError(422, "date_to darf nicht vor date_from liegen.")
-    if (end - start).days > 45:
-        raise HttpError(422, "Der Zeitraum darf höchstens 45 Tage umfassen.")
-
-    jobs = (
-        ServiceJob.objects.filter(
-            scheduled_start__date__gte=start, scheduled_start__date__lte=end
+    if (end - start).days > planung_service.MAX_BOARD_TAGE:
+        raise HttpError(
+            422,
+            f"Der Zeitraum darf höchstens {planung_service.MAX_BOARD_TAGE} Tage "
+            "umfassen.",
         )
-        .select_related("work_order__property", "property", "appointment_category")
-        .prefetch_related("assignments__assignee", "resource_links__resource")
-        .order_by("scheduled_start", "id")
+
+    board = planung_service.board_daten(
+        date_from=start,
+        date_to=end,
+        q=q,
+        category_id=category_id,
+        backlog_q=backlog_q,
     )
 
-    resources: dict = {}
-    resource_lanes: dict = {}
-    unassigned = 0
-    out_jobs = []
-    for j in jobs:
-        assignee_ids = []
-        for a in j.assignments.all():
-            resources[a.assignee_id] = a.assignee.display_name
-            assignee_ids.append(a.assignee_id)
-        resource_ids = []
-        for link in j.resource_links.all():
-            r = link.resource
-            resource_lanes[r.id] = r
-            resource_ids.append(r.id)
-        if not assignee_ids and not resource_ids:
-            unassigned += 1
-        # Freier Termin: eigener Titel, Liegenschaft optional (kann fehlen).
-        board_property = _job_property(j)
-        out_jobs.append(
+    jobs = []
+    for j in board.jobs:
+        p = _job_property(j)
+        jobs.append(
             BoardJobOut(
                 id=j.id,
                 job_number=j.job_number,
@@ -954,29 +1023,176 @@ def plantafel(
                 is_free=j.work_order_id is None,
                 scheduled_start=j.scheduled_start,
                 scheduled_end=j.scheduled_end,
-                property_name=board_property.name if board_property else None,
+                property_name=p.name if p else None,
                 category=_category_ref(j),
-                assignee_ids=assignee_ids,
-                resource_ids=resource_ids,
+                assignee_ids=[a.assignee_id for a in j.assignments.all()],
+                resource_ids=[link.resource_id for link in j.resource_links.all()],
+                conflicts=[
+                    KonfliktOut(**k) for k in board.konflikte.get(j.id, [])
+                ],
             )
         )
-    resource_list = [
-        BoardResourceOut(id=uid, display_name=name)
-        for uid, name in sorted(resources.items(), key=lambda kv: kv[1])
-    ]
-    lane_list = [
-        BoardResourceLaneOut(
-            id=r.id, display_name=r.name, resource_type=r.resource_type
+
+    backlog = []
+    for j in board.backlog:
+        p = _job_property(j)
+        backlog.append(
+            BacklogJobOut(
+                id=j.id,
+                job_number=j.job_number,
+                title=_job_title(j),
+                status=j.status,
+                is_free=j.work_order_id is None,
+                property_name=p.name if p else None,
+                category=_category_ref(j),
+                order_number=(
+                    j.work_order.order_number if j.work_order_id else None
+                ),
+            )
         )
-        for r in sorted(resource_lanes.values(), key=lambda r: r.name)
-    ]
+
     return PlantafelOut(
-        date_from=start,
-        date_to=end,
-        resources=resource_list,
-        resource_lanes=lane_list,
-        jobs=out_jobs,
-        unassigned_count=unassigned,
+        date_from=board.date_from,
+        date_to=board.date_to,
+        lanes=[BoardLaneOut(**lane) for lane in board.lanes],
+        jobs=jobs,
+        backlog=backlog,
+        backlog_total=board.backlog_total,
+        absences=[BoardAbsenceOut(**a) for a in board.absences],
+        holidays=[
+            BoardHolidayOut(holiday_date=d, name=n) for d, n in board.holidays
+        ],
+        unassigned_count=board.unassigned_count,
+    )
+
+
+# --- Termin anlegen/ändern aus dem Board (ein Vorgang) ----------------------
+
+class TerminCreateIn(Schema):
+    """Ein Termin mit allem, was am Board dranhängt — in EINEM Aufruf.
+
+    Ohne `work_order_id` entsteht ein freier Termin (dann ist `title` Pflicht).
+    Ohne `scheduled_start` landet der Termin im **Rückstand** (Status UNGEPLANT) —
+    das ist gewollt, nicht versehentlich.
+    """
+
+    work_order_id: UUID | None = None
+    title: str | None = None
+    property_id: UUID | None = None
+    scheduled_start: datetime | None = None
+    scheduled_end: datetime | None = None
+    on_site_contact_party_id: UUID | None = None
+    access_instructions: str | None = None
+    appointment_category_id: UUID | None = None
+    assignee_ids: list[UUID] = []
+    resource_ids: list[UUID] = []
+
+
+class TerminUpdateIn(Schema):
+    """Teil-Update. Nur mitgeschickte Felder werden geändert; ein ausdrückliches
+    ``null`` löscht (Kategorie/Kontakt entfernen). `assignee_ids`/`resource_ids`
+    sind eine **Vollersetzung**: Was fehlt, wird gelöst.
+
+    Ein ausdrückliches ``"scheduled_start": null`` legt den Termin **zurück in den
+    Rückstand** (Zeitraum weg, Status GEPLANT → UNGEPLANT). Dieser Statuswechsel
+    ist begründungspflichtig → `reason` ist dann Pflicht (sonst 422).
+
+    Der Auftragsbezug fehlt bewusst — er ist in der DB unveränderlich (WF-01).
+    """
+
+    title: str | None = None
+    property_id: UUID | None = None
+    scheduled_start: datetime | None = None
+    scheduled_end: datetime | None = None
+    on_site_contact_party_id: UUID | None = None
+    access_instructions: str | None = None
+    appointment_category_id: UUID | None = None
+    assignee_ids: list[UUID] | None = None
+    resource_ids: list[UUID] | None = None
+    # Begründung für den Statuswechsel GEPLANT → UNGEPLANT (Rückweg in den
+    # Rückstand). Kein Feld am Einsatz, sondern der `status_reason` des Audits.
+    reason: str | None = None
+
+
+class TerminOut(ServiceJobOut):
+    """Der geschriebene Termin plus die nicht-blockierenden Belegungshinweise."""
+
+    warnings: list[str] = []
+
+
+@router.post("/termine", response={201: TerminOut}, auth=django_auth)
+def create_termin(request, payload: TerminCreateIn):
+    """Legt einen Termin samt Kategorie, Mitarbeitern und Betriebsmitteln an.
+
+    Der ganze Vorgang läuft in EINER Transaktion: Vorher hätte das Board vier bis
+    acht Einzelrufe absetzen müssen und bei einem Fehler in der Mitte einen halb
+    angelegten Termin hinterlassen.
+
+    `require` (fail-closed) wie create_einsatz: Termine plant die Disposition;
+    Monteur-Scope 'EIGENE' → 403. Die DB-Tore kommen als 422."""
+    actor, _ = require(request, "workflow", "ANLEGEN")
+    require(request, "workflow", "AENDERN")  # Zuweisung/Status gehören dazu
+    try:
+        job = planung_service.create_termin(
+            actor,
+            work_order_id=payload.work_order_id,
+            title=payload.title,
+            property_id=payload.property_id,
+            scheduled_start=payload.scheduled_start,
+            scheduled_end=payload.scheduled_end,
+            on_site_contact_party_id=payload.on_site_contact_party_id,
+            access_instructions=payload.access_instructions,
+            appointment_category_id=payload.appointment_category_id,
+            assignee_ids=payload.assignee_ids,
+            resource_ids=payload.resource_ids,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    base = _reload_job(job.id)
+    return Status(
+        201,
+        TerminOut(
+            **base.dict(), warnings=planung_service.belegungs_warnungen(job.id)
+        ),
+    )
+
+
+@router.patch("/termine/{job_id}", response=TerminOut, auth=django_auth)
+def update_termin(request, job_id: UUID, payload: TerminUpdateIn):
+    """Ändert einen Termin vollständig aus dem Board heraus (ein Vorgang).
+
+    `require` (fail-closed): Umplanen/Zuweisen ist Dispositionssache; Monteur-Scope
+    'EIGENE' → 403 (er trägt am eigenen freien Termin über PATCH /einsaetze/{id}
+    Kontakt und Zutrittshinweise nach — dieser Endpunkt darf mehr und ist deshalb
+    strenger).
+
+    `scheduled_start: null` ist die **Gegenbewegung zum Ziehen ins Raster**: Der
+    Termin geht zurück in den Rückstand (Statuswechsel GEPLANT → UNGEPLANT, mit
+    `reason` begründungspflichtig)."""
+    actor, _ = require(request, "workflow", "AENDERN")
+    _load_job_or_404(job_id)
+    gesetzt = payload.model_fields_set
+    # `assignee_ids`/`resource_ids` und `reason` werden benannt übergeben — sie
+    # sind kein Sentinel-Feld des Einsatzes.
+    felder = {
+        name: getattr(payload, name)
+        for name in gesetzt
+        if name not in ("assignee_ids", "resource_ids", "reason")
+    }
+    try:
+        planung_service.update_termin(
+            actor,
+            service_job_id=job_id,
+            assignee_ids=payload.assignee_ids,
+            resource_ids=payload.resource_ids,
+            reason=payload.reason,
+            **felder,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    base = _reload_job(job_id)
+    return TerminOut(
+        **base.dict(), warnings=planung_service.belegungs_warnungen(job_id)
     )
 
 

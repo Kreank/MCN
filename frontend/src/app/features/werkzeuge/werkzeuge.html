@@ -1,0 +1,64 @@
+<section class="wz">
+  <header class="wz__head">
+    <p class="wz__kicker">
+      <span class="wz__scale" aria-hidden="true"></span>
+      Werkzeuge
+    </p>
+    <h1 class="wz__titel">Rechner für den Alltag</h1>
+    <p class="wz__lead">
+      Schnell mal einen Raum überschlagen, eine Einheit umrechnen, prüfen ob der alte Heizkörper
+      bei 55 °C Vorlauf noch reicht. Kein Serverzugriff, keine gespeicherten Daten — Ergebnisse
+      lassen sich kopieren.
+    </p>
+    @if (kontext(); as k) {
+      <p class="wz__kontext">
+        <span class="stamp stamp--type">Kontext</span>
+        <span>{{ k }}</span>
+      </p>
+    }
+  </header>
+
+  <div class="wz__tabs" role="tablist" aria-label="Werkzeuge">
+    @for (t of tabs; track t.id; let i = $index) {
+      <button
+        type="button"
+        role="tab"
+        class="wz__tab"
+        [id]="'werkzeug-tab-' + t.id"
+        [class.is-active]="aktiv() === t.id"
+        [attr.aria-selected]="aktiv() === t.id"
+        [attr.aria-controls]="'werkzeug-panel'"
+        [attr.tabindex]="aktiv() === t.id ? 0 : -1"
+        (click)="waehle(t.id)"
+        (keydown)="onTabKey($event, i)"
+      >
+        {{ t.label }}
+      </button>
+    }
+  </div>
+
+  <div
+    class="wz__body"
+    id="werkzeug-panel"
+    role="tabpanel"
+    tabindex="0"
+    [attr.aria-labelledby]="'werkzeug-tab-' + aktiv()"
+  >
+    <p class="wz__zweck">{{ aktiverTab().zweck }}</p>
+
+    @switch (aktiv()) {
+      @case ('heizlast') {
+        <app-heizlast-rechner [kontext]="kontext()" />
+      }
+      @case ('heizkoerper') {
+        <app-heizkoerper-rechner [kontext]="kontext()" />
+      }
+      @case ('volumenstrom') {
+        <app-volumenstrom-rechner [kontext]="kontext()" />
+      }
+      @case ('einheiten') {
+        <app-einheiten-umrechner [kontext]="kontext()" />
+      }
+    }
+  </div>
+</section>

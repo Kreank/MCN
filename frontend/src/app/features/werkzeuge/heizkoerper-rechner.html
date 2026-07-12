@@ -1,0 +1,107 @@
+<div class="rechner">
+  <form class="rechner__eingabe" [formGroup]="form" (submit)="$event.preventDefault()">
+    <fieldset class="rechner__satz">
+      <legend class="rechner__legende">Katalogwert</legend>
+
+      <app-feld
+        [control]="form.controls.normleistung"
+        label="Normleistung (W)"
+        typ="zahl"
+        hinweis="Leistung laut Datenblatt bei {{ norm.vl }}/{{ norm.rl }}/{{ norm.raum }}"
+      />
+    </fieldset>
+
+    <fieldset class="rechner__satz">
+      <legend class="rechner__legende">Neuer Betriebspunkt</legend>
+
+      <div class="rechner__paar">
+        <app-feld [control]="form.controls.vl" label="Vorlauf (°C)" typ="zahl" />
+        <app-feld [control]="form.controls.rl" label="Rücklauf (°C)" typ="zahl" />
+        <app-feld [control]="form.controls.raum" label="Raum (°C)" typ="zahl" />
+      </div>
+
+      <app-feld
+        [control]="form.controls.bauart"
+        label="Bauart"
+        typ="select"
+        [optionen]="bauartOptionen"
+        hinweis="Belegt den Exponenten vor — er bleibt überschreibbar."
+      />
+
+      <app-feld
+        [control]="form.controls.exponent"
+        label="Heizkörperexponent n"
+        typ="zahl"
+        hinweis="Erfahrungswert, herstellerabhängig. Maßgeblich ist das Datenblatt."
+      />
+    </fieldset>
+  </form>
+
+  <div class="rechner__ergebnis">
+    <p class="rechner__ergebnis-label" id="hk-label">
+      Leistung bei {{ betriebspunkt() || '—' }}
+    </p>
+    <output
+      class="rechner__wert"
+      [class.rechner__wert--leer]="!ergebnis()"
+      aria-labelledby="hk-label"
+      aria-live="polite"
+      >{{ wattText() }}</output
+    >
+    @if (kwText()) {
+      <p class="rechner__zweitwert">{{ kwText() }}</p>
+    }
+
+    <dl class="rechner__kennzahlen">
+      <div class="rechner__kennzahl">
+        <dt>Anteil der Normleistung</dt>
+        <dd>{{ faktorText() }}</dd>
+      </div>
+      <div class="rechner__kennzahl">
+        <dt>Übertemperatur ΔΘ<sub>ln</sub></dt>
+        <dd>{{ deltaLnText() }}</dd>
+      </div>
+    </dl>
+
+    @if (fehler(); as f) {
+      <p class="rechner__formel" role="alert">! {{ f }}</p>
+    } @else if (formelText()) {
+      <p class="rechner__formel">{{ formelText() }}</p>
+    } @else {
+      <p class="rechner__formel">
+        Normleistung und Betriebspunkt eingeben. Normbedingung: {{ norm.vl }}/{{ norm.rl }}/{{
+          norm.raum
+        }} → ΔΘ<sub>ln</sub> = {{ deltaNorm }} K.
+      </p>
+    }
+
+    <div class="rechner__aktionen">
+      <button type="button" class="rechner__btn" [disabled]="!ergebnis()" (click)="kopieren()">
+        Ergebnis kopieren
+      </button>
+      @if (uebernahme()) {
+        <button
+          type="button"
+          class="rechner__btn rechner__btn--primary"
+          [disabled]="!ergebnis()"
+          (click)="uebernehmenKlick()"
+        >
+          Als Textposition übernehmen
+        </button>
+      }
+    </div>
+
+    @if (rueckmeldung()) {
+      <p class="rechner__rueckmeldung" role="status">{{ rueckmeldung() }}</p>
+    }
+  </div>
+</div>
+
+<p class="rechner__haftung">
+  <span class="rechner__haftung-mark" aria-hidden="true">!</span>
+  <span>
+    <strong>Plausibilisierung — kein Auslegungsnachweis.</strong>
+    {{ haftung }} Die Rechnung sagt, ob ein vorhandener Heizkörper bei niedrigerer Vorlauftemperatur
+    ungefähr reicht; sie ersetzt weder die raumweise Heizlast noch den hydraulischen Abgleich.
+  </span>
+</p>

@@ -1,0 +1,230 @@
+<app-einstellungen-nav />
+
+@switch (state().kind) {
+  @case ('loading') {
+    <p class="lade-hinweis">Wird geladen …</p>
+  }
+  @case ('forbidden') {
+    <app-kein-zugriff />
+  }
+  @case ('error') {
+    <div class="note note--error" role="alert">
+      <p>Die Einstellungen konnten nicht geladen werden.</p>
+      <button type="button" class="btn" (click)="laden()">Erneut versuchen</button>
+    </div>
+  }
+  @case ('ready') {
+    <header class="kopf">
+      <div>
+        <p class="kicker">Einstellungen</p>
+        <h1>Zeiterfassung</h1>
+      </div>
+      @if (darfAnlegen()) {
+        <button type="button" class="btn btn--primary" (click)="neu()">
+          + Neue Kategorie
+        </button>
+      }
+    </header>
+
+    <p class="sr-only" aria-live="polite" role="status">{{ meldung() }}</p>
+    @if (fehler(); as f) {
+      <div class="note note--error" role="alert">{{ f }}</div>
+    }
+
+    <!-- ================= KATEGORIEN ================= -->
+    <section aria-labelledby="kat-titel">
+      <h2 id="kat-titel">Zeitkategorien</h2>
+      <p class="hinweis">
+        Das <strong>Arbeitszeit-Kennzeichen</strong> ist die einzige fachlich harte
+        Eigenschaft: Nur daran hängt, ob eine Buchung als Arbeitszeit im Sinne von
+        ArbZG und MiLoG zählt (Fahrt- und Bereitschaftszeit zählen mit, eine Pause
+        nicht). Systemkategorien sind fest verdrahtet und können nicht archiviert
+        werden; bei „Pause" ist das Kennzeichen nicht umschaltbar.
+      </p>
+
+      <label class="schalter">
+        <input
+          type="checkbox"
+          [checked]="zeigeArchivierte()"
+          (change)="zeigeArchivierte.set($any($event.target).checked); laden()"
+        />
+        Archivierte anzeigen
+      </label>
+
+      <table class="tabelle">
+        <caption class="sr-only">Zeitkategorien</caption>
+        <thead>
+          <tr>
+            <th scope="col">Name</th>
+            <th scope="col">Arbeitszeit</th>
+            <th scope="col">Art</th>
+            <th scope="col">Reihenfolge</th>
+            <th scope="col">Status</th>
+            <th scope="col"><span class="sr-only">Aktionen</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (k of kategorien(); track k.id) {
+            <tr>
+              <td>
+                <strong>{{ k.name }}</strong>
+                @if (k.description) {
+                  <span class="beschreibung">{{ k.description }}</span>
+                }
+              </td>
+              <td>
+                @if (k.is_work_time) {
+                  <span class="stamp stamp--positive">
+                    <span aria-hidden="true">✓</span> Arbeitszeit
+                  </span>
+                } @else {
+                  <span class="stamp stamp--warn">
+                    <span aria-hidden="true">—</span> keine Arbeitszeit
+                  </span>
+                }
+              </td>
+              <td>
+                @if (k.is_system) {
+                  <span class="stamp">System</span>
+                } @else {
+                  <span class="stamp stamp--type">Betrieb</span>
+                }
+              </td>
+              <td class="num">{{ k.sort_order }}</td>
+              <td>
+                @if (k.status === 'AKTIV') {
+                  <span class="stamp stamp--positive">Aktiv</span>
+                } @else {
+                  <span class="stamp stamp--negativ">Archiviert</span>
+                }
+              </td>
+              <td class="aktionen">
+                @if (darfAendern() && k.status === 'AKTIV') {
+                  <button type="button" class="btn btn--klein" (click)="bearbeiten(k)">
+                    Bearbeiten
+                  </button>
+                  @if (!k.is_system) {
+                    <button
+                      type="button"
+                      class="btn btn--klein"
+                      (click)="archivierenOffen.set(k)"
+                    >
+                      Archivieren
+                    </button>
+                  }
+                }
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </section>
+
+    <!-- ================= PAUSENREGEL ================= -->
+    <section class="pausen" aria-labelledby="pausen-titel">
+      <h2 id="pausen-titel">Pausenregel</h2>
+      <p class="hinweis">
+        ArbZG § 4: bei mehr als 6 Stunden Arbeitszeit mindestens 30 Minuten Ruhepause,
+        bei mehr als 9 Stunden mindestens 45 Minuten. Fehlt die Pause, rechnet MCN sie
+        auf Anforderung ein — die betroffene Zeit wird zu Pause umgewidmet und als
+        <em>automatisch</em> gekennzeichnet, damit sie von einer gestempelten Pause
+        unterscheidbar bleibt.
+      </p>
+
+      <form [formGroup]="pausenForm" (ngSubmit)="pausenSpeichern()">
+        <fieldset class="modi">
+          <legend>Modus</legend>
+          @for (m of modi; track m) {
+            <label class="radio">
+              <input type="radio" formControlName="mode" [value]="m" />
+              {{ PAUSEN_MODUS_LABEL[m] }}
+            </label>
+          }
+        </fieldset>
+
+        @if (istFesteZeiten()) {
+          <div class="fenster" formArrayName="fenster">
+            <p class="fenster__titel">Pausenfenster</p>
+            @for (f of fenster.controls; track $index) {
+              <div class="fenster__zeile" [formGroupName]="$index">
+                <label>
+                  <span>Von</span>
+                  <input type="time" formControlName="von" required />
+                </label>
+                <label>
+                  <span>Bis</span>
+                  <input type="time" formControlName="bis" required />
+                </label>
+                <button
+                  type="button"
+                  class="btn btn--klein"
+                  (click)="fensterWeg($index)"
+                  [attr.aria-label]="'Pausenfenster ' + ($index + 1) + ' entfernen'"
+                >
+                  Entfernen
+                </button>
+              </div>
+            }
+            <button type="button" class="btn btn--klein" (click)="fensterHinzu()">
+              + Fenster
+            </button>
+          </div>
+        }
+
+        @if (darfAendern()) {
+          <button type="submit" class="btn btn--primary" [disabled]="laeuftAktion()">
+            Pausenregel speichern
+          </button>
+        }
+      </form>
+    </section>
+
+    <!-- ================= DIALOGE ================= -->
+    <app-dialog
+      [offen]="dialogOffen()"
+      [titel]="bearbeitet() ? 'Kategorie bearbeiten' : 'Neue Zeitkategorie'"
+      (schliessen)="dialogOffen.set(false)"
+    >
+      <form [formGroup]="katForm" (ngSubmit)="speichern()">
+        <app-feld [control]="$any(katForm.controls.name)" label="Name" [pflicht]="true" />
+        <app-feld
+          [control]="$any(katForm.controls.description)"
+          label="Beschreibung"
+          typ="textarea"
+        />
+        <app-feld
+          [control]="$any(katForm.controls.is_work_time)"
+          label="Zählt als Arbeitszeit (ArbZG/MiLoG)"
+          typ="checkbox"
+          [hinweis]="
+            bearbeitet()?.code === 'PAUSE'
+              ? 'Bei „Pause“ nicht umschaltbar — eine Pause ist nie Arbeitszeit.'
+              : 'Fahrt-, Bereitschafts- und Werkstattzeit sind Arbeitszeit. Pausen nicht.'
+          "
+        />
+        <app-feld
+          [control]="$any(katForm.controls.sort_order)"
+          label="Reihenfolge"
+          typ="zahl"
+        />
+        <div class="dialog-aktionen">
+          <button type="button" class="btn" (click)="dialogOffen.set(false)">Abbrechen</button>
+          <button type="submit" class="btn btn--primary" [disabled]="laeuftAktion()">
+            Speichern
+          </button>
+        </div>
+      </form>
+    </app-dialog>
+
+    <app-bestaetigung
+      [offen]="!!archivierenOffen()"
+      titel="Kategorie archivieren"
+      text="Die Kategorie steht für neue Buchungen nicht mehr zur Verfügung. Bereits
+            gebuchte Zeiten bleiben unverändert erhalten."
+      bestaetigenLabel="Archivieren"
+      [laedt]="laeuftAktion()"
+      (bestaetigen)="archivieren()"
+      (abbrechen)="archivierenOffen.set(null)"
+    />
+  }
+}

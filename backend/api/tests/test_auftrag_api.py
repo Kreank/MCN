@@ -161,3 +161,54 @@ def test_voller_durchlauf_ueber_api(client, app_user):
     assert body["status"] == "KAUFMAENNISCH_GEPRUEFT"
     roles = {p["role"] for p in body["parties"]}
     assert "PRINCIPAL" in roles
+
+
+def _add_party(client, order_id, party_id, **kw):
+    return client.post(
+        f"/api/workflow/work_orders/{order_id}/parties",
+        data={"party_id": str(party_id), "role": kw.pop("role", "PRINCIPAL"), **kw},
+        content_type="application/json",
+    )
+
+
+@pytest.mark.django_db
+def test_add_party_zweiter_primaerer_422(admin_client, seeded):
+    # uq_work_order_party_primary: höchstens ein primärer Beteiligter je Rolle.
+    # Die zweite (andere) Partei als primärer PRINCIPAL muss als 422 enden.
+    app_user = seeded["app_user"]
+    p1 = identity_service.create_person(app_user.id, first_name="A", last_name="Erst")
+    p2 = identity_service.create_person(app_user.id, first_name="B", last_name="Zweit")
+    oid = seeded["a1"].id
+    assert _add_party(admin_client, oid, p1.id, is_primary=True).status_code == 201
+    r = _add_party(admin_client, oid, p2.id, is_primary=True)
+    assert r.status_code == 422, r.content
+    assert "primärer Beteiligter" in r.json()["detail"]
+
+
+@pytest.mark.django_db
+def test_add_party_dieselbe_rolle_doppelt_422(admin_client, seeded):
+    # UNIQUE(work_order_id, role, party_id): dieselbe Partei nicht zweimal in
+    # derselben Rolle (beide nicht-primär, damit der primary-Index nicht greift).
+    app_user = seeded["app_user"]
+    p1 = identity_service.create_person(app_user.id, first_name="C", last_name="Kost")
+    oid = seeded["a1"].id
+    assert _add_party(
+        admin_client, oid, p1.id, role="COST_BEARER", is_primary=False
+    ).status_code == 201
+    r = _add_party(admin_client, oid, p1.id, role="COST_BEARER", is_primary=False)
+    assert r.status_code == 422, r.content
+    assert "bereits zugeordnet" in r.json()["detail"]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("anteil", ["0", "150"])
+def test_add_party_anteil_ausserhalb_bereich_422(admin_client, seeded, anteil):
+    # work_order_party_allocation_percent_check: 0 < Anteil <= 100.
+    app_user = seeded["app_user"]
+    p1 = identity_service.create_person(app_user.id, first_name="D", last_name="Drei")
+    r = _add_party(
+        admin_client, seeded["a1"].id, p1.id,
+        role="COST_BEARER", is_primary=False, allocation_percent=anteil,
+    )
+    assert r.status_code == 422, r.content
+    assert "Anteil" in r.json()["detail"]

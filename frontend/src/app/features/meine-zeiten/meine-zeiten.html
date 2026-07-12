@@ -1,0 +1,344 @@
+@switch (state().kind) {
+  @case ('loading') {
+    <p class="lade-hinweis">Zeiterfassung wird geladen …</p>
+  }
+  @case ('forbidden') {
+    <app-kein-zugriff />
+  }
+  @case ('error') {
+    <div class="note note--error" role="alert">
+      <p>Die Zeiterfassung konnte nicht geladen werden.</p>
+      <button type="button" class="btn" (click)="laden()">Erneut versuchen</button>
+    </div>
+  }
+  @case ('ready') {
+    <header class="kopf">
+      <p class="kicker">Zeiterfassung</p>
+      <h1>Meine Zeiten</h1>
+    </header>
+
+    <!-- Ansage jedes Zustandswechsels fuer Screenreader (WCAG 4.1.3). -->
+    <p class="sr-only" aria-live="polite" role="status">{{ ansage() }}</p>
+
+    @if (fehler(); as f) {
+      <div class="note note--error" role="alert">{{ f }}</div>
+    }
+
+    @if (stempel(); as s) {
+      <!-- ================= DIE STEMPELUHR ================= -->
+      <section class="uhr" [class.uhr--laeuft]="s.zustand === 'LAEUFT'"
+               [class.uhr--pause]="s.zustand === 'PAUSE'"
+               aria-labelledby="uhr-titel">
+        <h2 id="uhr-titel" class="sr-only">Stempeluhr</h2>
+
+        <!-- Zustand als TEXT + Symbol, nie nur als Farbe. -->
+        <p class="uhr__zustand">
+          <span class="uhr__zeichen" aria-hidden="true">
+            @switch (s.zustand) {
+              @case ('LAEUFT') { ▶ }
+              @case ('PAUSE') { ❚❚ }
+              @default { ■ }
+            }
+          </span>
+          <span class="uhr__zustand-text">{{ ZUSTAND_LABEL[s.zustand] }}</span>
+        </p>
+
+        @if (s.eintrag; as e) {
+          <p class="uhr__zeit">{{ dauerText(laufendeSekunden()) }}</p>
+          <p class="uhr__detail">
+            {{ e.kategorie }} · seit {{ uhrzeit(e.started_at) }}
+            @if (e.einsatz) { · Einsatz {{ e.einsatz }} }
+          </p>
+        } @else {
+          <p class="uhr__zeit">{{ dauerText(0) }}</p>
+          <p class="uhr__detail">Noch nichts erfasst heute.</p>
+        }
+
+        @if (s.ueberfaellig) {
+          <p class="note note--warnung uhr__warnung" role="alert">
+            <strong>Achtung:</strong> Diese Buchung läuft seit einem früheren Tag —
+            vermutlich wurde das Stoppen vergessen. Stoppen Sie sie und korrigieren
+            Sie anschließend das Ende.
+          </p>
+        }
+
+        <!-- Die vier Knoepfe. Grosse Touch-Ziele (min. 64 px). -->
+        <div class="uhr__knoepfe">
+          @if (s.zustand === 'GESTOPPT') {
+            <button type="button" class="knopf knopf--start" [disabled]="laeuftAktion()"
+                    (click)="start()">
+              Start
+            </button>
+          }
+          @if (s.zustand === 'LAEUFT') {
+            <button type="button" class="knopf knopf--pause" [disabled]="laeuftAktion()"
+                    (click)="pause()">
+              Pause
+            </button>
+            <button type="button" class="knopf knopf--stopp" [disabled]="laeuftAktion()"
+                    (click)="stopp()">
+              Stopp
+            </button>
+          }
+          @if (s.zustand === 'PAUSE') {
+            <button type="button" class="knopf knopf--start" [disabled]="laeuftAktion()"
+                    (click)="weiter()">
+              Weiter
+            </button>
+            <button type="button" class="knopf knopf--stopp" [disabled]="laeuftAktion()"
+                    (click)="stopp()">
+              Stopp
+            </button>
+          }
+        </div>
+
+        @if (s.zustand === 'GESTOPPT' && brauchtBegruendung()) {
+          <p class="note uhr__warnung">
+            Dieser Arbeitstag ist bestätigt. Sie können weiter stempeln — beim
+            Start fragen wir nach einer Begründung, und der Tag geht zurück auf
+            „Entwurf".
+          </p>
+        }
+
+        @if (s.zustand === 'GESTOPPT') {
+          <p class="uhr__kategorie">
+            <label for="startkat">Was machen Sie?</label>
+            <select id="startkat" [value]="startKategorie()"
+                    (change)="startKategorie.set($any($event.target).value)">
+              @for (k of kategorieOptionen(); track k.wert) {
+                <option [value]="k.wert">{{ k.label }}</option>
+              }
+            </select>
+          </p>
+        }
+      </section>
+
+      <!-- ================= TAGESSUMME ================= -->
+      <section class="summe" aria-label="Tagessumme">
+        <!-- „heute" nur, wenn der Bezugstag wirklich heute ist. Läuft die Uhr
+             seit gestern, tragen die Summen das Datum von gestern. -->
+        <div class="kachel">
+          <p class="kachel__label">Arbeitszeit {{ summenLabel() }}</p>
+          <p class="kachel__wert">{{ dauerText(tagArbeitLive()) }}</p>
+        </div>
+        <div class="kachel">
+          <p class="kachel__label">Pause {{ summenLabel() }}</p>
+          <p class="kachel__wert">{{ dauerText(tagPauseLive()) }}</p>
+        </div>
+        <div class="kachel">
+          <p class="kachel__label">Arbeitstag</p>
+          <p class="kachel__wert kachel__wert--klein">
+            @if (heute(); as t) {
+              <span [class]="tagStatusClass(t.status)">
+                <span aria-hidden="true">{{ TAG_STATUS_ZEICHEN[t.status] }}</span>
+                {{ TAG_STATUS_LABEL[t.status] }}
+              </span>
+            } @else {
+              —
+            }
+          </p>
+        </div>
+      </section>
+    }
+
+    <!-- ================= HEUTIGE TIMELINE ================= -->
+    <section class="timeline" aria-labelledby="timeline-titel">
+      <div class="timeline__kopf">
+        <h2 id="timeline-titel">
+          @if (heute(); as t) { {{ tagText(t.day) }} } @else { Heute }
+        </h2>
+        <div class="timeline__aktionen">
+          <button type="button" class="btn" (click)="eintragDialogOeffnen()">
+            Zeit nachtragen
+          </button>
+          @if (kannEinreichen()) {
+            <button type="button" class="btn btn--primary"
+                    (click)="einreichenOffen.set(true)">
+              Arbeitstag einreichen
+            </button>
+          }
+        </div>
+      </div>
+
+      @if (heute(); as t) {
+        @if (t.status === 'ABGELEHNT' && t.decision_note) {
+          <p class="note note--error" role="alert">
+            <strong>Abgelehnt:</strong> {{ t.decision_note }}
+          </p>
+        }
+        @if (t.status === 'BESTAETIGT') {
+          <p class="note">
+            Bestätigt von {{ t.decided_by }}. Eine Änderung ist weiterhin möglich —
+            sie verlangt eine Begründung und setzt die Bestätigung zurück.
+          </p>
+        }
+        @if (t.eintraege.length === 0) {
+          <p class="tab-platzhalter">Noch keine Zeitbuchung an diesem Tag.</p>
+        } @else {
+          <ul class="eintraege">
+            @for (e of t.eintraege; track e.id) {
+              <li class="eintrag" [class.eintrag--pause]="!e.is_work_time">
+                <span class="eintrag__zeit">
+                  {{ uhrzeit(e.started_at) }} –
+                  @if (e.ended_at) { {{ uhrzeit(e.ended_at) }} } @else {
+                    <em>läuft</em>
+                  }
+                </span>
+                <span class="eintrag__kat">
+                  {{ e.kategorie }}
+                  @if (e.auto_generated) {
+                    <span class="stamp stamp--warn" title="Vom System eingerechnet">
+                      automatisch
+                    </span>
+                  }
+                  @if (e.einsatz) {
+                    <span class="eintrag__einsatz">Einsatz {{ e.einsatz }}</span>
+                  }
+                </span>
+                <span class="eintrag__dauer">{{ dauerText(e.dauer_sekunden) }}</span>
+                <span class="eintrag__aktion">
+                  @if (!e.ended_at) {
+                    <span class="stamp stamp--type">läuft</span>
+                  } @else {
+                    <button type="button" class="btn btn--klein"
+                            [disabled]="laeuftAktion()"
+                            (click)="eintragLoeschen(e)"
+                            [attr.aria-label]="'Zeitbuchung ' + e.kategorie + ' löschen'">
+                      Löschen
+                    </button>
+                  }
+                </span>
+                @if (e.note) {
+                  <span class="eintrag__notiz">{{ e.note }}</span>
+                }
+              </li>
+            }
+          </ul>
+        }
+      } @else {
+        <p class="tab-platzhalter">Noch keine Zeitbuchung an diesem Tag.</p>
+      }
+    </section>
+
+    <!-- ================= LETZTE TAGE ================= -->
+    <section class="letzte" aria-labelledby="letzte-titel">
+      <h2 id="letzte-titel">Letzte 30 Tage</h2>
+      @if (tage().length === 0) {
+        <p class="tab-platzhalter">Keine Arbeitstage im Zeitraum.</p>
+      } @else {
+        <table class="tabelle">
+          <caption class="sr-only">Meine Arbeitstage der letzten 30 Tage</caption>
+          <thead>
+            <tr>
+              <th scope="col">Tag</th>
+              <th scope="col">Arbeitszeit</th>
+              <th scope="col">Pause</th>
+              <th scope="col">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (t of tage(); track t.id) {
+              <tr>
+                <td>{{ tagText(t.day) }}</td>
+                <td class="num">{{ dauerText(t.arbeit_sekunden) }}</td>
+                <td class="num">{{ dauerText(t.pause_sekunden) }}</td>
+                <td>
+                  <span [class]="tagStatusClass(t.status)">
+                    <span aria-hidden="true">{{ TAG_STATUS_ZEICHEN[t.status] }}</span>
+                    {{ TAG_STATUS_LABEL[t.status] }}
+                  </span>
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      }
+    </section>
+
+    <!-- ================= DIALOGE ================= -->
+    <app-dialog
+      [offen]="eintragDialogOffen()"
+      titel="Zeit nachtragen"
+      (schliessen)="eintragDialogOffen.set(false)"
+    >
+      <form [formGroup]="eintragForm" (ngSubmit)="eintragSpeichern()">
+        <app-feld
+          [control]="$any(eintragForm.controls.category_id)"
+          label="Kategorie"
+          typ="select"
+          [pflicht]="true"
+          [optionen]="alleKategorieOptionen()"
+        />
+        <app-feld
+          [control]="$any(eintragForm.controls.datum)"
+          label="Datum"
+          typ="datum"
+          [pflicht]="true"
+        />
+        <app-feld
+          [control]="$any(eintragForm.controls.von)"
+          label="Von"
+          typ="zeit"
+          [pflicht]="true"
+        />
+        <app-feld
+          [control]="$any(eintragForm.controls.bis)"
+          label="Bis"
+          typ="zeit"
+          [pflicht]="true"
+        />
+        <app-feld [control]="$any(eintragForm.controls.note)" label="Notiz" typ="textarea" />
+        <div class="dialog-aktionen">
+          <button type="button" class="btn" (click)="eintragDialogOffen.set(false)">
+            Abbrechen
+          </button>
+          <button type="submit" class="btn btn--primary" [disabled]="laeuftAktion()">
+            Speichern
+          </button>
+        </div>
+      </form>
+    </app-dialog>
+
+    <!-- Bestätigter Tag: der Weg zurück in die Uhr führt über eine Begründung
+         (workflow.unseal_work_day). Wir fragen sie ab, statt den Monteur in eine
+         rohe Datenbankmeldung laufen zu lassen. -->
+    <app-dialog
+      [offen]="begruendungOffen()"
+      titel="Arbeitstag ist bestätigt"
+      (schliessen)="begruendungOffen.set(false)"
+    >
+      <form [formGroup]="begruendungForm" (ngSubmit)="startMitBegruendung()">
+        <p class="note">
+          Dieser Arbeitstag wurde bereits bestätigt. Eine weitere Zeitbuchung
+          setzt die Bestätigung zurück — der Tag geht auf „Entwurf" und muss
+          erneut eingereicht werden. Bitte begründen Sie die Nachbuchung.
+        </p>
+        <app-feld
+          [control]="$any(begruendungForm.controls.grund)"
+          label="Begründung"
+          typ="textarea"
+          [pflicht]="true"
+        />
+        <div class="dialog-aktionen">
+          <button type="button" class="btn" (click)="begruendungOffen.set(false)">
+            Abbrechen
+          </button>
+          <button type="submit" class="btn btn--primary" [disabled]="laeuftAktion()">
+            Trotzdem starten
+          </button>
+        </div>
+      </form>
+    </app-dialog>
+
+    <app-bestaetigung
+      [offen]="einreichenOffen()"
+      titel="Arbeitstag einreichen"
+      text="Der Arbeitstag geht zur Bestätigung an die Leitung. Bis zur Entscheidung
+            können Sie ihn noch zurückholen, indem Sie eine Zeit ändern."
+      bestaetigenLabel="Einreichen"
+      [laedt]="laeuftAktion()"
+      (bestaetigen)="einreichen()"
+      (abbrechen)="einreichenOffen.set(false)"
+    />
+  }
+}

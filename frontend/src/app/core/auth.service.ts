@@ -115,4 +115,25 @@ export class AuthService {
     if (!u) return false;
     return u.permissions.some((p) => p.module === module && p.action === action);
   }
+
+  /**
+   * Wie `darf`, verlangt aber row_scope `ALLE`.
+   *
+   * Der Server ist **fail-closed**: `permissions.require()` wirft 403, sobald
+   * der effektive Scope `EIGENE` ist und die Ansicht das nicht umsetzt
+   * (`backend/api/permissions.py`). Ein Nav-Punkt, der auf so eine Ansicht
+   * zeigt, führte den Benutzer direkt auf „Kein Zugriff".
+   *
+   * Konkreter Fall: seit Migration 0068 trägt MONTEUR `hr/LESEN` mit Scope
+   * EIGENE (er braucht es für die eigene Zeiterfassung). Ohne diese Prüfung
+   * erschienen ihm „Mitarbeiter" und die Zeiterfassungs-Verwaltung in der
+   * Navigation — beide antworten mit 403.
+   */
+  darfAlle(module: string, action: string): boolean {
+    const u = this.user();
+    if (!u) return false;
+    return u.permissions.some(
+      (p) => p.module === module && p.action === action && p.row_scope === 'ALLE',
+    );
+  }
 }

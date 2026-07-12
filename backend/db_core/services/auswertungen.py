@@ -748,7 +748,12 @@ def mitarbeitende_summary(*, year):
     )
     time_rows = (
         TimeEntry.objects.filter(
-            time_type="ARBEITSZEIT",
+            # Seit Migration 0066 entscheidet die Kategorie, ob eine Buchung
+            # Arbeitszeit ist. Vorher filterte diese Auswertung hart auf
+            # time_type='ARBEITSZEIT' — Fahrt-, Bereitschafts- und Nacharbeitszeit
+            # fielen unter den Tisch, obwohl sie Arbeitszeit sind.
+            category__is_work_time=True,
+            ended_at__isnull=False,
             user_id__in=list(by_app_user.keys()),
             started_at__date__gte=start,
             started_at__date__lte=end,

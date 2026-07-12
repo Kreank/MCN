@@ -33,6 +33,7 @@ import { Dialog } from '../../shared/dialog/dialog';
 import { Feld, FeldOption } from '../../shared/formular/feld';
 import { Bestaetigung } from '../../shared/bestaetigung/bestaetigung';
 import { IdsBestellung } from './ids-bestellung/ids-bestellung';
+import { WerkzeugeDialog } from '../werkzeuge/werkzeuge-dialog';
 import { ResolvedPosition } from '../../core/anbindung.model';
 import { apiFehlerZuweisen } from '../../shared/formular/api-fehler';
 import {
@@ -181,6 +182,7 @@ const EDITIERBAR: QuoteStatus[] = ['ENTWURF', 'INTERN_GEPRUEFT', 'FREIGEGEBEN'];
     Feld,
     Bestaetigung,
     IdsBestellung,
+    WerkzeugeDialog,
   ],
   templateUrl: './angebot-editor.html',
   styleUrl: './angebot-editor.scss',
@@ -1283,6 +1285,50 @@ export class AngebotEditor {
       `${neu.length} Position(en) aus dem Händler-Warenkorb übernommen. ` +
         'Die Preise sind Einkaufspreise — bitte Aufschlag prüfen.',
     );
+  }
+
+  // ======================= Werkzeuge (Rechner) ============================
+  protected readonly werkzeugeOffen = signal(false);
+
+  /** Belegtitel als Kontext auf der Rechner-Ausgabe (reine Anzeige). Der Titel
+   *  steht im Kopfformular — `InvoiceDetail` trägt kein `title`-Feld. Bewusst
+   *  eine Methode (frisch je Change-Detection), kein memoisiertes Signal. */
+  protected werkzeugKontext(): string {
+    return this.kopfForm.controls.title.value.trim();
+  }
+
+  /**
+   * Ergebnis eines Rechners als **Textzeile** in den Beleg übernehmen.
+   *
+   * Bewusst `line_type: 'TEXT'`: ein Überschlagswert dokumentiert eine Annahme,
+   * er ist keine bepreiste Position. Es geht damit **keine in JavaScript
+   * gerechnete Zahl** als Menge oder Preis in den Beleg — die Invariante
+   * „der Server rechnet verbindlich" bleibt unberührt.
+   */
+  werkzeugErgebnisUebernehmen(text: string): void {
+    if (this.readonly() || !text.trim()) return;
+    const line: EditorLine = {
+      uid: neueUid(),
+      rubrikUid: this.zielRubrik(),
+      line_type: 'TEXT',
+      line_kind: 'NORMAL',
+      description: text.trim(),
+      quantity: null,
+      unit: null,
+      unit_price: null,
+      discount_percent: null,
+      tax_code: null,
+      unit_cost: null,
+      markup_percent: null,
+      sale_price_group_id: null,
+      source_article_id: null,
+      source_assembly_id: null,
+      netAmount: null,
+      taxRatePercent: null,
+    };
+    this.lines.update((ls) => [...ls, line]);
+    this.markiereGeaendert();
+    this.ansage.set('Rechenergebnis als Textposition übernommen.');
   }
 
   private vatZuTaxCode(vat: string | null): string {

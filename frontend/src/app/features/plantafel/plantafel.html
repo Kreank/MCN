@@ -3,7 +3,7 @@
     <div>
       <p class="page-head__kicker">
         <span class="page-head__scale" aria-hidden="true"></span>
-        Planung · Plantafel
+        Planung · Disposition
       </p>
       <h1 id="plantafel-titel" class="page-head__titel">Plantafel</h1>
     </div>
@@ -11,25 +11,72 @@
 
   <app-planung-nav />
 
-  <div class="board-controls">
-    <div class="zeitnav" role="group" aria-label="Zeitraum wechseln">
-      <button type="button" class="btn" (click)="prev()" aria-label="Vorheriger Zeitraum">‹</button>
-      <button type="button" class="btn" (click)="today()">Heute</button>
-      <button type="button" class="btn" (click)="next()" aria-label="Nächster Zeitraum">›</button>
+  <!-- ============================ Steuerleiste ============================ -->
+  <div class="leiste">
+    <div class="leiste__zeit">
+      <label class="feldchen">
+        <span class="feldchen__label">Ansicht</span>
+        <!-- `[selected]` je Option, NICHT `[value]` am <select>: die Optionen
+             entstehen erst durch @for, ein vorab gesetztes value fiele auf die
+             erste Option zurück — die Anzeige lög dann über die echte Ansicht. -->
+        <select class="feldchen__select" (change)="ansichtWaehlen($any($event.target).value)">
+          @for (a of ansichten; track a.wert) {
+            <option [value]="a.wert" [selected]="a.wert === ansicht()">{{ a.label }}</option>
+          }
+        </select>
+      </label>
+
+      <div class="zeitnav" role="group" aria-label="Zeitraum wechseln">
+        <button type="button" class="btn" (click)="prev()" aria-label="Vorheriger Zeitraum">‹</button>
+        <button type="button" class="btn" (click)="heute()">Heute</button>
+        <button type="button" class="btn" (click)="next()" aria-label="Nächster Zeitraum">›</button>
+      </div>
+
+      <label class="feldchen">
+        <span class="feldchen__label">Datum</span>
+        <input
+          type="date"
+          class="feldchen__input"
+          [value]="von()"
+          (change)="datumWaehlen($any($event.target).value)"
+        />
+      </label>
+
+      <p class="zeitraum" aria-live="polite">{{ zeitraumLabel() }}</p>
     </div>
-    <span class="zeitraum" aria-hidden="true">{{ rangeLabel() }}</span>
+
+    <div class="leiste__filter">
+      <label class="feldchen feldchen--weit">
+        <span class="feldchen__label">Suche im Raster</span>
+        <input
+          type="search"
+          class="feldchen__input"
+          placeholder="Titel, Nummer, Objekt …"
+          [value]="suche()"
+          (change)="sucheSetzen($any($event.target).value)"
+        />
+      </label>
+      <label class="feldchen">
+        <span class="feldchen__label">Kategorie</span>
+        <select class="feldchen__select" (change)="katFilterSetzen($any($event.target).value)">
+          <option value="" [selected]="!katFilter()">Alle Kategorien</option>
+          @for (k of kategorien(); track k.id) {
+            <option [value]="k.id" [selected]="k.id === katFilter()">{{ k.name }}</option>
+          }
+        </select>
+      </label>
+      @if (filterAktiv()) {
+        <button type="button" class="btn" (click)="filterZuruecksetzen()">Filter zurücksetzen</button>
+      }
+      @if (darfPlanen()) {
+        <button type="button" class="btn btn--primary" (click)="neuerTermin()">
+          <span aria-hidden="true">＋</span> Neuer Termin
+        </button>
+      }
+    </div>
   </div>
 
-  @if (darfUmplanen()) {
-    <p class="board-hinweis">
-      Einsätze lassen sich mit der Maus in eine andere Zelle <strong>ziehen</strong> —
-      oder ohne Maus: Kachel-Knopf <strong>„Verschieben“</strong> aufnehmen,
-      <strong>Pfeiltasten</strong> bewegen, <strong>Enter</strong> ablegen,
-      <strong>Escape</strong> abbrechen.
-    </p>
-  }
-
-  <!-- Ansagen für Screenreader: Aufnehmen, Zielwechsel, Ergebnis, Fehler. -->
+  <!-- Ansagen für Screenreader (Aufnehmen, Zielwechsel, Ergebnis, Fehler). -->
   <p class="sr-only" role="status" aria-live="polite">{{ ansage() }}</p>
   <p class="sr-only" role="status">{{ summary() }}</p>
 
@@ -53,10 +100,10 @@
 
   @if (warnungen().length) {
     <!-- Doppelbelegung ist bewusst NICHT gesperrt (der Zeitraum liegt am Einsatz
-         und ist nullable). Die Umplanung ist durchgelaufen — die Warnung wird
-         gezeigt, nicht verschluckt. -->
+         und ist nullable, siehe Migration 0025). Der Vorgang ist durchgelaufen —
+         die Warnung wird gezeigt, nicht verschluckt. -->
     <div class="note note--warnung note--umplanen" role="status">
-      <p class="note__text"><strong>Umgeplant — mit Hinweis auf Doppelbelegung</strong></p>
+      <p class="note__text"><strong>Gespeichert — mit Hinweisen</strong></p>
       <ul class="note__liste">
         @for (w of warnungen(); track w) {
           <li>{{ w }}</li>
@@ -78,234 +125,632 @@
     @case ('error') {
       <div class="note note--error" role="alert">
         <h2 class="note__titel">Verbindung zur Plantafel unterbrochen</h2>
-        <p class="note__text">Die Einsätze ließen sich nicht laden. Prüfe die Verbindung und lade den Bereich erneut.</p>
+        <p class="note__text">
+          Die Einsätze ließen sich nicht laden. Prüfe die Verbindung und lade den Bereich erneut.
+        </p>
         <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
       </div>
     }
 
     @case ('ready') {
-      @if (lanes().length === 0) {
-        <div class="note note--empty">
-          <h2 class="note__titel">Keine verplanten Einsätze im Zeitraum</h2>
-          <p class="note__text">In diesem Zeitfenster hat keine Bahn geplante Einsätze. Wechsle den Zeitraum oben.</p>
-        </div>
-      } @else {
-        <div class="board-wrap">
-          <!-- Tastensteuerung des Verschiebens: der Fokus liegt auf der Zielzelle,
-               das Event blubbert hierher. -->
-          <div class="board" [style.--days]="windowDays" (keydown)="boardTaste($event)">
-            <div class="board__corner"></div>
-            @for (day of days(); track day.iso) {
-              <div class="board__dayhead" [class.is-today]="day.isToday">
-                <span class="board__dow">{{ day.dow }}</span>
-                <span class="board__date">{{ day.label }}</span>
-              </div>
-            }
+      <div class="disposition">
+        <!-- ========================= Rückstand (Pool) ===================== -->
+        <!-- Das eigentliche Herz einer Plantafel: die UNGEPLANTEN Einsätze.
+             Ohne sie gäbe es nichts, was man ins Raster ziehen könnte. -->
+        <!-- Der Rückstand ist AUCH ein Ablageziel: eine Kachel hierher zu ziehen
+             ist die Gegenbewegung zum Ziehen ins Raster. Sie öffnet den Dialog,
+             denn der Statuswechsel GEPLANT → UNGEPLANT ist begründungspflichtig. -->
+        <aside
+          class="pool"
+          [class.pool--dropziel]="poolDropZiel()"
+          aria-labelledby="pool-titel"
+          (dragover)="poolDragUeber($event)"
+          (dragleave)="poolDragVerlassen()"
+          (drop)="poolDrop($event)"
+        >
+          <div class="pool__kopf">
+            <h2 id="pool-titel" class="pool__titel">
+              Rückstand
+              <span class="pool__zahl">{{ backlogTotal() }}</span>
+            </h2>
+            <button
+              type="button"
+              class="minibtn"
+              [attr.aria-expanded]="poolOffen()"
+              (click)="poolOffen.set(!poolOffen())"
+            >
+              {{ poolOffen() ? 'Einklappen' : 'Ausklappen' }}
+            </button>
+          </div>
 
-            @for (lane of lanes(); track lane.kind + lane.id; let li = $index) {
-              <div
-                class="board__lane"
-                [class.board__lane--none]="lane.kind === 'unassigned'"
-                [class.board__lane--resource]="lane.kind === 'resource'"
-              >
-                <span class="board__lane-name">{{ lane.name }}</span>
-                @if (lane.sub) {
-                  <span class="board__lane-sub">{{ lane.sub }}</span>
+          @if (poolOffen()) {
+            <p class="pool__hinweis">
+              Ungeplante Einsätze. Mit der Maus ins Raster <strong>ziehen</strong> — oder ohne
+              Maus: <strong>„Aufnehmen“</strong>, mit den <strong>Pfeiltasten</strong> die Zelle
+              wählen, <strong>Enter</strong> legt ab. Umgekehrt geht es auch: eine Kachel
+              <strong>hierher ziehen</strong> (oder „In den Rückstand“ an der Kachel) nimmt
+              den Termin wieder heraus.
+            </p>
+            <label class="feldchen feldchen--weit pool__suche">
+              <span class="feldchen__label">Im Rückstand suchen</span>
+              <input
+                type="search"
+                class="feldchen__input"
+                placeholder="Titel, Nummer, Objekt …"
+                [value]="backlogSuche()"
+                (change)="backlogSucheSetzen($any($event.target).value)"
+              />
+            </label>
+
+            @if (backlog().length === 0) {
+              <p class="pool__leer">
+                @if (backlogSuche()) {
+                  Kein ungeplanter Einsatz passt zur Suche.
+                } @else {
+                  Kein ungeplanter Einsatz — alles ist terminiert.
                 }
-              </div>
-              @for (day of days(); track day.iso; let di = $index) {
-                <div
-                  class="board__cell"
-                  [class.is-today]="day.isToday"
-                  [class.board__cell--moeglich]="quelle() && istErlaubtesZiel(li)"
-                  [class.board__cell--ziel]="istZiel(li, di)"
-                  (dragover)="dragUeber($event, li, lane, day.iso)"
-                  (dragleave)="dragVerlassen(lane, day.iso)"
-                  (drop)="drop($event, lane, day.iso)"
-                >
-                  @for (job of cellJobs(lane, day.iso); track job.id) {
+              </p>
+            } @else {
+              <ul class="pool__liste">
+                @for (job of backlog(); track job.id) {
+                  <li>
                     <div
-                      class="tile tile--{{ statusMod(job.status) }}"
-                      [class.tile--bewegt]="istInBewegung(job)"
+                      class="pkarte"
+                      [class.pkarte--bewegt]="istInBewegung(job.id)"
                       [attr.draggable]="darfUmplanen() && !busy() ? 'true' : null"
-                      (dragstart)="dragStart($event, job, lane, day.iso)"
+                      (dragstart)="dragStart($event, { art: 'backlog', job })"
                       (dragend)="dragEnde()"
                     >
-                      <a
-                        class="tile__link"
-                        draggable="false"
-                        [routerLink]="['/planung', job.id]"
-                        [title]="job.job_number + ' · ' + job.title"
-                        [attr.aria-label]="
-                          job.title + ', ' + time(job.scheduled_start) + ', ' +
-                          statusLabel(job.status) +
-                          (job.is_free ? ', freier Termin ohne Auftrag' : '') +
-                          (job.category ? ', Kategorie ' + job.category.name : '')
-                        "
-                      >
-                        <span class="tile__time">{{ time(job.scheduled_start) }}</span>
-                        <span class="tile__title">{{ job.title }}</span>
+                      <div class="pkarte__kopf">
+                        <span class="pkarte__nr">{{ job.job_number }}</span>
                         @if (job.is_free) {
-                          <!-- Kennzeichnung als TEXT (nicht nur Farbe) — WCAG 1.4.1. -->
                           <span class="tile__frei">Freier Termin</span>
+                        } @else if (job.order_number) {
+                          <span class="pkarte__auftrag">{{ job.order_number }}</span>
                         }
-                        @if (job.category) {
-                          <span class="kat-chip tile__kat {{ categoryClass(job) }}">
-                            <span class="kat-dot" aria-hidden="true"></span>
-                            {{ job.category.name }}
-                          </span>
-                        }
-                        <span class="tile__status">{{ statusLabel(job.status) }}</span>
+                      </div>
+                      <a class="pkarte__titel" [routerLink]="['/planung', job.id]" draggable="false">
+                        {{ job.title }}
                       </a>
+                      @if (job.property_name) {
+                        <span class="pkarte__ort">{{ job.property_name }}</span>
+                      }
+                      @if (job.category) {
+                        <span class="kat-chip {{ categoryClass(job.category) }}">
+                          <span class="kat-dot" aria-hidden="true"></span>
+                          {{ job.category.name }}
+                        </span>
+                      }
                       @if (darfUmplanen()) {
-                        <!-- Gleichwertiger Weg ohne Maus (und auf Touch, wo HTML5-
-                             Drag&Drop nicht greift): aufnehmen → Pfeiltasten → Enter. -->
-                        <!-- KEINE id aus der Job-ID: ein Einsatz mit mehreren
-                             Zuweisungen erscheint in jeder Bahn — die id wäre doppelt.
-                             Der Fokus kehrt über das Auslöser-ELEMENT zurück. -->
-                        <button
-                          type="button"
-                          class="tile__griff"
-                          [disabled]="busy()"
-                          (click)="aufnehmen(job, lane, day.iso, $event)"
-                          [attr.aria-label]="
-                            'Einsatz ' + job.job_number + ', ' + job.title +
-                            ', verschieben: aufnehmen, mit den Pfeiltasten bewegen, mit Enter ablegen'
-                          "
-                        >
-                          <span aria-hidden="true">⠿</span> Verschieben
-                        </button>
+                        <div class="pkarte__aktionen">
+                          <button
+                            type="button"
+                            class="btn btn--klein"
+                            [disabled]="busy()"
+                            (click)="ausPoolAufnehmen(job, $event)"
+                            [attr.aria-label]="
+                              'Einsatz ' + job.job_number + ', ' + job.title +
+                              ', aufnehmen und mit den Pfeiltasten im Raster ablegen'
+                            "
+                          >
+                            <span aria-hidden="true">⠿</span> Aufnehmen
+                          </button>
+                          <button
+                            type="button"
+                            class="btn btn--klein"
+                            [disabled]="busy()"
+                            (click)="poolPlanen(job)"
+                          >
+                            Terminieren …
+                          </button>
+                        </div>
+                      }
+                    </div>
+                  </li>
+                }
+              </ul>
+              @if (backlogTotal() > backlog().length) {
+                <p class="pool__mehr">
+                  {{ backlogTotal() - backlog().length }} weitere — Suche eingrenzen.
+                </p>
+              }
+            }
+          }
+        </aside>
+
+        <!-- ============================== Board =========================== -->
+        <div class="board-spalte">
+          <div class="board-kopf">
+            <p class="board-kopf__zahlen">
+              <strong>{{ konfliktZahl() }}</strong> Termine mit Konflikt
+              @if (konfliktZahl() > 0) {
+                <span aria-hidden="true">⚠</span>
+              }
+            </p>
+            @if (darfUmplanen()) {
+              <p class="board-kopf__hinweis">
+                Kacheln mit der Maus <strong>ziehen</strong> — oder Knopf
+                <strong>„Verschieben“</strong>, <strong>Pfeiltasten</strong>,
+                <strong>Enter</strong>.
+              </p>
+            }
+          </div>
+
+          <div class="board-wrap">
+            <!-- Der Fokus liegt beim Verschieben auf der Zielzelle; das Tastenevent
+                 blubbert hierher. -->
+            <div class="board" (keydown)="boardTaste($event)">
+              <!-- Kopfzeile: Tage bzw. Stunden -->
+              <div class="board__zeile board__zeile--kopf" [style.--slots]="slots().length">
+                <div class="board__ecke">Bahn</div>
+                <div class="board__kopfslots">
+                  @for (slot of slots(); track slot.dayIso + slot.kopf) {
+                    <div
+                      class="slotkopf"
+                      [class.is-today]="slot.isToday"
+                      [class.is-frei]="slot.isWeekend"
+                      [class.is-feiertag]="!!slot.feiertag"
+                    >
+                      <span class="slotkopf__haupt">{{ slot.kopf }}</span>
+                      @if (slot.sub) {
+                        <span class="slotkopf__sub">{{ slot.sub }}</span>
+                      }
+                      @if (slot.feiertag) {
+                        <!-- Feiertag als TEXT, nicht nur als Farbfläche (WCAG 1.4.1). -->
+                        <span class="slotkopf__feiertag" [title]="slot.feiertag">
+                          <span aria-hidden="true">★</span> {{ slot.feiertag }}
+                        </span>
                       }
                     </div>
                   }
+                </div>
+              </div>
 
-                  @if (griff() && istErlaubtesZiel(li)) {
-                    <!-- Drop-Ziel: als Knopf (Maus, Touch UND Tastatur) und mit
-                         Text markiert — nicht nur farblich. -->
-                    <button
-                      type="button"
-                      class="cell-drop"
-                      [class.cell-drop--ziel]="istZiel(li, di)"
-                      [id]="'drop-' + li + '-' + di"
-                      [attr.tabindex]="istZiel(li, di) ? 0 : -1"
-                      (click)="zielAnklicken(lane, day.iso)"
-                      [attr.aria-label]="
-                        'Hier ablegen: ' + day.dow + ', ' + day.label + ', Bahn ' + lane.name
-                      "
-                    >
-                      <span aria-hidden="true">▾</span> Hier ablegen
-                    </button>
-                  } @else if (darfPlanen() && !griff()) {
-                    <!-- Während eines Maus-Drags bleibt der Knopf stehen (kein
-                         Layout-Sprung unter dem Zeiger); im Tastatur-Griff nimmt
-                         das Drop-Ziel seinen Platz ein. -->
-                    <button
-                      type="button"
-                      class="cell-add"
-                      (click)="terminOeffnen(lane, day)"
-                      [attr.aria-label]="'Termin am ' + day.label + ' für ' + lane.name + ' anlegen'"
-                    >
-                      + Termin
-                    </button>
-                  }
+              @for (lane of lanes(); track lane.kind + lane.id; let li = $index) {
+                @if (li === 0 || lanes()[li - 1].kind !== lane.kind) {
+                  <p class="board__gruppe">
+                    {{ lane.kind === 'USER' ? 'Mitarbeiter' : 'Betriebsmittel' }}
+                  </p>
+                }
+                <div
+                  class="board__zeile"
+                  [class.board__zeile--resource]="lane.kind === 'RESOURCE'"
+                  [style.--slots]="slots().length"
+                  [style.--reihen]="reihen(lane)"
+                >
+                  <!-- Bahnenkopf: Name + Auslastung (Text UND Balken) -->
+                  <div class="bahn">
+                    <span class="bahn__name">{{ lane.display_name }}</span>
+                    @if (lane.sub) {
+                      <span class="bahn__sub">{{ resTyp(lane.sub) }}</span>
+                    }
+                    @if (lane.kind === 'USER') {
+                      <span class="last last--{{ auslastungMod(lane) }}">
+                        <span
+                          class="last__balken"
+                          aria-hidden="true"
+                          [style.--fuell]="(auslastung(lane) ?? 0) + '%'"
+                        ></span>
+                        <span class="last__text">{{ auslastungText(lane) }}</span>
+                      </span>
+                    }
+                  </div>
+
+                  <!-- Rasterfläche der Bahn -->
+                  <div class="spur">
+                    <!-- Hintergrundzellen: Drop-Ziel, Klick = neuer Termin -->
+                    @for (slot of slots(); track slot.dayIso + slot.kopf; let si = $index) {
+                      <div
+                        class="zelle"
+                        [style.grid-column]="si + 1"
+                        [class.is-today]="slot.isToday"
+                        [class.is-frei]="slot.isWeekend"
+                        [class.is-feiertag]="!!slot.feiertag"
+                        [class.zelle--moeglich]="quelle() && istErlaubtesZiel(li)"
+                        [class.zelle--ziel]="istZiel(li, si)"
+                        (dragover)="dragUeber($event, li, si)"
+                        (dragleave)="dragVerlassen(li, si)"
+                        (drop)="drop($event, li, si)"
+                      >
+                        @if (griff() && istErlaubtesZiel(li)) {
+                          <button
+                            type="button"
+                            class="minibtn zelle__drop"
+                            [class.zelle__drop--ziel]="istZiel(li, si)"
+                            [id]="'drop-' + li + '-' + si"
+                            [attr.tabindex]="istZiel(li, si) ? 0 : -1"
+                            (click)="zielAnklicken(li, si)"
+                            [attr.aria-label]="
+                              'Hier ablegen: ' + slot.kopf + ' ' + slot.sub +
+                              ', Bahn ' + lane.display_name
+                            "
+                          >
+                            <span aria-hidden="true">▾</span> Ablegen
+                          </button>
+                        } @else if (darfPlanen() && !quelle()) {
+                          <button
+                            type="button"
+                            class="minibtn zelle__neu"
+                            (click)="neuerTermin(li, si)"
+                            [attr.aria-label]="
+                              'Termin anlegen: ' + slot.kopf + ' ' + slot.sub +
+                              ', Bahn ' + lane.display_name
+                            "
+                          >
+                            + Termin
+                          </button>
+                        }
+                      </div>
+                    }
+
+                    <!-- Sperrflächen: genehmigte Abwesenheiten (nicht anklickbar).
+                         Nur DASS jemand abwesend ist — nie, WARUM: die Art ist ein
+                         Gesundheitsdatum (DSGVO Art. 9) und hängt am hr-Recht, das
+                         ein Disponent nicht hat. Der Server liefert sie hier gar
+                         nicht erst. -->
+                    @for (s of sperren(lane); track s.absence.id) {
+                      <div
+                        class="sperre"
+                        [style.grid-column]="s.von + 1 + ' / span ' + s.span"
+                        [attr.aria-label]="lane.display_name + ' ist abwesend'"
+                      >
+                        <span class="sperre__text">
+                          <span aria-hidden="true">⛱</span> Abwesend
+                        </span>
+                      </div>
+                    }
+
+                    <!-- Die Termin-Balken (mehrtägig = mehrspaltig) -->
+                    @for (b of balken(lane); track b.job.id) {
+                      <div
+                        class="tile tile--{{ statusMod(b.job.status) }}"
+                        [class.tile--bewegt]="istInBewegung(b.job.id)"
+                        [class.tile--konflikt]="b.job.conflicts.length > 0"
+                        [class.tile--offen-links]="b.offenLinks"
+                        [class.tile--offen-rechts]="b.offenRechts"
+                        [style.grid-column]="b.von + 1 + ' / span ' + b.span"
+                        [style.grid-row]="b.reihe + 1"
+                        [attr.draggable]="darfUmplanen() && !busy() ? 'true' : null"
+                        (dragstart)="dragStart($event, { art: 'board', job: b.job, lane })"
+                        (dragend)="dragEnde()"
+                      >
+                        <a
+                          class="tile__link"
+                          draggable="false"
+                          [routerLink]="['/planung', b.job.id]"
+                          [title]="
+                            b.job.job_number + ' · ' + b.job.title +
+                            (b.job.conflicts.length ? ' · ' + konfliktText(b.job) : '')
+                          "
+                          [attr.aria-label]="
+                            b.job.title + ', ' + zeit(b.job.scheduled_start) + ', ' +
+                            statusLabel(b.job.status) +
+                            (b.job.is_free ? ', freier Termin ohne Auftrag' : '') +
+                            (b.job.category ? ', Kategorie ' + b.job.category.name : '') +
+                            (b.job.conflicts.length
+                              ? ', Konflikt: ' + konfliktText(b.job)
+                              : '')
+                          "
+                        >
+                          <span class="tile__kopf">
+                            @if (b.offenLinks) {
+                              <span class="tile__rand" aria-hidden="true">‹</span>
+                            }
+                            <span class="tile__time">
+                              {{ zeit(b.job.scheduled_start) }}@if (b.job.scheduled_end) {
+                                –{{ zeit(b.job.scheduled_end) }}
+                              }
+                            </span>
+                            @if (b.offenRechts) {
+                              <span class="tile__rand" aria-hidden="true">›</span>
+                            }
+                          </span>
+                          <span class="tile__title">{{ b.job.title }}</span>
+                          @if (b.job.property_name) {
+                            <span class="tile__ort">{{ b.job.property_name }}</span>
+                          }
+                          @if (b.job.is_free) {
+                            <span class="tile__frei">Freier Termin</span>
+                          }
+                          @if (b.job.category) {
+                            <span class="kat-chip tile__kat {{ categoryClass(b.job.category) }}">
+                              <span class="kat-dot" aria-hidden="true"></span>
+                              {{ b.job.category.name }}
+                            </span>
+                          }
+                          <span class="tile__status">{{ statusLabel(b.job.status) }}</span>
+                        </a>
+
+                        @if (b.job.conflicts.length) {
+                          <!-- Konflikte: Symbol UND Text — nie nur Farbe. Sie
+                               BLOCKIEREN nichts (weiche Invariante), sie zeigen.
+                               Höchstens zwei auf der Kachel; der Rest wird gezählt
+                               und steht vollständig im title/aria-label. -->
+                          <ul class="konflikte">
+                            @for (k of sichtbareKonflikte(b.job); track k.text) {
+                              <li class="konflikt konflikt--{{ k.kind.toLowerCase() }}">
+                                <span class="konflikt__sym" aria-hidden="true">{{ kSymbol(k) }}</span>
+                                <span class="konflikt__label">{{ kLabel(k) }}:</span>
+                                <span class="konflikt__text">{{ k.text }}</span>
+                              </li>
+                            }
+                            @if (weitereKonflikte(b.job); as rest) {
+                              <li class="konflikt konflikt--mehr">
+                                <span class="konflikt__sym" aria-hidden="true">⚠</span>
+                                <span class="konflikt__label">
+                                  + {{ rest }} weitere Konflikte
+                                </span>
+                              </li>
+                            }
+                          </ul>
+                        }
+
+                        @if (darfUmplanen()) {
+                          <div class="tile__aktionen">
+                            <button
+                              type="button"
+                              class="minibtn tile__griff"
+                              [disabled]="busy()"
+                              (click)="aufnehmen({ art: 'board', job: b.job, lane }, li, b.von, $event)"
+                              [attr.aria-label]="
+                                'Einsatz ' + b.job.job_number + ', ' + b.job.title +
+                                ', verschieben: aufnehmen, mit den Pfeiltasten bewegen, mit Enter ablegen'
+                              "
+                            >
+                              <span aria-hidden="true">⠿</span> Verschieben
+                            </button>
+                            <button
+                              type="button"
+                              class="minibtn tile__griff"
+                              [disabled]="busy()"
+                              (click)="bearbeiten(b.job)"
+                              [attr.aria-label]="
+                                'Termin ' + b.job.job_number + ', ' + b.job.title + ', bearbeiten'
+                              "
+                            >
+                              <span aria-hidden="true">✎</span> Bearbeiten
+                            </button>
+                            <!-- Der Rückweg ohne Maus: Gegenstück zum Ziehen auf
+                                 den Rückstand. -->
+                            <button
+                              type="button"
+                              class="minibtn tile__griff"
+                              [disabled]="busy()"
+                              (click)="zurueckInDenRueckstand(b.job)"
+                              [attr.aria-label]="
+                                'Termin ' + b.job.job_number + ', ' + b.job.title +
+                                ', zurück in den Rückstand legen (Begründung nötig)'
+                              "
+                            >
+                              <span aria-hidden="true">↩</span> In den Rückstand
+                            </button>
+                          </div>
+                        }
+                      </div>
+                    }
+                  </div>
                 </div>
               }
-            }
+            </div>
           </div>
         </div>
-      }
+      </div>
     }
   }
 
-  <!-- Termin für einen Auftrag anlegen (Klick in eine Zelle) -->
+  <!-- ======================== Termin anlegen/bearbeiten ==================== -->
   <app-dialog
-    [offen]="neuOffen()"
-    titel="Termin anlegen"
-    (schliessen)="terminSchliessen()"
+    [offen]="dialogOffen()"
+    [titel]="
+      rueckstandModus()
+        ? 'Termin in den Rückstand zurücklegen'
+        : bearbeitet()
+          ? 'Termin bearbeiten'
+          : 'Termin anlegen'
+    "
+    (schliessen)="dialogSchliessen()"
   >
-    @if (neuCell(); as c) {
-      <p class="note">
-        Neuer Termin am <strong>{{ c.dayLabel }}</strong>
-        @if (c.lane.kind === 'user') {
-          für <strong>{{ c.lane.name }}</strong>
-        } @else if (c.lane.kind === 'resource') {
-          auf der Ressource <strong>{{ c.lane.name }}</strong> (Mitarbeiter-Zuweisung separat)
-        } @else {
-          (ohne Zuweisung)
-        }. Wähle die Terminart und die Uhrzeit.
-      </p>
+    @if (dialogLaedt()) {
+      <!-- Das Formular zeigt erst, was gespeichert IST. Sonst schriebe das
+           Speichern zurück, was die Kachel zufällig weiß — und löschte den Rest
+           (Kontakt, Zutrittshinweise). -->
+      <p class="lade-hinweis" role="status">Termin wird geladen …</p>
     }
-    <form class="termin-form" [formGroup]="neuForm" (ngSubmit)="terminAnlegen()" novalidate>
-      <fieldset class="terminart">
-        <legend class="terminart__legend">Terminart</legend>
-        <div class="terminart__optionen">
-          <label class="terminart__opt">
-            <input
-              type="radio"
-              name="terminart"
-              value="auftrag"
-              [checked]="art() === 'auftrag'"
-              (change)="artWaehlen('auftrag')"
-            />
-            <span class="terminart__text">
-              <span class="terminart__titel">Termin zu einem Auftrag</span>
-              <span class="terminart__hint">Titel und Liegenschaft kommen vom Auftrag.</span>
-            </span>
-          </label>
-          <label class="terminart__opt">
-            <input
-              type="radio"
-              name="terminart"
-              value="frei"
-              [checked]="art() === 'frei'"
-              (change)="artWaehlen('frei')"
-            />
-            <span class="terminart__text">
-              <span class="terminart__titel">Freier Termin</span>
-              <span class="terminart__hint">
-                Begehung, Besichtigung oder Beratung — noch ohne Auftrag.
+
+    <form class="termin-form" [formGroup]="form" (ngSubmit)="speichern()" novalidate>
+      @if (!auftragGesperrt()) {
+        <fieldset class="terminart">
+          <legend class="terminart__legend">Terminart</legend>
+          <div class="terminart__optionen">
+            <label class="terminart__opt">
+              <input
+                type="radio"
+                name="terminart"
+                value="auftrag"
+                [checked]="art() === 'auftrag'"
+                (change)="artWaehlen('auftrag')"
+              />
+              <span class="terminart__text">
+                <span class="terminart__titel">Termin zu einem Auftrag</span>
+                <span class="terminart__hint">Titel und Liegenschaft kommen vom Auftrag.</span>
               </span>
-            </span>
-          </label>
+            </label>
+            <label class="terminart__opt">
+              <input
+                type="radio"
+                name="terminart"
+                value="frei"
+                [checked]="art() === 'frei'"
+                (change)="artWaehlen('frei')"
+              />
+              <span class="terminart__text">
+                <span class="terminart__titel">Freier Termin</span>
+                <span class="terminart__hint">
+                  Begehung, Besichtigung oder Beratung — noch ohne Auftrag.
+                </span>
+              </span>
+            </label>
+          </div>
+        </fieldset>
+
+        @if (art() === 'auftrag') {
+          <app-referenz-wahl
+            [control]="form.controls.work_order_id"
+            label="Auftrag"
+            [pflicht]="true"
+            [suche]="auftragSuche"
+            hinweis="Suche nach Auftragstitel oder -nummer."
+          />
+        } @else {
+          <app-referenz-wahl
+            [control]="form.controls.property_id"
+            label="Liegenschaft"
+            [suche]="liegenschaftSuche"
+            hinweis="Optional — falls das Objekt schon angelegt ist."
+          />
+        }
+      } @else {
+        <p class="note note--info">
+          Der Auftragsbezug eines Einsatzes ist <strong>unveränderlich</strong> (er wird beim
+          Anlegen festgelegt). Alles andere lässt sich hier ändern.
+        </p>
+      }
+
+      <app-feld
+        [control]="form.controls.title"
+        label="Titel"
+        [pflicht]="art() === 'frei' && !auftragGesperrt()"
+        hinweis="Beim freien Termin Pflicht — beim Auftragstermin optional (sonst gilt der Auftragstitel)."
+      />
+
+      <app-feld
+        [control]="form.controls.appointment_category_id"
+        label="Kategorie"
+        typ="select"
+        [optionen]="katOptionen()"
+      />
+
+      @if (rueckstandModus()) {
+        <!-- Rückweg ins Backlog: Zeitraum fällt weg, Status GEPLANT → UNGEPLANT.
+             Dieser Wechsel ist begründungspflichtig (Statusautomat) — die
+             Begründung landet im Audit, nicht am Einsatz. -->
+        <p class="note note--info">
+          Der Termin verliert seinen <strong>Zeitraum</strong> und steht danach wieder im
+          <strong>Rückstand</strong>. Zuweisungen und Angaben bleiben erhalten.
+        </p>
+        <app-feld
+          [control]="form.controls.rueckstand_grund"
+          label="Begründung"
+          typ="textarea"
+          [pflicht]="true"
+          hinweis="Warum wird der Termin herausgenommen? (z. B. „Kunde hat abgesagt“) — sie steht im Statusverlauf."
+        />
+        <button type="button" class="btn" (click)="rueckstandUmschalten()">
+          Doch Zeitraum behalten
+        </button>
+      } @else {
+        <div class="termin-form__zeiten">
+          <app-feld [control]="form.controls.start_datum" label="Beginn (Datum)" typ="datum" />
+          <app-feld [control]="form.controls.start_zeit" label="Beginn (Uhrzeit)" typ="zeit" />
+          <app-feld [control]="form.controls.end_datum" label="Ende (Datum)" typ="datum" />
+          <app-feld [control]="form.controls.end_zeit" label="Ende (Uhrzeit)" typ="zeit" />
+        </div>
+        <p class="termin-form__hinweis">
+          Ohne Beginn landet der Termin im <strong>Rückstand</strong>. Ein mehrtägiger Einsatz
+          bekommt einfach ein späteres Enddatum — er wird im Raster als durchgehender Balken
+          gezeigt.
+        </p>
+        @if (bearbeitet()) {
+          <button type="button" class="btn" (click)="rueckstandUmschalten()">
+            <span aria-hidden="true">↩</span> In den Rückstand zurücklegen …
+          </button>
+        }
+      }
+
+      <!-- Mehrfachzuweisung (Hero: „Mitarbeiter und Ressourcen zuweisen") -->
+      <fieldset class="wahl">
+        <legend class="wahl__legend">
+          Mitarbeiter
+          <span class="wahl__zahl">{{ gewaehlteMitarbeiter().length }} gewählt</span>
+        </legend>
+        <div class="wahl__liste">
+          @for (lane of mitarbeiterBahnen(); track lane.id) {
+            <label class="wahl__opt">
+              <input
+                type="checkbox"
+                [checked]="istGewaehlt(gewaehlteMitarbeiter(), lane.id)"
+                (change)="mitarbeiterUmschalten(lane.id)"
+              />
+              <span>{{ lane.display_name }}</span>
+            </label>
+          }
         </div>
       </fieldset>
 
-      @if (art() === 'auftrag') {
-        <app-referenz-wahl
-          [control]="neuForm.controls.work_order_id"
-          label="Auftrag"
-          [pflicht]="true"
-          [suche]="auftragSuche"
-          hinweis="Suche nach Auftragstitel oder -nummer."
-        />
-      } @else {
-        <app-feld
-          [control]="neuForm.controls.title"
-          label="Titel"
-          [pflicht]="true"
-          hinweis="Pflicht — z. B. „Begehung Dachgeschoss“."
-        />
-        <app-referenz-wahl
-          [control]="neuForm.controls.property_id"
-          label="Liegenschaft"
-          [suche]="liegenschaftSuche"
-          hinweis="Optional — falls das Objekt schon angelegt ist."
-        />
+      <fieldset class="wahl">
+        <legend class="wahl__legend">
+          Betriebsmittel
+          <span class="wahl__zahl">{{ gewaehlteRessourcen().length }} gewählt</span>
+        </legend>
+        <div class="wahl__liste">
+          @if (ressourcen().length === 0) {
+            <p class="wahl__leer">Keine aktiven Betriebsmittel angelegt.</p>
+          }
+          @for (r of ressourcen(); track r.id) {
+            <label class="wahl__opt">
+              <input
+                type="checkbox"
+                [checked]="istGewaehlt(gewaehlteRessourcen(), r.id)"
+                (change)="ressourceUmschalten(r.id)"
+              />
+              <span>{{ r.name }} <em>{{ resTyp(r.resource_type) }}</em></span>
+            </label>
+          }
+        </div>
+      </fieldset>
+
+      <!-- Der bereits hinterlegte Kontakt wird als TEXT gezeigt: Die Suchbox hält
+           zwar seine ID (er geht beim Speichern nicht verloren), zeigt aber nur
+           selbst getroffene Auswahlen an — das Feld sähe sonst leer aus, obwohl
+           ein Kontakt gesetzt ist. -->
+      @if (zeigtAktuellenKontakt()) {
+        <p class="termin-form__aktuell">
+          <span class="termin-form__aktuell-label">Hinterlegt:</span>
+          <strong>{{ aktuellerKontakt() }}</strong>
+          <button type="button" class="btn btn--klein" (click)="kontaktEntfernen()">
+            Kontakt entfernen
+          </button>
+        </p>
       }
-      <div class="termin-form__zeiten">
-        <app-feld [control]="neuForm.controls.start" label="Beginn" typ="zeit" [pflicht]="true" />
-        <app-feld [control]="neuForm.controls.end" label="Ende (optional)" typ="zeit" />
-      </div>
+      <app-referenz-wahl
+        [control]="form.controls.on_site_contact_party_id"
+        label="Kontakt vor Ort"
+        [suche]="kontaktSuche"
+        hinweis="Optional — wer vor Ort aufschließt bzw. ansprechbar ist. Eine Suche ersetzt den hinterlegten Kontakt."
+      />
+      <app-feld
+        [control]="form.controls.access_instructions"
+        label="Zugangshinweise"
+        typ="textarea"
+        hinweis="Schlüssel, Codes, Anfahrt, Parken."
+      />
     </form>
-    @if (neuFehler(); as f) {
+
+    @if (dialogFehler(); as f) {
       <p class="note note--error" role="alert">{{ f }}</p>
     }
+
     <div dialog-aktionen class="dialog__aktionen">
-      <button type="button" class="btn" (click)="terminSchliessen()" [disabled]="neuBusy()">
+      <button type="button" class="btn" (click)="dialogSchliessen()" [disabled]="dialogBusy()">
         Abbrechen
       </button>
-      <button type="button" class="btn btn--primary" (click)="terminAnlegen()" [disabled]="neuBusy()">
-        {{ neuBusy() ? 'Wird angelegt …' : 'Termin anlegen' }}
+      <button
+        type="button"
+        class="btn btn--primary"
+        (click)="speichern()"
+        [disabled]="dialogBusy() || dialogLaedt()"
+      >
+        {{ dialogBusy() ? 'Wird gespeichert …' : dialogLaedt() ? 'Lädt …' : 'Übernehmen' }}
       </button>
     </div>
   </app-dialog>
