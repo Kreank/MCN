@@ -86,6 +86,15 @@ export interface OpenItemDetail extends OpenItem {
   dunning: DunningNotice[];
   /** Best-effort vorbelegte Schuldner-E-Mail für den Mahnungsversand-Dialog. */
   recipient_email: string | null;
+  /** Zahlungsbedingungen der Rechnung (read-only). Sie ändern weder den
+   *  Zahlungsstatus noch den offenen Betrag — maßgeblich bleibt, was tatsächlich
+   *  gezahlt wurde. Decimals sind Strings. */
+  discount_percent: string | null;
+  discount_days: number | null;
+  payment_term_days: number | null;
+  skonto_bis: string | null;
+  skonto_betrag: string | null;
+  skonto_zahlbetrag: string | null;
 }
 
 export interface DunningRow {

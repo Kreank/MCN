@@ -5,6 +5,8 @@ Profil greift ein neutraler Fallback (kein Absturz). Für eine unveröffentlicht
 oder fehlende Rechnung gibt es kein PDF (None).
 """
 import re
+import zlib
+from datetime import date, timedelta
 from decimal import Decimal
 from hashlib import sha256
 
@@ -61,7 +63,18 @@ def fake_storage(monkeypatch):
     return fake
 
 
-def _published_invoice(app_user):
+def _pdf_text(data):
+    """Sichtbarer Text eines fpdf2-PDF (Inhaltsströme sind zlib-komprimiert)."""
+    stuecke = []
+    for m in re.finditer(rb"stream\r?\n(.*?)\r?\nendstream", data, re.S):
+        try:
+            stuecke.append(zlib.decompress(m.group(1)).decode("latin-1"))
+        except zlib.error:
+            continue
+    return "\n".join(stuecke)
+
+
+def _published_invoice(app_user, **invoice_kwargs):
     obj = property_service.create_property(
         app_user.id, name="PDF-Objekt", property_type="WEG",
         street="Weg 1", postal_code="10115", city="Berlin",
@@ -91,6 +104,7 @@ def _published_invoice(app_user):
             {"line_type": "MATERIAL", "description": "Ziegel", "quantity": 100,
              "unit": "Stk", "unit_price": "2.40", "tax_code": "DE_19"},
         ],
+        **invoice_kwargs,
     )
     for role in ("INVOICE_DEBTOR", "INVOICE_RECIPIENT"):
         beleg_service.add_invoice_party(
@@ -329,3 +343,73 @@ def test_quote_pdf_ohne_auftrag_rendert_ohne_empfaenger(app_user):
     assert beleg_pdf.quote_recipient_party(q) is None
     data = beleg_pdf.render_quote_pdf(quote.id)
     assert data is not None and data[:4] == b"%PDF"
+
+
+# --- Zahlungsbedingungen / Skonto (Migration 0058) --------------------------
+
+@pytest.mark.django_db
+def test_pdf_zeigt_skonto_hinweis(app_user):
+    """Der Beleg trägt die Zahlungsbedingung im Klartext — nicht nur als Feld
+    irgendwo im UI: der Kunde muss sie auf dem PDF lesen können."""
+    inv = _published_invoice(
+        app_user, invoice_date=date(2026, 7, 1),
+        payment_term_days=30, discount_percent="2", discount_days=10,
+    )
+    # Brutto: 100 x 2,40 = 240,00 netto + 19 % = 285,60 → 2 % Skonto = 5,71 EUR.
+    assert inv.gross_total == Decimal("285.60")
+    assert inv.due_date == date(2026, 7, 31)
+
+    data = beleg_pdf.render_invoice_pdf(inv.id)
+    assert data is not None and data[:4] == b"%PDF"
+    text = _pdf_text(data)
+    assert "Zahlungsbedingungen" in text
+    assert "Skonto" in text
+    assert "5,71 EUR" in text          # Skontobetrag
+    assert "11.07.2026" in text        # Skontofrist (Belegdatum + 10 Tage)
+    assert "31.07.2026" in text        # Zahlungsziel
+
+
+@pytest.mark.django_db
+def test_pdf_ohne_skonto_zeigt_nettofrist(app_user):
+    inv = _published_invoice(
+        app_user, invoice_date=date(2026, 7, 1), payment_term_days=14
+    )
+    data = beleg_pdf.render_invoice_pdf(inv.id)
+    text = _pdf_text(data)
+    assert "Zahlbar ohne Abzug bis 15.07.2026." in text
+    assert "Skonto" not in text
+
+
+@pytest.mark.django_db
+def test_pdf_ohne_faelligkeit_zeigt_keine_zahlungsbedingung(app_user):
+    inv = _published_invoice(app_user, invoice_date=date(2026, 7, 1))
+    text = _pdf_text(beleg_pdf.render_invoice_pdf(inv.id))
+    assert "Zahlbar ohne Abzug" not in text
+    assert "Zahlungsbedingungen" not in text
+
+
+@pytest.mark.django_db
+def test_pdf_skontobetrag_kommt_aus_dem_service(app_user):
+    """Keine zweite Rechenstelle: der Text nutzt beleg.zahlungsbedingungen()."""
+    inv = _published_invoice(
+        app_user, invoice_date=date(2026, 7, 1),
+        payment_term_days=30, discount_percent="3", discount_days=8,
+    )
+    zb = beleg_service.zahlungsbedingungen(inv)
+    text = beleg_pdf._zahlungsbedingungen_text(inv)
+    assert beleg_pdf._eur(zb["skonto_betrag"]) in text
+    assert beleg_pdf._de_date(zb["skonto_bis"]) in text
+    assert zb["skonto_bis"] == inv.invoice_date + timedelta(days=8)
+
+
+@pytest.mark.django_db
+def test_pdf_storno_hat_keine_zahlungsbedingung(app_user):
+    """Eine Stornorechnung fordert kein Geld — kein „zahlbar bis"."""
+    inv = _published_invoice(
+        app_user, invoice_date=date(2026, 7, 1),
+        payment_term_days=30, discount_percent="2", discount_days=10,
+    )
+    storno = beleg_service.create_cancellation(app_user.id, invoice_id=inv.id)
+    text = _pdf_text(beleg_pdf.render_invoice_pdf(storno.id))
+    assert "Zahlungsbedingungen" not in text
+    assert "Zahlbar ohne Abzug" not in text

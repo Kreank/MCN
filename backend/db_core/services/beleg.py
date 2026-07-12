@@ -18,6 +18,7 @@ import hashlib
 import json
 import uuid
 from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
 
 from db_core.db_context import business_transaction
@@ -78,6 +79,10 @@ _Q_QTY = Decimal("0.001")
 _Q_PRICE = Decimal("0.01")
 _Q_DISCOUNT = Decimal("0.0001")
 _CENT = Decimal("0.01")
+# Zahlungsbedingungen (Migration 0058): discount_percent numeric(5,2),
+# payment_term_days/discount_days integer in [0, 365].
+_Q_SKONTO = Decimal("0.01")
+_MAX_TAGE = 365
 
 
 def _dec(value):
@@ -86,6 +91,113 @@ def _dec(value):
 
 def _round2(value):
     return value.quantize(_CENT, rounding=ROUND_HALF_UP)
+
+
+def _tage_pruefen(wert, label):
+    """Ein Tagesfeld (Zahlungsziel/Skontofrist) auf den DB-Wertebereich prüfen."""
+    if wert in (None, ""):
+        return None
+    try:
+        tage = int(wert)
+    except (TypeError, ValueError):
+        raise ValueError(f"{label} muss eine ganze Zahl von Tagen sein.")
+    if not (0 <= tage <= _MAX_TAGE):
+        raise ValueError(f"{label} muss zwischen 0 und {_MAX_TAGE} Tagen liegen.")
+    return tage
+
+
+def _zahlungsbedingungen_pruefen(
+    invoice_type, *, payment_term_days, discount_percent, discount_days
+):
+    """Validiert die Zahlungsbedingungen und quantisiert den Skontosatz.
+
+    Läuft VOR dem Schreiben, damit ein Eingabefehler als klare Meldung (422)
+    endet und nicht als DB-CHECK-Verletzung (500). Die Regeln spiegeln exakt die
+    Constraints aus Migration 0058:
+
+    - Wertebereiche (0..365 Tage, Skonto echt zwischen 0 und 100 %),
+    - **Paarigkeit**: Skontosatz und Skontofrist nur gemeinsam,
+    - **Frist <= Ziel**,
+    - **Kreditbelege tragen keine Zahlungsbedingungen** (eine Gutschrift fordert
+      kein Geld — es gibt nichts zu skontieren).
+
+    Gibt das normalisierte dict zurück (alle drei Schlüssel, ggf. None).
+    """
+    ziel = _tage_pruefen(payment_term_days, "Zahlungsziel")
+    frist = _tage_pruefen(discount_days, "Skontofrist")
+
+    satz = None
+    if discount_percent not in (None, ""):
+        try:
+            satz = _dec(discount_percent).quantize(_Q_SKONTO, rounding=ROUND_HALF_UP)
+        except (ArithmeticError, ValueError):
+            raise ValueError("Skontosatz muss eine Zahl sein.")
+        if not (Decimal(0) < satz < Decimal(100)):
+            raise ValueError("Skontosatz muss größer als 0 und kleiner als 100 % sein.")
+
+    if (satz is None) != (frist is None):
+        raise ValueError(
+            "Skontosatz und Skontofrist können nur gemeinsam gesetzt werden."
+        )
+    if frist is not None and ziel is not None and frist > ziel:
+        raise ValueError("Die Skontofrist darf nicht nach dem Zahlungsziel liegen.")
+    if invoice_type in _CREDIT_TYPES and any(
+        v is not None for v in (ziel, satz, frist)
+    ):
+        raise ValueError(
+            "Gutschriften und Stornobelege tragen keine Zahlungsbedingungen."
+        )
+    return {
+        "payment_term_days": ziel,
+        "discount_percent": satz,
+        "discount_days": frist,
+    }
+
+
+def _frist_gegen_faelligkeit_pruefen(invoice_date, due_date, discount_days):
+    """Die Skontofrist darf nicht nach der Fälligkeit enden.
+
+    `payment_term_days` allein reicht als Schranke nicht: `due_date` ist die
+    maßgebliche Fälligkeit und kann von Hand gesetzt sein (auch früher als das
+    Zahlungsziel). Ohne diese Prüfung stünde auf dem Beleg „Skonto bei Zahlung
+    bis 11.07., sonst netto bis 05.07." — eine Frist, die nach der Fälligkeit
+    endet. Wird hart abgelehnt (422) statt still auf die Fälligkeit gedeckelt:
+    welche der beiden Angaben falsch ist, weiß nur der Bearbeiter.
+    """
+    if discount_days is None or invoice_date is None or due_date is None:
+        return
+    ende = invoice_date + timedelta(days=int(discount_days))
+    if ende > due_date:
+        raise ValueError(
+            f"Die Skontofrist endet am {ende.isoformat()} und damit nach der "
+            f"Fälligkeit ({due_date.isoformat()}). Skontofrist oder "
+            "Fälligkeitsdatum anpassen."
+        )
+
+
+def zahlungsbedingungen(invoice):
+    """Abgeleitete Skonto-Angaben einer Rechnung (oder None).
+
+    Einzige Rechenstelle für Skonto — PDF, API und Buchhaltung greifen hierauf zu,
+    damit dieselbe Rechnung nirgends zwei verschiedene Skontobeträge zeigt.
+
+    None, wenn kein Skonto vereinbart ist oder die Rechenbasis fehlt (ohne
+    Belegdatum gibt es kein Fristende, ohne Bruttobetrag keinen Skontobetrag).
+    """
+    if invoice.discount_percent is None or invoice.discount_days is None:
+        return None
+    if invoice.invoice_date is None or invoice.gross_total is None:
+        return None
+    betrag = _round2(invoice.gross_total * invoice.discount_percent / Decimal(100))
+    return {
+        "discount_percent": invoice.discount_percent,
+        "discount_days": int(invoice.discount_days),
+        "payment_term_days": invoice.payment_term_days,
+        "skonto_bis": invoice.invoice_date + timedelta(days=int(invoice.discount_days)),
+        "skonto_betrag": betrag,
+        "skonto_zahlbetrag": invoice.gross_total - betrag,
+        "zahlbar_bis": invoice.due_date,
+    }
 
 
 def _kalkulation_pruefen(idx, line, unit_price):
@@ -406,6 +518,9 @@ def update_invoice(
     invoice_id,
     invoice_date=...,
     due_date=...,
+    payment_term_days=...,
+    discount_percent=...,
+    discount_days=...,
     lines=None,
     rubriken=None,
 ):
@@ -437,6 +552,32 @@ def update_invoice(
         kopf["invoice_date"] = invoice_date
     if due_date is not ...:
         kopf["due_date"] = due_date
+
+    # Zahlungsbedingungen gegen den RESULTIERENDEN Zustand prüfen: wer nur den
+    # Skontosatz schickt, während die Frist schon am Beleg steht, ändert einen
+    # gültigen Beleg — die Paarigkeit gilt für das Ergebnis, nicht für den Payload.
+    bedingungen = {
+        "payment_term_days": (
+            invoice.payment_term_days if payment_term_days is ... else payment_term_days
+        ),
+        "discount_percent": (
+            invoice.discount_percent if discount_percent is ... else discount_percent
+        ),
+        "discount_days": (
+            invoice.discount_days if discount_days is ... else discount_days
+        ),
+    }
+    normiert = _zahlungsbedingungen_pruefen(invoice.invoice_type, **bedingungen)
+    if any(f is not ... for f in (payment_term_days, discount_percent, discount_days)):
+        kopf.update(normiert)
+    # Auch ein reiner Datumswechsel kann die Skontofrist hinter die Fälligkeit
+    # schieben — deshalb immer gegen den Ergebniszustand prüfen, nicht nur, wenn
+    # ein Bedingungsfeld im Payload stand.
+    _frist_gegen_faelligkeit_pruefen(
+        invoice.invoice_date if invoice_date is ... else invoice_date,
+        invoice.due_date if due_date is ... else due_date,
+        normiert["discount_days"],
+    )
 
     prepared = rubriken_norm = None
     if lines is not None:
@@ -474,6 +615,9 @@ def create_invoice(
     reference_invoice_id=None,
     invoice_date=None,
     due_date=None,
+    payment_term_days=None,
+    discount_percent=None,
+    discount_days=None,
     lines=None,
     rubriken=None,
 ):
@@ -501,6 +645,15 @@ def create_invoice(
     ensure_exists(Project, project_id, "Projekt")
     ensure_exists(WorkOrder, work_order_id, "Auftrag")
     ensure_exists(Invoice, reference_invoice_id, "Referenzrechnung")
+    bedingungen = _zahlungsbedingungen_pruefen(
+        invoice_type,
+        payment_term_days=payment_term_days,
+        discount_percent=discount_percent,
+        discount_days=discount_days,
+    )
+    _frist_gegen_faelligkeit_pruefen(
+        invoice_date, due_date, bedingungen["discount_days"]
+    )
     prepared, net_total, tax_total, gross_total = _prepare_lines(lines)
     rubriken_norm = _prepare_rubriken(rubriken, prepared)
 
@@ -515,6 +668,7 @@ def create_invoice(
             status="ENTWURF",
             invoice_date=invoice_date,
             due_date=due_date,
+            **bedingungen,
             net_total=net_total,
             tax_total=tax_total,
             gross_total=gross_total,
@@ -648,6 +802,31 @@ def publish_invoice(actor_app_user_id, *, invoice_id):
             "Veröffentlichung erfordert einen zugeordneten Auftrag (B-08)."
         )
 
+    # Das Belegdatum wird IMMER hier festgeschrieben, wenn es fehlt — nicht erst
+    # vom DB-Trigger (der bleibt das Sicherheitsnetz). Sonst trüge der gehashte
+    # Snapshot `invoice_date: null`, während die Zeile (und das ausgelieferte PDF,
+    # und die daraus abgeleitete Skontofrist) das heutige Datum zeigt: der
+    # Snapshot rekonstruierte den Beleg dann nicht mehr (B-21/B-30).
+    #
+    # Auf derselben Basis leitet sich die Fälligkeit aus dem Zahlungsziel ab, wenn
+    # kein Datum gesetzt wurde. `due_date` bleibt die maßgebliche Spalte
+    # (Mahnwesen/offene Posten/DATEV); ein bereits gesetztes Datum bleibt
+    # unangetastet.
+    kopf_extra = {}
+    if invoice.invoice_date is None:
+        invoice.invoice_date = datetime.now(timezone.utc).date()
+        kopf_extra["invoice_date"] = invoice.invoice_date
+    if invoice.due_date is None and invoice.payment_term_days is not None:
+        invoice.due_date = invoice.invoice_date + timedelta(
+            days=int(invoice.payment_term_days)
+        )
+        kopf_extra["due_date"] = invoice.due_date
+    # Jetzt stehen Belegdatum und Fälligkeit endgültig fest — erst hier lässt sich
+    # abschließend prüfen, dass die Skontofrist nicht nach der Fälligkeit endet.
+    _frist_gegen_faelligkeit_pruefen(
+        invoice.invoice_date, invoice.due_date, invoice.discount_days
+    )
+
     header = {
         "invoice_type": invoice.invoice_type,
         "property_id": str(invoice.property_id),
@@ -662,6 +841,13 @@ def publish_invoice(actor_app_user_id, *, invoice_id):
         ),
         "invoice_date": invoice.invoice_date.isoformat() if invoice.invoice_date else None,
         "due_date": invoice.due_date.isoformat() if invoice.due_date else None,
+        # Zahlungsbedingungen gehören in den Snapshot: sie stehen auf dem Beleg,
+        # den der Kunde bekommt, und sind damit GoBD-fest einzufrieren.
+        "payment_term_days": invoice.payment_term_days,
+        "discount_percent": (
+            str(invoice.discount_percent) if invoice.discount_percent is not None else None
+        ),
+        "discount_days": invoice.discount_days,
         "currency": invoice.currency,
         "net_total": str(invoice.net_total),
         "tax_total": str(invoice.tax_total),
@@ -689,6 +875,7 @@ def publish_invoice(actor_app_user_id, *, invoice_id):
                 billing_snapshot=snapshot,
                 content_hash=digest,
                 status="VEROEFFENTLICHT",
+                **kopf_extra,
             )
             if not updated:
                 # Zwischenzeitlich veröffentlicht (Wettlauf): kein stiller Erfolg.

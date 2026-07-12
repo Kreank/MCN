@@ -44,7 +44,13 @@ import {
   felderAlsBeruehrtMarkieren,
   serverFehlerZuruecksetzen,
 } from '../../shared/formular/formular.util';
-import { apiZuDeDezimal, deZuApiDezimal, dezimalValidator } from '../../shared/formular/dezimal';
+import {
+  apiZuDeDezimal,
+  deZuApiDezimal,
+  dezimalValidator,
+  ganzzahlValidator,
+} from '../../shared/formular/dezimal';
+import { isoDatumDe } from '../../shared/datum';
 
 type ViewState =
   | { kind: 'loading' }
@@ -59,6 +65,15 @@ type PaletteModus = 'artikel' | 'leistungen';
 
 let uidSeq = 0;
 const neueUid = (): string => `u${++uidSeq}`;
+
+/** Tagesangabe aus einem Formularfeld: leer = `null` (nicht vereinbart), nie 0.
+ * Fehleingaben kommen hier nicht mehr an — `ganzzahlValidator` blockiert das
+ * Speichern vorher, statt ein gespeichertes Zahlungsziel still zu verwerfen. */
+function ganzzahlOderNull(eingabe: string): number | null {
+  const s = (eingabe ?? '').trim();
+  if (!/^\d+$/.test(s)) return null;
+  return Number(s);
+}
 
 /** Ein Abschnitt (Rubrik) im Editor. `uid` ist eine stabile lokale Kennung. */
 interface EditorRubrik {
@@ -197,14 +212,46 @@ export class AngebotEditor {
   protected readonly ansage = signal('');
 
   /** Kopf-Formular. Angebot: Titel + Angebots-/Gültig-bis-Datum. Rechnung: kein
-   * Titel (Identität über Typ+Nummer), stattdessen Rechnungs-/Fälligkeitsdatum.
-   * Titel ist nur beim Angebot Pflicht (Validator in `titelPflichtSetzen`). */
+   * Titel (Identität über Typ+Nummer), stattdessen Rechnungs-/Fälligkeitsdatum
+   * plus Zahlungsbedingungen (Zahlungsziel, Skontosatz, Skontofrist).
+   * Titel ist nur beim Angebot Pflicht (Validator in `titelPflichtSetzen`).
+   *
+   * Die Zahlungsbedingungen bleiben Strings: leere Eingabe = `null` (nicht 0),
+   * der Skontosatz ist ein Decimal und wird erst beim Senden über
+   * `deZuApiDezimal` in den Punkt-String gewandelt. */
   protected readonly kopfForm = this.fb.group({
     title: this.fb.control('', { nonNullable: true }),
     quote_date: this.fb.control('', { nonNullable: true }),
     valid_until_date: this.fb.control('', { nonNullable: true }),
     invoice_date: this.fb.control('', { nonNullable: true }),
     due_date: this.fb.control('', { nonNullable: true }),
+    payment_term_days: this.fb.control('', {
+      nonNullable: true,
+      validators: [ganzzahlValidator],
+    }),
+    discount_percent: this.fb.control('', {
+      nonNullable: true,
+      validators: [dezimalValidator],
+    }),
+    discount_days: this.fb.control('', {
+      nonNullable: true,
+      validators: [ganzzahlValidator],
+    }),
+  });
+
+  /** Zahlungsbedingungs-Vorschau — ausschließlich mit den vom **Server**
+   * gerechneten Werten des zuletzt gespeicherten Standes. Der Editor rechnet
+   * bewusst kein Geld (dieselbe Regel wie bei den Summen). */
+  protected readonly skontoHinweis = computed<string | null>(() => {
+    if (!this.istRechnung) return null;
+    const inv = this.quote() as InvoiceDetail | null;
+    if (!inv?.skonto_bis || !inv.skonto_betrag) return null;
+    const satz = apiZuDeDezimal(inv.discount_percent, 2);
+    let text =
+      `${satz} % Skonto bei Zahlung bis ${this.datumDe(inv.skonto_bis)} ` +
+      `(${this.euro(inv.skonto_betrag)}), zahlbar ${this.euro(inv.skonto_zahlbetrag)}`;
+    if (inv.due_date) text += `, sonst netto bis ${this.datumDe(inv.due_date)}`;
+    return `${text}. Vom Server berechnet (gespeicherter Stand).`;
   });
 
   // --- Rechte / read-only --------------------------------------------------
@@ -439,6 +486,11 @@ export class AngebotEditor {
         title: '', quote_date: '', valid_until_date: '',
         invoice_date: inv.invoice_date ?? '',
         due_date: inv.due_date ?? '',
+        payment_term_days:
+          inv.payment_term_days === null ? '' : String(inv.payment_term_days),
+        // Decimal bleibt String; nur die Anzeige wird eingedeutscht.
+        discount_percent: apiZuDeDezimal(inv.discount_percent, 2),
+        discount_days: inv.discount_days === null ? '' : String(inv.discount_days),
       });
     } else {
       const q = data as QuoteDetail;
@@ -447,6 +499,7 @@ export class AngebotEditor {
         quote_date: q.quote_date ?? '',
         valid_until_date: q.valid_until_date ?? '',
         invoice_date: '', due_date: '',
+        payment_term_days: '', discount_percent: '', discount_days: '',
       });
     }
     // Abschnitte in Anzeigereihenfolge; Nummer (1-basiert) → lokale uid.
@@ -1131,6 +1184,10 @@ export class AngebotEditor {
       return {
         invoice_date: kopf.invoice_date || null,
         due_date: kopf.due_date || null,
+        // Leere Eingabe heißt „nicht vereinbart" (null) — nicht 0 Tage.
+        payment_term_days: ganzzahlOderNull(kopf.payment_term_days),
+        discount_percent: deZuApiDezimal(kopf.discount_percent) || null,
+        discount_days: ganzzahlOderNull(kopf.discount_days),
         rubriken,
         lines,
       };
@@ -1149,7 +1206,12 @@ export class AngebotEditor {
     serverFehlerZuruecksetzen(this.kopfForm);
     felderAlsBeruehrtMarkieren(this.kopfForm);
     if (this.kopfForm.invalid) {
-      this.meldung.set({ art: 'fehler', text: 'Bitte den Titel des Angebots ausfüllen.' });
+      this.meldung.set({
+        art: 'fehler',
+        text: this.istRechnung
+          ? 'Bitte die markierten Kopffelder korrigieren (Zahlungsziel und Skontofrist in ganzen Tagen, Skonto als Zahl).'
+          : 'Bitte den Titel des Angebots ausfüllen.',
+      });
       return;
     }
     this.saving.set(true);
@@ -1252,6 +1314,11 @@ export class AngebotEditor {
     const n = Number(v);
     if (!Number.isFinite(n)) return '—';
     return this.euroFmt.format(n);
+  }
+
+  /** ISO-Datum (JJJJ-MM-TT) in deutscher Schreibweise, ohne Zeitzonen-Drift. */
+  private datumDe(iso: string): string {
+    return isoDatumDe(iso);
   }
 
   menge(qty: string | null, unit: string | null): string {

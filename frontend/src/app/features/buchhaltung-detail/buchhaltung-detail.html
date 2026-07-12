@@ -84,6 +84,18 @@
           <div class="feld"><dt class="feld__label">Bruttobetrag</dt><dd class="feld__wert">{{ euro(daten()!.gross_total) }}</dd></div>
           <div class="feld"><dt class="feld__label">Bezahlt</dt><dd class="feld__wert">{{ euro(daten()!.paid_total) }}</dd></div>
           <div class="feld feld--stark"><dt class="feld__label">Offener Betrag</dt><dd class="feld__wert">{{ euro(daten()!.open_amount) }}</dd></div>
+          @if (daten()!.skonto_betrag) {
+            <div class="feld">
+              <dt class="feld__label">Skonto</dt>
+              <dd class="feld__wert">
+                {{ skontoText() }}
+                <span class="skonto-note">
+                  Nur zur Information — der offene Betrag bleibt der volle Rechnungsbetrag,
+                  bis eine Zahlung gebucht ist.
+                </span>
+              </dd>
+            </div>
+          }
         </dl>
 
         <div class="bezug">

@@ -979,6 +979,15 @@ class Invoice(models.Model):
     status = models.TextField()  # ENTWURF | VEROEFFENTLICHT
     invoice_date = models.DateField(null=True, blank=True)
     due_date = models.DateField(null=True, blank=True)
+    # Zahlungsbedingungen je Rechnung (Migration 0058). `due_date` bleibt die
+    # maßgebliche Fälligkeit (Mahnwesen/DATEV); payment_term_days leitet sie beim
+    # Veröffentlichen ab, wenn sie leer geblieben ist. Skontosatz und -frist gibt
+    # es nur gemeinsam; Gutschrift/Storno tragen keine Zahlungsbedingungen (DB-CHECK).
+    payment_term_days = models.IntegerField(null=True, blank=True)
+    discount_percent = models.DecimalField(
+        max_digits=5, decimal_places=2, null=True, blank=True
+    )
+    discount_days = models.IntegerField(null=True, blank=True)
     currency = models.CharField(max_length=3, db_default="EUR")
     net_total = models.DecimalField(
         max_digits=15, decimal_places=2, null=True, blank=True

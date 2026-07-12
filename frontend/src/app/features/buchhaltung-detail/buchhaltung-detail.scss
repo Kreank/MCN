@@ -283,3 +283,12 @@
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+
+// Skonto-Hinweis im Übersichts-Raster: Klartext, nie nur eine Zahl.
+.skonto-note {
+  display: block;
+  margin-top: var(--space-1);
+  font-size: var(--step--1);
+  font-weight: 400;
+  color: var(--ink-muted);
+}

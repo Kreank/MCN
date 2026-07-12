@@ -30,6 +30,7 @@ export function feldFehlerText(control: AbstractControl | null | undefined): str
   if (e['min'] != null) return `Der Wert ist zu klein (mindestens ${e['min'].min}).`;
   if (e['max'] != null) return `Der Wert ist zu groß (höchstens ${e['max'].max}).`;
   if (e['dezimal']) return 'Bitte eine gültige Zahl eingeben (z. B. 1.234,56).';
+  if (e['ganzzahl']) return 'Bitte eine ganze Zahl ohne Einheit eingeben (z. B. 30).';
   if (e['gtin'])
     return 'Ungültige GTIN/EAN: 8, 12, 13 oder 14 Ziffern mit korrekter Prüfziffer.';
   return 'Ungültige Eingabe.';

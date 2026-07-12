@@ -23,6 +23,8 @@ import { Dialog } from '../../shared/dialog/dialog';
 import { Feld, FeldOption } from '../../shared/formular/feld';
 import { ReferenzWahl, RefSuche } from '../../shared/formular/referenz-wahl';
 import { apiFehlerZuweisen } from '../../shared/formular/api-fehler';
+import { apiZuDeDezimal } from '../../shared/formular/dezimal';
+import { fristAbgelaufen, isoDatumDe } from '../../shared/datum';
 import {
   felderAlsBeruehrtMarkieren,
   serverFehlerZuruecksetzen,
@@ -129,6 +131,35 @@ export class RechnungDetail {
   protected readonly dateienZiel = computed<ZielFilter>(() => ({
     invoice_id: this.daten()?.id ?? '',
   }));
+
+  /** Zahlungsbedingungen als Klartext (nie nur Farbe/Zahl). Alle Beträge und
+   * Fristen kommen vom Server — hier wird nichts nachgerechnet. */
+  protected readonly zahlungsbedingungen = computed<string | null>(() => {
+    const d = this.daten();
+    if (!d) return null;
+    if (d.skonto_bis && d.skonto_betrag) {
+      const satz = apiZuDeDezimal(d.discount_percent, 2);
+      // Abgelaufene Frist im Klartext benennen (nicht nur farblich), sonst liest
+      // sich ein Monate alter Beleg wie ein noch einlösbarer Skontoabzug.
+      const abgelaufen = fristAbgelaufen(d.skonto_bis) ? ' (Frist abgelaufen)' : '';
+      const kern =
+        `${satz} % Skonto bei Zahlung bis ${this.datumDe(d.skonto_bis)}` +
+        `${abgelaufen} (${this.euro(d.skonto_betrag)})`;
+      return d.due_date
+        ? `${kern}, sonst netto bis ${this.datumDe(d.due_date)}.`
+        : `${kern}, sonst netto ohne Abzug.`;
+    }
+    if (d.due_date) return `Zahlbar ohne Abzug bis ${this.datumDe(d.due_date)}.`;
+    if (d.payment_term_days !== null) {
+      return `${d.payment_term_days} Tage netto ab Rechnungsdatum.`;
+    }
+    return null;
+  });
+
+  /** ISO-Datum (JJJJ-MM-TT) deutsch, ohne Zeitzonen-Drift durch `new Date()`. */
+  private datumDe(iso: string): string {
+    return isoDatumDe(iso);
+  }
 
   constructor() {
     this.route.paramMap.pipe(takeUntilDestroyed()).subscribe((pm) => {

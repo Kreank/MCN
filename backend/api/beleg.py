@@ -497,6 +497,15 @@ class InvoicePartyOut(Schema):
 class InvoiceDetailOut(InvoiceOut):
     due_date: date | None = None
     tax_total: Decimal | None = None
+    # Zahlungsbedingungen je Rechnung (Migration 0058).
+    payment_term_days: int | None = None
+    discount_percent: Decimal | None = None
+    discount_days: int | None = None
+    # Abgeleitet (read-only) aus Belegdatum, Bruttobetrag und Skonto — der Server
+    # rechnet, das UI zeigt nur an.
+    skonto_bis: date | None = None
+    skonto_betrag: Decimal | None = None
+    skonto_zahlbetrag: Decimal | None = None
     version: int
     project: ProjectRefOut | None = None
     work_order_number: str | None = None
@@ -520,6 +529,9 @@ class InvoiceIn(Schema):
     reference_invoice_id: UUID | None = None
     invoice_date: date | None = None
     due_date: date | None = None
+    payment_term_days: int | None = None
+    discount_percent: Decimal | None = None
+    discount_days: int | None = None
     rubriken: list[RubrikIn] = []
     lines: list[QuoteLineIn] = []
 
@@ -641,6 +653,8 @@ def _invoice_detail(invoice_id):
         if invoice.status == "VEROEFFENTLICHT"
         else None
     )
+    # Einzige Rechenstelle für Skonto (dieselbe, die das PDF nutzt).
+    zb = beleg_service.zahlungsbedingungen(invoice) or {}
     return InvoiceDetailOut(
         id=invoice.id,
         invoice_number=invoice.invoice_number,
@@ -649,6 +663,12 @@ def _invoice_detail(invoice_id):
         currency=invoice.currency,
         invoice_date=invoice.invoice_date,
         due_date=invoice.due_date,
+        payment_term_days=invoice.payment_term_days,
+        discount_percent=invoice.discount_percent,
+        discount_days=invoice.discount_days,
+        skonto_bis=zb.get("skonto_bis"),
+        skonto_betrag=zb.get("skonto_betrag"),
+        skonto_zahlbetrag=zb.get("skonto_zahlbetrag"),
         net_total=invoice.net_total,
         tax_total=invoice.tax_total,
         gross_total=invoice.gross_total,
@@ -682,6 +702,9 @@ def create_invoice(request, payload: InvoiceIn):
             reference_invoice_id=payload.reference_invoice_id,
             invoice_date=payload.invoice_date,
             due_date=payload.due_date,
+            payment_term_days=payload.payment_term_days,
+            discount_percent=payload.discount_percent,
+            discount_days=payload.discount_days,
             rubriken=[r.dict() for r in payload.rubriken],
             lines=[line.dict() for line in payload.lines],
         )
@@ -696,6 +719,9 @@ class InvoiceUpdateIn(Schema):
     hat keinen Titel (Identität über Typ + Nummer)."""
     invoice_date: date | None = None
     due_date: date | None = None
+    payment_term_days: int | None = None
+    discount_percent: Decimal | None = None
+    discount_days: int | None = None
     rubriken: list[RubrikIn] | None = None
     lines: list[QuoteLineIn] | None = None
 
@@ -712,6 +738,15 @@ def update_invoice(request, invoice_id: UUID, payload: InvoiceUpdateIn):
             # Sentinel `...` unterscheidet „leeren" (None) von „nicht ändern".
             invoice_date=payload.invoice_date if "invoice_date" in gesetzt else ...,
             due_date=payload.due_date if "due_date" in gesetzt else ...,
+            payment_term_days=(
+                payload.payment_term_days if "payment_term_days" in gesetzt else ...
+            ),
+            discount_percent=(
+                payload.discount_percent if "discount_percent" in gesetzt else ...
+            ),
+            discount_days=(
+                payload.discount_days if "discount_days" in gesetzt else ...
+            ),
             rubriken=[r.dict() for r in payload.rubriken or []],
             lines=(
                 [line.dict() for line in payload.lines]

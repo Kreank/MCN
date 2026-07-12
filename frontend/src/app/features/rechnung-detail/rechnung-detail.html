@@ -158,6 +158,22 @@
           <div class="feld"><dt class="feld__label">Belegnummer</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.invoice_number">{{ daten()!.invoice_number || 'noch nicht vergeben' }}</dd></div>
           <div class="feld"><dt class="feld__label">Rechnungsdatum</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.invoice_date">{{ daten()!.invoice_date || '—' }}</dd></div>
           <div class="feld"><dt class="feld__label">Fällig bis</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.due_date">{{ daten()!.due_date || '—' }}</dd></div>
+          <div class="feld">
+            <dt class="feld__label">Zahlungsbedingungen</dt>
+            <dd class="feld__wert" [class.feld__wert--leer]="!zahlungsbedingungen()">
+              {{ zahlungsbedingungen() || 'keine vereinbart' }}
+            </dd>
+          </div>
+          @if (daten()!.skonto_betrag) {
+            <div class="feld">
+              <dt class="feld__label">Skontobetrag</dt>
+              <dd class="feld__wert">{{ euro(daten()!.skonto_betrag) }}</dd>
+            </div>
+            <div class="feld">
+              <dt class="feld__label">Zahlbetrag mit Skonto</dt>
+              <dd class="feld__wert">{{ euro(daten()!.skonto_zahlbetrag) }}</dd>
+            </div>
+          }
           <div class="feld"><dt class="feld__label">Veröffentlicht</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.published_at">{{ daten()!.published_at || '—' }}</dd></div>
           <div class="feld"><dt class="feld__label">Auftrag</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.work_order_number">{{ daten()!.work_order_number || '—' }}</dd></div>
           <div class="feld"><dt class="feld__label">Inhalts-Hash</dt><dd class="feld__wert feld__wert--mono" [class.feld__wert--leer]="!daten()!.content_hash">{{ hashKurz(daten()!.content_hash) }}</dd></div>

@@ -34,6 +34,7 @@ from fpdf import FPDF
 from db_core import storage as storage_module
 from db_core.db_context import business_transaction
 from db_core.models import CompanyProfile, File, Invoice, Quote
+from db_core.services.beleg import zahlungsbedingungen
 
 log = logging.getLogger(__name__)
 
@@ -89,6 +90,34 @@ def _eur(value):
 
 def _de_date(d):
     return d.strftime("%d.%m.%Y") if d else "-"
+
+
+def _de_prozent(value):
+    """Prozentsatz in deutscher Schreibweise mit zwei Nachkommastellen (2,00)."""
+    return f"{Decimal(value).quantize(Decimal('0.01'))}".replace(".", ",")
+
+
+def _zahlungsbedingungen_text(invoice):
+    """Die Zahlungsbedingungs-Zeile des Belegs (oder None).
+
+    Rechnet nicht selbst: der Skontobetrag kommt aus `beleg.zahlungsbedingungen()`,
+    damit PDF und Bildschirm nie zwei verschiedene Beträge zeigen.
+    """
+    zb = zahlungsbedingungen(invoice)
+    if zb:
+        text = (
+            f"Zahlungsbedingungen: {_de_prozent(zb['discount_percent'])} % Skonto "
+            f"bei Zahlung bis {_de_date(zb['skonto_bis'])} "
+            f"({_eur(zb['skonto_betrag'])})"
+        )
+        if zb["zahlbar_bis"]:
+            return f"{text}, sonst netto bis {_de_date(zb['zahlbar_bis'])}."
+        return f"{text}, sonst netto ohne Abzug."
+    # Ohne Skonto, aber mit Fälligkeit: die Zahlungsfrist trotzdem ausschreiben.
+    # Gutschrift/Storno fordern kein Geld (und tragen laut DB keine Bedingungen).
+    if invoice.due_date and invoice.invoice_type not in ("GUTSCHRIFT", "STORNO"):
+        return f"Zahlbar ohne Abzug bis {_de_date(invoice.due_date)}."
+    return None
 
 
 def _issuer_lines(profile):
@@ -305,8 +334,14 @@ def render_invoice_pdf(invoice_id):
     pdf.set_font("Helvetica", "B", 16)
     pdf.cell(0, 9, f"{title} {invoice.invoice_number or ''}".strip(), new_x="LMARGIN", new_y="NEXT")
     pdf.set_font("Helvetica", "", 10)
-    pdf.cell(0, 6, f"Belegdatum: {_de_date(invoice.invoice_date)}"
-                   f"    Fällig: {_de_date(invoice.due_date)}", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 6, _txt(f"Belegdatum: {_de_date(invoice.invoice_date)}"
+                        f"    Fällig: {_de_date(invoice.due_date)}"),
+             new_x="LMARGIN", new_y="NEXT")
+    zb = _zahlungsbedingungen_text(invoice)
+    if zb:
+        pdf.set_font("Helvetica", "", 9)
+        pdf.multi_cell(0, 5, _txt(zb), new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("Helvetica", "", 10)
     if debtor and debtor != recipient:
         pdf.cell(0, 6, _txt(f"Rechnungsschuldner: {debtor}"), new_x="LMARGIN", new_y="NEXT")
     pdf.ln(4)

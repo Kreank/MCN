@@ -14,7 +14,8 @@ import {
   felderAlsBeruehrtMarkieren,
   serverFehlerZuruecksetzen,
 } from '../../shared/formular/formular.util';
-import { deZuApiDezimal, dezimalValidator } from '../../shared/formular/dezimal';
+import { apiZuDeDezimal, deZuApiDezimal, dezimalValidator } from '../../shared/formular/dezimal';
+import { fristAbgelaufen, isoDatumDe } from '../../shared/datum';
 import { VerbotenState, fehlerDetail, fehlerState, istVerboten } from '../../shared/http-fehler';
 import { BuchhaltungService } from '../../core/buchhaltung.service';
 import { BelegService } from '../../core/beleg.service';
@@ -533,6 +534,22 @@ export class BuchhaltungDetail {
   }
   d(iso: string | null): string {
     if (!iso) return '—';
+    // Reine Datumswerte nicht durch `new Date` schicken: die parst sie als
+    // UTC-Mitternacht und zeigt sie bei negativem Client-Offset einen Tag zu frueh.
+    if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return isoDatumDe(iso);
     return this.dateFmt.format(new Date(iso));
+  }
+
+  /** Skonto im Klartext (nie nur eine Zahl). Alles vom Server gerechnet.
+   * Eine abgelaufene Frist wird ausdrücklich benannt — sonst läse sich ein Monate
+   * alter offener Posten wie ein noch einlösbarer Skontoabzug. */
+  protected skontoText(): string {
+    const x = this.daten();
+    if (!x?.skonto_betrag || !x.skonto_bis) return '—';
+    const satz = apiZuDeDezimal(x.discount_percent, 2);
+    const kern =
+      `${satz} % bis ${this.d(x.skonto_bis)} — ${euro(x.skonto_betrag)} Abzug, ` +
+      `zahlbar ${euro(x.skonto_zahlbetrag)}`;
+    return fristAbgelaufen(x.skonto_bis) ? `${kern} (Frist abgelaufen)` : kern;
   }
 }

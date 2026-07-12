@@ -197,6 +197,18 @@ export interface InvoiceParty {
 export interface InvoiceDetail extends Invoice {
   due_date: string | null;
   tax_total: string | null;
+  /** Zahlungsziel in Tagen ab Belegdatum (leitet due_date beim Veröffentlichen ab). */
+  payment_term_days: number | null;
+  /** Skontosatz in Prozent — Decimal als String. Nur zusammen mit discount_days. */
+  discount_percent: string | null;
+  /** Skontofrist in Tagen ab Belegdatum. Nur zusammen mit discount_percent. */
+  discount_days: number | null;
+  /** Abgeleitet (read-only, Server rechnet): Ende der Skontofrist. */
+  skonto_bis: string | null;
+  /** Abgeleitet: Skontobetrag (Decimal als String). */
+  skonto_betrag: string | null;
+  /** Abgeleitet: Bruttobetrag abzüglich Skonto (Decimal als String). */
+  skonto_zahlbetrag: string | null;
   version: number;
   project: QuoteProjectRef | null;
   work_order_number: string | null;
@@ -275,6 +287,10 @@ export interface InvoiceCreate {
   reference_invoice_id?: string | null;
   invoice_date?: string | null;
   due_date?: string | null;
+  payment_term_days?: number | null;
+  /** Decimal als Punkt-String (deZuApiDezimal), nie number. */
+  discount_percent?: string | null;
+  discount_days?: number | null;
   rubriken?: RubrikInput[];
   lines: QuoteLineInput[];
 }
@@ -283,6 +299,10 @@ export interface InvoiceCreate {
 export interface InvoiceUpdate {
   invoice_date?: string | null;
   due_date?: string | null;
+  payment_term_days?: number | null;
+  /** Decimal als Punkt-String (deZuApiDezimal), nie number. */
+  discount_percent?: string | null;
+  discount_days?: number | null;
   rubriken?: RubrikInput[];
   lines?: QuoteLineInput[];
 }

@@ -51,3 +51,15 @@ export function dezimalValidator(control: AbstractControl): ValidationErrors | n
   const api = deZuApiDezimal(roh);
   return /^-?\d+(\.\d+)?$/.test(api) ? null : { dezimal: true };
 }
+
+/**
+ * Validator fuer ganzzahlige Felder ohne Vorzeichen (z. B. Tagesangaben).
+ * Leer ist gueltig. Markiert Fehleingaben ("30 Tage", "dreissig", "10,5") als
+ * ungueltig, statt sie beim Senden stillschweigend zu verschlucken oder zu
+ * truncaten — ein still geloeschtes Zahlungsziel waere schlimmer als ein Fehler.
+ */
+export function ganzzahlValidator(control: AbstractControl): ValidationErrors | null {
+  const roh = control.value;
+  if (roh == null || String(roh).trim() === '') return null;
+  return /^\d+$/.test(String(roh).trim()) ? null : { ganzzahl: true };
+}

@@ -116,8 +116,41 @@
           @if (istRechnung) {
             <div class="ed-kopf__datum">
               <app-feld [control]="kopfForm.controls.invoice_date" label="Rechnungsdatum" typ="datum" />
-              <app-feld [control]="kopfForm.controls.due_date" label="Fällig bis" typ="datum" />
+              <app-feld
+                [control]="kopfForm.controls.due_date"
+                label="Fällig bis"
+                typ="datum"
+                hinweis="Leer lassen: wird beim Veröffentlichen aus dem Zahlungsziel berechnet."
+              />
             </div>
+            <fieldset class="ed-kopf__zb">
+              <legend class="ed-kopf__zb-legende">Zahlungsbedingungen</legend>
+              <div class="ed-kopf__zb-felder">
+                <app-feld
+                  [control]="kopfForm.controls.payment_term_days"
+                  label="Zahlungsziel (Tage)"
+                  typ="zahl"
+                  inputmode="numeric"
+                  hinweis="Ab Rechnungsdatum, 0–365 Tage."
+                />
+                <app-feld
+                  [control]="kopfForm.controls.discount_percent"
+                  label="Skonto (%)"
+                  typ="zahl"
+                  hinweis="z. B. 2,5 — nur zusammen mit der Skontofrist."
+                />
+                <app-feld
+                  [control]="kopfForm.controls.discount_days"
+                  label="Skontofrist (Tage)"
+                  typ="zahl"
+                  inputmode="numeric"
+                  hinweis="Ab Rechnungsdatum, höchstens so lang wie das Zahlungsziel."
+                />
+              </div>
+              @if (skontoHinweis(); as hinweis) {
+                <p class="ed-kopf__zb-vorschau">{{ hinweis }}</p>
+              }
+            </fieldset>
           } @else {
             <app-feld
               [control]="kopfForm.controls.title"

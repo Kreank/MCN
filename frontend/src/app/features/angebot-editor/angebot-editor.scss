@@ -105,6 +105,33 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-4);
 }
+
+// Zahlungsbedingungen (nur Rechnung): Zahlungsziel, Skontosatz, Skontofrist.
+.ed-kopf__zb {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0; // sonst sprengt ein <fieldset> das Grid
+}
+.ed-kopf__zb-legende {
+  padding: 0;
+  margin-bottom: var(--space-3);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.ed-kopf__zb-felder {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: var(--space-4);
+}
+.ed-kopf__zb-vorschau {
+  margin: var(--space-3) 0 0;
+  font-size: 0.875rem;
+  color: var(--ink-muted);
+}
 @media (max-width: 720px) {
   .ed-kopf {
     grid-template-columns: 1fr;

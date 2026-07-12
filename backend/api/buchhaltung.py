@@ -203,6 +203,17 @@ class OpenItemDetailOut(OpenItemOut):
     dunning: list[DunningNoticeOut]
     # Best-effort vorbelegte Schuldner-E-Mail für den Mahnungsversand-Dialog.
     recipient_email: str | None = None
+    # Zahlungsbedingungen der Rechnung, rein informativ (read-only). Sie ändern
+    # weder den Zahlungsstatus noch den offenen Betrag: maßgeblich bleibt, was
+    # tatsächlich gezahlt wurde (Invariante des Zahlungsspiegels B-23). Ein
+    # Skontoabzug erscheint als Zahlungsdifferenz und muss bewusst ausgebucht
+    # werden — er wird nie automatisch unterstellt.
+    discount_percent: Decimal | None = None
+    discount_days: int | None = None
+    payment_term_days: int | None = None
+    skonto_bis: date | None = None
+    skonto_betrag: Decimal | None = None
+    skonto_zahlbetrag: Decimal | None = None
 
 
 class CorrectionIn(Schema):
@@ -549,6 +560,7 @@ def get_open_item(request, invoice_id: UUID):
             reference_invoice_id=inv.id, status="VEROEFFENTLICHT"
         ).order_by("created_at")
     ]
+    zb = beleg_service.zahlungsbedingungen(inv) or {}
     return OpenItemDetailOut(
         **base.model_dump(),
         currency=inv.currency,
@@ -560,6 +572,12 @@ def get_open_item(request, invoice_id: UUID):
         payments=payments,
         dunning=notices,
         recipient_email=beleg_versand_service.debtor_email(inv),
+        discount_percent=inv.discount_percent,
+        discount_days=inv.discount_days,
+        payment_term_days=inv.payment_term_days,
+        skonto_bis=zb.get("skonto_bis"),
+        skonto_betrag=zb.get("skonto_betrag"),
+        skonto_zahlbetrag=zb.get("skonto_zahlbetrag"),
     )
 
 
