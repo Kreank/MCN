@@ -73,6 +73,9 @@ export class PlanungEinstellungen {
     color_token: this.fb.control<CategoryColorToken>('NAVY', { nonNullable: true }),
     description: this.fb.control('', { nonNullable: true }),
     sort_order: this.fb.control(0, { nonNullable: true }),
+    // Übliche Dauer in Minuten. Leer = keine — dann schlägt der Termin-Dialog
+    // kein Ende vor (er erfindet keins).
+    default_duration_minutes: this.fb.control('', { nonNullable: true }),
   });
 
   // ===================== Ressourcen ======================================
@@ -136,7 +139,10 @@ export class PlanungEinstellungen {
   // ===================== Kategorie: Anlegen/Bearbeiten ====================
   katNeu(): void {
     this.katEditId.set(null);
-    this.katForm.reset({ name: '', color_token: 'NAVY', description: '', sort_order: 0 });
+    this.katForm.reset({
+      name: '', color_token: 'NAVY', description: '', sort_order: 0,
+      default_duration_minutes: '',
+    });
     this.katFormularMeldung.set(null);
     this.katDialogOffen.set(true);
   }
@@ -148,6 +154,8 @@ export class PlanungEinstellungen {
       color_token: k.color_token,
       description: k.description ?? '',
       sort_order: k.sort_order,
+      default_duration_minutes:
+        k.default_duration_minutes != null ? String(k.default_duration_minutes) : '',
     });
     this.katFormularMeldung.set(null);
     this.katDialogOffen.set(true);
@@ -166,11 +174,22 @@ export class PlanungEinstellungen {
 
     const v = this.katForm.getRawValue();
     const editId = this.katEditId();
+    const dauerRoh = v.default_duration_minutes.trim();
+    // Eine unlesbare Eingabe darf die Dauer nicht STILL löschen: `Number('x')` ist
+    // NaN, und NaN serialisiert als `null` — der Wert wäre weg, ohne dass es
+    // jemand merkt. Lieber ein klarer Formularfehler.
+    const dauer = dauerRoh ? Number(dauerRoh.replace(',', '.')) : null;
+    if (dauer !== null && !Number.isFinite(dauer)) {
+      this.katFormularMeldung.set('Die übliche Dauer muss eine Zahl in Minuten sein.');
+      return;
+    }
     const payload = {
       name: v.name.trim(),
       color_token: v.color_token,
       description: v.description.trim() || null,
       sort_order: Number(v.sort_order) || 0,
+      // Leeres Feld = ausdrücklich „keine übliche Dauer" (null), nicht 0 Minuten.
+      default_duration_minutes: dauer,
     };
     this.katLaedt.set(true);
     const obs = editId
@@ -332,6 +351,14 @@ export class PlanungEinstellungen {
   // ---- Darstellungshelfer -------------------------------------------------
   katColorClass(token: CategoryColorToken): string {
     return categoryColorClass(token);
+  }
+
+  /** Minuten menschenlesbar: 90 → „1 h 30 min", 45 → „45 min", 120 → „2 h". */
+  dauerText(minuten: number): string {
+    const h = Math.floor(minuten / 60);
+    const m = minuten % 60;
+    if (h === 0) return `${m} min`;
+    return m === 0 ? `${h} h` : `${h} h ${m} min`;
   }
   typLabel(t: ResourceType): string {
     return resourceTypeLabel(t);

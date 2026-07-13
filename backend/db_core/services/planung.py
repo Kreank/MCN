@@ -15,7 +15,7 @@ Warnhinweis, wenn sich bekannte Zeitfenster überlappen — die Zuordnung wird
 trotzdem angelegt (Hero-Parität: Überlappung sichtbar, aber nicht verboten).
 """
 import uuid
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone as dt_timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -35,6 +35,8 @@ from db_core.models import (
     ServiceJob,
 )
 from db_core.services import einsatz as einsatz_service
+from db_core.services import faelligkeit as faelligkeit_service
+from db_core.services import zeiterfassung as zeit_service
 from db_core.services._validation import ensure_exists
 
 # Die Plantafel ist ein Disponentenwerkzeug für einen deutschen Handwerksbetrieb:
@@ -47,6 +49,9 @@ BOARD_TZ = ZoneInfo("Europe/Berlin")
 # Sentinel für Teil-Updates am Termin: „Feld nicht mitgeschickt" ist etwas anderes
 # als „Feld ausdrücklich auf NULL setzen" (Kategorie entfernen, Kontakt löschen).
 _UNSET_TERMIN = object()
+# Öffentlicher Name desselben Sentinels für die API-Schicht: sie muss „Feld nicht
+# mitgeschickt" von „ausdrücklich auf null" unterscheiden können.
+UNSET = _UNSET_TERMIN
 
 # Geschlossene Farb-Codeliste (spiegelt den CHECK in Migration 0025). Das UI
 # bildet jeden Token WCAG-sicher auf ein Farbschema ab (dekorativer Punkt +
@@ -54,6 +59,17 @@ _UNSET_TERMIN = object()
 COLOR_TOKENS = ("NAVY", "ORANGE", "SAGE", "AMBER", "TEAL", "PLUM", "ROSE", "SLATE")
 
 RESOURCE_TYPES = ("FAHRZEUG", "GERAET", "RAUM", "SONSTIGE")
+
+# Wiederholung eines Serientermins (Migration 0077). Bewusst dieselbe Semantik wie
+# die Wartungsintervalle (`services/faelligkeit.naechstes_intervall`) — der Betrieb
+# soll nicht zwei verschiedene Intervallbegriffe lernen müssen.
+SERIE_INTERVALLE = ("TAEGLICH", "WOECHENTLICH", "ZWEIWOECHENTLICH", "MONATLICH")
+# Obergrenze je Anlage-Vorgang. Eine Serie ist ein Dispositionswerkzeug, kein
+# Dauerauftrag: Wer 200 Termine auf einmal erzeugt, plant nicht mehr, sondern
+# füllt das Board zu (und jeder einzelne wäre danach von Hand zu pflegen).
+SERIE_MAX = 52
+# Dauer je Termin in Minuten — begrenzt wie die Kategorie-Defaultdauer (7 Tage).
+_MAX_DAUER_MIN = 10080
 
 # Erlaubte Ressourcen-Statuswechsel → {Zielstatus}. Spiegelt den DB-Trigger
 # resource.enforce_resource_status.
@@ -78,8 +94,28 @@ def _active_name_taken(name, *, exclude_id=None):
     return qs.exists()
 
 
+def _dauer_pruefen(minuten):
+    """Prüft eine Dauer in Minuten gegen den DB-Wertebereich (0 < d <= 7 Tage).
+
+    None bleibt None — „keine übliche Dauer" ist ein gültiger Zustand und darf
+    nicht zu 0 werden (0 Minuten wäre ein Termin ohne Ausdehnung).
+    """
+    if minuten in (None, ""):
+        return None
+    try:
+        wert = int(minuten)
+    except (TypeError, ValueError):
+        raise ValueError("Die Dauer muss eine ganze Zahl in Minuten sein.")
+    if not (0 < wert <= _MAX_DAUER_MIN):
+        raise ValueError(
+            f"Die Dauer muss zwischen 1 und {_MAX_DAUER_MIN} Minuten liegen."
+        )
+    return wert
+
+
 def create_category(
-    actor_app_user_id, *, name, color_token="NAVY", description=None, sort_order=0
+    actor_app_user_id, *, name, color_token="NAVY", description=None, sort_order=0,
+    default_duration_minutes=None,
 ):
     """Legt eine Terminkategorie (Status AKTIV) an."""
     if not name or not name.strip():
@@ -93,6 +129,7 @@ def create_category(
         raise ValueError(f"Eine aktive Kategorie '{name.strip()}' existiert bereits.")
     if sort_order is None:
         sort_order = 0
+    dauer = _dauer_pruefen(default_duration_minutes)
     with as_business_error():
         with business_transaction(actor_app_user_id):
             category = AppointmentCategory.objects.create(
@@ -102,6 +139,7 @@ def create_category(
                 color_token=color_token,
                 status="AKTIV",
                 sort_order=sort_order,
+                default_duration_minutes=dauer,
                 created_by_id=actor_app_user_id,
                 version=1,
             )
@@ -117,15 +155,25 @@ def update_category(
     color_token=None,
     description=None,
     sort_order=None,
+    default_duration_minutes=_UNSET_TERMIN,
 ):
-    """Ändert Name/Farbe/Beschreibung/Sortierung einer Kategorie. Umbenennen
-    wirkt auf bestehende Termine (die FK bleibt bestehen) — wie in Hero."""
+    """Ändert Name/Farbe/Beschreibung/Sortierung/Dauer einer Kategorie. Umbenennen
+    wirkt auf bestehende Termine (die FK bleibt bestehen) — wie in Hero.
+
+    Die geänderte Dauer wirkt **nur auf künftige Dialoge**: Bestehende Termine
+    behalten ihren Zeitraum. Sie nachträglich zu strecken, wäre eine stille
+    Umplanung von Terminen, die längst zugesagt sind.
+    """
     category = AppointmentCategory.objects.filter(id=category_id).first()
     if category is None:
         raise ValueError("Terminkategorie nicht gefunden.")
     if category.status != "AKTIV":
         raise ValueError("Archivierte Kategorien können nicht geändert werden.")
     fields = {}
+    # Sentinel: „nicht mitgeschickt" (nicht ändern) vs. ausdrückliches None
+    # („keine übliche Dauer mehr").
+    if default_duration_minutes is not _UNSET_TERMIN:
+        fields["default_duration_minutes"] = _dauer_pruefen(default_duration_minutes)
     if name is not None:
         if not name.strip():
             raise ValueError("name darf nicht leer sein.")
@@ -1178,3 +1226,270 @@ def update_termin(
                     to_status="GEPLANT",
                 )
     return ServiceJob.objects.get(id=service_job_id)
+
+
+# ===========================================================================
+# Serientermine (Migration 0077)
+# ===========================================================================
+
+def _takt(lokal, intervall, n):
+    """Das n-te Vorkommen nach `lokal` — **auf der Wanduhr, aus der Basis gerechnet**.
+
+    Zwei Fallen, die beide hier gelöst sind:
+
+    1. **Sommerzeit.** `lokal` ist eine Ortszeit (`BOARD_TZ`). Python addiert eine
+       `timedelta` auf ein zonenbehaftetes Datum als **Wanduhr-Arithmetik**: aus
+       Mo 08:00 MESZ wird eine Woche später Mo 08:00 MEZ — dieselbe Uhrzeit, ein
+       anderer UTC-Offset. Genau das will der Disponent. Rechnete man in UTC
+       weiter (wie es der rohe DB-Wert nahelegt), stünde der Monteur nach der
+       Zeitumstellung **eine Stunde zu früh** vor der Tür.
+    2. **Monatstag.** Immer aus der BASIS, nie iterativ vom Vorgänger: Der 31.01.
+       wird monatlich zum 28.02. (Clamping) — aus DEM weiterzurechnen ergäbe den
+       28.03. statt des 31.03., und die Serie wanderte übers Jahr nach vorn.
+    """
+    if intervall == "TAEGLICH":
+        return lokal + timedelta(days=n)
+    if intervall == "WOECHENTLICH":
+        return lokal + timedelta(weeks=n)
+    if intervall == "ZWEIWOECHENTLICH":
+        return lokal + timedelta(weeks=2 * n)
+    if intervall == "MONATLICH":
+        neu = faelligkeit_service.add_months(lokal.date(), n)
+        return lokal.replace(year=neu.year, month=neu.month, day=neu.day)
+    raise ValueError(f"Unbekanntes Intervall '{intervall}'.")
+
+
+def _serien_starts(anker, intervall, anzahl, *, werktags, bestehend=()):
+    """Die Startzeitpunkte der NEUEN Vorkommen (in UTC).
+
+    Gerechnet wird durchgehend in der **Betriebszeitzone** (`BOARD_TZ`): Ein
+    Handwerkstermin ist eine Uhrzeit auf der Wanduhr, kein UTC-Zeitstempel. Auch
+    Wochentag und Feiertagsvergleich müssen den BERLINER Kalendertag treffen — ein
+    Termin am Montag 00:30 Ortszeit ist in UTC noch Sonntag und würde sonst
+    grundlos verschoben.
+
+    **INVARIANTE: Der Takt zählt IMMER aus dem `anker`** (dem ersten Vorkommen der
+    Reihe), nie vom Vorgänger. Nur so bleibt „immer am 31." erhalten (der Februar
+    klemmt auf den 28., der März muss wieder auf den 31.), und nur so verschiebt
+    ein Feiertag nicht dauerhaft den Wochentag der ganzen Serie.
+
+    **`bestehend`** sind die Startzeitpunkte der bereits vorhandenen Mitglieder.
+    Eine Serie wird damit **verlängert, nicht neu ausgerollt**: Taktschritte, die
+    schon belegt sind oder vor dem letzten vorhandenen Termin liegen, werden
+    übersprungen — es entstehen genau `anzahl` NEUE Termine hinter dem Ende der
+    Reihe. (Review-Fund: ohne das erzeugte ein zweiter „Wiederholen"-Klick die
+    Vorkommen 1..n ein zweites Mal — zwei deckungsgleiche Einsätze, die sich das
+    Board anschließend selbst als Doppelbelegung meldete.)
+
+    `werktags=True` schiebt ein Vorkommen, das auf einen Sonntag oder Feiertag
+    fällt, auf den nächsten Werktag (Samstag bleibt bewusst Arbeitstag). Trifft es
+    dabei einen bereits belegten Zeitpunkt (täglicher Takt über einen Sonntag),
+    **entfällt es** — eine Dublette wäre kein Plan.
+
+    Zur **Zeitumstellung**: Fällt ein Vorkommen in die nicht existierende Stunde
+    der Frühjahrsumstellung (02:00–03:00 am letzten März-Sonntag), löst `ZoneInfo`
+    es auf den nächsten existierenden Zeitpunkt auf (03:30 statt 02:30) statt zu
+    scheitern. Das ist bewusst gutmütig: Die Alternative wäre, dem Disponenten
+    einen Termin zu verweigern, den es an diesem Tag schlicht nicht gibt.
+    """
+    lokal_anker = anker.astimezone(BOARD_TZ)
+    belegt = {b.astimezone(BOARD_TZ) for b in bestehend} | {lokal_anker}
+    # Hinter das Ende der Reihe planen, nicht in sie hinein.
+    nicht_vor = max(belegt)
+
+    # Suchhorizont: die vorhandenen Vorkommen müssen übersprungen werden, dazu die
+    # neuen und etwas Luft für ausgefallene Taktschritte (Dubletten).
+    grenze = len(belegt) + anzahl + SERIE_MAX
+    feiertage = None
+    if werktags:
+        # Feiertagsfenster EINMAL laden (sonst zwei Queries je Vorkommen).
+        horizont = _takt(lokal_anker, intervall, grenze)
+        feiertage = zeit_service.feiertage(
+            lokal_anker.date(), (horizont + timedelta(days=21)).date()
+        )
+
+    starts = []
+    n = 0
+    while len(starts) < anzahl and n < grenze:
+        n += 1
+        wann = _takt(lokal_anker, intervall, n)
+        if werktags:
+            neu = faelligkeit_service.naechster_werktag(wann.date(), feiertage)
+            if neu != wann.date():
+                wann = wann.replace(year=neu.year, month=neu.month, day=neu.day)
+        if wann <= nicht_vor or wann in belegt:
+            continue
+        belegt.add(wann)
+        starts.append(wann.astimezone(dt_timezone.utc))
+    return starts
+
+
+def serie_anlegen(
+    actor_app_user_id,
+    *,
+    service_job_id,
+    intervall,
+    anzahl,
+    werktags=True,
+):
+    """Wiederholt einen geplanten Termin `anzahl`-mal — als echte Folge-Einsätze.
+
+    Jedes Vorkommen ist ein **eigenständiger Einsatz** mit eigener Nummer, eigenem
+    Status und eigenen Zuweisungen (kein virtuelles Vorkommen, keine Serienregel in
+    der DB — siehe Migration 0077). Kopiert werden Auftrag/Titel/Liegenschaft,
+    Kategorie, Vor-Ort-Kontakt, Zutrittshinweise, Mitarbeiter und Ressourcen; die
+    **Dauer** des Ausgangstermins bleibt erhalten.
+
+    Der Ausgangstermin bekommt dieselbe `series_id` — er IST das erste Vorkommen.
+    Trägt er schon eine, wird die bestehende Serie fortgesetzt.
+
+    Bewusst NICHT kopiert: Status (jeder Folgetermin startet frisch), Ist-Zeiten,
+    Zeit-/Materialbuchungen und Berichte — die gehören zur geleisteten Arbeit,
+    nicht zur Planung.
+    """
+    if intervall not in SERIE_INTERVALLE:
+        raise ValueError(
+            f"Ungültiges Intervall '{intervall}'. "
+            f"Erlaubt: {', '.join(SERIE_INTERVALLE)}."
+        )
+    try:
+        anzahl = int(anzahl)
+    except (TypeError, ValueError):
+        raise ValueError("Die Anzahl der Wiederholungen muss eine ganze Zahl sein.")
+    if not (1 <= anzahl <= SERIE_MAX):
+        raise ValueError(
+            f"Die Anzahl der Wiederholungen muss zwischen 1 und {SERIE_MAX} liegen."
+        )
+
+    job = ServiceJob.objects.filter(id=service_job_id).first()
+    if job is None:
+        raise ValueError("Einsatz nicht gefunden.")
+    if job.scheduled_start is None:
+        # Ohne Startzeitpunkt gibt es kein Raster, aus dem sich Folgetermine
+        # ableiten ließen. Ein Termin im Rückstand wird erst geplant, dann
+        # wiederholt — nicht umgekehrt.
+        raise ValueError(
+            "Nur ein Termin mit Beginn lässt sich wiederholen. Plane ihn zuerst "
+            "ins Raster."
+        )
+    dauer = (
+        job.scheduled_end - job.scheduled_start
+        if job.scheduled_end is not None
+        else None
+    )
+
+    # Die ROLLE wandert mit: ein LEAD des Ausgangstermins bliebe sonst in jedem
+    # Folgetermin ein gewöhnlicher Techniker, und die Kolonne hätte keinen Führenden.
+    zuweisungen = list(
+        JobAssignment.objects.filter(service_job_id=job.id).values_list(
+            "assignee_id", "role"
+        )
+    )
+    resource_ids = list(
+        JobResource.objects.filter(service_job_id=job.id).values_list(
+            "resource_id", flat=True
+        )
+    )
+    # Dieselbe Planbarkeitsprüfung wie beim Anlegen eines Termins: Wurde eine
+    # Ressource seit dem Ausgangstermin archiviert oder ein Mitarbeiter deaktiviert,
+    # darf die Serie sie nicht in die Zukunft weiterkopieren. Ohne diese Prüfung
+    # ginge das durch — `JobResource` hat keinen Status-Trigger.
+    _pruefe_planbar([u for u, _ in zuweisungen], resource_ids)
+
+    # Eine bestehende Reihe wird VERLÄNGERT, nicht neu ausgerollt. Der Takt zählt
+    # aus dem **gespeicherten Anker** (`series_anchor`), nicht aus dem aktuellen
+    # Bestand: Ein verschobenes oder abgesagtes Vorkommen darf den Takt der ganzen
+    # Reihe nicht kippen (sonst würde aus „jeden Montag" ein „jeden Dienstag",
+    # bloß weil jemand einen einzelnen Termin gezogen hat), und der Monatstag
+    # bliebe auf dem geklemmten 28.02. hängen.
+    anker = job.series_anchor or job.scheduled_start
+    bestehend = []
+    if job.series_id is not None:
+        bestehend = list(
+            ServiceJob.objects.filter(
+                series_id=job.series_id, scheduled_start__isnull=False
+            ).values_list("scheduled_start", flat=True)
+        )
+
+    starts = _serien_starts(
+        anker, intervall, anzahl, werktags=werktags, bestehend=bestehend
+    )
+    if not starts:
+        # Ehrlich bleiben: Es gibt zwei Wege hierher — jeder Takt fiel auf einen
+        # bereits belegten Zeitpunkt, ODER ein von Hand weit nach hinten
+        # verschobener Termin der Reihe liegt hinter dem ganzen Suchfenster.
+        raise ValueError(
+            "Aus diesen Angaben entsteht kein zusätzlicher Termin: Jeder "
+            "Taktschritt liegt entweder vor dem letzten Termin der Reihe oder auf "
+            "einem Zeitpunkt, den die Reihe schon belegt. Wurde ein Termin der "
+            "Reihe von Hand weit nach hinten verschoben, plane die Fortsetzung "
+            "von diesem Termin aus."
+        )
+    series_id = job.series_id or uuid.uuid4()
+
+    erzeugt = []
+    with as_business_error():
+        with business_transaction(actor_app_user_id):
+            if job.series_id is None:
+                # Der Ausgangstermin IST das erste Vorkommen — er bekommt Klammer
+                # und Anker. Der DB-CHECK verlangt beides gemeinsam.
+                ServiceJob.objects.filter(id=job.id).update(
+                    series_id=series_id, series_anchor=anker
+                )
+            for start in starts:
+                neu = einsatz_service.create_service_job(
+                    actor_app_user_id,
+                    work_order_id=job.work_order_id,
+                    title=job.title,
+                    property_id=job.property_id,
+                    scheduled_start=start,
+                    scheduled_end=(start + dauer) if dauer is not None else None,
+                    on_site_contact_party_id=job.on_site_contact_party_id,
+                    access_instructions=job.access_instructions,
+                    appointment_category_id=job.appointment_category_id,
+                )
+                ServiceJob.objects.filter(id=neu.id).update(
+                    series_id=series_id, series_anchor=anker
+                )
+                for uid, rolle in zuweisungen:
+                    einsatz_service.assign_user(
+                        actor_app_user_id, service_job_id=neu.id,
+                        assignee_user_id=uid, role=rolle,
+                    )
+                for rid in resource_ids:
+                    JobResource.objects.create(
+                        id=uuid.uuid4(),
+                        service_job_id=neu.id,
+                        resource_id=rid,
+                        created_by_id=actor_app_user_id,
+                    )
+                einsatz_service.advance_status(
+                    actor_app_user_id, service_job_id=neu.id, to_status="GEPLANT"
+                )
+                erzeugt.append(neu.id)
+    return {
+        "series_id": series_id,
+        "erzeugt": list(
+            ServiceJob.objects.filter(id__in=erzeugt)
+            .select_related("appointment_category", "property", "work_order__property")
+            .prefetch_related("assignments", "resource_links")
+            .order_by("scheduled_start")
+        ),
+    }
+
+
+def serie(service_job_id):
+    """Alle Termine der Serie, zu der dieser Einsatz gehört (chronologisch).
+
+    Leere Liste, wenn der Einsatz zu keiner Serie gehört — das UI zeigt dann keinen
+    Serienhinweis.
+    """
+    job = ServiceJob.objects.filter(id=service_job_id).first()
+    if job is None or job.series_id is None:
+        return []
+    return list(
+        ServiceJob.objects.filter(series_id=job.series_id)
+        .select_related("appointment_category", "property", "work_order__property")
+        .prefetch_related("assignments", "resource_links")
+        .order_by("scheduled_start", "job_number")
+    )

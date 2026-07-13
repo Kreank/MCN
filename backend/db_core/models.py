@@ -1979,6 +1979,18 @@ class ServiceJob(models.Model):
         blank=True,
         related_name="service_jobs",
     )
+    # Serientermin (Migration 0077): reine HERKUNFTSKLAMMER — „diese Termine
+    # wurden zusammen angelegt". Kein FK, keine Serientabelle: jedes Vorkommen ist
+    # ein eigenständiger Einsatz mit eigenem Status, eigenen Zuweisungen und
+    # eigenen Zeitbuchungen. Eine nachträglich änderbare Serienregel würde bereits
+    # abgearbeitete Termine rückwirkend in Frage stellen.
+    series_id = models.UUIDField(null=True, blank=True)
+    # Taktgeber der Reihe: Beginn des ERSTEN Vorkommens, wie er beim Anlegen galt.
+    # Jeder weitere Takt zählt daraus — deshalb kippt ein verschobenes oder
+    # abgesagtes Vorkommen den Takt der Reihe NICHT, und der Monatstag bleibt
+    # erhalten (der geklemmte 28.02. weiß nicht mehr, dass „der 31." gemeint war).
+    # DB-CHECK: Anker und series_id gibt es nur gemeinsam.
+    series_anchor = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(db_default=Now())
     updated_at = models.DateTimeField(db_default=Now())
 
@@ -2214,6 +2226,10 @@ class AppointmentCategory(models.Model):
     color_token = models.TextField(db_default=models.Value("NAVY"))
     status = models.TextField(db_default=models.Value("AKTIV"))  # AKTIV|ARCHIVIERT
     sort_order = models.IntegerField(db_default=models.Value(0))
+    # Übliche Dauer dieses Termintyps in Minuten (Migration 0077). **Nur ein
+    # VORSCHLAG** für den Termin-Dialog — der Server leitet daraus nie ein
+    # `scheduled_end` ab, sonst überschriebe er die Entscheidung des Disponenten.
+    default_duration_minutes = models.IntegerField(null=True, blank=True)
     created_by = models.ForeignKey(
         AppUser,
         models.DO_NOTHING,

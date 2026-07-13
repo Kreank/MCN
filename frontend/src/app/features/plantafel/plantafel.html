@@ -452,6 +452,12 @@
                           @if (b.job.is_free) {
                             <span class="tile__frei">Freier Termin</span>
                           }
+                          @if (b.job.series_id) {
+                            <!-- Text UND Symbol, nie nur Farbe (WCAG 2.2). -->
+                            <span class="tile__serie">
+                              <span aria-hidden="true">↻</span> Serientermin
+                            </span>
+                          }
                           @if (b.job.category) {
                             <span class="kat-chip tile__kat {{ categoryClass(b.job.category) }}">
                               <span class="kat-dot" aria-hidden="true"></span>
@@ -628,7 +634,14 @@
         label="Kategorie"
         typ="select"
         [optionen]="katOptionen()"
+        (change)="kategorieGewaehlt()"
       />
+      @if (gewaehlteKatDauer(); as d) {
+        <p class="note note--info">
+          Übliche Dauer dieser Kategorie: <strong>{{ dauerText(d) }}</strong>.
+          Das Ende wird daraus vorgeschlagen — du kannst es jederzeit überschreiben.
+        </p>
+      }
 
       @if (rueckstandModus()) {
         <!-- Rückweg ins Backlog: Zeitraum fällt weg, Status GEPLANT → UNGEPLANT.
@@ -744,6 +757,18 @@
       <button type="button" class="btn" (click)="dialogSchliessen()" [disabled]="dialogBusy()">
         Abbrechen
       </button>
+      <!-- Wiederholen gibt es nur für einen bereits GEPLANTEN Termin: ohne Beginn
+           existiert kein Raster, aus dem sich Folgetermine ableiten ließen. -->
+      @if (wiederholbar(); as job) {
+        <button
+          type="button"
+          class="btn"
+          (click)="serieOeffnen(job)"
+          [disabled]="dialogBusy() || dialogLaedt()"
+        >
+          Wiederholen …
+        </button>
+      }
       <button
         type="button"
         class="btn btn--primary"
@@ -753,5 +778,52 @@
         {{ dialogBusy() ? 'Wird gespeichert …' : dialogLaedt() ? 'Lädt …' : 'Übernehmen' }}
       </button>
     </div>
+  </app-dialog>
+
+  <!-- ================= Termin wiederholen (Serie) ======================= -->
+  <app-dialog
+    [offen]="serieOffen()"
+    titel="Termin wiederholen"
+    (schliessen)="serieSchliessen()"
+  >
+    <form class="formular" [formGroup]="serieForm" (ngSubmit)="serieAnlegen()">
+      <p class="note note--info">
+        Es entstehen <strong>eigenständige Folgetermine</strong> — jeder mit eigener
+        Nummer und eigenem Status. Ein abgesagter Termin lässt die übrigen
+        unberührt. Mitarbeiter, Betriebsmittel, Kategorie und Dauer werden
+        mitkopiert.
+      </p>
+      <app-feld
+        [control]="serieForm.controls.intervall"
+        label="Takt"
+        typ="select"
+        [optionen]="serieIntervalle"
+      />
+      <app-feld
+        [control]="serieForm.controls.anzahl"
+        label="Zusätzliche Termine"
+        typ="zahl"
+        inputmode="numeric"
+        [pflicht]="true"
+        hinweis="Höchstens 52. Der Ausgangstermin bleibt der erste der Reihe."
+      />
+      <app-feld
+        [control]="serieForm.controls.werktags"
+        label="Sonntage und Feiertage überspringen"
+        typ="checkbox"
+        hinweis="Ein betroffener Termin rückt auf den nächsten Werktag. Der Takt bleibt gewahrt — aus „jeden Montag“ wird nach einem Feiertag nicht dauerhaft „jeden Dienstag“. Samstag gilt als Arbeitstag."
+      />
+      @if (serieFehler(); as f) {
+        <p class="note note--error" role="alert">{{ f }}</p>
+      }
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" (click)="serieSchliessen()" [disabled]="serieBusy()">
+          Abbrechen
+        </button>
+        <button type="submit" class="btn btn--primary" [disabled]="serieBusy()">
+          {{ serieBusy() ? 'Wird angelegt …' : 'Termine anlegen' }}
+        </button>
+      </div>
+    </form>
   </app-dialog>
 </section>

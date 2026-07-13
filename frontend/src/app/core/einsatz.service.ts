@@ -4,6 +4,7 @@ import { Observable } from 'rxjs';
 import {
   Abwesend,
   AssignableUser,
+  BoardJob,
   JobAssignmentInput,
   JobAssignmentResult,
   JobStatusInput,
@@ -13,6 +14,9 @@ import {
   PlantafelQuery,
   ScheduleInput,
   ScheduleResult,
+  SerieCreate,
+  SerieResult,
+  SerienTermin,
   ServiceJob,
   ServiceJobCreate,
   ServiceJobDetail,
@@ -102,6 +106,20 @@ export class EinsatzService {
   /** Termin ändern (Vollersetzung der Zuweisungs-/Ressourcenlisten). */
   updateTermin(id: string, payload: TerminUpdate): Observable<TerminResult> {
     return this.http.patch<TerminResult>(`/api/planung/termine/${id}`, payload);
+  }
+
+  /**
+   * Termin wiederholen — erzeugt echte, eigenständige Folgetermine (kein
+   * virtuelles Vorkommen). Mitarbeiter, Ressourcen, Kategorie und Dauer werden
+   * mitkopiert; jeder Folgetermin hat eigene Nummer und eigenen Status.
+   */
+  serieAnlegen(id: string, payload: SerieCreate): Observable<SerieResult> {
+    return this.http.post<SerieResult>(`/api/planung/termine/${id}/serie`, payload);
+  }
+
+  /** Alle Termine der Serie (leer, wenn der Termin zu keiner gehört). */
+  serie(id: string): Observable<SerienTermin[]> {
+    return this.http.get<SerienTermin[]>(`/api/planung/termine/${id}/serie`);
   }
 
   // --- Schreiben (Session-Auth Pflicht) ------------------------------------

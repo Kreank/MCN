@@ -13,6 +13,7 @@ import {
   Konflikt,
   Plantafel as PlantafelData,
   Resource,
+  SerienIntervall,
   ServiceJobStatus,
   categoryColorClass,
   konfliktLabel,
@@ -26,7 +27,7 @@ import { PartyService } from '../../core/party.service';
 import { AuthService } from '../../core/auth.service';
 import { PlanungNav } from '../planung-nav/planung-nav';
 import { Dialog } from '../../shared/dialog/dialog';
-import { Feld } from '../../shared/formular/feld';
+import { Feld, FeldOption } from '../../shared/formular/feld';
 import { ReferenzWahl, RefSuche } from '../../shared/formular/referenz-wahl';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { VerbotenState, fehlerDetail, fehlerState } from '../../shared/http-fehler';
@@ -901,6 +902,55 @@ export class Plantafel {
     ...this.kategorien().map((k) => ({ wert: k.id, label: k.name })),
   ]);
 
+  /**
+   * Ende aus der üblichen Dauer der gewählten Kategorie vorbelegen (Migration
+   * 0077) — der häufigste Handgriff der Disposition.
+   *
+   * **Vorschlag, keine Vorschrift.** Zwei Fälle, bewusst verschieden:
+   *
+   * - **Neuer Termin:** Das Ende ist nur eine Voreinstellung des Dialogs
+   *   (Start + 2 h). Die Kategoriedauer darf sie ersetzen — sonst griffe die
+   *   Dauer genau dort nie, wo sie gebraucht wird. Hat der Bediener das Ende
+   *   selbst angefasst (`dirty` — Angular setzt das nur bei echter Eingabe,
+   *   nicht bei `setValue`), bleibt es stehen.
+   * - **Bestehender Termin:** Das Ende ist ein ZUGESAGTER Zeitraum. Es wird nur
+   *   gefüllt, wenn es leer ist — eine bloße Kategorieänderung darf einen
+   *   vereinbarten Termin nicht still verschieben.
+   */
+  kategorieGewaehlt(): void {
+    const dauer = this.gewaehlteKatDauer();
+    if (!dauer) return;
+
+    const c = this.form.controls;
+    if (!c.start_datum.value || !c.start_zeit.value) return;
+
+    const neu = this.bearbeitet() === null;
+    const hatEnde = !!c.end_datum.value || !!c.end_zeit.value;
+    const angefasst = c.end_datum.dirty || c.end_zeit.dirty;
+    if (angefasst) return;
+    if (!neu && hatEnde) return;
+
+    const startIso = this.zuIso(c.start_datum.value, c.start_zeit.value);
+    if (!startIso) return;
+    const ende = new Date(new Date(startIso).getTime() + dauer * 60_000);
+    c.end_datum.setValue(isoVon(ende));
+    c.end_zeit.setValue(this.hhmm(ende));
+  }
+
+  /** Die übliche Dauer der aktuell gewählten Kategorie (für den Dialoghinweis). */
+  gewaehlteKatDauer(): number | null {
+    const katId = this.form.controls.appointment_category_id.value;
+    return this.kategorien().find((k) => k.id === katId)?.default_duration_minutes ?? null;
+  }
+
+  /** Minuten menschenlesbar: 90 → „1 h 30 min". */
+  dauerText(minuten: number): string {
+    const h = Math.floor(minuten / 60);
+    const m = minuten % 60;
+    if (h === 0) return `${m} min`;
+    return m === 0 ? `${h} h` : `${h} h ${m} min`;
+  }
+
   protected readonly auftragSuche: RefSuche = (q) =>
     this.auftragSvc
       .list({ page: 1, page_size: 20, q })
@@ -1147,6 +1197,96 @@ export class Plantafel {
   }
   istGewaehlt(liste: string[], id: string): boolean {
     return liste.includes(id);
+  }
+
+  // ===================== Serientermine (Migration 0077) =====================
+  /**
+   * Einen geplanten Termin wiederholen. Es entstehen **echte, eigenständige
+   * Folgetermine** (kein virtuelles Vorkommen einer Regel): Jeder hat eigene
+   * Nummer und eigenen Status, ein abgesagter Dienstag macht den Mittwoch nicht
+   * kaputt. Mitarbeiter, Ressourcen, Kategorie und Dauer werden mitkopiert.
+   */
+  protected readonly serieOffen = signal(false);
+  protected readonly serieBusy = signal(false);
+  protected readonly serieFehler = signal<string | null>(null);
+  protected readonly serieZiel = signal<BoardJob | null>(null);
+  protected readonly serieForm = this.fb.group({
+    intervall: this.fb.control<SerienIntervall>('WOECHENTLICH', { nonNullable: true }),
+    anzahl: this.fb.control(3, {
+      nonNullable: true,
+      validators: [Validators.required, Validators.min(1), Validators.max(52)],
+    }),
+    werktags: this.fb.control(true, { nonNullable: true }),
+  });
+  protected readonly serieIntervalle: FeldOption[] = [
+    { wert: 'TAEGLICH', label: 'täglich' },
+    { wert: 'WOECHENTLICH', label: 'wöchentlich' },
+    { wert: 'ZWEIWOECHENTLICH', label: 'alle zwei Wochen' },
+    { wert: 'MONATLICH', label: 'monatlich' },
+  ];
+
+  /**
+   * Der Termin im Dialog, wenn er sich wiederholen lässt — sonst null.
+   *
+   * Nur ein bereits GEPLANTER Termin (mit Beginn) kann eine Serie tragen: ohne
+   * Raster gibt es nichts zu takten. Ein Rückstands-Eintrag wird erst geplant,
+   * dann wiederholt.
+   */
+  protected readonly wiederholbar = computed<BoardJob | null>(() => {
+    const job = this.bearbeitet();
+    if (!job || this.rueckstandModus() || !this.darfPlanen()) return null;
+    return 'scheduled_start' in job && job.scheduled_start ? (job as BoardJob) : null;
+  });
+
+  serieOeffnen(job: BoardJob): void {
+    if (!this.darfPlanen()) return;
+    this.serieZiel.set(job);
+    this.serieForm.reset({ intervall: 'WOECHENTLICH', anzahl: 3, werktags: true });
+    this.serieFehler.set(null);
+    this.serieOffen.set(true);
+  }
+
+  serieSchliessen(): void {
+    if (!this.serieBusy()) this.serieOffen.set(false);
+  }
+
+  serieAnlegen(): void {
+    const job = this.serieZiel();
+    if (!job || this.serieBusy()) return;
+    this.serieForm.markAllAsTouched();
+    if (this.serieForm.invalid) return;
+    const v = this.serieForm.getRawValue();
+    this.serieBusy.set(true);
+    this.serieFehler.set(null);
+    this.svc
+      .serieAnlegen(job.id, {
+        intervall: v.intervall,
+        anzahl: Number(v.anzahl),
+        werktags: v.werktags,
+      })
+      .subscribe({
+        next: (r) => {
+          this.serieBusy.set(false);
+          this.serieOffen.set(false);
+          this.dialogOffen.set(false);
+          // Die Warnungen der neuen Termine gehören AUSGESPROCHEN: Sie liegen in
+          // einer Zukunft, die der Disponent gerade nicht auf dem Board sieht
+          // (Doppelbelegung, Abwesenheit, Feiertag). Blockieren tun sie nicht.
+          const hinweise = r.warnungen.length
+            ? ` Hinweise: ${r.warnungen.join(' · ')}`
+            : '';
+          this.ansage.set(
+            `${r.anzahl} Folgetermin${r.anzahl === 1 ? '' : 'e'} angelegt. ` +
+              'Jeder ist ein eigener Einsatz und lässt sich einzeln umplanen.' +
+              hinweise,
+          );
+          this.laden(true);
+        },
+        error: (err) => {
+          this.serieBusy.set(false);
+          this.serieFehler.set(fehlerDetail(err) ?? 'Die Serie ließ sich nicht anlegen.');
+        },
+      });
   }
 
   private hhmm(d: Date): string {

@@ -240,6 +240,12 @@ export interface BoardJob {
   assignee_ids: string[];
   resource_ids: string[];
   conflicts: Konflikt[];
+  /**
+   * Herkunftsklammer einer Serie (null = Einzeltermin). Jedes Vorkommen ist ein
+   * eigenständiger Einsatz — die Klammer dient nur der Anzeige und dem Auffinden
+   * der ganzen Reihe.
+   */
+  series_id: string | null;
 }
 
 /** Ein UNGEPLANTER Einsatz aus dem Rückstand — das, was man ins Raster zieht. */
@@ -442,6 +448,14 @@ export interface AppointmentCategory {
   color_token: CategoryColorToken;
   status: CategoryStatus;
   sort_order: number;
+  /**
+   * Übliche Dauer dieses Termintyps in Minuten (null = keine).
+   *
+   * **Nur ein Vorschlag:** Der Termin-Dialog belegt daraus das Ende vor. Der
+   * Server leitet daraus nie etwas ab, und eine geänderte Kategoriedauer
+   * verschiebt keinen bestehenden Termin.
+   */
+  default_duration_minutes: number | null;
 }
 
 export interface CategoryCreate {
@@ -449,6 +463,7 @@ export interface CategoryCreate {
   color_token: CategoryColorToken;
   description?: string | null;
   sort_order?: number;
+  default_duration_minutes?: number | null;
 }
 
 export interface CategoryUpdate {
@@ -456,6 +471,50 @@ export interface CategoryUpdate {
   color_token?: CategoryColorToken | null;
   description?: string | null;
   sort_order?: number | null;
+  /** Weglassen = nicht ändern; ausdrückliches null = keine übliche Dauer mehr. */
+  default_duration_minutes?: number | null;
+}
+
+/** Wiederholungstakt einer Terminserie (Migration 0077). */
+export type SerienIntervall =
+  | 'TAEGLICH'
+  | 'WOECHENTLICH'
+  | 'ZWEIWOECHENTLICH'
+  | 'MONATLICH';
+
+export interface SerieCreate {
+  intervall: SerienIntervall;
+  /** Zahl der ZUSÄTZLICHEN Termine — der Ausgangstermin bleibt der erste. */
+  anzahl: number;
+  /** Sonntage/Feiertage auf den nächsten Werktag schieben (Takt bleibt gewahrt). */
+  werktags?: boolean;
+}
+
+/**
+ * Ein Vorkommen einer Serie. **Eigener Typ statt `BoardJob`**, weil
+ * `scheduled_start` hier null sein darf: Jedes Vorkommen ist ein eigenständiger
+ * Einsatz und kann einzeln in den Rückstand zurückgelegt werden — es bleibt
+ * trotzdem Teil der Reihe.
+ */
+export interface SerienTermin {
+  id: string;
+  job_number: string;
+  title: string;
+  status: ServiceJobStatus;
+  is_free: boolean;
+  scheduled_start: string | null;
+  scheduled_end: string | null;
+  property_name: string | null;
+  category: CategoryRef | null;
+  series_id: string | null;
+}
+
+export interface SerieResult {
+  series_id: string;
+  erzeugt: SerienTermin[];
+  anzahl: number;
+  /** Nicht-blockierende Belegungshinweise der NEU angelegten Termine. */
+  warnungen: string[];
 }
 
 export type ResourceType = 'FAHRZEUG' | 'GERAET' | 'RAUM' | 'SONSTIGE';

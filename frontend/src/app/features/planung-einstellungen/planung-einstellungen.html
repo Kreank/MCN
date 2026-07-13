@@ -57,6 +57,7 @@
             <tr>
               <th scope="col">Name</th>
               <th scope="col">Farbe</th>
+              <th scope="col">Übliche Dauer</th>
               <th scope="col">Sortierung</th>
               <th scope="col">Status</th>
               <th scope="col"><span class="sr-only">Aktionen</span></th>
@@ -74,6 +75,13 @@
                   }
                 </td>
                 <td>{{ k.color_token }}</td>
+                <td>
+                  @if (k.default_duration_minutes) {
+                    {{ dauerText(k.default_duration_minutes) }}
+                  } @else {
+                    <span class="feld__wert--leer">keine</span>
+                  }
+                </td>
                 <td>{{ k.sort_order }}</td>
                 <td>
                   <span class="stamp" [class.stamp--warn]="k.status === 'ARCHIVIERT'">
@@ -219,6 +227,13 @@
       [control]="katForm.controls.description"
       label="Beschreibung"
       typ="textarea"
+    />
+    <app-feld
+      [control]="katForm.controls.default_duration_minutes"
+      label="Übliche Dauer (Minuten)"
+      typ="zahl"
+      inputmode="numeric"
+      hinweis="Vorschlag für den Termin-Dialog: Er belegt das Ende daraus vor. Leer lassen, wenn es keine übliche Dauer gibt — dann wird auch keine vorgeschlagen. Bestehende Termine ändern sich nie mit."
     />
     <app-feld
       [control]="katForm.controls.sort_order"

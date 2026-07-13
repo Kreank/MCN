@@ -369,7 +369,8 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.tile__frei {
+.tile__frei,
+.tile__serie {
   align-self: flex-start;
   padding: 0 0.3rem;
   font-size: 0.64rem;

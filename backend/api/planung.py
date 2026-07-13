@@ -920,6 +920,29 @@ class BoardJobOut(Schema):
     assignee_ids: list[UUID]
     resource_ids: list[UUID]
     conflicts: list[KonfliktOut] = []
+    # Herkunftsklammer einer Serie (Migration 0077). null = Einzeltermin. Jedes
+    # Vorkommen ist ein eigenständiger Einsatz — die Klammer ist nur Anzeige.
+    series_id: UUID | None = None
+
+
+def _board_job_out(j, *, konflikte=()):
+    """Eine Board-Kachel. Einzige Abbildungsstelle — Board und Serie nutzen sie."""
+    p = _job_property(j)
+    return BoardJobOut(
+        id=j.id,
+        job_number=j.job_number,
+        title=_job_title(j),
+        status=j.status,
+        is_free=j.work_order_id is None,
+        scheduled_start=j.scheduled_start,
+        scheduled_end=j.scheduled_end,
+        property_name=p.name if p else None,
+        category=_category_ref(j),
+        assignee_ids=[a.assignee_id for a in j.assignments.all()],
+        resource_ids=[link.resource_id for link in j.resource_links.all()],
+        conflicts=[KonfliktOut(**k) for k in konflikte],
+        series_id=j.series_id,
+    )
 
 
 class BacklogJobOut(Schema):
@@ -1011,27 +1034,10 @@ def plantafel(
         backlog_q=backlog_q,
     )
 
-    jobs = []
-    for j in board.jobs:
-        p = _job_property(j)
-        jobs.append(
-            BoardJobOut(
-                id=j.id,
-                job_number=j.job_number,
-                title=_job_title(j),
-                status=j.status,
-                is_free=j.work_order_id is None,
-                scheduled_start=j.scheduled_start,
-                scheduled_end=j.scheduled_end,
-                property_name=p.name if p else None,
-                category=_category_ref(j),
-                assignee_ids=[a.assignee_id for a in j.assignments.all()],
-                resource_ids=[link.resource_id for link in j.resource_links.all()],
-                conflicts=[
-                    KonfliktOut(**k) for k in board.konflikte.get(j.id, [])
-                ],
-            )
-        )
+    jobs = [
+        _board_job_out(j, konflikte=board.konflikte.get(j.id, []))
+        for j in board.jobs
+    ]
 
     backlog = []
     for j in board.backlog:
@@ -1243,6 +1249,128 @@ def update_termin(request, job_id: UUID, payload: TerminUpdateIn):
     )
 
 
+class SerieIn(Schema):
+    """Einen geplanten Termin wiederholen (Migration 0077)."""
+    # TAEGLICH | WOECHENTLICH | ZWEIWOECHENTLICH | MONATLICH
+    intervall: str
+    # Zahl der ZUSÄTZLICHEN Termine (der Ausgangstermin bleibt der erste).
+    anzahl: int
+    # Fällt ein Vorkommen auf Sonntag/Feiertag, auf den nächsten Werktag schieben.
+    # Der TAKT zählt trotzdem vom unverschobenen Datum weiter — sonst wanderte
+    # „jeden Montag" nach dem ersten Feiertag dauerhaft auf den Dienstag.
+    werktags: bool = True
+
+
+class SerienTerminOut(Schema):
+    """Ein Vorkommen einer Serie.
+
+    **Eigenes Schema statt `BoardJobOut`**, weil `scheduled_start` hier
+    NULL-fähig sein MUSS: Jedes Vorkommen ist ein eigenständiger Einsatz und darf
+    einzeln in den Rückstand zurückgelegt werden (`scheduled_start = null`). Es
+    bleibt trotzdem Teil der Reihe — es aus der Serienansicht zu filtern, hieße
+    die Absage zu verschweigen.
+    """
+    id: UUID
+    job_number: str
+    title: str
+    status: str
+    is_free: bool = False
+    scheduled_start: datetime | None = None
+    scheduled_end: datetime | None = None
+    property_name: str | None = None
+    category: CategoryRefOut | None = None
+    series_id: UUID | None = None
+
+
+class SerieOut(Schema):
+    series_id: UUID
+    # Die neu erzeugten Termine (der Ausgangstermin ist nicht dabei).
+    erzeugt: list[SerienTerminOut]
+    anzahl: int
+    # Nicht-blockierende Belegungshinweise der NEUEN Termine (Doppelbelegung,
+    # Abwesenheit, Feiertag) — je Termin gesammelt. Sie verhindern nichts (offene
+    # Invariante), aber sie dürfen auch nicht stumm bleiben: Eine Serie legt
+    # Termine in eine Zukunft, die der Disponent nicht vor Augen hat.
+    warnungen: list[str] = []
+
+
+def _serien_termin_out(j):
+    p = _job_property(j)
+    return SerienTerminOut(
+        id=j.id,
+        job_number=j.job_number,
+        title=_job_title(j),
+        status=j.status,
+        is_free=j.work_order_id is None,
+        scheduled_start=j.scheduled_start,
+        scheduled_end=j.scheduled_end,
+        property_name=p.name if p else None,
+        category=_category_ref(j),
+        series_id=j.series_id,
+    )
+
+
+@router.post("/termine/{job_id}/serie", response={201: SerieOut}, auth=django_auth)
+def termin_wiederholen(request, job_id: UUID, payload: SerieIn):
+    """Wiederholt einen Termin — als echte, eigenständige Folgetermine.
+
+    Jedes Vorkommen ist ein eigener Einsatz mit eigener Nummer und eigenem Status
+    (kein virtuelles Vorkommen): Ein abgesagter Dienstag macht den Mittwoch nicht
+    kaputt. Mitarbeiter, Ressourcen, Kategorie und Dauer werden mitkopiert.
+    """
+    actor, _ = require(request, "workflow", "ANLEGEN")
+    require(request, "workflow", "AENDERN")  # Zuweisung/Status gehören dazu
+    _load_job_or_404(job_id)
+    try:
+        ergebnis = planung_service.serie_anlegen(
+            actor,
+            service_job_id=job_id,
+            intervall=payload.intervall,
+            anzahl=payload.anzahl,
+            werktags=payload.werktags,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    jobs = [_serien_termin_out(j) for j in ergebnis["erzeugt"]]
+    # Die Warnungen der NEUEN Termine mitliefern: Sie liegen in einer Zukunft,
+    # die der Disponent gerade nicht auf dem Board sieht.
+    warnungen = []
+    # Weniger Termine als bestellt? Das muss AUSGESPROCHEN werden. Wer 6 eintippt
+    # und 4 bekommt, soll nicht rätseln, ob etwas schiefging.
+    entfallen = payload.anzahl - len(jobs)
+    if entfallen > 0:
+        warnungen.append(
+            f"{entfallen} Vorkommen fiel{'en' if entfallen > 1 else ''} mit einem "
+            "bestehenden Termin der Reihe zusammen und entfiel"
+            f"{'en' if entfallen > 1 else ''}."
+        )
+    for j in ergebnis["erzeugt"]:
+        for w in planung_service.belegungs_warnungen(j.id):
+            warnungen.append(f"{j.job_number}: {w}")
+    return Status(
+        201,
+        SerieOut(
+            series_id=ergebnis["series_id"],
+            erzeugt=jobs,
+            anzahl=len(jobs),
+            warnungen=warnungen,
+        ),
+    )
+
+
+@router.get("/termine/{job_id}/serie", response=list[SerienTerminOut])
+def serie_lesen(request, job_id: UUID):
+    """Alle Termine der Serie, zu der dieser Einsatz gehört (chronologisch).
+
+    Leere Liste, wenn er zu keiner Serie gehört. Ein Vorkommen, das in den
+    Rückstand zurückgelegt wurde, trägt `scheduled_start: null` und bleibt Teil
+    der Reihe — die Absage wird nicht verschwiegen.
+    """
+    require(request, "workflow", "LESEN")
+    _load_job_or_404(job_id)
+    return [_serien_termin_out(j) for j in planung_service.serie(job_id)]
+
+
 # ===========================================================================
 # Terminkategorien (Stammdaten) — Modul workflow
 # ===========================================================================
@@ -1262,6 +1390,9 @@ class CategoryOut(Schema):
     color_token: str
     status: str
     sort_order: int
+    # Übliche Dauer dieses Termintyps (Minuten). **Nur ein Vorschlag** für den
+    # Termin-Dialog; null = keiner. Der Server leitet daraus nie ein Ende ab.
+    default_duration_minutes: int | None = None
 
 
 class CategoryCreateIn(Schema):
@@ -1269,6 +1400,7 @@ class CategoryCreateIn(Schema):
     color_token: str = "NAVY"
     description: str | None = None
     sort_order: int = 0
+    default_duration_minutes: int | None = None
 
 
 class CategoryUpdateIn(Schema):
@@ -1276,6 +1408,7 @@ class CategoryUpdateIn(Schema):
     color_token: str | None = None
     description: str | None = None
     sort_order: int | None = None
+    default_duration_minutes: int | None = None
 
 
 def _category_out(c):
@@ -1286,6 +1419,7 @@ def _category_out(c):
         color_token=c.color_token,
         status=c.status,
         sort_order=c.sort_order,
+        default_duration_minutes=c.default_duration_minutes,
     )
 
 
@@ -1314,6 +1448,7 @@ def create_kategorie(request, payload: CategoryCreateIn):
             color_token=payload.color_token,
             description=payload.description,
             sort_order=payload.sort_order,
+            default_duration_minutes=payload.default_duration_minutes,
         )
     except ValueError as exc:
         raise HttpError(422, str(exc))
@@ -1322,8 +1457,9 @@ def create_kategorie(request, payload: CategoryCreateIn):
 
 @router.patch("/kategorien/{category_id}", response=CategoryOut, auth=django_auth)
 def update_kategorie(request, category_id: UUID, payload: CategoryUpdateIn):
-    """Aendert eine Terminkategorie (Name/Farbe/Beschreibung/Sortierung)."""
+    """Aendert eine Terminkategorie (Name/Farbe/Beschreibung/Sortierung/Dauer)."""
     actor, _ = require(request, "workflow", "AENDERN")
+    gesetzt = payload.model_dump(exclude_unset=True)
     try:
         c = planung_service.update_category(
             actor,
@@ -1332,6 +1468,13 @@ def update_kategorie(request, category_id: UUID, payload: CategoryUpdateIn):
             color_token=payload.color_token,
             description=payload.description,
             sort_order=payload.sort_order,
+            # Sentinel: „nicht mitgeschickt" (nicht ändern) vs. ausdrückliches
+            # null („keine übliche Dauer mehr").
+            default_duration_minutes=(
+                payload.default_duration_minutes
+                if "default_duration_minutes" in gesetzt
+                else planung_service.UNSET
+            ),
         )
     except ValueError as exc:
         raise HttpError(422, str(exc))
