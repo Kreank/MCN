@@ -624,14 +624,47 @@ Vier Slices, parallel gebaut, geteilte Dateien → **ein** Commit. Migrationen
       `:focus-within` — auf **Touch** sind sie vom Board aus nicht erreichbar (Umweg über
       die Einsatz-Mappe). Beide brauchen einen eigenen kleinen Slice.
 
+20. ✔ **Plantafel: Lesbarkeit, Grundraster, Übersicht** (`382fa15`, keine Migration).
+    Drei User-Meldungen, eine Geometrie:
+    - **Lesbarkeit** („bei nur 1 Std. Zeitfenster sieht das kacke aus"): Zu kurze Kacheln
+      werden auf eine **lesbare** Mindestbreite gestreckt (`KACHEL_LESBAR_REM`), und die
+      Streckung wird **sichtbar gemacht** — ein Dauerbalken zeigt Länge UND Lage der
+      echten Dauer. Der Beginn bleibt auf der Skala; nur am rechten Bandrand wächst die
+      Kachel nach links (der Dauerbalken wandert mit).
+    - **Grundraster** (Arbeitszeit 07–17, einstellbar, `localStorage`).
+      **INVARIANTE: Das Raster ist eine ANZEIGE-Einstellung, KEIN Filter.** Liegt ein
+      Termin außerhalb, weitet sich das Band und das Board sagt es an. Zwei Wege in die
+      Unsichtbarkeit wurden im Review gefunden und geschlossen: ein Termin **ohne Ende**
+      außerhalb des Rasters, und der **Nachtteil eines Termins über Mitternacht** in der
+      Tagesansicht des Folgetags (dort öffnet das Band auf 0–24). Ein unsichtbarer Termin
+      wäre der gefährlichste Fehler einer Plantafel.
+    - **Übersicht** („eine komplette Woche in der Übersicht"): Die Stundenbreite wird aus
+      der **gemessenen** Board-Breite zurückgerechnet (ResizeObserver) — die Woche passt
+      in den Schirm. Reicht der Platz nicht (4 Wochen, geweitetes Band), scrollt das
+      Board; gestaucht wird die Zeit nie. Dazu flacher Seitenkopf (Titel + Reiter in einer
+      Zeile) und **einklappbare Navigation** (`mcn.nav.schmal`, gut 11 rem mehr Breite).
+    - **INVARIANTE (verschärft): Die Reihen-Packung rechnet in GEZEICHNETEN Koordinaten**
+      (Spalte + Anteil), nicht in echter Zeit — nur so kennt sie jede Streckung (auch die
+      nach links) und kann Kacheln nicht fälschlich für überschneidungsfrei halten.
+    - **INVARIANTE: Die gezeichnete Mindestbreite muss ≥ der CSS-`min-width` der Kachel
+      sein.** Sonst wächst die Kachel über ihre Grid-Area hinaus, und die Packung — die
+      nur die Grid-Area kennt — weiß nichts davon. Deshalb ist `stundePx` nach unten
+      geschrankt, und **rem wird gemessen, nicht mit 16 px geraten** (WCAG 1.4.4).
+    - Behoben: der gemeldete **Scroll-Fehler**. Das Board ist jetzt so breit wie sein
+      Inhalt (`width: max-content`), nicht wie sein Scrollfenster — sonst enden Zeilen und
+      Kopfzeile an der Fensterkante und die klebende Bahnenspalte hört auf mitzulaufen
+      (`sticky` klebt nur im umgebenden Block). Kacheln schoben sich zudem über die
+      Bahnenspalte (z-index 2 → 4).
+
 **★ NÄCHSTE SCHRITTE (offen).** Zuerst das, was auf Externe wartet, sichtbar halten:
 
 **Noch offen, ableitbar (selbst entscheidbar):**
 - **Die zwei vertagten Punkte der Zeitskala** (siehe 19: DST in der Tagesansicht,
   Touch-Erreichbarkeit der Kachel-Aktionen).
-- **Board-Einstellungen** (der letzte offene Teil von „Plantafel Stufe 1"): Es gibt keine
-  User-Preference-Struktur im Schema. Erst klären, ob die Einstellungen **firmenweit**
-  (`company.company_profile`) oder **je Benutzer** gehören.
+- **Board-Einstellungen** (der letzte offene Teil von „Plantafel Stufe 1"): Grundraster
+  und Navigationszustand liegen derzeit im **`localStorage`** — bewusst, weil es keine
+  User-Preference-Struktur im Schema gibt. Erst klären, ob die Einstellungen **firmenweit**
+  (`company.company_profile`) oder **je Benutzer** gehören; dann umziehen.
 - **XRechnung** (reines XML, B2G/Leitweg-ID) — optional, User hat 1–2×/Jahr öffentliche
   Auftraggeber. Das CII-Mapping steht bereits.
 - **Vier-Augen auf weitere Aktionen ausrollen** (Dubletten-Merge, Massenexport,
