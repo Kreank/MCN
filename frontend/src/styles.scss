@@ -1624,3 +1624,168 @@ button {
   letter-spacing: 0.06em;
   color: var(--ink-hint);
 }
+
+/* PLANTAFEL — DAUERBALKEN. Ein kurzer Termin wird auf eine LESBARE Breite
+   gestreckt (eine Stunde waere sonst ein Strich, den niemand ueberfliegen kann).
+   Dieser Balken zeigt die TATSAECHLICHE Dauer und macht die Streckung damit
+   sichtbar, statt eine falsche Dauer vorzutaeuschen. Er liegt am unteren Rand der
+   Kachel und traegt seine Aussage zusaetzlich im `title` — nie nur ueber die
+   Optik (WCAG 1.4.1). */
+.tile__dauer {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
+  border-bottom-left-radius: var(--radius-sm);
+  background: var(--accent);
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+/* PLANTAFEL — Grundraster-Einstellung in der Steuerleiste. */
+.raster {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0 var(--space-2) var(--space-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.raster__legend {
+  padding: 0 var(--space-1);
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-hint);
+}
+.feldchen--eng .feldchen__select {
+  min-width: 5.5rem;
+}
+.raster-hinweis {
+  max-width: 70ch;
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-left: 4px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+/* ===================== Plantafel: flacher Seitenkopf ========================
+   Titel und Bereichsreiter in EINER Zeile. Die Plantafel ist das Hauptwerkzeug
+   des Disponenten — jede Zeile Kopf, die er nicht braucht, fehlt ihm unten an
+   Bahnen. (Hier statt in plantafel.scss: dort ist das 8-kB-Budget ausgereizt.) */
+.plantafel__kopf {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-5);
+  margin-bottom: var(--space-3);
+}
+.plantafel__titel {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--step-3);
+  line-height: 1.1;
+}
+.plantafel__kopf app-planung-nav {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ==================== Eingeklappte Navigation ==============================
+   Nur die Bemassungskennungen, kein Text. Gibt dem Inhalt gut 11 rem zurueck —
+   auf der Plantafel entscheidet das, ob eine ganze Woche in den Schirm passt. */
+/* Die Spaltenbreite selbst setzt app.html über `--nav-w` — Komponenten-Styles sind
+   attributgebunden und schlügen eine Klassenregel hier.
+
+   NUR ab 721 px: Darunter wird die Sidebar zur vollbreiten Kopfleiste (app.scss).
+   Wer am Schreibtisch eingeklappt hat, saehe am Handy sonst eine breite Leiste mit
+   zentrierten, unbeschrifteten Zahlen — die Einstellung ist fuer Breite gedacht,
+   und die gibt es dort nicht zu gewinnen. */
+@media (min-width: 721px) {
+  .shell--schmal .sidebar {
+    padding-inline: var(--space-2);
+  }
+  /* Die Beschriftungen bleiben IM DOM (nur optisch weggeschnitten): Ein Link, dessen
+     zugaenglicher Name auf „50" zusammenschrumpfte, waere fuer Screenreader wertlos. */
+  .shell--schmal .nav__label,
+  .shell--schmal .brand__type,
+  .shell--schmal .sidebar__foot,
+  .shell--schmal .nav-toggle__text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .shell--schmal .nav,
+  .shell--schmal .messkante {
+    padding-left: 0;
+  }
+  .shell--schmal .messkante {
+    display: none;
+  }
+  .shell--schmal .nav__link {
+    justify-content: center;
+  }
+  .shell--schmal .sidebar__brand {
+    justify-content: center;
+    padding-inline: 0;
+  }
+}
+/* Unter 721 px ist die Navigation ohnehin eine Kopfleiste — der Schalter hat dort
+   nichts zu gewinnen und wird ausgeblendet (er bleibt fuer Screenreader irrelevant,
+   weil er dann auch aus dem Fokusfluss faellt). */
+@media (max-width: 720px) {
+  .nav-toggle {
+    display: none;
+  }
+}
+
+.nav-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  width: 100%;
+  margin-bottom: var(--space-3);
+  padding: 0.3rem var(--space-2);
+  border: 1px solid var(--command-line);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--on-command);
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.nav-toggle:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.nav-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ============== Plantafel: Board-Breite (aus plantafel.scss ausgelagert) =====
+   `max-content` + `min-width: 100%`: Das Board ist so breit wie sein INHALT, nicht
+   wie sein Scrollfenster. Sonst enden Zeilenhintergruende und Kopfzeile an der
+   Fensterkante (die Tage liefen beim Scrollen ins Leere), und die klebende
+   Bahnenspalte hoert auf mitzulaufen — `sticky` klebt nur im umgebenden Block. */
+.plantafel {
+  width: 100%;
+}
+.plantafel .board {
+  width: max-content;
+  min-width: 100%;
+}

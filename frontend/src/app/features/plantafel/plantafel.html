@@ -1,15 +1,12 @@
 <section class="plantafel" aria-labelledby="plantafel-titel">
-  <header class="page-head">
-    <div>
-      <p class="page-head__kicker">
-        <span class="page-head__scale" aria-hidden="true"></span>
-        Planung · Disposition
-      </p>
-      <h1 id="plantafel-titel" class="page-head__titel">Plantafel</h1>
-    </div>
+  <!-- Flacher Kopf: Titel und Bereichsreiter stehen NEBENEINANDER, der Kicker
+       („Planung · Disposition") entfällt — die Reiter sagen dasselbe. Die Plantafel
+       ist das Hauptwerkzeug des Disponenten; jede Zeile Kopf, die er nicht braucht,
+       fehlt ihm unten an Bahnen. -->
+  <header class="plantafel__kopf">
+    <h1 id="plantafel-titel" class="plantafel__titel">Plantafel</h1>
+    <app-planung-nav />
   </header>
-
-  <app-planung-nav />
 
   <!-- ============================ Steuerleiste ============================ -->
   <div class="leiste">
@@ -43,6 +40,44 @@
       </label>
 
       <p class="zeitraum" aria-live="polite">{{ zeitraumLabel() }}</p>
+
+      <!-- GRUNDRASTER: Welche Stunden des Tages zeigt das Board normalerweise?
+           Das ist eine ANZEIGE-Vorliebe, KEIN Filter — liegt ein Termin außerhalb
+           (Notdienst), weitet sich das Raster automatisch und sagt es dazu. Ein
+           Termin kann dadurch nie unsichtbar werden. -->
+      <fieldset class="raster">
+        <legend class="raster__legend">Arbeitszeit im Raster</legend>
+        <label class="feldchen feldchen--eng">
+          <span class="feldchen__label">von</span>
+          <select
+            class="feldchen__select"
+            (change)="bandSetzen($any($event.target).value, bandEinstellung().bis)"
+          >
+            @for (h of stundenOptionen; track h) {
+              @if (h <= 20) {
+                <option [value]="h" [selected]="h === bandEinstellung().von">
+                  {{ stundeText(h) }}
+                </option>
+              }
+            }
+          </select>
+        </label>
+        <label class="feldchen feldchen--eng">
+          <span class="feldchen__label">bis</span>
+          <select
+            class="feldchen__select"
+            (change)="bandSetzen(bandEinstellung().von, $any($event.target).value)"
+          >
+            @for (h of stundenOptionen; track h) {
+              @if (h >= bandEinstellung().von + 4) {
+                <option [value]="h" [selected]="h === bandEinstellung().bis">
+                  {{ stundeText(h) }}
+                </option>
+              }
+            }
+          </select>
+        </label>
+      </fieldset>
     </div>
 
     <div class="leiste__filter">
@@ -96,6 +131,16 @@
       <p class="note__text">{{ f }}</p>
       <button type="button" class="btn" (click)="hinweiseSchliessen()">Verstanden</button>
     </div>
+  }
+
+  <!-- Das Raster hat sich über die eingestellte Arbeitszeit hinaus geweitet.
+       Das MUSS ausgesprochen werden: Sonst wundert sich der Disponent, warum sein
+       07–17-Raster plötzlich bis 23 Uhr reicht — und schlimmer: Er müsste
+       befürchten, dass umgekehrt Termine fehlen. Sie fehlen nie. -->
+  @if (bandErweitert(); as be) {
+    <p class="raster-hinweis" role="status">
+      <span aria-hidden="true">↔</span> {{ be }}
+    </p>
   }
 
   @if (warnungen().length) {
@@ -276,18 +321,20 @@
             }
           </div>
 
-          <div class="board-wrap">
+          <div class="board-wrap" #boardWrap>
             <!-- Der Fokus liegt beim Verschieben auf der Zielzelle; das Tastenevent
                  blubbert hierher. -->
-            <!-- `--spaltenbreite` koppelt die Tagesspalte an das Zeitband: Eine
-                 Stunde bekommt eine lesbare Mindestbreite, damit die Skala trägt
-                 (ein Zwei-Stunden-Termin wäre sonst ein Strich). Passt die Woche
-                 damit nicht mehr auf den Schirm, scrollt das Board waagerecht —
-                 das ist ehrlicher, als die Zeit zu stauchen. -->
+            <!-- `--spaltenbreite` koppelt die Tagesspalte an das Zeitband. Die
+                 Breite wird GEMESSEN (`stundePx`), damit der gewählte Zeitraum in
+                 den Schirm passt — die Woche muss der Disponent überblicken, nicht
+                 erscrollen. Passt sie beim besten Willen nicht (4 Wochen, oder ein
+                 Notdienst weitet das Band auf 24 Stunden), scrollt das Board
+                 waagerecht; gestaucht wird die Zeit nie. -->
             <div
               class="board"
               [style.--stunden]="bandStunden()"
               [style.--spaltenbreite]="spaltenbreite()"
+              [style.--spaltenmax]="spaltenmax()"
               (keydown)="boardTaste($event)"
             >
               <!-- Kopfzeile: Tage bzw. Stunden -->
@@ -450,6 +497,26 @@
                         (dragstart)="dragStart($event, { art: 'board', job: b.job, lane })"
                         (dragend)="dragEnde()"
                       >
+                        <!-- DAUERBALKEN: Ein kurzer Termin wird auf eine LESBARE
+                             Breite gestreckt (sonst wäre eine Stunde ein Strich,
+                             den niemand überfliegen kann). Damit das keine falsche
+                             Dauer vortäuscht, zeigt dieser Balken die
+                             TATSÄCHLICHE Länge — die Streckung wird sichtbar
+                             gemacht, nicht verschwiegen. Bei maßstabsgetreuen
+                             Kacheln (100 %) ist er randlos und fällt nicht auf. -->
+                        @if (b.dauerAnteil < 99) {
+                          <!-- Rein dekorativ: Die echte Dauer steht als Text auf der
+                               Kachel und im `aria-label`. Ein `title` auf einem leeren
+                               <span> wäre weder per Tastatur noch per Touch erreichbar
+                               und für Screenreader nur Lärm. -->
+                          <span
+                            class="tile__dauer"
+                            aria-hidden="true"
+                            [style.width.%]="b.dauerAnteil"
+                            [style.left.%]="b.dauerVersatz"
+                          ></span>
+                        }
+
                         <!-- `title` und `aria-label` tragen die VOLLE Angabe. Sie
                              müssen es: Bei schmalen Kacheln blendet die
                              Container-Query Endzeit, Titel, Ort und Chips aus —

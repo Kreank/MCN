@@ -6,9 +6,8 @@
 // Ein Termin ist ein BALKEN in der Spur (`grid-column: von / span n`), kein Punkt
 // in einer Zelle — nur so wird ein mehrtägiger Einsatz zu einem Balken. Die
 // Hintergrundzellen liegen darunter (Drop-Ziele), die Sperrflächen dazwischen.
-.plantafel {
-  width: 100%;
-}
+// `.plantafel { width: 100% }` und `.board { width: max-content }` liegen in
+// styles.scss — Stil-Budget dieser Datei (8 kB). Auslagern, nicht lockern.
 
 // ======================= Disposition: Pool + Board ==========================
 .disposition {
@@ -40,17 +39,25 @@
   color: var(--ink-muted);
 }
 
+// Der flache Seitenkopf (.plantafel__kopf) liegt in styles.scss — Budget (8 kB).
 .board-wrap {
-  max-height: calc(100dvh - 18rem);
+  // Der flache Kopf gibt Höhe zurück — das Board nimmt sie: mehr Bahnen ohne
+  // Scrollen ist auf der Plantafel der eigentliche Gewinn.
+  max-height: calc(100dvh - 14rem);
   overflow: auto;
+  // Klebende Kopfzeile und Bahnenspalte liegen ÜBER den Kacheln. Ohne dieses
+  // Scroll-Polster schöbe der Browser einen per Tastatur fokussierten Knopf genau
+  // darunter — sichtbar fokussiert, aber verdeckt (WCAG 2.4.11).
+  scroll-padding: 3.5rem 0 0 12rem;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   box-shadow: var(--shadow-1);
   background: var(--surface);
 }
-.board {
-  min-width: 44rem;
-}
+// `max-content` + `min-width: 100%`: Das Board ist so breit wie sein INHALT, nicht
+// wie sein Scrollfenster. Sonst enden Zeilenhintergründe und Kopfzeile an der
+// Fensterkante (die Tage liefen beim Scrollen ins Leere), und die klebende
+// Bahnenspalte hört mitzulaufen auf — `sticky` klebt nur im umgebenden Block.
 
 // Eine Bahn: Kopf (klebt links) + Spur.
 .board__zeile {
@@ -80,7 +87,7 @@
 }
 .board__kopfslots {
   display: grid;
-  grid-template-columns: repeat(var(--slots), minmax(var(--spaltenbreite, 3rem), 1fr));
+  grid-template-columns: repeat(var(--slots), minmax(var(--spaltenbreite), var(--spaltenmax)));
   // MUSS dieselbe Spurgeometrie haben wie `.spur` (gap + padding), sonst fluchten
   // die Teilstriche der Zeitskala nicht mit den Stundenlinien in den Zellen und
   // nicht mit den Balken — der Versatz wüchse über die Woche auf ~2 rem an. Eine
@@ -136,6 +143,9 @@
 .board__gruppe {
   position: sticky;
   left: 0;
+  // Über Kacheln (2) und deren Aktionen (3), unter der Kopfzeile (5): Sonst
+  // schieben sich beim Scrollen die Kacheln über die klebende Bahnenspalte.
+  z-index: 4;
   margin: 0;
   padding: var(--space-2) var(--space-3);
   font-family: var(--font-mono);
@@ -150,7 +160,8 @@
 .bahn {
   position: sticky;
   left: 0;
-  z-index: 2;
+  // Siehe `.board__gruppe`: Die Bahnenspalte überdeckt die Kacheln, nicht umgekehrt.
+  z-index: 4;
   display: flex;
   flex-direction: column;
   // Oben ausgerichtet, NICHT zentriert: eine Bahn mit vielen gestapelten
@@ -188,7 +199,7 @@
 .spur {
   position: relative;
   display: grid;
-  grid-template-columns: repeat(var(--slots), minmax(var(--spaltenbreite, 3rem), 1fr));
+  grid-template-columns: repeat(var(--slots), minmax(var(--spaltenbreite), var(--spaltenmax)));
   grid-template-rows: repeat(var(--reihen, 1), minmax(4.5rem, auto));
   gap: 0.25rem;
   padding: 0.25rem;
