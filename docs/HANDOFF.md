@@ -20,8 +20,8 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 > und Freigaben laufen aus dem UI durch Rechte, Statusautomaten und DB-Trigger.
 > Dazu **Vier-Augen-Freigaben**, **Belegerfassung** (Eingangsrechnungen) und die
 > **Rechtematrix-Pflege** als UI.
-> **2431 Backend-Tests grün** (13 skipped: 12 E-Rechnungs-Validatortests ohne Java,
-> 1 MinIO-E2E), db_core-Migrationen bis **0075**, accounts bis **0002**.
+> **2510 Backend-Tests grün** (14 skipped: 12 E-Rechnungs-Validatortests ohne Java,
+> 1 MinIO-E2E), db_core-Migrationen bis **0077**, accounts bis **0002**.
 > Das **Frontend baut erstmals ohne Budget-Warnung** (8/10 kB gehalten — nicht
 > lockern, sondern auslagern).
 > Stand 2026-07-11 (Hero-Paritäts-Ausbau, 20 Slices an einem Tag — Details in
@@ -548,14 +548,59 @@ Vier Slices, parallel gebaut, geteilte Dateien → **ein** Commit. Migrationen
       deklariert, **kein Nachweis**; **keine Normtabellen** mitgeliefert (siehe
       Normrecht oben).
 
+### Welle 4 (2026-07-13): § 35a-Ausweis und Plantafel Stufe 1 (Welle A)
+
+16. ✔ **§ 35a-Arbeitskostenausweis** (`9aa2e7f`, Migration 0076). Lohn-, Maschinen- und
+    Fahrtkosten getrennt vom Material auf der Privatkundenrechnung — ohne den Ausweis
+    verliert der Kunde 20 % davon (max. 1.200 €/Jahr) an Steuerermäßigung.
+    - **LEITINVARIANTE: unbestimmt ist NICHT null.** `line_type` klassifiziert die
+      Position bereits, aber für **PAUSCHALE, FREMDLEISTUNG und ZUSCHLAG ist der Anteil
+      daraus nicht ableitbar** (eine Pauschale enthält beides). Dort bleibt
+      `labour_net_amount` NULL, und der Beleg weist **gar nichts** aus, statt eine
+      geratene Zahl gegenüber dem Finanzamt zu behaupten. Abgeleitet wird nur, wo die
+      Art eindeutig ist: ARBEITSZEIT/FAHRT voll, MATERIAL 0,00 — **überschreibbar**,
+      denn Verbrauchsmittel sind trotz Material begünstigt.
+    - Der DB-CHECK bindet den Anteil **je Position** an den Positionsbetrag. Die Prüfung
+      auf **Belegebene** ist nicht redundant dazu (Review-Fund): Die Anrechnung eines
+      Abschlags zieht dessen Arbeitskosten ab — trug er mehr Lohn als die
+      Schlussrechnung abrechnet, stand ein **negativer** Betrag im festgeschriebenen
+      PDF; war er ein Materialvorschuss, **überstieg** der Ausweis den Rechnungsbetrag.
+      Beides ist jetzt `UNSTIMMIG` = kein Ausweis mit benanntem Grund. **Kein
+      Veröffentlichungsverbot** — das machte die SR dauerhaft unstellbar, obwohl ihre
+      Beträge stimmen.
+    - Storno/Gutschrift negiert den Anteil mit (der negative Ausweis auf einem
+      Kreditbeleg ist richtig). Anrechnungspositionen tragen den negativen Anteil des
+      Abschlags je Steuergruppe — sonst zählte der Kunde dieselben Arbeitskosten
+      zweimal. `SNAPSHOT_VERSION 3`; Altbelege weisen korrekterweise nichts aus.
+    - Genau **eine Rechenstelle**: `beleg.arbeitskosten()`. Der Editor unterscheidet
+      **abgeleitet vs. abweichend angegeben** — ein abgeleiteter Wert geht NIE in den
+      Payload, sonst erstarrte er und stünde nach einer Mengenänderung falsch (600 €
+      Lohn auf einer 1.200-€-Position).
+17. ✔ **Plantafel Stufe 1, Welle A** (`dc40145`, Migration 0077): **Default-Dauer je
+    Terminkategorie** + **Serientermine**.
+    - Die Dauer ist ein **Vorschlag** für den Dialog; der Server leitet daraus nie ein
+      `scheduled_end` ab, und eine geänderte Kategoriedauer verschiebt **keinen
+      bestehenden Termin** (das wäre eine stille Umplanung zugesagter Termine).
+    - Ein Serientermin ist eine Reihe **echter, eigenständiger Einsätze** (wie die
+      Fälligkeits-Engine ihre Folgetermine materialisiert), keine Regel: eigener Status,
+      eigene Zuweisungen, eigene Nummer. Ein abgesagter Dienstag macht den Mittwoch
+      nicht kaputt. `series_id` ist reine Herkunftsklammer **ohne FK/Serientabelle**.
+    - **`series_anchor` ist der Taktgeber** (Beginn des ERSTEN Vorkommens). Jeder Takt
+      zählt aus IHM — nie aus dem Vorgänger (der geklemmte 28.02. weiß nicht mehr, dass
+      „der 31." gemeint war) und nie aus dem aktuellen Bestand (ein verschobenes
+      Vorkommen machte aus „jeden Montag" sonst dauerhaft „jeden Dienstag").
+    - Ein zweites „Wiederholen" **verlängert** die Reihe, statt sie neu auszurollen
+      (Review-Fund: es erzeugte Dubletten auf denselben Tagen).
+
 **★ NÄCHSTE SCHRITTE (offen).** Zuerst das, was auf Externe wartet, sichtbar halten:
 
 **Noch offen, ableitbar (selbst entscheidbar):**
-- **§ 35a-Ausweis** — Lohn-, Fahrt- und Maschinenkosten **getrennt vom Material** auf
-  der Privatkundenrechnung. Ohne den Ausweis verliert der Kunde **20 % Steuerbonus**;
-  das ist der greifbarste offene Nutzen.
-- **Plantafel Stufe 1:** Default-Dauer je Terminkategorie, Termine kopieren/wiederholen,
-  Kolonnen-/Team-Modell, Skill-Matching, Board-Einstellungen.
+- **Plantafel Stufe 1, Welle B:** **Kolonnen-/Team-Modell**, **Skill-Matching**,
+  **Board-Einstellungen**. Alle drei führen eine **neue Fachdomäne** ein (es gibt im
+  Schema NICHTS dazu: keine Qualifikation, kein Team; `company.trade` ist eine Codeliste,
+  die an nichts hängt). **Erst die fachliche Frage klären:** Arbeitet der Betrieb in
+  festen Kolonnen? Welche Qualifikationen sind planungsrelevant? Ohne Antwort baut man
+  eine Struktur, die niemand pflegt.
 - **XRechnung** (reines XML, B2G/Leitweg-ID) — optional, User hat 1–2×/Jahr öffentliche
   Auftraggeber. Das CII-Mapping steht bereits.
 - **Vier-Augen auf weitere Aktionen ausrollen** (Dubletten-Merge, Massenexport,
@@ -595,6 +640,22 @@ kein Aufweichen des Triggers.
 Scratch-Daten; bei Bedarf auf INAKTIV setzen.
 
 ### Bewusst offene Invarianten (nicht versehentlich „reparieren")
+
+- **§ 35a: unbestimmt ist NICHT null.** Wo die Positionsart den Arbeitskostenanteil nicht
+  hergibt (PAUSCHALE/FREMDLEISTUNG/ZUSCHLAG), bleibt er NULL und der Beleg weist **gar
+  nichts** aus. Kein Default auf 0 („verschenkt still den Bonus") und keiner auf „voll"
+  („Steuerverkürzung"). Der Ausweis wird zusätzlich auf **Belegebene** geprüft: negativ
+  oder größer als der Rechnungsbetrag → `UNSTIMMIG`, kein Ausweis. Das ist **nicht**
+  redundant zum DB-CHECK (der prüft je Position) — die Anrechnung eines Abschlags kann
+  die Summe kippen.
+- **Ein Handwerkstermin ist eine Uhrzeit auf der WANDUHR.** Serientakte rechnen in
+  `BOARD_TZ` (Europe/Berlin), nicht in UTC — sonst verschiebt die Sommerzeitumstellung
+  den Termin um eine Stunde. Auch Wochentag und Feiertagsvergleich müssen den
+  **Berliner** Kalendertag treffen (Montag 00:30 Ortszeit ist in UTC noch Sonntag).
+- **Der Serien-Takt zählt aus `series_anchor`, nie aus dem Bestand.** Ein verschobenes
+  oder abgesagtes Vorkommen darf den Takt der Reihe nicht kippen, und der Monatstag muss
+  den geklemmten Februar überleben. Die Werktagsverschiebung wirkt auf das **einzelne
+  Vorkommen**, nie auf den Takt.
 
 - **Ein Wert, der in ein EINGABEFELD geht, darf NIE gruppiert formatiert sein.**
   `apiZuDeEingabe` (ohne Tausenderpunkt) für Formulare, `apiZuDeAnzeige` (mit) nur für
@@ -782,8 +843,8 @@ Default `mcn-dev-passwort-2026`):
 **Backend** (`cd backend`, uv):
 ```bash
 uv run python manage.py check
-uv run pytest -p no:cacheprovider -q          # aktuell 2431 grün, 13 skipped
-uv run python manage.py migrate               # Migrationskopf: 0075 (einziges Leaf)
+uv run pytest -p no:cacheprovider -q          # aktuell 2510 grün, 14 skipped
+uv run python manage.py migrate               # Migrationskopf: 0077 (einziges Leaf)
 uv run python manage.py runserver 127.0.0.1:8000 --noreload
 uv run python manage.py seed_demo             # idempotenter Demo-Datensatz
 ```
