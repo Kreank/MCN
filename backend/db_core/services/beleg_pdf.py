@@ -56,6 +56,7 @@ from db_core.models import CompanyProfile, File, Invoice, Quote
 from db_core.services.beleg import (
     FINAL_TYPE,
     anzeige_menge_preis,
+    arbeitskosten,
     beleg_stammdaten,
     beteiligter,
     issuer_stammdaten,
@@ -433,6 +434,59 @@ def _render_anrechnung(pdf, invoice):
     zeile("Verbleibender Zahlbetrag", spiegel["zahlbetrag"], bold=True, border="T")
 
 
+def _render_arbeitskosten(pdf, invoice):
+    """Ausweis der Arbeitskosten nach § 35a EStG (Lohn-, Maschinen-, Fahrtkosten).
+
+    Ohne diesen Ausweis verliert ein Privatkunde 20 % der Arbeitskosten (max.
+    1.200 EUR/Jahr) an Steuerermäßigung — der Materialanteil ist nicht begünstigt,
+    und eine eigene Schätzung des Kunden erkennt das Finanzamt nicht an.
+
+    Der Block bleibt aus, wenn
+    - der Beleg ihn abgeschaltet hat (`show_labour_costs`, B2B),
+    - auch nur EINE Position ihren Anteil nicht bestimmt (lieber kein Ausweis als
+      ein falscher — das UI warnt vor dem Veröffentlichen), oder
+    - keine Arbeitskosten enthalten sind (reine Materiallieferung).
+
+    Rechnet nicht selbst: die Zahlen kommen aus `beleg.arbeitskosten` — derselben
+    Quelle, die auch die API und der Editor nutzen.
+    """
+    if not invoice.show_labour_costs:
+        return
+    ausweis = arbeitskosten(invoice)
+    if not ausweis["bestimmbar"] or not ausweis["gross_amount"]:
+        return
+
+    pdf.ln(4)
+    pdf.set_font(FONT_FAMILY, "B", 10)
+    pdf.cell(0, 6, _txt("Arbeitskosten nach § 35a EStG"),
+             new_x="LMARGIN", new_y="NEXT")
+    label_w, val_w = 150, 40
+    for label, betrag, bold in (
+        ("in der Rechnung enthaltene Lohn-, Maschinen- und Fahrtkosten (netto)",
+         ausweis["net_amount"], False),
+        ("darauf entfallende Umsatzsteuer", ausweis["tax_amount"], False),
+        ("Arbeitskosten (brutto)", ausweis["gross_amount"], True),
+    ):
+        pdf.set_font(FONT_FAMILY, "B" if bold else "", 10 if bold else 9)
+        pdf.multi_cell(label_w, 6, _txt(label), align="R", new_x="RIGHT", new_y="TOP",
+                       max_line_height=6)
+        pdf.cell(val_w, 6, _eur(betrag), align="R", border="T" if bold else 0,
+                 new_x="LMARGIN", new_y="NEXT")
+
+    pdf.set_font(FONT_FAMILY, "", 8)
+    pdf.set_text_color(110, 110, 110)
+    pdf.multi_cell(
+        0, 4,
+        _txt("Für Handwerkerleistungen in einem Privathaushalt können 20 % der "
+             "Arbeitskosten (höchstens 1.200 EUR im Jahr) von der Steuerschuld "
+             "abgezogen werden (§ 35a Abs. 3 EStG). Voraussetzung ist die "
+             "unbare Zahlung auf das oben genannte Konto; Materialkosten sind "
+             "nicht begünstigt."),
+        new_x="LMARGIN", new_y="NEXT",
+    )
+    pdf.set_text_color(0, 0, 0)
+
+
 def load_invoice_for_render(invoice_id):
     """Lädt eine Rechnung mit allem, was Layout und ZUGFeRD-XML brauchen.
 
@@ -497,6 +551,7 @@ def render_invoice_document(invoice, *, compliance=None):
     _render_lines(pdf, invoice.lines.all())
     _render_totals(pdf, invoice.net_total, invoice.tax_total, invoice.gross_total)
     _render_anrechnung(pdf, invoice)
+    _render_arbeitskosten(pdf, invoice)
 
     if invoice.invoice_type in ("GUTSCHRIFT", "STORNO") and invoice.reference_invoice_id:
         ref = Invoice.objects.filter(id=invoice.reference_invoice_id).first()

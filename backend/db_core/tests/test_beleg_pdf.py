@@ -81,7 +81,7 @@ def _pdf_text(data):
     return " ".join(roh.split())
 
 
-def _published_invoice(app_user, **invoice_kwargs):
+def _published_invoice(app_user, *, lines=None, **invoice_kwargs):
     obj = property_service.create_property(
         app_user.id, name="PDF-Objekt", property_type="WEG",
         street="Weg 1", postal_code="10115", city="Berlin",
@@ -107,7 +107,7 @@ def _published_invoice(app_user, **invoice_kwargs):
     inv = beleg_service.create_invoice(
         app_user.id, property_id=obj.id, invoice_type="RECHNUNG",
         work_order_id=order.id,
-        lines=[
+        lines=lines or [
             {"line_type": "MATERIAL", "description": "Ziegel", "quantity": 100,
              "unit": "Stk", "unit_price": "2.40", "tax_code": "DE_19"},
         ],
@@ -426,3 +426,61 @@ def test_pdf_storno_hat_keine_zahlungsbedingung(app_user):
     text = _pdf_text(beleg_pdf.render_invoice_pdf(storno.id))
     assert "Zahlungsbedingungen" not in text
     assert "Zahlbar ohne Abzug" not in text
+
+
+# --- § 35a-Ausweis (Migration 0076) -----------------------------------------
+
+_LOHN_UND_MATERIAL = [
+    {"line_type": "ARBEITSZEIT", "description": "Monteurstunden", "quantity": 10,
+     "unit": "h", "unit_price": "60.00", "tax_code": "DE_19"},
+    {"line_type": "FAHRT", "description": "Anfahrt", "quantity": 1,
+     "unit_price": "40.00", "tax_code": "DE_19"},
+    {"line_type": "MATERIAL", "description": "Heizkörper", "quantity": 2,
+     "unit": "Stk", "unit_price": "300.00", "tax_code": "DE_19"},
+]
+
+
+@pytest.mark.django_db
+def test_pdf_weist_die_arbeitskosten_nach_35a_aus(app_user):
+    """Ohne diesen Block verliert der Privatkunde 20 % der Arbeitskosten."""
+    inv = _published_invoice(app_user, lines=_LOHN_UND_MATERIAL)
+    text = _pdf_text(beleg_pdf.render_invoice_pdf(inv.id))
+
+    assert "Arbeitskosten nach § 35a EStG" in text
+    # 600 Lohn + 40 Fahrt = 640,00 netto; USt 121,60; brutto 761,60.
+    assert beleg_pdf._eur(Decimal("640.00")) in text
+    assert beleg_pdf._eur(Decimal("121.60")) in text
+    assert beleg_pdf._eur(Decimal("761.60")) in text
+    # Der Materialanteil (600,00) darf NICHT in den Arbeitskosten stecken.
+    ausweis = beleg_service.arbeitskosten(inv)
+    assert ausweis["net_amount"] == Decimal("640.00")
+
+
+@pytest.mark.django_db
+def test_pdf_ohne_ausweis_wenn_abgeschaltet(app_user):
+    """B2B-Rechnung: der Block lässt sich je Beleg abschalten."""
+    inv = _published_invoice(
+        app_user, lines=_LOHN_UND_MATERIAL, show_labour_costs=False
+    )
+    text = _pdf_text(beleg_pdf.render_invoice_pdf(inv.id))
+    assert "35a" not in text
+
+
+@pytest.mark.django_db
+def test_pdf_ohne_ausweis_wenn_eine_position_unbestimmt_ist(app_user):
+    """Lieber kein Ausweis als ein falscher: eine Pauschale ohne bestimmten Anteil
+    macht den ganzen Ausweis unmöglich — es wird nichts geschätzt."""
+    inv = _published_invoice(app_user, lines=_LOHN_UND_MATERIAL + [
+        {"line_type": "PAUSCHALE", "description": "Bad komplett", "quantity": 1,
+         "unit_price": "2000.00", "tax_code": "DE_19"},
+    ])
+    text = _pdf_text(beleg_pdf.render_invoice_pdf(inv.id))
+    assert "35a" not in text
+
+
+@pytest.mark.django_db
+def test_pdf_ohne_ausweis_bei_reiner_materiallieferung(app_user):
+    """Keine Arbeitskosten enthalten → kein leerer 0,00-EUR-Block."""
+    inv = _published_invoice(app_user)  # Default: nur MATERIAL
+    text = _pdf_text(beleg_pdf.render_invoice_pdf(inv.id))
+    assert "35a" not in text

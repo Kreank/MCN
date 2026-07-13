@@ -205,6 +205,33 @@ a.ref:focus-visible {
   padding-top: var(--space-4);
   border-top: 1.5px solid var(--line);
 }
+/* § 35a-Ausweis. Die Warnung trägt Text UND Symbol — nie nur Farbe (WCAG 2.2). */
+.lohn {
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: 1.5px solid var(--line);
+}
+.lohn__titel {
+  margin: 0 0 var(--space-3);
+  font-size: 1rem;
+}
+.lohn__hinweis,
+.lohn__aus {
+  margin: var(--space-3) 0 0;
+  font-size: 0.86rem;
+  color: var(--ink-muted);
+  max-width: 62ch;
+}
+.lohn__warnung {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--amber);
+  border-left: 4px solid var(--amber);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  font-size: 0.9rem;
+  max-width: 70ch;
+}
 .kette__titel {
   margin: 0 0 var(--space-2);
   font-size: 1rem;

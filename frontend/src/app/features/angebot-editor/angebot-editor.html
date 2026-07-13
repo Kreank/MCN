@@ -823,6 +823,29 @@
           >
         </p>
       }
+
+      <!-- § 35a EStG: Lohn-, Maschinen- und Fahrtkosten sind für den Privatkunden
+           mit 20 % steuerlich begünstigt, Material nicht. Wo die Positionsart die
+           Aufteilung nicht hergibt (Pauschale, Fremdleistung, Zuschlag), muss sie
+           angegeben werden — sonst weist die Rechnung gar nichts aus. -->
+      <div class="pos-lohn">
+        <app-feld
+          [control]="posForm.controls.labour_manual"
+          label="Arbeitskostenanteil abweichend angeben (§ 35a)"
+          typ="checkbox"
+        />
+        @if (posForm.controls.labour_manual.value) {
+          <app-feld
+            [control]="posForm.controls.labour_net_amount"
+            label="davon Arbeitskosten (netto)"
+            typ="zahl"
+            [pflicht]="true"
+            hinweis="In Euro, höchstens der Positionsbetrag. Lohn-, Maschinen- und Fahrtkosten zählen; Material nicht (Verbrauchsmittel schon)."
+          />
+        } @else if (arbeitskostenHinweis(); as ah) {
+          <p class="pos-lohn__hinw" role="status">{{ ah }}</p>
+        }
+      </div>
     } @else {
       <p class="pos-texthinweis">
         Text- und Zwischensummenzeilen tragen keinen Betrag und zählen nicht in die Summe.

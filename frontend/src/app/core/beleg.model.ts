@@ -76,6 +76,15 @@ export interface QuoteLine {
   tax_code: string | null;
   tax_rate_percent: string | null;
   net_amount: string | null;
+  /**
+   * Nach § 35a EStG begünstigter Arbeitskostenanteil (netto) dieser Position.
+   *
+   * **null = unbestimmt, NICHT 0,00.** Der Server leitet ihn ab, wo die
+   * Positionsart eindeutig ist (ARBEITSZEIT/FAHRT voll, MATERIAL 0,00); bei
+   * PAUSCHALE/FREMDLEISTUNG/ZUSCHLAG bleibt er offen, bis ihn jemand setzt.
+   * Solange auch nur eine Position offen ist, weist die Rechnung nichts aus.
+   */
+  labour_net_amount: string | null;
   /** Interner Kalkulations-Snapshot (steht nicht auf dem Kundenbeleg). */
   unit_cost: string | null;
   markup_percent: string | null;
@@ -201,9 +210,36 @@ export interface InvoiceParty {
   allocation_percent: string | null;
 }
 
+/**
+ * Der § 35a-Ausweis einer Rechnung — **vom Server gerechnet**, nie im Client.
+ *
+ * `bestimmbar: false` heißt: mindestens eine Position hat ihren Arbeitskosten-
+ * anteil nicht bestimmt (`offen` nennt die Positionsnummern). Die Beträge sind
+ * dann null = unbekannt (nicht 0), und der Beleg weist nichts aus.
+ */
+export interface Arbeitskosten {
+  bestimmbar: boolean;
+  /**
+   * Warum kein Ausweis zustande kommt:
+   * - `OFFENE_POSITIONEN` — `offen` nennt die Positionsnummern ohne Anteil.
+   * - `UNSTIMMIG` — das Ergebnis ist kein Teil des Rechnungsbetrags (negativ oder
+   *   größer). Entsteht nur bei einer Schlussrechnung mit fehlerhaft erfasstem
+   *   Abschlag; im Beleg selbst ist dann nichts zu reparieren.
+   */
+  grund: 'OFFENE_POSITIONEN' | 'UNSTIMMIG' | null;
+  offen: number[];
+  net_amount: string | null;
+  tax_amount: string | null;
+  gross_amount: string | null;
+}
+
 export interface InvoiceDetail extends Invoice {
   due_date: string | null;
   tax_total: string | null;
+  /** Arbeitskosten nach § 35a EStG auf dem Beleg ausweisen (Default: ja). */
+  show_labour_costs: boolean;
+  /** Der berechnete Ausweis (immer gesetzt; siehe `bestimmbar`). */
+  arbeitskosten: Arbeitskosten | null;
   /** Zahlungsziel in Tagen ab Belegdatum (leitet due_date beim Veröffentlichen ab). */
   payment_term_days: number | null;
   /** Skontosatz in Prozent — Decimal als String. Nur zusammen mit discount_days. */
@@ -306,6 +342,12 @@ export interface QuoteLineInput {
   unit_price?: string | null;
   discount_percent?: string | null;
   tax_code?: string | null;
+  /**
+   * § 35a-Arbeitskostenanteil (Decimal als Punkt-String). **Weglassen = vom
+   * Server ableiten lassen**; ein gesetzter Wert gewinnt immer und muss ein Teil
+   * des Positionsbetrags sein (sonst 422).
+   */
+  labour_net_amount?: string | null;
   unit_cost?: string | null;
   markup_percent?: string | null;
   sale_price_group_id?: string | null;
@@ -354,6 +396,8 @@ export interface InvoiceCreate {
   /** Decimal als Punkt-String (deZuApiDezimal), nie number. */
   discount_percent?: string | null;
   discount_days?: number | null;
+  /** § 35a-Ausweis (Default: true — der Privatkunde ist der Regelfall). */
+  show_labour_costs?: boolean;
   rubriken?: RubrikInput[];
   lines: QuoteLineInput[];
   /**
@@ -372,6 +416,8 @@ export interface InvoiceUpdate {
   /** Decimal als Punkt-String (deZuApiDezimal), nie number. */
   discount_percent?: string | null;
   discount_days?: number | null;
+  /** § 35a-Ausweis ein/aus. Weggelassen = unverändert. */
+  show_labour_costs?: boolean;
   rubriken?: RubrikInput[];
   lines?: QuoteLineInput[];
 }

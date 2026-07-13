@@ -941,6 +941,11 @@ class QuoteLine(models.Model):
     net_amount = models.DecimalField(
         max_digits=15, decimal_places=2, null=True, blank=True
     )
+    # Arbeitskostenanteil nach § 35a EStG (Migration 0076). NULL = UNBESTIMMT,
+    # nicht 0,00 — siehe InvoiceLine.labour_net_amount.
+    labour_net_amount = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True
+    )
     # Kalkulations-Snapshot (Migration 0033)
     unit_cost = models.DecimalField(
         max_digits=12, decimal_places=2, null=True, blank=True
@@ -1017,6 +1022,10 @@ class Invoice(models.Model):
         max_digits=5, decimal_places=2, null=True, blank=True
     )
     discount_days = models.IntegerField(null=True, blank=True)
+    # Arbeitskosten nach § 35a EStG ausweisen (Migration 0076). Default true: der
+    # Privatkunde ist der Regelfall des Betriebs, und ein vergessener Haken kostet
+    # ihn 20 % der Arbeitskosten. Auf einer B2B-Rechnung abschaltbar.
+    show_labour_costs = models.BooleanField(db_default=models.Value(True))
     currency = models.CharField(max_length=3, db_default="EUR")
     net_total = models.DecimalField(
         max_digits=15, decimal_places=2, null=True, blank=True
@@ -1114,6 +1123,15 @@ class InvoiceLine(models.Model):
         max_digits=5, decimal_places=2, null=True, blank=True
     )
     net_amount = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True
+    )
+    # Arbeitskostenanteil nach § 35a EStG (Migration 0076): der begünstigte
+    # NETTO-Teil dieser Position (Lohn-, Maschinen-, Fahrtkosten).
+    # **NULL heißt UNBESTIMMT, nicht 0,00.** Solange eine summenwirksame Position
+    # unbestimmt ist, weist der Beleg gar keine Arbeitskosten aus — ein geratener
+    # Anteil wäre eine Falschaussage gegenüber dem Finanzamt. Vorzeichen und
+    # Betragsgrenze sind per CHECK an net_amount gebunden.
+    labour_net_amount = models.DecimalField(
         max_digits=15, decimal_places=2, null=True, blank=True
     )
     # Kalkulations-Snapshot (Migration 0033)

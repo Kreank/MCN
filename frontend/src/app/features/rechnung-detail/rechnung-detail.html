@@ -210,6 +210,60 @@
           <div class="feld"><dt class="feld__label">Gesamt (brutto)</dt><dd class="feld__wert">{{ euro(daten()!.gross_total) }}</dd></div>
         </dl>
 
+        <!-- § 35a EStG: Arbeitskosten (Lohn/Maschine/Fahrt) sind für den
+             Privatkunden mit 20 % begünstigt, Material nicht. Fehlt der Ausweis,
+             ist der Bonus weg — und nach dem Veröffentlichen ist der Beleg
+             unveränderlich. Deshalb steht die Lücke hier, nicht im Kleingedruckten. -->
+        <section class="lohn" aria-labelledby="lohn-titel">
+          <h3 class="lohn__titel" id="lohn-titel">Arbeitskosten (§ 35a EStG)</h3>
+          @if (!daten()!.show_labour_costs) {
+            <p class="lohn__aus">
+              Werden auf dieser Rechnung <strong>nicht ausgewiesen</strong> (z. B. Geschäftskunde).
+            </p>
+          } @else if (lohnWarnung(); as w) {
+            <p class="lohn__warnung" role="status">
+              <span aria-hidden="true">⚠</span> {{ w }}
+              @if (darfBearbeiten() && lohnLueckeNachtragbar()) {
+                Der Anteil lässt sich im Editor je Position nachtragen.
+              }
+            </p>
+          } @else if (zeigtArbeitskosten()) {
+            <dl class="feld-raster">
+              <div class="feld">
+                <dt class="feld__label">Arbeitskosten (netto)</dt>
+                <dd class="feld__wert">{{ euro(daten()!.arbeitskosten!.net_amount) }}</dd>
+              </div>
+              <div class="feld">
+                <dt class="feld__label">Umsatzsteuer darauf</dt>
+                <dd class="feld__wert">{{ euro(daten()!.arbeitskosten!.tax_amount) }}</dd>
+              </div>
+              <div class="feld">
+                <dt class="feld__label">Arbeitskosten (brutto)</dt>
+                <dd class="feld__wert">{{ euro(daten()!.arbeitskosten!.gross_amount) }}</dd>
+              </div>
+            </dl>
+            <p class="lohn__hinweis">
+              Stehen so auf dem Beleg-PDF. Der Kunde kann 20 % davon (höchstens 1.200 €
+              im Jahr) von seiner Steuerschuld abziehen — Voraussetzung ist die unbare
+              Zahlung.
+            </p>
+          } @else {
+            <p class="lohn__hinweis">
+              Diese Rechnung enthält keine Arbeitskosten (reine Materiallieferung).
+            </p>
+          }
+          @if (kannVeroeffentlichen() && darfAendern()) {
+            <button
+              type="button"
+              class="btn"
+              [disabled]="lohnSchalterLaedt()"
+              (click)="lohnAusweisSetzen(!daten()!.show_labour_costs)"
+            >
+              {{ daten()!.show_labour_costs ? 'Ausweis abschalten' : 'Ausweis einschalten' }}
+            </button>
+          }
+        </section>
+
         <div class="bezug">
           <a class="bezug__item" [routerLink]="['/liegenschaften', daten()!.property.id]">
             <span class="bezug__label">Liegenschaft</span>

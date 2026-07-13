@@ -609,7 +609,10 @@ def test_spaeter_gepflegtes_firmenprofil_repariert_die_erechnung(app_user):
     das Profil da ist, zieht der Fallback es je Feld nach. Ohne das bliebe der
     Beleg für immer ausstellerlos (der Beleg lässt sich nicht neu ausstellen)."""
     inv = _published_invoice(app_user)
-    assert inv.billing_snapshot["header"]["snapshot_version"] == 2
+    assert (
+        inv.billing_snapshot["header"]["snapshot_version"]
+        == beleg_service.SNAPSHOT_VERSION
+    )
     assert inv.billing_snapshot["header"]["issuer"] is None
 
     firma_service.update_company_profile(

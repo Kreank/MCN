@@ -69,6 +69,9 @@ class QuoteLineOut(Schema):
     tax_code: str | None = None
     tax_rate_percent: Decimal | None = None
     net_amount: Decimal | None = None
+    # § 35a-Arbeitskostenanteil (netto) dieser Position. **null = unbestimmt**,
+    # nicht 0,00 — dann weist der Beleg keine Arbeitskosten aus.
+    labour_net_amount: Decimal | None = None
     # Interner Kalkulations-Snapshot (nicht auf dem Kundenbeleg).
     unit_cost: Decimal | None = None
     markup_percent: Decimal | None = None
@@ -118,6 +121,10 @@ class QuoteLineIn(Schema):
     unit_price: Decimal | None = None
     discount_percent: Decimal | None = None
     tax_code: str | None = None
+    # § 35a-Arbeitskostenanteil (netto). Weglassen = vom Server ableiten
+    # (ARBEITSZEIT/FAHRT voll, MATERIAL 0,00, sonst unbestimmt); ein gesetzter
+    # Wert gewinnt immer und muss ein Teil des Positionsbetrags sein.
+    labour_net_amount: Decimal | None = None
     unit_cost: Decimal | None = None
     markup_percent: Decimal | None = None
     sale_price_group_id: UUID | None = None
@@ -264,6 +271,7 @@ def _quote_detail(quote_id):
             tax_code=l.tax_code_id,
             tax_rate_percent=l.tax_rate_percent,
             net_amount=l.net_amount,
+            labour_net_amount=l.labour_net_amount,
             unit_cost=l.unit_cost,
             markup_percent=l.markup_percent,
             source_article_id=l.source_article_id,
@@ -540,6 +548,27 @@ class AnrechenbarerAbschlagOut(Schema):
     angerechnet: bool = False
 
 
+class ArbeitskostenOut(Schema):
+    """Der § 35a-Ausweis (Lohn-, Maschinen-, Fahrtkosten) — vom Server gerechnet.
+
+    `bestimmbar=false` heißt: der Beleg weist nichts aus. `grund` sagt warum:
+
+    - `OFFENE_POSITIONEN` — mindestens eine Position hat ihren Anteil nicht
+      bestimmt; `offen` nennt die Positionsnummern.
+    - `UNSTIMMIG` — das Ergebnis ist kein Teil des Rechnungsbetrags (negativ oder
+      größer als er). Entsteht nur bei einer Schlussrechnung, deren angerechneter
+      Abschlag fehlerhaft erfasst wurde.
+
+    Die Beträge sind dann **null = unbekannt, nicht 0**.
+    """
+    bestimmbar: bool
+    grund: str | None = None
+    offen: list[int] = []
+    net_amount: Decimal | None = None
+    tax_amount: Decimal | None = None
+    gross_amount: Decimal | None = None
+
+
 class InvoiceDetailOut(InvoiceOut):
     due_date: date | None = None
     tax_total: Decimal | None = None
@@ -547,6 +576,9 @@ class InvoiceDetailOut(InvoiceOut):
     payment_term_days: int | None = None
     discount_percent: Decimal | None = None
     discount_days: int | None = None
+    # § 35a EStG (Migration 0076): Ausweis-Schalter + der berechnete Ausweis.
+    show_labour_costs: bool = True
+    arbeitskosten: ArbeitskostenOut | None = None
     # Abgeleitet (read-only) aus Belegdatum, Bruttobetrag und Skonto — der Server
     # rechnet, das UI zeigt nur an.
     skonto_bis: date | None = None
@@ -588,6 +620,9 @@ class InvoiceIn(Schema):
     payment_term_days: int | None = None
     discount_percent: Decimal | None = None
     discount_days: int | None = None
+    # § 35a-Ausweis. Default true: der Privatkunde ist der Regelfall, und ein
+    # vergessener Haken kostet ihn 20 % der Arbeitskosten.
+    show_labour_costs: bool = True
     rubriken: list[RubrikIn] = []
     lines: list[QuoteLineIn] = []
     # Nur SCHLUSSRECHNUNG: die anzurechnenden Abschlags-/Teilrechnungen. Die
@@ -679,6 +714,7 @@ def _invoice_detail(invoice_id):
             tax_code=l.tax_code_id,
             tax_rate_percent=l.tax_rate_percent,
             net_amount=l.net_amount,
+            labour_net_amount=l.labour_net_amount,
             unit_cost=l.unit_cost,
             markup_percent=l.markup_percent,
             source_article_id=l.source_article_id,
@@ -761,6 +797,9 @@ def _invoice_detail(invoice_id):
         skonto_bis=zb.get("skonto_bis"),
         skonto_betrag=zb.get("skonto_betrag"),
         skonto_zahlbetrag=zb.get("skonto_zahlbetrag"),
+        show_labour_costs=invoice.show_labour_costs,
+        # Einzige Rechenstelle des § 35a-Ausweises (dieselbe, die das PDF nutzt).
+        arbeitskosten=ArbeitskostenOut(**beleg_service.arbeitskosten(invoice)),
         net_total=invoice.net_total,
         tax_total=invoice.tax_total,
         gross_total=invoice.gross_total,
@@ -808,6 +847,7 @@ def create_invoice(request, payload: InvoiceIn):
             payment_term_days=payload.payment_term_days,
             discount_percent=payload.discount_percent,
             discount_days=payload.discount_days,
+            show_labour_costs=payload.show_labour_costs,
             rubriken=[r.dict() for r in payload.rubriken],
             lines=[line.dict() for line in payload.lines],
             advance_invoice_ids=payload.advance_invoice_ids,
@@ -878,6 +918,7 @@ class InvoiceUpdateIn(Schema):
     payment_term_days: int | None = None
     discount_percent: Decimal | None = None
     discount_days: int | None = None
+    show_labour_costs: bool | None = None
     rubriken: list[RubrikIn] | None = None
     lines: list[QuoteLineIn] | None = None
 
@@ -902,6 +943,13 @@ def update_invoice(request, invoice_id: UUID, payload: InvoiceUpdateIn):
             ),
             discount_days=(
                 payload.discount_days if "discount_days" in gesetzt else ...
+            ),
+            # `null` heißt „nichts gesagt", nicht „abschalten" — sonst nähme ein
+            # Client, der das Feld leer mitschickt, dem Kunden still den Ausweis.
+            show_labour_costs=(
+                payload.show_labour_costs
+                if payload.show_labour_costs is not None
+                else ...
             ),
             rubriken=[r.dict() for r in payload.rubriken or []],
             lines=(

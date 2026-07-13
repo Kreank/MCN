@@ -180,6 +180,107 @@ export class RechnungDetail {
     return summe.toFixed(2);
   });
 
+  /**
+   * § 35a: Fehlt an mindestens einer Position der Arbeitskostenanteil, weist die
+   * Rechnung KEINE Arbeitskosten aus — der Privatkunde verliert damit 20 %
+   * Steuerermäßigung darauf, und nach dem Veröffentlichen ist der Beleg
+   * unveränderlich (GoBD). Deshalb warnt die Mappe, solange der Entwurf noch
+   * änderbar ist. Die Positionsnummern kommen vom Server.
+   */
+  protected readonly lohnWarnung = computed<string | null>(() => {
+    const d = this.daten();
+    if (!d || !d.show_labour_costs) return null;
+    const ak = d.arbeitskosten;
+    if (!ak || ak.bestimmbar) return null;
+
+    if (ak.grund === 'UNSTIMMIG') {
+      // Kein Bedienfehler-Vorwurf: Das entsteht auch bei völlig korrekt erfassten
+      // Abschlägen (z. B. ein reiner Materialvorschuss). Der Ausweis wäre dann
+      // negativ oder größer als der Rechnungsbetrag — beides darf nicht auf einem
+      // Beleg stehen, also weist er nichts aus.
+      return (
+        'Der angerechnete Abschlag trägt andere Arbeitskosten, als diese Rechnung ' +
+        'insgesamt abrechnet: Der Ausweis wäre negativ oder größer als der ' +
+        'Rechnungsbetrag — „darin enthalten" träfe dann nicht zu. Diese Rechnung ' +
+        'weist deshalb keine Arbeitskosten nach § 35a EStG aus. Die Beträge der ' +
+        'Rechnung selbst sind davon unberührt.'
+      );
+    }
+    if (ak.offen.length === 0) return null;
+
+    // Eine Anrechnungsposition stammt aus einem veröffentlichten Abschlag: sie
+    // steht nicht im Editor und lässt sich nicht nachtragen. Den Bediener dorthin
+    // zu schicken, wäre eine Sackgasse.
+    const anrechnung = new Set(
+      d.lines.filter((l) => l.advance_invoice_id).map((l) => l.position_number),
+    );
+    const nachtragbar = ak.offen.filter((n) => !anrechnung.has(n));
+    const ausAbschlag = ak.offen.filter((n) => anrechnung.has(n));
+
+    const teile: string[] = [];
+    if (nachtragbar.length > 0) {
+      teile.push(
+        `Für ${nachtragbar.length === 1 ? 'Position' : 'die Positionen'} ` +
+          `${nachtragbar.join(', ')} ist der Arbeitskostenanteil nicht angegeben.`,
+      );
+    }
+    if (ausAbschlag.length > 0) {
+      teile.push(
+        `${ausAbschlag.length === 1 ? 'Position' : 'Die Positionen'} ` +
+          `${ausAbschlag.join(', ')} rechnet einen Abschlag an, der selbst keinen ` +
+          'Arbeitskostenanteil ausweist — er ist veröffentlicht und nicht mehr änderbar.',
+      );
+    }
+    teile.push(
+      'Solange etwas davon offen ist, weist die Rechnung keine Arbeitskosten nach ' +
+        '§ 35a EStG aus.',
+    );
+    return teile.join(' ');
+  });
+
+  /** Ob die offene Lücke überhaupt im Editor behebbar ist (siehe `lohnWarnung`). */
+  protected readonly lohnLueckeNachtragbar = computed<boolean>(() => {
+    const d = this.daten();
+    const ak = d?.arbeitskosten;
+    if (!d || !ak || ak.grund !== 'OFFENE_POSITIONEN') return false;
+    const anrechnung = new Set(
+      d.lines.filter((l) => l.advance_invoice_id).map((l) => l.position_number),
+    );
+    return ak.offen.some((n) => !anrechnung.has(n));
+  });
+
+  /** Ob der § 35a-Block auf dem Beleg steht (bestimmbar UND Betrag > 0). */
+  protected readonly zeigtArbeitskosten = computed<boolean>(() => {
+    const d = this.daten();
+    const ak = d?.arbeitskosten;
+    return !!d?.show_labour_costs && !!ak?.bestimmbar && Number(ak.gross_amount) !== 0;
+  });
+
+  protected readonly lohnSchalterLaedt = signal(false);
+
+  /** § 35a-Ausweis je Beleg ein-/ausschalten (nur im Entwurf; B2B braucht ihn nicht). */
+  lohnAusweisSetzen(an: boolean): void {
+    const d = this.daten();
+    if (!d || this.lohnSchalterLaedt()) return;
+    this.lohnSchalterLaedt.set(true);
+    this.svc.updateInvoice(d.id, { show_labour_costs: an }).subscribe({
+      next: (neu) => {
+        this.state.set({ kind: 'ready', data: neu });
+        this.lohnSchalterLaedt.set(false);
+        this.meldung.set({
+          art: 'erfolg',
+          text: an
+            ? 'Arbeitskosten nach § 35a werden auf der Rechnung ausgewiesen.'
+            : 'Arbeitskosten nach § 35a werden nicht ausgewiesen.',
+        });
+      },
+      error: (err) => {
+        this.lohnSchalterLaedt.set(false);
+        this.meldung.set({ art: 'fehler', text: this.fehlerText(err) });
+      },
+    });
+  }
+
   constructor() {
     this.route.paramMap.pipe(takeUntilDestroyed()).subscribe((pm) => {
       const id = pm.get('id');

@@ -102,6 +102,19 @@ interface EditorLine {
   source_assembly_id: string | null;
   netAmount: string | null;
   taxRatePercent: string | null;
+  /**
+   * § 35a-Arbeitskostenanteil — nur gesetzt, wenn der Bediener ihn ABWEICHEND
+   * angegeben hat (`labourManual`). Sonst leitet ihn der Server aus der
+   * Positionsart ab.
+   *
+   * Warum die Unterscheidung? Ein abgeleiteter Wert, den der Editor
+   * zurückschickte, würde damit zu einem AUSDRÜCKLICHEN: ändert der Bediener
+   * danach die Menge (600 € Lohn → 1.200 €), bliebe der Anteil bei 600 € stehen
+   * und die Rechnung wiese die Hälfte aus. Deshalb geht ein abgeleiteter Anteil
+   * NIE mit in den Payload — der Server rechnet ihn jedes Mal neu.
+   */
+  labour_net_amount: string | null;
+  labourManual: boolean;
 }
 
 /** Anzeige-Gruppe: ein Abschnitt (oder die Sammelgruppe „Ohne Abschnitt"). */
@@ -369,6 +382,13 @@ export class AngebotEditor {
     unit_cost: this.fb.control('', { nonNullable: true, validators: [dezimalValidator] }),
     discount_percent: this.fb.control('', { nonNullable: true, validators: [dezimalValidator] }),
     tax_code: this.fb.control('DE_19', { nonNullable: true }),
+    // § 35a: abweichender Arbeitskostenanteil. Ohne Häkchen leitet ihn der Server
+    // aus der Positionsart ab (und rechnet ihn bei jeder Mengenänderung neu).
+    labour_manual: this.fb.control(false, { nonNullable: true }),
+    labour_net_amount: this.fb.control('', {
+      nonNullable: true,
+      validators: [dezimalValidator],
+    }),
     // Transientes Häkchen: gehört NUR zum Dialog, wird bei jedem Öffnen auf
     // false gesetzt und nie in den EditorLine-/Beleg-Zustand übernommen. Es löst
     // eine einmalige, ausdrückliche Stamm-Übernahme aus — nicht bei jedem Speichern.
@@ -461,6 +481,29 @@ export class AngebotEditor {
     return TEXT_TYPES.includes(this.posForm.controls.line_type.value);
   }
 
+  /**
+   * Was der Server für die gewählte Positionsart ableiten wird — als Hinweis im
+   * Dialog. Der Editor RECHNET damit nichts (er zeigt nur an, was passiert):
+   * ARBEITSZEIT/FAHRT sind voll begünstigt, MATERIAL gar nicht, der Rest bleibt
+   * unbestimmt und muss angegeben werden, sonst weist die Rechnung nichts aus.
+   */
+  arbeitskostenHinweis(): string | null {
+    if (this.posIstText() || this.posForm.controls.labour_manual.value) return null;
+    switch (this.posForm.controls.line_type.value) {
+      case 'ARBEITSZEIT':
+      case 'FAHRT':
+        return 'Zählt in voller Höhe als Arbeitskosten (§ 35a EStG).';
+      case 'MATERIAL':
+        return 'Zählt nicht als Arbeitskosten (Material ist nicht begünstigt).';
+      default:
+        return (
+          'Arbeitskostenanteil unbestimmt: Solange er offen ist, weist die ' +
+          'Rechnung gar keine Arbeitskosten nach § 35a aus — der Kunde verliert ' +
+          'dann 20 % Steuerermäßigung darauf.'
+        );
+    }
+  }
+
   constructor() {
     // Titel ist nur beim Angebot ein Pflichtfeld (Rechnung hat keinen Titel).
     if (!this.istRechnung) {
@@ -481,6 +524,19 @@ export class AngebotEditor {
       .pipe(debounceTime(300), distinctUntilChanged(), takeUntilDestroyed())
       .subscribe((q) => this.paletteFetch(q));
 
+    // Häkchen „abweichend angeben" an → der Betrag ist Pflicht. Ohne diesen
+    // Validator liefe ein leeres Feld als „nichts angegeben" durch, der Server
+    // leitete wieder ab — und der Bediener glaubte, er habe den Anteil gesetzt.
+    this.posForm.controls.labour_manual.valueChanges
+      .pipe(takeUntilDestroyed())
+      .subscribe((manuell) => {
+        const c = this.posForm.controls.labour_net_amount;
+        c.setValidators(
+          manuell ? [Validators.required, dezimalValidator] : [dezimalValidator],
+        );
+        c.updateValueAndValidity({ emitEvent: false });
+      });
+
     // Text-/Nicht-Text-Umschaltung im Positionsdialog: Pflicht-Validatoren
     // (Menge/Preis) nur für Nicht-Textzeilen. FormControl-Werte sind keine
     // Signale, daher über valueChanges statt über einen effect().
@@ -493,6 +549,12 @@ export class AngebotEditor {
       p.setValidators(req);
       q.updateValueAndValidity({ emitEvent: false });
       p.updateValueAndValidity({ emitEvent: false });
+      // Eine Textzeile trägt keinen Betrag: das § 35a-Feld wird nicht gerendert.
+      // Bliebe sein Pflicht-Validator stehen, machte er das Formular ungültig —
+      // „Übernehmen" bräche wortlos ab, und das schuldige Feld wäre unsichtbar.
+      if (text) {
+        this.posForm.controls.labour_manual.setValue(false);
+      }
     });
 
     // Kopffeld-Änderungen (Titel/Daten) als ungespeichert markieren. `uebernehmen`
@@ -621,7 +683,31 @@ export class AngebotEditor {
       source_assembly_id: l.source_assembly_id,
       netAmount: l.net_amount,
       taxRatePercent: l.tax_rate_percent,
+      labour_net_amount: l.labour_net_amount,
+      labourManual: this.istAbweichenderAnteil(l),
     };
+  }
+
+  /**
+   * Trägt die geladene Position einen ABWEICHENDEN Arbeitskostenanteil — oder
+   * genau den, den der Server ohnehin ableiten würde?
+   *
+   * Die API überliefert nur die Zahl, nicht ihre Herkunft. Stimmt sie mit der
+   * Ableitung überein, behandeln wir sie als abgeleitet: dann rechnet der Server
+   * sie bei einer Mengenänderung neu, statt einen veralteten Betrag festzuhalten.
+   * Weicht sie ab, muss sie jemand gesetzt haben — dann bleibt sie erhalten.
+   */
+  private istAbweichenderAnteil(l: QuoteLine): boolean {
+    if (TEXT_TYPES.includes(l.line_type)) return false;
+    const abgeleitet =
+      l.line_type === 'ARBEITSZEIT' || l.line_type === 'FAHRT'
+        ? l.net_amount
+        : l.line_type === 'MATERIAL'
+          ? '0.00'
+          : null;
+    if (l.labour_net_amount == null) return false;
+    if (abgeleitet == null) return true;
+    return Number(l.labour_net_amount) !== Number(abgeleitet);
   }
 
   private kalkulationLaden(): void {
@@ -916,6 +1002,11 @@ export class AngebotEditor {
       unit_cost: line.unit_cost != null ? apiZuDeEingabe(line.unit_cost, 2) : '',
       discount_percent: line.discount_percent != null ? apiZuDeEingabe(line.discount_percent) : '',
       tax_code: line.tax_code ?? 'DE_19',
+      labour_manual: line.labourManual,
+      labour_net_amount:
+        line.labourManual && line.labour_net_amount != null
+          ? apiZuDeEingabe(line.labour_net_amount, 2)
+          : '',
       // Häkchen bei jedem Öffnen zurücksetzen — es ist transient und persistiert nie.
       stamm_uebernehmen: false,
     });
@@ -1007,8 +1098,12 @@ export class AngebotEditor {
             unit_cost: null,
             markup_percent: null,
             netAmount: null,
+            // Eine Textzeile trägt keinen Betrag — und damit keine Arbeitskosten.
+            labour_net_amount: null,
+            labourManual: false,
           };
         }
+        const manuell = v.labour_manual;
         return {
           ...l,
           line_type: v.line_type,
@@ -1023,6 +1118,10 @@ export class AngebotEditor {
           // markup wird vom Server neu abgeleitet; lokal verwerfen.
           markup_percent: null,
           netAmount: null,
+          // Ohne Häkchen leitet der Server den Anteil ab (und rechnet ihn bei
+          // jeder Mengenänderung neu) — nichts mitschicken.
+          labourManual: manuell,
+          labour_net_amount: manuell ? deZuApiDezimal(v.labour_net_amount) || null : null,
         };
       }),
     );
@@ -1152,6 +1251,9 @@ export class AngebotEditor {
           source_assembly_id: null,
           netAmount: null,
           taxRatePercent: null,
+          // Der Server leitet den § 35a-Anteil aus der Positionsart ab.
+          labour_net_amount: null,
+          labourManual: false,
         };
         this.lineEinsetzen(line, zielRubrik, zielIndex);
         this.ansage.set(`Artikel „${art.description}" nach „${zielName}" übernommen.`);
@@ -1225,6 +1327,9 @@ export class AngebotEditor {
           source_assembly_id: asm.id,
           netAmount: null,
           taxRatePercent: null,
+          // Der Server leitet den § 35a-Anteil aus der Positionsart ab.
+          labour_net_amount: null,
+          labourManual: false,
         };
         this.lineEinsetzen(line, zielRubrik, zielIndex);
         this.ansage.set(
@@ -1260,6 +1365,9 @@ export class AngebotEditor {
       source_assembly_id: null,
       netAmount: null,
       taxRatePercent: null,
+      // Der Server leitet den § 35a-Anteil aus der Positionsart ab.
+      labour_net_amount: null,
+      labourManual: false,
     };
     this.lines.update((ls) => [...ls, line]);
     this.markiereGeaendert();
@@ -1301,6 +1409,9 @@ export class AngebotEditor {
       source_assembly_id: null,
       netAmount: null,
       taxRatePercent: null,
+      // Händlerware ist MATERIAL — der Server setzt den § 35a-Anteil auf 0,00.
+      labour_net_amount: null,
+      labourManual: false,
     }));
     this.lines.update((ls) => [...ls, ...neu]);
     this.markiereGeaendert();
@@ -1352,6 +1463,9 @@ export class AngebotEditor {
       source_assembly_id: null,
       netAmount: null,
       taxRatePercent: null,
+      // Der Server leitet den § 35a-Anteil aus der Positionsart ab.
+      labour_net_amount: null,
+      labourManual: false,
     };
     this.lines.update((ls) => [...ls, line]);
     this.markiereGeaendert();
@@ -1389,6 +1503,9 @@ export class AngebotEditor {
       source_assembly_id: null,
       netAmount: null,
       taxRatePercent: null,
+      // Der Server leitet den § 35a-Anteil aus der Positionsart ab.
+      labour_net_amount: null,
+      labourManual: false,
     };
     this.lines.update((ls) => [...ls, line]);
     this.markiereGeaendert();
@@ -1436,6 +1553,10 @@ export class AngebotEditor {
             sale_price_group_id: l.sale_price_group_id,
             source_article_id: l.source_article_id,
             source_assembly_id: l.source_assembly_id,
+            // Nur einen ABWEICHEND angegebenen Anteil mitschicken. Ein
+            // abgeleiteter würde sonst zum ausdrücklichen Wert erstarren und bei
+            // der nächsten Mengenänderung falsch stehen bleiben.
+            ...(l.labourManual ? { labour_net_amount: l.labour_net_amount } : {}),
           });
         }
       }

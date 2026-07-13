@@ -65,6 +65,20 @@ LINE_TYPES = (
 )
 TEXT_TYPES = ("TEXT", "ZWISCHENSUMME")
 
+# § 35a EStG (Migration 0076): aus welchen Positionsarten lässt sich der
+# begünstigte Arbeitskostenanteil ABLEITEN — und aus welchen nicht?
+#
+# Begünstigt sind Lohn-, Maschinen- und Fahrtkosten (inkl. der darauf
+# entfallenden USt), Material ist es nicht. ARBEITSZEIT und FAHRT sind damit voll
+# begünstigt, MATERIAL gar nicht. Für PAUSCHALE, FREMDLEISTUNG und ZUSCHLAG ist
+# der Anteil NICHT ableitbar: eine Pauschale („Bad komplett") enthält beides, eine
+# Fremdleistung bringt die Aufteilung des Subunternehmers mit, ein Zuschlag kann
+# auf Lohn wie auf Material gehen. Dort bleibt der Anteil UNBESTIMMT (None), bis
+# ihn jemand setzt — ein geratener Anteil wäre eine Falschaussage gegenüber dem
+# Finanzamt (zu hoch: Steuerverkürzung; zu niedrig: verschenkter Kundenbonus).
+LABOUR_VOLL = ("ARBEITSZEIT", "FAHRT")
+LABOUR_KEIN = ("MATERIAL",)
+
 # Positionsart (Migration 0036): ALTERNATIV = Ausweichvariante, BEDARF =
 # Eventualposition. Beide tragen einen Betrag, zählen aber NICHT in die Summe —
 # im PDF stehen sie in Klammern. Die DB-Summenprüfung filtert identisch.
@@ -219,6 +233,42 @@ def zahlungsbedingungen(invoice):
     }
 
 
+def _arbeitskosten_anteil(idx, line, line_type, net):
+    """Der § 35a-Anteil einer Betragsposition: ausdrücklich gesetzt oder abgeleitet.
+
+    Ein ausdrücklich übergebener Wert gewinnt IMMER — auch auf einer MATERIAL-
+    Zeile: Verbrauchsmittel (Schmier-, Reinigungs-, Dichtmittel) sind nach § 35a
+    begünstigt, obwohl sie Material sind. Umgekehrt lässt sich eine ARBEITSZEIT-
+    Zeile herunterstufen, wenn sie ausnahmsweise nicht im Haushalt anfiel.
+
+    Der Wert muss ein TEIL des Positionsbetrags sein (gleiches Vorzeichen, nicht
+    größer) — dieselbe Regel erzwingt der DB-CHECK; hier kommt sie als klare
+    Meldung (422) statt als IntegrityError (500).
+
+    None = unbestimmt. Kein stiller Default auf 0: das verschenkte dem Kunden den
+    Bonus, ohne dass es jemand merkt.
+    """
+    wert = line.get("labour_net_amount")
+    if wert in (None, ""):
+        if line_type in LABOUR_VOLL:
+            return net
+        if line_type in LABOUR_KEIN:
+            return Decimal("0.00")
+        return None
+    try:
+        anteil = _dec(wert).quantize(_Q_PRICE, rounding=ROUND_HALF_UP)
+    except (ArithmeticError, ValueError):
+        raise ValueError(
+            f"Position {idx}: Arbeitskostenanteil muss eine Zahl sein."
+        )
+    if anteil * net < 0 or abs(anteil) > abs(net):
+        raise ValueError(
+            f"Position {idx}: Der Arbeitskostenanteil muss ein Teil des "
+            f"Positionsbetrags sein (höchstens {net}, gleiches Vorzeichen)."
+        )
+    return anteil
+
+
 def _kalkulation_pruefen(idx, line, unit_price):
     """Prüft und normalisiert den Kalkulations-Snapshot einer Position.
 
@@ -352,8 +402,14 @@ def _prepare_lines(lines):
                 tax_code_id=tc.code,
                 tax_rate_percent=tc.rate_percent,
                 net_amount=net,
+                labour_net_amount=_arbeitskosten_anteil(idx, line, lt, net),
             )
             row.update(_kalkulation_pruefen(idx, line, unit_price))
+        elif line.get("labour_net_amount") not in (None, ""):
+            raise ValueError(
+                f"Position {idx}: {lt} trägt keinen Betrag und damit auch keinen "
+                "Arbeitskostenanteil."
+            )
         prepared.append(row)
 
     net, tax, gross = _totals(prepared)
@@ -553,6 +609,7 @@ def update_invoice(
     payment_term_days=...,
     discount_percent=...,
     discount_days=...,
+    show_labour_costs=...,
     lines=None,
     rubriken=None,
 ):
@@ -584,6 +641,8 @@ def update_invoice(
         kopf["invoice_date"] = invoice_date
     if due_date is not ...:
         kopf["due_date"] = due_date
+    if show_labour_costs is not ...:
+        kopf["show_labour_costs"] = bool(show_labour_costs)
 
     # Zahlungsbedingungen gegen den RESULTIERENDEN Zustand prüfen: wer nur den
     # Skontosatz schickt, während die Frist schon am Beleg steht, ändert einen
@@ -709,6 +768,118 @@ def _summenwirksame_gruppen(invoice):
         key = (line.tax_code_id, line.tax_rate_percent)
         gruppen[key] = gruppen.get(key, Decimal("0.00")) + line.net_amount
     return gruppen
+
+
+def _arbeitskosten_gruppen(invoice):
+    """§ 35a-Anteil je Steuergruppe — oder None für eine Gruppe mit Lücke.
+
+    Die Unbestimmtheit PROPAGIERT: enthält eine Gruppe auch nur eine Position ohne
+    bestimmten Anteil, ist die ganze Gruppe unbestimmt. Sie darf nicht stillschweigend
+    als „0 in dieser Position" gelesen werden — sonst wiese der Beleg zu wenig
+    Arbeitskosten aus, und niemand sähe es.
+    """
+    gruppen = {}
+    for line in invoice.lines.all():
+        if line.line_type in TEXT_TYPES or line.line_kind != SUMMENWIRKSAM:
+            continue
+        key = (line.tax_code_id, line.tax_rate_percent)
+        if line.labour_net_amount is None:
+            gruppen[key] = None
+            continue
+        vorher = gruppen.get(key, Decimal("0.00"))
+        if vorher is None:
+            continue
+        gruppen[key] = vorher + line.labour_net_amount
+    return gruppen
+
+
+# Gründe, aus denen ein § 35a-Ausweis unterbleibt (das UI nennt sie im Klartext).
+LOHN_OFFEN = "OFFENE_POSITIONEN"      # mindestens eine Position ohne bestimmten Anteil
+LOHN_UNSTIMMIG = "UNSTIMMIG"          # Ergebnis ist kein Teil des Rechnungsbetrags
+
+
+def arbeitskosten(invoice):
+    """Der § 35a-Ausweis einer Rechnung — die EINZIGE Rechenstelle.
+
+    PDF, API und Frontend ziehen von hier; damit steht auf derselben Rechnung
+    nirgends ein zweiter, abweichender Arbeitskostenbetrag.
+
+    Gibt IMMER ein dict zurück, auch wenn der Ausweis nicht möglich ist — das UI
+    soll den Grund nennen können, statt den Block wortlos verschwinden zu lassen:
+
+    - `grund=OFFENE_POSITIONEN` + `offen=[Positionsnummern]`, sobald eine
+      summenwirksame Position keinen bestimmten Anteil trägt.
+    - `grund=UNSTIMMIG`, wenn das Ergebnis kein Teil des Rechnungsbetrags ist
+      (siehe unten).
+    - Sonst Netto/Steuer/Brutto. Die Steuer wird **je Steuergruppe** gerundet (wie
+      die Kopfsteuer): bei einer reinen Lohnrechnung ist der ausgewiesene
+      Steuerbetrag damit exakt `tax_total`.
+
+    Beträge sind bei `bestimmbar=False` **None (unbekannt), nicht 0**.
+
+    **Die Belegprüfung ist nicht redundant zum DB-CHECK.** Der CHECK sichert je
+    POSITION, dass der Anteil ein Teil des Positionsbetrags ist. Auf BELEGEBENE
+    kann die Summe das trotzdem verletzen, weil die Anrechnung eines Abschlags
+    dessen Arbeitskosten wieder abzieht (`_anrechnung_lines`):
+
+    - Trug der Abschlag mehr Lohn, als die Schlussrechnung insgesamt abrechnet
+      (z. B. ein als ARBEITSZEIT erfasster Abschlag über 10.000 € bei nur 5.000 €
+      Lohnleistung), wäre der Ausweis **negativ**.
+    - War der Abschlag reines Material, kann der Lohnanteil den **Zahlbetrag der
+      Schlussrechnung übersteigen**.
+
+    Beides sind Aussagen, die auf keinem Beleg stehen dürfen — und beide entstehen
+    aus einem Erfassungsfehler in einem bereits veröffentlichten (und damit
+    unveränderlichen) Abschlag. Also: kein Ausweis, aber ein benannter Grund.
+    Ein Veröffentlichungsverbot wäre hier falsch — es machte die Schlussrechnung
+    dauerhaft unstellbar, obwohl ihre Beträge stimmen.
+
+    `show_labour_costs` wird hier NICHT geprüft — die Funktion sagt, was in dem
+    Beleg steckt; ob es aufs Papier kommt, entscheidet der Renderer.
+    """
+    def _unbestimmt(grund, offen=()):
+        return {
+            "bestimmbar": False,
+            "grund": grund,
+            "offen": list(offen),
+            "net_amount": None,
+            "tax_amount": None,
+            "gross_amount": None,
+        }
+
+    offen = []
+    gruppen = {}
+    for line in sorted(invoice.lines.all(), key=lambda l: l.position_number):
+        if line.line_type in TEXT_TYPES or line.line_kind != SUMMENWIRKSAM:
+            continue
+        if line.labour_net_amount is None:
+            offen.append(line.position_number)
+            continue
+        key = (line.tax_code_id, line.tax_rate_percent)
+        gruppen[key] = gruppen.get(key, Decimal("0.00")) + line.labour_net_amount
+    if offen:
+        return _unbestimmt(LOHN_OFFEN, offen)
+
+    netto = sum(gruppen.values(), Decimal("0.00"))
+    gesamt = invoice.net_total
+    # Ohne Belegsumme lässt sich die Aussage „darin enthalten" nicht prüfen —
+    # dann wird sie auch nicht behauptet (fail-closed; erreichbar nur über
+    # Altdaten oder einen Schreibweg an der Service-Schicht vorbei).
+    if gesamt is None or netto * gesamt < 0 or abs(netto) > abs(gesamt):
+        return _unbestimmt(LOHN_UNSTIMMIG)
+
+    steuer = sum(
+        (_round2(betrag * rate / Decimal(100)) for (_c, rate), betrag in gruppen.items()),
+        Decimal("0.00"),
+    )
+    return {
+        "bestimmbar": True,
+        "grund": None,
+        "offen": [],
+        "net_amount": netto,
+        "tax_amount": steuer,
+        "gross_amount": netto + steuer,
+    }
 
 
 def _stornierte_belege():
@@ -955,14 +1126,26 @@ def _anrechnung_lines(rows, abschlaege, start_position):
     Einzelpreis darf negativ sein). Für die AUSGABE (PDF/XML) legt
     `anzeige_menge_preis` das Vorzeichen auf die Menge — EN16931 verbietet
     negative Einzelpreise (BR-27), negative Mengen dagegen nicht.
+
+    **§ 35a:** Die Anrechnungsposition nimmt auch die Arbeitskosten des Abschlags
+    zurück (negativ, je Steuergruppe). Nur so weist die Schlussrechnung genau die
+    Arbeitskosten aus, die MIT IHR bezahlt werden — die des Abschlags standen auf
+    dem Abschlagsbeleg und wurden dort bereits geltend gemacht. Ohne den Abzug
+    zählte der Kunde dieselben Arbeitskosten zweimal. War der Anteil im Abschlag
+    unbestimmt, ist er es hier auch (die Unbestimmtheit propagiert bis in den
+    Ausweis der Schlussrechnung).
     """
     namen = {i.id: i for i in abschlaege}
+    arbeitskosten_je_abschlag = {i.id: _arbeitskosten_gruppen(i) for i in abschlaege}
     lines = []
     pos = start_position
     for row in rows:
         inv = namen[row["advance_invoice_id"]]
         pos += 1
         netto = row["net_amount"]
+        gruppe = arbeitskosten_je_abschlag[inv.id].get(
+            (row["tax_code_id"], row["tax_rate_percent"])
+        )
         datum = inv.invoice_date.strftime("%d.%m.%Y") if inv.invoice_date else "-"
         titel = (
             "Abschlagsrechnung"
@@ -985,6 +1168,7 @@ def _anrechnung_lines(rows, abschlaege, start_position):
                 "tax_code_id": row["tax_code_id"],
                 "tax_rate_percent": row["tax_rate_percent"],
                 "net_amount": -netto,
+                "labour_net_amount": (None if gruppe is None else -gruppe),
                 "advance_invoice_id": inv.id,
             }
         )
@@ -1099,6 +1283,7 @@ def create_invoice(
     payment_term_days=None,
     discount_percent=None,
     discount_days=None,
+    show_labour_costs=True,
     lines=None,
     rubriken=None,
     advance_invoice_ids=None,
@@ -1165,6 +1350,7 @@ def create_invoice(
             invoice_date=invoice_date,
             due_date=due_date,
             **bedingungen,
+            show_labour_costs=bool(show_labour_costs),
             net_total=net_total,
             tax_total=tax_total,
             gross_total=gross_total,
@@ -1345,7 +1531,13 @@ def add_invoice_party(
 # Belege werden nicht rehasht (das wäre eine nachträgliche Änderung an einem
 # festgeschriebenen Beleg). Leser (Beleg-PDF, ZUGFeRD) müssen deshalb den
 # Live-Fallback für Altbelege behalten.
-SNAPSHOT_VERSION = 2
+#
+# `SNAPSHOT_VERSION = 3` friert zusätzlich den § 35a-Arbeitskostenanteil je
+# Position ein (Migration 0076). Er steht auf dem Kundenbeleg und ist damit Teil
+# dessen, was der Beleg aussagt — ohne ihn ließe sich der ausgewiesene
+# Steuerbonus aus dem Snapshot nicht rekonstruieren. Altbelege tragen den
+# Schlüssel nicht; sie weisen (korrekterweise) auch keine Arbeitskosten aus.
+SNAPSHOT_VERSION = 3
 
 # Reihenfolge = Vorrang bei der Adresswahl für den Beleg: die Rechnungsadresse
 # schlägt die Geschäfts-/Post-/Privatadresse.
@@ -1581,6 +1773,9 @@ def _line_snapshot(line, rubrik_nummern=None):
         "tax_code": line.tax_code_id,
         "tax_rate_percent": s(line.tax_rate_percent),
         "net_amount": s(line.net_amount),
+        # § 35a-Anteil (SNAPSHOT_VERSION 3): steht auf dem Kundenbeleg, gehört
+        # also in den gehashten Inhalt. None = unbestimmt (kein Ausweis).
+        "labour_net_amount": s(line.labour_net_amount),
     }
 
 
@@ -1877,6 +2072,13 @@ def _negated_lines(origin_lines, positions=None):
                 "tax_code_id": line.tax_code_id,
                 "tax_rate_percent": line.tax_rate_percent,
                 "net_amount": net,
+                # Der § 35a-Anteil kehrt sich mit dem Betrag um: die Gutschrift
+                # nimmt genau die Arbeitskosten zurück, die die Ursprungsrechnung
+                # ausgewiesen hat. War er dort unbestimmt, bleibt er es hier —
+                # eine Umkehr erfindet keine Bestimmtheit.
+                "labour_net_amount": (
+                    None if line.labour_net_amount is None else -line.labour_net_amount
+                ),
             }
         )
 
@@ -1932,6 +2134,10 @@ def _create_credit(actor_app_user_id, origin, *, invoice_type, positions):
             reference_invoice_id=origin.id,
             status="ENTWURF",
             invoice_date=origin.invoice_date,
+            # Der Ausweis folgt dem Ursprung: das Storno einer B2B-Rechnung trägt
+            # keinen § 35a-Block, das einer Privatkundenrechnung nimmt genau den
+            # dort ausgewiesenen Betrag wieder zurück.
+            show_labour_costs=origin.show_labour_costs,
             net_total=net,
             tax_total=tax,
             gross_total=gross,
