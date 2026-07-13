@@ -57,11 +57,51 @@ export const ANSICHTEN: { wert: Ansicht; label: string }[] = [
   { wert: 'monat', label: '4 Wochen' },
 ];
 
-/** Stundenraster der Tagesansicht (Betriebszeit). Hero macht das konfigurierbar;
- * wir zeigen fest 06–20 Uhr — das deckt jede Handwerkerschicht ab, und ein
- * Termin außerhalb wird an den Rand geklemmt (nie verschluckt, s. `spanne`). */
+/**
+ * Das **Zeitband** eines Tages: die Stunden, die das Raster zeigt.
+ *
+ * 06–20 Uhr ist die Grundeinstellung — sie deckt jede Handwerkerschicht ab. Das
+ * Band **wächst aber mit den Daten** (`zeitBand`): Liegt ein Notdiensttermin um
+ * 22:30, reicht das Band an diesem Board bis 23 Uhr. Ein Termin wird also NIE an
+ * den Rand geklemmt und nie verschluckt — er verschiebt die Skala.
+ */
 const TAG_VON = 6;
 const TAG_BIS = 20;
+
+/**
+ * Mindestbreite eines Balkens, als Anteil des Zeitbands.
+ *
+ * Ein 15-Minuten-Termin wäre in einer Wochenansicht sonst ein Haarstrich und
+ * praktisch weder lesbar noch greifbar (Drag&Drop, Tap-Ziel ≥ 24 px, WCAG 2.5.8).
+ * Er wird deshalb auf diese Breite **aufgerundet — nach RECHTS**, damit sein
+ * Beginn an der richtigen Stelle der Skala steht. Die Uhrzeit steht ohnehin als
+ * Text auf der Kachel: Die Skala ist eine Orientierung, keine Messlatte.
+ */
+const MIN_BALKEN_ANTEIL = 0.08;
+
+/**
+ * Dasselbe für die Tagesansicht, wo eine Spalte EINE STUNDE ist: 25 % = 15 min.
+ *
+ * Bewusst klein. Die 24-px-Zielgröße (WCAG 2.5.8) garantiert ohnehin die
+ * CSS-`min-width` der Kachel — verzerrungsfrei und ohne den Beginn zu
+ * verschieben. Ein großzügiger Anteil hier bläht dagegen einen 15-Minuten-Termin
+ * auf eine Dreiviertelstunde auf und lügt über die Dauer (Review-Fund).
+ */
+const MIN_ANTEIL_TAG = 0.25;
+
+/**
+ * Mindestbreite einer Stunde in der Tages-Spalte (Woche/2W/4W).
+ *
+ * Der Wert ist ein Kompromiss, und zwar ein bewusster: Bei 1,1 rem ist eine
+ * 14-Stunden-Spalte gut 15 rem breit — eine **ganze Woche passt damit auf einen
+ * üblichen Bildschirm**, und ein Zwei-Stunden-Termin ist immer noch ~35 px breit
+ * (bei 3 rem/Stunde wäre er lesbar, aber man sähe nur noch drei Tage).
+ *
+ * Es ist eine MINDEST-breite: Ist mehr Platz da, dehnen sich die Spalten
+ * (`minmax(…, 1fr)`). Reicht er nicht, scrollt das Board waagerecht — das ist
+ * ehrlicher, als die Zeit zu stauchen.
+ */
+const STUNDE_REM = 1.1;
 
 /** Eine Spalte des Rasters: ein Tag (Wochen-/Monatsansicht) oder eine Stunde
  * (Tagesansicht). Beides verhält sich beim Ziehen, Ablegen und Navigieren gleich. */
@@ -87,6 +127,21 @@ type Balken = {
   /** Ragt der Einsatz über den linken/rechten Rand des Fensters hinaus? */
   offenLinks: boolean;
   offenRechts: boolean;
+  /**
+   * Position INNERHALB der belegten Spalten, in Prozent ihrer Gesamtbreite.
+   *
+   * Ohne das füllte ein Termin von 7–9 Uhr die ganze Tagesspalte und sähe aus wie
+   * ein Ganztagestermin — und zwei Termine am selben Tag stapelten sich
+   * übereinander, statt nebeneinander auf ihrer Uhrzeit zu liegen. Prozentuale
+   * Ränder eines Grid-Items lösen sich gegen seine **Grid-Area** auf; die Balken
+   * bleiben damit an die Spalten gebunden (Drag&Drop, Tastatur, Sperrflächen
+   * rechnen unverändert in Spalten) und liegen trotzdem zeitgenau.
+   */
+  insetLinks: number;
+  insetRechts: number;
+  /** Absolute Zeitgrenzen (ms) — für die zeitgenaue Reihen-Packung. */
+  startMs: number;
+  endeMs: number;
 };
 
 /** Abwesenheitsband in einer Mitarbeiter-Bahn (Sperrfläche, nicht anklickbar). */
@@ -115,6 +170,25 @@ const STATUS_MOD: Record<ServiceJobStatus, string> = {
   AUSGEFALLEN: 'aus',
 };
 
+/**
+ * Vier-Zeichen-Kurzform des Status für die Kachelmarke.
+ *
+ * Sie bleibt in JEDER Kachelbreite stehen — auch dort, wo die Container-Query
+ * den vollen Statustext ausblendet. Ohne sie bliebe der Status an einer schmalen
+ * Kachel allein an der Farbe hängen, und die Projektregel sagt: nie nur Farbe.
+ */
+const STATUS_KURZ: Record<ServiceJobStatus, string> = {
+  UNGEPLANT: 'OFFN',
+  GEPLANT: 'PLAN',
+  BESTAETIGT: 'BEST',
+  UNTERWEGS: 'FAHRT',
+  VOR_ORT: 'VORT',
+  PAUSIERT: 'PAUS',
+  ABGESCHLOSSEN: 'FERT',
+  NACHARBEIT: 'NACH',
+  AUSGEFALLEN: 'AUSF',
+};
+
 function isoVon(d: Date): string {
   const m = `${d.getMonth() + 1}`.padStart(2, '0');
   const t = `${d.getDate()}`.padStart(2, '0');
@@ -129,6 +203,17 @@ function heuteIso(): string {
 function tagBeginn(iso: string): Date {
   const [y, m, d] = iso.split('-').map(Number);
   return new Date(y, m - 1, d, 0, 0, 0, 0);
+}
+
+/**
+ * Mitternacht (Ortszeit) des Tages, auf den ein Zeitpunkt fällt.
+ *
+ * NICHT `tagBeginn(d.toISOString())`: Das zerlegt einen ISO-String am
+ * Bindestrich und bekäme aus „2026-07-14T05:00:00Z“ zwar Jahr und Monat, aber
+ * als Tag „14T05:00:00Z“ → NaN. Und es wäre der UTC-Tag, nicht der lokale.
+ */
+function tagBeginnVon(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
 }
 
 function plusTage(iso: string, n: number): string {
@@ -226,6 +311,118 @@ export class Plantafel {
   });
 
   /**
+   * Das Zeitband des Boards (Stunden), abgeleitet aus den sichtbaren Terminen.
+   *
+   * Grundlage ist die Betriebszeit 06–20 Uhr; ein Termin außerhalb **weitet das
+   * Band**, statt an den Rand geklemmt zu werden. Ein Notdienst um 22:30 macht
+   * die Skala also bis 23 Uhr auf — für ALLE Spalten gleich, sonst wären die Tage
+   * nicht mehr vergleichbar.
+   */
+  protected readonly zeitBand = computed<{ von: number; bis: number }>(() => {
+    const s = this.state();
+    let von = TAG_VON;
+    let bis = TAG_BIS;
+    if (s.kind === 'ready') {
+      for (const job of s.data.jobs) {
+        const a = new Date(job.scheduled_start);
+        von = Math.min(von, a.getHours());
+        // Ein Termin OHNE Ende bekommt keine erfundene Dauer — nur sein Beginn
+        // zählt fürs Band (die Kachel trägt dafür den Konflikt „Kein Ende").
+        if (!job.scheduled_end) continue;
+        const e = new Date(job.scheduled_end);
+        // Ein Ende exakt um MITTERNACHT gehört noch zum Vortag (24:00) — es macht
+        // den Termin nicht mehrtägig. Sonst risse ein gewöhnlicher „bis 24 Uhr"-
+        // Einsatz das Band unnötig auf volle 24 Stunden auf.
+        const endetUmMitternacht = e.getHours() === 0 && e.getMinutes() === 0;
+        const endTag = endetUmMitternacht
+          ? tagBeginnVon(new Date(e.getTime() - 1))
+          : tagBeginnVon(e);
+
+        if (endTag.getTime() !== tagBeginnVon(a).getTime()) {
+          // Der Termin läuft ECHT über Mitternacht (Nachtdienst). Das Band wird
+          // bis 24 Uhr geöffnet, damit sein Abendteil sichtbar ist — aber der
+          // Anfang bleibt bei 6 Uhr. Ihn ebenfalls auf 0 zu öffnen, machte JEDE
+          // Tagesspalte 24 Stunden breit; ein einziger Notdienst halbierte damit
+          // die Zahl der Tage, die auf den Schirm passen. Der Preis für den
+          // Regelfall wäre zu hoch. Der Nachtteil des Folgetags (00–06 Uhr) liegt
+          // dann vor dem Band; der Balken endet sichtbar an der Mitternachtskante,
+          // und die volle Spanne steht im Tooltip.
+          bis = 24;
+          continue;
+        }
+        const endeStunde = endetUmMitternacht
+          ? 24
+          : e.getHours() + (e.getMinutes() > 0 ? 1 : 0);
+        bis = Math.max(bis, endeStunde);
+      }
+    }
+    return { von: Math.max(0, von), bis: Math.min(24, bis) };
+  });
+
+  /**
+   * Mindestbreite eines Balkens als Anteil SEINER GRID-AREA.
+   *
+   * Sie muss zur Spaltenlänge passen: In der Tagesansicht ist eine Spalte eine
+   * Stunde (ein Viertelstundentermin wäre 12 px — unter der 24-px-Zielgröße nach
+   * WCAG 2.5.8), in den Tages-Spalten das ganze Zeitband.
+   */
+  private minAnteil(): number {
+    return this.ansicht() === 'tag' ? MIN_ANTEIL_TAG : MIN_BALKEN_ANTEIL;
+  }
+
+  /** Die Mindestbreite in ECHTER Zeit — die Reihen-Packung muss dieselbe
+   *  Geometrie annehmen wie das Rendering, sonst überlappen die Kacheln wieder. */
+  private minDauerMs(): number {
+    return this.ansicht() === 'tag'
+      ? MIN_ANTEIL_TAG * 3_600_000
+      : MIN_BALKEN_ANTEIL * this.bandStunden() * 3_600_000;
+  }
+
+  /** Stunden im Band — die Zahl der Teilstriche je Tagesspalte. */
+  protected readonly bandStunden = computed(() => this.zeitBand().bis - this.zeitBand().von);
+
+  /**
+   * Mindestbreite einer Spalte.
+   *
+   * In den Tages-Spalten (Woche/2W/4W) trägt eine Spalte das ganze Zeitband —
+   * sie braucht **Platz je Stunde**, sonst wäre ein Zwei-Stunden-Termin ein
+   * Strich und die Skala Dekoration. Passt der Zeitraum damit nicht mehr auf den
+   * Schirm, scrollt das Board waagerecht; das ist ehrlicher, als die Zeit zu
+   * stauchen. In der Tagesansicht IST eine Spalte eine Stunde — dort genügt die
+   * bisherige Mindestbreite.
+   */
+  protected readonly spaltenbreite = computed(() =>
+    this.ansicht() === 'tag'
+      ? '3rem'
+      : `${(this.bandStunden() * STUNDE_REM).toFixed(1)}rem`,
+  );
+
+  /**
+   * Die Teilstriche der Zeitskala (Kopfzeile und Zellenraster). Bei vielen
+   * Stunden wird ausgedünnt — eine Skala, die man nicht lesen kann, ist Dekoration.
+   */
+  protected readonly bandTicks = computed<{ stunde: number; label: string; stark: boolean }[]>(
+    () => {
+      const { von, bis } = this.zeitBand();
+      const n = bis - von;
+      // In der Tagesansicht IST jede Spalte eine Stunde — dort braucht es keine
+      // Unterteilung innerhalb der Spalte.
+      if (this.ansicht() === 'tag') return [];
+      const schritt = n <= 8 ? 1 : n <= 16 ? 2 : 3;
+      const out: { stunde: number; label: string; stark: boolean }[] = [];
+      for (let h = von; h < bis; h++) {
+        const beschriftet = (h - von) % schritt === 0;
+        out.push({
+          stunde: h,
+          label: beschriftet ? `${h}` : '',
+          stark: beschriftet,
+        });
+      }
+      return out;
+    },
+  );
+
+  /**
    * Die Spalten des Rasters. In der Tagesansicht sind es STUNDEN, sonst TAGE —
    * für alles Weitere (Ziehen, Ablegen, Tastatur) ist eine Spalte eine Spalte.
    */
@@ -235,13 +432,14 @@ export class Plantafel {
     if (this.ansicht() === 'tag') {
       const iso = this.anker();
       const basis = tagBeginn(iso);
-      return Array.from({ length: TAG_BIS - TAG_VON }, (_, i) => {
+      const { von, bis } = this.zeitBand();
+      return Array.from({ length: bis - von }, (_, i) => {
         const start = new Date(basis);
-        start.setHours(TAG_VON + i);
+        start.setHours(von + i);
         return {
           start,
           dayIso: iso,
-          kopf: `${`${TAG_VON + i}`.padStart(2, '0')}:00`,
+          kopf: `${`${von + i}`.padStart(2, '0')}:00`,
           sub: '',
           isToday: iso === heute,
           isWeekend: [0, 6].includes(basis.getDay()),
@@ -356,7 +554,10 @@ export class Plantafel {
    * liefert null. Ein Einsatz OHNE Ende belegt genau eine Spalte — geraten wird
    * keine Dauer (die Kachel trägt dafür den Konflikt „Kein Ende").
    */
-  private spanne(startIso: string, endIso: string | null): Omit<Balken, 'job' | 'reihe'> | null {
+  private spanne(
+    startIso: string,
+    endIso: string | null,
+  ): Omit<Balken, 'job' | 'reihe'> | null {
     const slots = this.slots();
     const { start: fVon, ende: fBis } = this.fenster();
     const ms = this.slotMs();
@@ -378,12 +579,133 @@ export class Plantafel {
       bis = Math.min(slots.length, Math.max(von + 1, rohBis));
     }
     if (bis <= 0 || von >= slots.length) return null;
+    const span = Math.max(1, bis - von);
+
+    const offenLinks = roh < 0;
+    const offenRechts = !!e && e.getTime() > fBis.getTime();
+    const [insetLinks, insetRechts] = this.insets(
+      s, e, von, span, offenLinks, offenRechts,
+    );
     return {
       von,
-      span: Math.max(1, bis - von),
-      offenLinks: roh < 0,
-      offenRechts: !!e && e.getTime() > fBis.getTime(),
+      span,
+      offenLinks,
+      offenRechts,
+      insetLinks,
+      insetRechts,
+      startMs: s.getTime(),
+      // Ohne Ende gibt es keine Dauer — für die Reihen-Packung zählt dann nur der
+      // Beginn (ein erfundenes Ende wäre eine Behauptung über die Arbeitszeit).
+      endeMs: e ? e.getTime() : s.getTime(),
     };
+  }
+
+  /**
+   * Die zeitgenaue Position eines Balkens INNERHALB seiner Spalten, in Prozent.
+   *
+   * In der Tagesansicht ist eine Spalte bereits eine Stunde — dort liegt der
+   * Balken exakt auf der Minute. In den Tages-Spalten (Woche/2W/4W) bildet das
+   * **Zeitband** (z. B. 06–20 Uhr) die Zellenbreite ab: Ein Termin von 7–9 Uhr
+   * beginnt bei einem Vierzehntel und ist zwei Vierzehntel breit — statt die
+   * ganze Zelle zu füllen und wie ein Ganztagestermin auszusehen.
+   *
+   * Ein Termin außerhalb des Bandes kann nicht auftreten: Das Band wächst mit den
+   * Daten (`zeitBand`).
+   */
+  private insets(
+    s: Date,
+    e: Date | null,
+    von: number,
+    span: number,
+    offenLinks: boolean,
+    offenRechts: boolean,
+  ): [number, number] {
+    const slots = this.slots();
+    if (this.ansicht() === 'tag') {
+      // Stunden-Spalten: der Anteil bezieht sich auf die Stunde selbst.
+      const ms = this.slotMs();
+      const spaltenStart = slots[von].start.getTime();
+      const links = Math.max(0, (s.getTime() - spaltenStart) / ms);
+      const rechtsKante = slots[von + span - 1].start.getTime() + ms;
+      const rechts = e ? Math.max(0, (rechtsKante - e.getTime()) / ms) : 0;
+      return this.klemmen(links / span, rechts / span, span);
+    }
+
+    const { von: bandVon, bis: bandBis } = this.zeitBand();
+
+    /**
+     * Anteil des Zeitbands, an dem `d` innerhalb der Spalte `spalte` liegt.
+     *
+     * **Gegen den Tag DER SPALTE gerechnet, nicht gegen den Tag von `d`.** Sonst
+     * (Review-Fund, reproduziert):
+     * - stünde ein Termin, der von Sonntag 22:00 in den Montag hineinragt, bei
+     *   88 % der MONTAGSSPALTE — also abends statt an der linken Kante;
+     * - kollabierte ein Termin, der um Mitternacht endet, auf die Mindestbreite,
+     *   weil Mitternacht schon zum FOLGETAG gehört (ein 16-Stunden-Termin als
+     *   25-Pixel-Stummel).
+     *
+     * Bandgrenzen werden als LOKALE Datumswerte gebaut, nicht per
+     * Millisekunden-Addition: An den Umstellungstagen hat ein Tag 23 bzw. 25
+     * Stunden, und jeder Balken stünde sonst eine Stunde falsch (dieselbe
+     * Wanduhr-Invariante wie im Backend).
+     */
+    const anteilIn = (spalte: number, d: Date): number => {
+      const tag = slots[spalte].start;
+      const y = tag.getFullYear();
+      const m = tag.getMonth();
+      const t = tag.getDate();
+      const bandStart = new Date(y, m, t, bandVon, 0, 0, 0).getTime();
+      // `bandBis === 24` läuft sauber auf 00:00 des Folgetags über.
+      const bandEnde = new Date(y, m, t, bandBis, 0, 0, 0).getTime();
+      const len = bandEnde - bandStart;
+      if (len <= 0) return 0;
+      return Math.min(1, Math.max(0, (d.getTime() - bandStart) / len));
+    };
+
+    // Geklemmte Ränder liegen AUF der Fensterkante — dort gibt es keinen Anteil
+    // zu rechnen (die Fortsetzungsmarke ‹ / › sagt, dass es weitergeht).
+    const links = offenLinks ? 0 : anteilIn(von, s);
+    let rechts: number;
+    if (!e) {
+      // Ohne Ende: eine schmale Marke am Beginn, KEINE geratene Dauer.
+      rechts = Math.max(0, 1 - links - this.minAnteil());
+    } else if (offenRechts) {
+      rechts = 0;
+    } else {
+      rechts = 1 - anteilIn(von + span - 1, e);
+    }
+    return this.klemmen(links / span, Math.max(0, rechts) / span, span);
+  }
+
+  /**
+   * Ränder so beschneiden, dass der Balken sichtbar und greifbar bleibt.
+   *
+   * Ein 15-Minuten-Termin wäre sonst ein Haarstrich — nicht lesbar, nicht
+   * anfassbar (WCAG 2.5.8 verlangt 24 px Zielgröße). Er wächst deshalb nach
+   * RECHTS über seine Zeit hinaus; sein BEGINN bleibt an der richtigen Stelle,
+   * und die Uhrzeit steht als Text auf der Kachel. Die Skala ist eine
+   * Orientierung, keine Messlatte — das ist bewusst so.
+   */
+  private klemmen(links: number, rechts: number, span: number): [number, number] {
+    let l = Math.min(Math.max(links, 0), 1);
+    let r = Math.min(Math.max(rechts, 0), 1);
+    // Die Ränder sind Anteile der GRID-AREA (also `span` Spalten breit), die
+    // Mindestbreite meint aber EINE Spalte — sonst bliese ein Balken über zwei
+    // Spalten auf die doppelte Mindestbreite auf und schöbe dabei seinen Beginn
+    // nach links (Review-Fund: ein 30-Minuten-Termin wurde in der Tagesansicht
+    // als 08:30–10:00 gezeichnet). Die Reihen-Packung rechnet mit derselben
+    // Dauer (`minDauerMs`), damit beide dieselbe Geometrie annehmen.
+    const min = this.minAnteil() / span;
+    if (1 - l - r < min) {
+      // Zuerst nach rechts wachsen — der BEGINN soll an der richtigen Stelle der
+      // Skala bleiben.
+      r = Math.max(0, 1 - l - min);
+      // Am rechten Bandrand (z. B. 19:45–20:00) ist rechts schon 0; dann muss der
+      // Balken nach LINKS wachsen, sonst bliebe er ein 6-Pixel-Strich und wäre
+      // weder lesbar noch greifbar (WCAG 2.5.8).
+      if (1 - l - r < min) l = Math.max(0, 1 - r - min);
+    }
+    return [l * 100, r * 100];
   }
 
   /**
@@ -423,15 +745,28 @@ export class Plantafel {
     // platzierten kollidiert. Ohne das lägen gleichzeitige Termine übereinander
     // und einer wäre schlicht unsichtbar — bei einer Doppelbelegung genau der
     // Fall, den man sehen MUSS.
+    //
+    // Die Kollision wird über die ZEIT geprüft, nicht über die Spalten: Zwei
+    // Termine am selben Tag (8–10 und 13–15 Uhr) belegen dieselbe Tagesspalte,
+    // überschneiden sich aber nicht — sie gehören NEBENEINANDER auf ihre Uhrzeit,
+    // nicht untereinander. Nur so zeigt eine Bahn, was ein Monteur an einem Tag
+    // wirklich zu tun hat.
+    // **Die Packung muss dieselbe Geometrie annehmen wie das Rendering.**
+    // `klemmen()` zieht kurze Termine auf eine Mindestbreite auf (sonst wären sie
+    // Haarstriche). Rechnete die Packung mit der ECHTEN Dauer, hielte sie einen
+    // 8:00–8:30-Termin und einen 9:00–10:00-Termin für überschneidungsfrei — der
+    // erste würde aber bis 9:07 gezeichnet und läge über dem zweiten. Genau der
+    // Fall, den die Packung verhindern soll (Review-Fund).
+    const minMs = this.minDauerMs();
     for (const balken of map.values()) {
-      balken.sort((a, b) => a.von - b.von || b.span - a.span);
+      balken.sort((a, b) => a.startMs - b.startMs || b.endeMs - a.endeMs);
       const belegt: { von: number; bis: number }[][] = [];
       for (const b of balken) {
-        const bis = b.von + b.span;
+        const bis = Math.max(b.endeMs, b.startMs + minMs);
         let reihe = 0;
-        while (belegt[reihe]?.some((x) => b.von < x.bis && x.von < bis)) reihe++;
+        while (belegt[reihe]?.some((x) => b.startMs < x.bis && x.von < bis)) reihe++;
         belegt[reihe] ??= [];
-        belegt[reihe].push({ von: b.von, bis });
+        belegt[reihe].push({ von: b.startMs, bis });
         b.reihe = reihe;
       }
     }
@@ -989,6 +1324,20 @@ export class Plantafel {
     return this.kategorien().find((k) => k.id === katId)?.default_duration_minutes ?? null;
   }
 
+  /**
+   * Die Zeitspanne eines Termins als Text — für Tooltip und `aria-label`.
+   *
+   * Sie MUSS dort stehen: Bei schmalen Kacheln blendet die Container-Query die
+   * Endzeit (und bei sehr kurzen Terminen auch die Anfangszeit) aus. Was hier
+   * fehlte, wäre dann nirgends mehr abrufbar — weder mit der Maus noch mit dem
+   * Screenreader.
+   */
+  spanneText(job: BoardJob): string {
+    const von = this.zeit(job.scheduled_start);
+    if (!job.scheduled_end) return `ab ${von} (kein Ende gepflegt)`;
+    return `${von}–${this.zeit(job.scheduled_end)}`;
+  }
+
   /** Minuten menschenlesbar: 90 → „1 h 30 min". */
   dauerText(minuten: number): string {
     const h = Math.floor(minuten / 60);
@@ -1493,6 +1842,18 @@ export class Plantafel {
 
   statusLabel(s: ServiceJobStatus): string {
     return serviceJobStatusLabel(s);
+  }
+
+  /**
+   * Kurzform des Status für die Kachelmarke — sie bleibt in JEDER Breite stehen.
+   *
+   * Die Projektregel ist eindeutig: **Status nie nur über Farbe** (WCAG 1.4.1).
+   * Blendete die Container-Query den vollen Statustext aus, bliebe an einer
+   * schmalen Kachel nur die Rahmenfarbe — genau das, was verboten ist. Vier
+   * Zeichen passen auch in einen 2-Stunden-Balken.
+   */
+  statusKurz(s: ServiceJobStatus): string {
+    return STATUS_KURZ[s] ?? '—';
   }
   statusMod(s: ServiceJobStatus): string {
     return STATUS_MOD[s] ?? 'neutral';

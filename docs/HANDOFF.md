@@ -592,15 +592,46 @@ Vier Slices, parallel gebaut, geteilte Dateien → **ein** Commit. Migrationen
     - Ein zweites „Wiederholen" **verlängert** die Reihe, statt sie neu auszurollen
       (Review-Fund: es erzeugte Dubletten auf denselben Tagen).
 
+18. ✔ **Plantafel Stufe 1, Welle B** (`ceb1aac`, Migration 0078/0079): **Qualifikationen**
+    (frei pflegbarer Katalog — `kind` ist ein DATENWERT ohne CHECK, Gewerk/Zertifikat/
+    Herstellerschulung liegen in derselben Tabelle) und **Zuweisungs-Vorlagen** (lose
+    Gruppen als Vorschlag, **kein Team-Modell** — User-Entscheidung).
+    - **INVARIANTE: Der Abgleich WARNT, er BLOCKIERT NICHT** (wie die Doppelbelegung).
+    - **INVARIANTE: Stichtag ist der TERMINBEGINN in ORTSZEIT** — nicht „heute", nicht
+      der UTC-Tag.
+    - **DSGVO:** Katalog + Bedarf = `workflow`, NACHWEIS = `hr`. Das Board zeigt die
+      FOLGE („kein Nachweis für X"), **nicht** das Gültig-bis aus der Personalakte.
+19. ✔ **Zeitskala der Plantafel** (User-Meldung: „ein 7–9-Uhr-Termin sieht aus, als ginge
+    er den ganzen Tag"). In der Wochenansicht ist eine Spalte ein TAG — die Balken sind
+    jetzt **zeitgenau innerhalb der Spalte** positioniert (prozentuale Margins gegen die
+    Grid-Area), der Tag ist sichtbar in Stunden unterteilt, und die Reihen-Packung läuft
+    über die **Zeit** statt über Spalten: Zwei Termine am selben Tag liegen nebeneinander
+    auf ihrer Uhrzeit, nicht übereinander.
+    - **INVARIANTE: gegen den Tag DER SPALTE rechnen, nicht gegen den Tag des Termins.**
+      Sonst stand ein Termin, der von Sonntag in den Montag ragt, bei 88 % der
+      Montagsspalte, und ein Termin, der um Mitternacht endet, kollabierte auf die
+      Mindestbreite (16 Stunden als 25-Pixel-Stummel).
+    - **INVARIANTE: Die Reihen-Packung muss dieselbe Geometrie annehmen wie das
+      Rendering.** Kurze Termine werden auf eine Mindestbreite geklemmt; rechnete die
+      Packung mit der echten Dauer, überlappten die Kacheln wieder.
+    - **INVARIANTE: Konflikt- und Statusmarke bleiben in JEDER Kachelbreite sichtbar.**
+      Die Container-Query blendet bei schmalen Kacheln Titel, Ort und Chips aus — Status
+      und Konflikt nie, sonst hinge beides nur noch an der Farbe (Projektregel).
+    - **Bewusst vertagt (notiert, nicht vergessen):** (a) In der **Tagesansicht** baut
+      `slots()` die Stundenspalten per `setHours` — öffnet ein Nachttermin das Band auf
+      0–24, sitzt an den zwei Zeitumstellungstagen jeder Balken eine Spalte daneben.
+      (b) Die Kachel-Aktionen („Verschieben"/„Bearbeiten") hängen an `:hover`/
+      `:focus-within` — auf **Touch** sind sie vom Board aus nicht erreichbar (Umweg über
+      die Einsatz-Mappe). Beide brauchen einen eigenen kleinen Slice.
+
 **★ NÄCHSTE SCHRITTE (offen).** Zuerst das, was auf Externe wartet, sichtbar halten:
 
 **Noch offen, ableitbar (selbst entscheidbar):**
-- **Plantafel Stufe 1, Welle B:** **Kolonnen-/Team-Modell**, **Skill-Matching**,
-  **Board-Einstellungen**. Alle drei führen eine **neue Fachdomäne** ein (es gibt im
-  Schema NICHTS dazu: keine Qualifikation, kein Team; `company.trade` ist eine Codeliste,
-  die an nichts hängt). **Erst die fachliche Frage klären:** Arbeitet der Betrieb in
-  festen Kolonnen? Welche Qualifikationen sind planungsrelevant? Ohne Antwort baut man
-  eine Struktur, die niemand pflegt.
+- **Die zwei vertagten Punkte der Zeitskala** (siehe 19: DST in der Tagesansicht,
+  Touch-Erreichbarkeit der Kachel-Aktionen).
+- **Board-Einstellungen** (der letzte offene Teil von „Plantafel Stufe 1"): Es gibt keine
+  User-Preference-Struktur im Schema. Erst klären, ob die Einstellungen **firmenweit**
+  (`company.company_profile`) oder **je Benutzer** gehören.
 - **XRechnung** (reines XML, B2G/Leitweg-ID) — optional, User hat 1–2×/Jahr öffentliche
   Auftraggeber. Das CII-Mapping steht bereits.
 - **Vier-Augen auf weitere Aktionen ausrollen** (Dubletten-Merge, Massenexport,

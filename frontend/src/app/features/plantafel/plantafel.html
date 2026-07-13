@@ -279,7 +279,17 @@
           <div class="board-wrap">
             <!-- Der Fokus liegt beim Verschieben auf der Zielzelle; das Tastenevent
                  blubbert hierher. -->
-            <div class="board" (keydown)="boardTaste($event)">
+            <!-- `--spaltenbreite` koppelt die Tagesspalte an das Zeitband: Eine
+                 Stunde bekommt eine lesbare Mindestbreite, damit die Skala trägt
+                 (ein Zwei-Stunden-Termin wäre sonst ein Strich). Passt die Woche
+                 damit nicht mehr auf den Schirm, scrollt das Board waagerecht —
+                 das ist ehrlicher, als die Zeit zu stauchen. -->
+            <div
+              class="board"
+              [style.--stunden]="bandStunden()"
+              [style.--spaltenbreite]="spaltenbreite()"
+              (keydown)="boardTaste($event)"
+            >
               <!-- Kopfzeile: Tage bzw. Stunden -->
               <div class="board__zeile board__zeile--kopf" [style.--slots]="slots().length">
                 <div class="board__ecke">Bahn</div>
@@ -299,6 +309,23 @@
                         <!-- Feiertag als TEXT, nicht nur als Farbfläche (WCAG 1.4.1). -->
                         <span class="slotkopf__feiertag" [title]="slot.feiertag">
                           <span aria-hidden="true">★</span> {{ slot.feiertag }}
+                        </span>
+                      }
+
+                      <!-- ZEITSKALA: Der Tag ist in Stunden unterteilt. Ohne sie
+                           sähe ein Termin von 7–9 Uhr aus wie ein Ganztagestermin,
+                           und mehrere Termine am Tag wären nicht auseinander-
+                           zuhalten. In der Tagesansicht IST jede Spalte eine
+                           Stunde — dort entfällt die Unterteilung. -->
+                      @if (bandTicks().length) {
+                        <span class="skala" aria-hidden="true">
+                          @for (t of bandTicks(); track t.stunde) {
+                            <span class="skala__tick" [class.skala__tick--stark]="t.stark">
+                              @if (t.label) {
+                                <span>{{ t.label }}</span>
+                              }
+                            </span>
+                          }
                         </span>
                       }
                     </div>
@@ -343,6 +370,7 @@
                       <div
                         class="zelle"
                         [style.grid-column]="si + 1"
+                        [class.zelle--stunden]="bandTicks().length > 0"
                         [class.is-today]="slot.isToday"
                         [class.is-frei]="slot.isWeekend"
                         [class.is-feiertag]="!!slot.feiertag"
@@ -400,7 +428,13 @@
                       </div>
                     }
 
-                    <!-- Die Termin-Balken (mehrtägig = mehrspaltig) -->
+                    <!-- Die Termin-Balken (mehrtägig = mehrspaltig).
+                         `margin-left/right` in PROZENT setzt sie zeitgenau
+                         INNERHALB ihrer Spalten: Prozentuale Ränder eines
+                         Grid-Items lösen sich gegen seine Grid-Area auf. Ein
+                         7–9-Uhr-Termin füllt damit nicht mehr die ganze
+                         Tagesspalte, und zwei Termine am selben Tag liegen
+                         nebeneinander auf ihrer Uhrzeit. -->
                     @for (b of balken(lane); track b.job.id) {
                       <div
                         class="tile tile--{{ statusMod(b.job.status) }}"
@@ -410,35 +444,72 @@
                         [class.tile--offen-rechts]="b.offenRechts"
                         [style.grid-column]="b.von + 1 + ' / span ' + b.span"
                         [style.grid-row]="b.reihe + 1"
+                        [style.margin-left.%]="b.insetLinks"
+                        [style.margin-right.%]="b.insetRechts"
                         [attr.draggable]="darfUmplanen() && !busy() ? 'true' : null"
                         (dragstart)="dragStart($event, { art: 'board', job: b.job, lane })"
                         (dragend)="dragEnde()"
                       >
+                        <!-- `title` und `aria-label` tragen die VOLLE Angabe. Sie
+                             müssen es: Bei schmalen Kacheln blendet die
+                             Container-Query Endzeit, Titel, Ort und Chips aus —
+                             was hier fehlte, wäre nirgends mehr abrufbar. -->
                         <a
                           class="tile__link"
                           draggable="false"
                           [routerLink]="['/planung', b.job.id]"
                           [title]="
-                            b.job.job_number + ' · ' + b.job.title +
+                            b.job.job_number + ' · ' + b.job.title + ' · ' +
+                            spanneText(b.job) +
+                            (b.job.property_name ? ' · ' + b.job.property_name : '') +
+                            (b.job.is_free ? ' · Freier Termin' : '') +
+                            (b.job.series_id ? ' · Serientermin' : '') +
+                            (b.job.category ? ' · ' + b.job.category.name : '') +
+                            ' · ' + statusLabel(b.job.status) +
                             (b.job.conflicts.length ? ' · ' + konfliktText(b.job) : '')
                           "
                           [attr.aria-label]="
-                            b.job.title + ', ' + zeit(b.job.scheduled_start) + ', ' +
+                            b.job.title + ', ' + spanneText(b.job) + ', ' +
                             statusLabel(b.job.status) +
+                            (b.job.property_name ? ', ' + b.job.property_name : '') +
                             (b.job.is_free ? ', freier Termin ohne Auftrag' : '') +
+                            (b.job.series_id ? ', Serientermin' : '') +
                             (b.job.category ? ', Kategorie ' + b.job.category.name : '') +
                             (b.job.conflicts.length
                               ? ', Konflikt: ' + konfliktText(b.job)
                               : '')
                           "
                         >
+                          <!-- MARKEN: Konflikt und Status. Sie bleiben in JEDER
+                               Breite sichtbar — auch dann, wenn die Container-Query
+                               Zeit, Titel und Chips ausblendet. Sonst bliebe ein
+                               Konflikt allein an der Rahmenfarbe hängen, und
+                               genau das verbietet die Projektregel („Status nie
+                               nur über Farbe", WCAG 1.4.1). Das Aufspüren von
+                               Doppelbelegungen ist die Kernaufgabe dieser Ansicht.
+                               (Review-Fund.) -->
+                          <span class="tile__marken">
+                            @if (b.job.conflicts.length) {
+                              <span class="tile__warn" [attr.title]="konfliktText(b.job)">
+                                <span aria-hidden="true">⚠</span>
+                                <span class="sr-only">Konflikt: {{ konfliktText(b.job) }}</span>
+                              </span>
+                            }
+                            <span class="tile__statuskurz">{{ statusKurz(b.job.status) }}</span>
+                          </span>
+
                           <span class="tile__kopf">
                             @if (b.offenLinks) {
                               <span class="tile__rand" aria-hidden="true">‹</span>
                             }
+                            <!-- Die ENDZEIT weicht als Erstes, wenn die Kachel
+                                 schmal wird (Container-Query): Der Beginn ist die
+                                 Angabe, die der Disponent im Raster sucht. Die
+                                 volle Spanne steht im Tooltip und in der Mappe. -->
                             <span class="tile__time">
-                              {{ zeit(b.job.scheduled_start) }}@if (b.job.scheduled_end) {
-                                –{{ zeit(b.job.scheduled_end) }}
+                              <span class="tile__von">{{ zeit(b.job.scheduled_start) }}</span>
+                              @if (b.job.scheduled_end) {
+                                <span class="tile__bis">–{{ zeit(b.job.scheduled_end) }}</span>
                               }
                             </span>
                             @if (b.offenRechts) {

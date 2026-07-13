@@ -80,7 +80,13 @@
 }
 .board__kopfslots {
   display: grid;
-  grid-template-columns: repeat(var(--slots), minmax(3rem, 1fr));
+  grid-template-columns: repeat(var(--slots), minmax(var(--spaltenbreite, 3rem), 1fr));
+  // MUSS dieselbe Spurgeometrie haben wie `.spur` (gap + padding), sonst fluchten
+  // die Teilstriche der Zeitskala nicht mit den Stundenlinien in den Zellen und
+  // nicht mit den Balken — der Versatz wüchse über die Woche auf ~2 rem an. Eine
+  // Skala, die nicht fluchtet, ist schlimmer als keine.
+  gap: 0.25rem;
+  padding: 0.25rem;
   background: var(--surface-sunken);
   border-bottom: 1.5px solid var(--line-strong);
 }
@@ -90,9 +96,11 @@
   align-items: center;
   gap: 0.05rem;
   min-width: 0;
-  padding: var(--space-2) 0.25rem;
+  padding: var(--space-2) 0.25rem 0;
   border-left: 1px solid var(--line);
 }
+// Die Zeitskala (.skala*, .zelle--stunden) liegt in styles.scss — das
+// Stil-Budget dieser Datei (8 kB) ist ausgereizt. Auslagern, nicht lockern.
 .slotkopf__haupt {
   font-family: var(--font-mono);
   font-size: 0.7rem;
@@ -180,7 +188,7 @@
 .spur {
   position: relative;
   display: grid;
-  grid-template-columns: repeat(var(--slots), minmax(3rem, 1fr));
+  grid-template-columns: repeat(var(--slots), minmax(var(--spaltenbreite, 3rem), 1fr));
   grid-template-rows: repeat(var(--reihen, 1), minmax(4.5rem, auto));
   gap: 0.25rem;
   padding: 0.25rem;
@@ -385,11 +393,48 @@
   font-size: 0.64rem;
   font-weight: 600;
 }
+/* Die Kachel-Aktionen liegen AUSSERHALB des Flusses.
+   Sonst bestimmte ihre Mindestbreite die Breite der Kachel — und ein
+   Zwei-Stunden-Termin waere so breit wie ein Ganztagestermin, obwohl die
+   Zeitskala ihn schmal setzen will. Sie erscheinen bei Hover/Fokus, bleiben aber
+   IM DOM und damit tastaturerreichbar (focus-within haelt sie offen). */
 .tile__aktionen {
+  position: absolute;
+  z-index: 3;
+  top: 100%;
+  left: -1px;
   display: flex;
-  flex-wrap: wrap;
   gap: 0.2rem;
-  margin-top: 0.2rem;
+  padding: 0.2rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  box-shadow: var(--shadow-2, var(--shadow-1));
+  white-space: nowrap;
+  /* NICHT `display:none`/`visibility:hidden`: Beides naehme die Knoepfe aus der
+     Tab-Reihenfolge, und die Plantafel ist vollstaendig tastaturbedienbar.
+     `opacity:0` laesst sie fokussierbar — wer hintabbt, loest `:focus-within`
+     aus und sieht sie. */
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.1s ease;
+}
+.tile:hover .tile__aktionen,
+.tile:focus-within .tile__aktionen {
+  opacity: 1;
+  pointer-events: auto;
+}
+/* Text darf die Kachel nicht aufblaehen — sonst waere ein kurzer Termin so breit
+   wie sein Titel. Die volle Angabe steht im `title`/`aria-label` und in der Mappe. */
+.tile__link {
+  overflow: hidden;
+}
+.tile__time,
+.tile__title,
+.tile__ort {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 // Kachel-Aktionen bauen ebenfalls auf `.minibtn` auf.
 .tile__griff {

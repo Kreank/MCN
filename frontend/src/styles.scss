@@ -1508,3 +1508,119 @@ button {
   font-weight: 600;
   color: var(--accent-ink);
 }
+
+/* ============================================================================
+   PLANTAFEL — ZEITSKALA (ausgelagert aus plantafel.scss: dessen 8-kB-Budget ist
+   ausgereizt, und das Budget wird nicht gelockert, sondern ausgelagert).
+
+   Der Tag ist in Stunden unterteilt. Ohne die Skala sah ein Termin von 7-9 Uhr
+   aus wie ein Ganztagestermin, und mehrere Termine an einem Tag liessen sich
+   nicht auseinanderhalten. `--stunden` kommt aus dem Zeitband der Komponente und
+   waechst mit den Daten (ein Notdienst um 22:30 macht die Skala bis 23 Uhr auf).
+
+   Die Linien sind DEKORATIV — die Uhrzeit steht immer als Text auf der Kachel
+   (WCAG 1.4.1: nie nur ueber die Optik).
+   ========================================================================== */
+.skala {
+  display: grid;
+  grid-template-columns: repeat(var(--stunden, 14), 1fr);
+  width: 100%;
+  margin-top: 0.15rem;
+}
+.skala__tick {
+  border-left: 1px solid var(--line);
+  min-height: 0.85rem;
+  font-family: var(--font-mono);
+  font-size: 0.54rem;
+  line-height: 1;
+  color: var(--ink-hint);
+  text-align: left;
+  padding-left: 0.1rem;
+  overflow: hidden;
+}
+.skala__tick--stark {
+  border-left-color: var(--line-strong);
+}
+.zelle--stunden {
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--line) 0 1px,
+    transparent 1px calc(100% / var(--stunden, 14))
+  );
+}
+
+/* PLANTAFEL — die Kachel richtet sich nach IHRER Breite (Container-Query).
+   Seit die Zeitskala die Balken zeitgenau setzt, ist eine Kachel so breit wie
+   ihr Termin dauert. Ein Zwei-Stunden-Termin in der Wochenansicht hat keine
+   30 Pixel — dort wird jedes zusaetzliche Element zum unlesbaren Schnipsel.
+   Deshalb blendet die Kachel bei wenig Platz von aussen nach innen aus; die
+   VOLLSTAENDIGE Angabe bleibt im `title`/`aria-label` (Screenreader und Hover
+   verlieren nichts) und in der Einsatz-Mappe. */
+.tile {
+  /* BENANNTER Container: Die Regeln unten duerfen nur die Plantafel-Kachel
+     treffen, nicht jede kuenftige Komponente mit einer `.tile`-Klasse.
+     Nebenbei tragend: `container-type: inline-size` impliziert
+     `contain: inline-size` — erst dadurch kann die Kachel UNTER ihre
+     Inhaltsbreite schrumpfen. Wer die Container-Query entfernt, blaeht alle
+     Kacheln wieder auf die volle Zellenbreite auf. */
+  container: plantafel-kachel / inline-size;
+  /* Zielgroesse (WCAG 2.5.8: 24 px) UND Platz fuer die Marken (Konflikt +
+     Statuskuerzel), die in jeder Breite sichtbar bleiben muessen. Das ist der
+     saubere Garant — die Mindestbreite ueber die GEOMETRIE zu erzwingen wuerde
+     die Dauer verfaelschen und den Beginn verschieben. */
+  min-width: 2.9rem;
+}
+@container plantafel-kachel (max-width: 8rem) {
+  .tile__ort,
+  .tile__frei,
+  .tile__serie,
+  .tile__kat,
+  .konflikte {
+    display: none;
+  }
+}
+@container plantafel-kachel (max-width: 6rem) {
+  .tile__bis {
+    display: none;
+  }
+}
+@container plantafel-kachel (max-width: 4.5rem) {
+  .tile__title,
+  .tile__status {
+    display: none;
+  }
+}
+@container plantafel-kachel (max-width: 2.5rem) {
+  /* Nur noch der Balken selbst — die Uhrzeit passt nicht mehr. Er bleibt
+     anklickbar, greifbar und traegt seine Angaben im Tooltip. */
+  .tile__time {
+    display: none;
+  }
+}
+
+/* PLANTAFEL — Marken der Kachel: Konflikt und Status. Sie bleiben in JEDER
+   Breite sichtbar, auch wenn die Container-Query alles andere ausblendet.
+   Projektregel: Status nie nur ueber Farbe (WCAG 1.4.1) — und das Aufspueren von
+   Doppelbelegungen ist die Kernaufgabe des Boards. */
+.tile__marken {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  min-width: 0;
+}
+.tile__warn {
+  flex: 0 0 auto;
+  font-size: 0.7rem;
+  line-height: 1;
+  color: var(--warn-ink);
+}
+.tile__statuskurz {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: clip;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 0.54rem;
+  letter-spacing: 0.06em;
+  color: var(--ink-hint);
+}
