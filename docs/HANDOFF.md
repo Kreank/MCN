@@ -6,20 +6,22 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 > TL;DR: MCN ist ein KI-first CRM (Nachfolger des Hero-CRM) für Handwerk/
 > Gebäudeservice. DB ist database-first PostgreSQL (Regeln in Triggern). Backend
 > Django 5 + django-ninja. Frontend Angular „Leitstand". Es wird in **vertikalen
-> Slices** gebaut (DB→Service→API→UI→Verifikation→Review). Aktuell **~20 Bereiche
+> Slices** gebaut (DB→Service→API→UI→Verifikation→Review). Aktuell **~22 Bereiche
 > live und bedienbar** (Kontakte, Liegenschaften, Projekte, Dokumente, Planung
-> inkl. Plantafel mit Drag&Drop/Kalender/Ressourcen, Wartung, Aufgaben,
-> Mitarbeiter/HR inkl. **Zeiterfassung mit Stempeluhr**, Artikel inkl.
-> VK-Kalkulation, Buchhaltung inkl. Mahnwesen + Storno/Korrektur + Beleg-PDF +
-> E-Rechnung, Auswertungen, **Werkzeuge** (Heizlast u. a.), Einstellungen,
+> inkl. Plantafel mit Drag&Drop/Kalender/Ressourcen, Wartung inkl.
+> **Fälligkeiten/Prüffristen/Gewährleistung**, Aufgaben,
+> Mitarbeiter/HR inkl. **Zeiterfassung mit Stempeluhr** und Stundenausgleich,
+> Artikel inkl. VK-Kalkulation und **EK→VK-Aufschlagsmatrix**,
+> Buchhaltung inkl. Mahnwesen + Storno/Korrektur + Beleg-PDF +
+> E-Rechnung, Auswertungen, **Werkzeuge** (Heizlast, Aufmaß u. a.), Einstellungen,
 > Mein Profil).
 > **Auth/Login + Rechtematrix stehen** (eigenes Login, kein SSO); die gesamte API
 > ist anmeldepflichtig. **Der Schreibpfad ist verdrahtet**: „+ Neu", Statusaktionen
 > und Freigaben laufen aus dem UI durch Rechte, Statusautomaten und DB-Trigger.
 > Dazu **Vier-Augen-Freigaben**, **Belegerfassung** (Eingangsrechnungen) und die
 > **Rechtematrix-Pflege** als UI.
-> **2193 Backend-Tests grün** (13 skipped: 12 E-Rechnungs-Validatortests ohne Java,
-> 1 MinIO-E2E), db_core-Migrationen bis **0068**, accounts bis **0002**.
+> **2431 Backend-Tests grün** (13 skipped: 12 E-Rechnungs-Validatortests ohne Java,
+> 1 MinIO-E2E), db_core-Migrationen bis **0075**, accounts bis **0002**.
 > Das **Frontend baut erstmals ohne Budget-Warnung** (8/10 kB gehalten — nicht
 > lockern, sondern auslagern).
 > Stand 2026-07-11 (Hero-Paritäts-Ausbau, 20 Slices an einem Tag — Details in
@@ -45,8 +47,7 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 > von mir eingecheckt), **Erste-Schritte-Checkliste** auf der Übersicht,
 > **Akquisekanäle/Quellen** (`/company/acquisition-sources` + Quelle am Kontakt,
 > Migration 0049/0050).
-> **Migrationskopf 0068** (bei Redaktionsschluss einziges Leaf; **derzeit bauen vier
-> Parallel-Agenten 0069–0072** — vor eigener Migration `showmigrations` prüfen).
+> **Migrationskopf 0075** (einziges Leaf; Arbeitsbaum sauber, alles committet).
 > **Neu (2026-07-11):** **DATEV-EXTF-Export** (Buchungsstapel aus
 > veröffentlichten Rechnungen, `GET /buchhaltung/datev-export.csv`, Config am
 > Firmenprofil, Migration 0051; Dialog in der Buchhaltung). v1-Grenzen dokumentiert
@@ -68,12 +69,22 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 > (0063, Schalter am Firmenprofil) und **Baustellenbericht am freien Termin**
 > (0064/0065, dabei zwei Sicherheitslücken in der Datei-API geschlossen). Details
 > unten. Grundsatzentscheidungen: Memory `grundsatz-entscheidungen-2026-07`.
-> **AKTUELL (2026-07-12, Welle 2):** `f1ed9d9` **Plantafel Drag & Drop, Design-
+> **2026-07-12, Welle 2:** `f1ed9d9` **Plantafel Drag & Drop, Design-
 > Behebung und ein Datenverlust-Bug** (die deutsche Dezimal-Formatierung schrieb
 > stillschweigend falsche Mengen — siehe Invariante unten) und `9893120`
 > **Zeiterfassung mit Stempeluhr** (Migrationen 0066–0068, gesetzliche Pflicht
 > nach § 17 MiLoG), **Plantafel auf Dispo-Niveau** und **Werkzeuge** (Nav 92:
 > Heizlast, Heizkörper-Umrechnung, Volumenstrom, Einheiten). Details unten.
+> **AKTUELL (2026-07-12, Welle 3):** `e0403af` **EK→VK-Matrix, Fälligkeiten-Engine,
+> HR-Reste und Aufmaß** — vier parallel gebaute Slices, wegen geteilter Dateien in
+> EINEM Commit: **EK→VK-Aufschlagsmatrix** (0069/0073 — Großhandelspreis rein,
+> Verkaufspreis raus; fehlt der EK, bleibt der VK **unbekannt, nie 0**),
+> **Fälligkeiten-Engine** (0071/0074 — Wartungsintervalle, **Prüffristen**
+> (TrinkwV/KÜO/SV…) und **Gewährleistung** unter einem Dach; Idempotenz garantiert
+> die **DB**, nicht der Code), **HR-Reste** (0072/0075 — Stundenausgleich in
+> **Minuten**, Resturlaubs-Übertrag, **Attest** hinter eigenem DSGVO-Tor,
+> „Wer fehlt?"), **Aufmaß-Rechner** + Wasserinhalt/Ausdehnungsgefäß aus der
+> NotizApp. Details unten.
 
 ---
 
@@ -202,10 +213,12 @@ Dann erst einchecken (nach `makemigrations --check` sauber + Suite grün), sonst
 kollidiert der Migrations-Graph (zwei Blätter auf demselben Parent). Beim Commit
 sonst **nur eigene Slice-Dateien** stagen (selektives Hunk-Staging bei geteilten
 Dateien wie `app.routes.ts`).
-**Stand jetzt akut:** Vier Agenten bauen parallel die Migrationen **0069–0072** (siehe
-„Nächste Schritte"). Wer dazwischen etwas anfasst, prüft vorher `git status` und
-`showmigrations` — halbfertige Migrationsdateien im Arbeitsbaum können sogar
-`manage.py` zum Absturz bringen.
+**Stand jetzt:** Der Parallelbau ist abgeschlossen und als `e0403af` eingecheckt
+(0069/0071/0072 + State-only 0073/0074/0075 — **kein 0070**, der Aufmaß-Slice brauchte
+keine Migration). Der Arbeitsbaum ist sauber, **0075 ist das einzige Leaf.** Die Lehre
+bleibt: Wer dazwischen etwas anfasst, prüft vorher `git status` und `showmigrations` —
+halbfertige Migrationsdateien im Arbeitsbaum können sogar `manage.py` zum Absturz
+bringen.
 
 ### Die vier priorisierten Slices sind GEBAUT (2026-07-12)
 
@@ -418,25 +431,145 @@ UI in der Buchhaltung; Memory `datev-export`).
     es nicht** (das sagt DIN ausdrücklich für Software). Deshalb keine
     DIN-Klimadaten/-Tabellen im Produkt.
 
-**★ NÄCHSTE SCHRITTE (offen).** Zuerst das, was gerade läuft und was auf Externe
-wartet, sichtbar halten:
+### Welle 3 (2026-07-12, `e0403af`): EK→VK-Matrix, Fälligkeiten, HR-Reste, Aufmaß
 
-**In Arbeit (vier parallele Agenten, Stand jetzt):**
-- **EK→VK-Aufschlagsmatrix** (Migration 0069).
-- **Aufmaß-Rechner** + Wasserinhalt/Ausdehnungsgefäß aus der NotizApp (0070).
-- **Fälligkeiten-Engine** für Wartung/Prüffristen/Gewährleistung (0071).
-- **HR-Reste:** Stundenausgleich, Resturlaubs-Übertrag, Attest-Upload,
-  „Derzeit abwesend" (0072).
+Vier Slices, parallel gebaut, geteilte Dateien → **ein** Commit. Migrationen
+0069/0071/0072 (Hand-SQL) + 0073/0074/0075 (State-only bzw. Trigger-Nachzug).
+**Ein 0070 gibt es nicht** — der Aufmaß-Slice ist rein clientseitig.
 
-**Danach geplant:**
-- **§ 35a-Ausweis** (Lohn-/Materialanteil auf der Privatkundenrechnung).
-- **Plantafel Stufe 1:** Default-Dauer je Kategorie, Kopieren/Wiederholen,
-  Kolonnen-Modell.
+12. ✔ **EK→VK-Aufschlagsmatrix** (Migration 0069 + State-only 0073). Der größte Hebel
+    im Backlog: Großhandelspreis rein, Verkaufspreis raus — statt jede Position von
+    Hand zu rechnen. Materialgruppen-Aufschlag, Rabattstaffel, Mindestmarge. Die
+    Einkaufspreise liefern IDS und DATANORM bereits.
+    - **Architektur: die Matrix sitzt UNTER der bestehenden Artikelkalkulation**
+      (`sale_price_group`/`article_sale_price`), nicht daneben. Rangfolge in
+      `services/aufschlagsmatrix.py::vk_vorschlag` — **die einzige Rechenstelle**:
+      1. **Handpreis** am Artikel (`price_origin='MANUELL'`) schlägt alles →
+      2. **VK-Gruppe** am Artikel (bestehende Formel) →
+      3. **Matrix** (Artikel > Warengruppe+Lieferant > Warengruppe > Lieferant >
+      Standard) → Staffel → **Mindestmarge als Untergrenze** →
+      4. sonst **`null` = unbekannt, NIE 0**.
+    - **INVARIANTE: Die Regel ist die einzige Wahrheit.** Ein gespeicherter
+      MATRIX-Preis wird **nirgends gelesen**, sondern live nachgerechnet
+      (`kalkulation.article_kalkulation()` erkennt `price_origin='MATRIX'` und rechnet
+      live). Sonst zeigten Artikelansicht und Editor verschiedene Preise, sobald jemand
+      die Regel ändert.
+    - **Mindestmarge wird mit `ROUND_CEILING` quantisiert** — eine abgerundete
+      Untergrenze ist keine Untergrenze. (Review-Fund: bei DATANORM-Kleinteilen mit
+      1 Cent EK fiel eine eingestellte 33-%-Mindestmarge komplett weg — 0 % erzielt.)
+    - **Massenpflege** mit **Fortsetzungscursor** (`ab_artikelnummer`); **Vorschau ==
+      Anwenden** (derselbe Code, `dry_run`), idempotent. Handpreise werden **nie**
+      angefasst; fehlender oder 0-EK → übersprungen.
+    - Der **IDS-Warenkorb rechnet den VK aus dem ZURÜCKGEGEBENEN EK** (`ek_override`),
+      nicht aus dem gespeicherten Stamm-EK (Review-Fund: die Position trug sonst zwei
+      Wahrheiten).
+    - UI: `features/aufschlagsmatrix` (Regelpflege, Staffel, Massenpflege mit
+      Vorschau); das Artikel-Detail zeigt **„Woher der Verkaufspreis kommt"**.
+13. ✔ **Fälligkeiten-Engine** (Migration 0071 + State-only 0074). Drei Fristenarten
+    unter einem Dach: **Wartungsintervalle**, **Prüffristen** (TrinkwV/Legionellen,
+    Schornsteinfeger/KÜO, Rückflussverhinderer, SV, Rauchwarnmelder, Druckbehälter) und
+    **Gewährleistung**. `maintenance.due_item` mit genau **einem** Anker; erzeugt
+    Termine (→ Plantafel-Rückstand), Angebote und Aufgaben.
+    - **INVARIANTE — die Idempotenz garantiert die DATENBANK, nicht der Code:** drei
+      partielle UNIQUE-Indizes über (Anker, `due_date`), **statusunabhängig**. Damit
+      kann auch ein **VERWORFENER** Eintrag nicht wieder auferstehen. Jeder Insert läuft
+      in einem eigenen Savepoint → zwei parallele Scheduler-Läufe erzeugen keine
+      Dublette.
+    - **Verwerfen schreibt die Quelle fort** — sonst stünde der Vertrag für immer auf
+      demselben Datum und wäre still tot.
+    - **INVARIANTE: Ein Fälligkeitsdatum wird NIE verschoben** (eine Frist ist eine
+      Frist). Verschoben wird nur der daraus abgeleitete **Wunschtermin**
+      (`naechster_werktag()` über Sonntage und `hr.holiday`; **Samstag bleibt bewusst
+      Arbeitstag**). Der aus einer Fälligkeit erzeugte Einsatz bekommt **kein
+      `scheduled_start`** — er landet UNGEPLANT im **Plantafel-Rückstand**, der
+      Wunschtermin steht als Notiz am Einsatz. (Review-Fund: mit gesetztem
+      `scheduled_start` war der Einsatz weder im Rückstand noch im Raster sichtbar —
+      die Plantafel ordnet Kacheln nur über **Zuweisungen** in Bahnen ein.)
+    - **Kein Rechtsrat im Produkt:** `basis` (BGB/VOB/INDIVIDUELL) ist ein **Etikett** —
+      der Code leitet daraus **keine** Frist ab; maßgeblich ist allein `duration_months`
+      (je Auftrag einstellbar, Default am Firmenprofil). Prüfarten sind
+      `is_suggestion`-Stammdaten, die der Betrieb selbst pflegt. `is_machinery`
+      **verkürzt nichts**, es schaltet nur den Vertriebshinweis „Anlage ohne
+      Wartungsvertrag" frei.
+    - **Neues Rechte-Modul `maintenance`** (Wartung lief vorher auf `workflow` mit —
+      kein Rollenverlust). **STORNIEREN ist das Tor fürs Verwerfen**: DISPOSITION darf
+      erledigen, aber eine Frist nicht bewusst verstreichen lassen.
+    - Der Bestands-Scheduler `wartung_faellige_ausloesen` wurde **erweitert, nicht
+      ersetzt** (zwei Phasen). `erledigen()` schreibt einen `maintenance_event` **und**
+      den Vertrag über den Stichtag hinaus fort, damit die Vollautomatik kein zweites
+      Folgeobjekt erzeugt.
+    - UI: `features/faelligkeiten`, `features/pruefungen`, `features/gewaehrleistung`
+      (Subnav Wartung).
+14. ✔ **HR-Reste** (Migration 0072 + 0075).
+    - **Stundenausgleich** (`hr.time_adjustment`): in **MINUTEN**, nicht in
+      Dezimalstunden — 20 min sind 0,333… h und in einer Dezimalspalte nicht
+      verlustfrei; ein Arbeitszeitkonto, das bei jeder Drittelstunde rundet, ist eine
+      Schätzung, keine Aufzeichnung. **Append-only + Storno** (`reversal_of_id`, beide
+      Zeilen fallen aus der Summe). **Saldo bleibt abgeleitet:** `Ist − Soll + Σ
+      Ausgleich`.
+    - **INVARIANTE (Migration 0075): Niemand gleicht sein eigenes Arbeitszeitkonto aus —
+      auch nicht über den STORNO.** Ein Storno **IST** eine Ausgleichsbuchung. Die Regel
+      liegt **physisch im DB-Trigger** (`hr.enforce_time_adjustment`), nicht nur im
+      Service. (Review-Fund, reproduziert: 30 h aufs eigene Konto buchen wurde
+      abgewiesen — dieselben 30 h über den Storno zurückholen ging durch.)
+    - **Resturlaubs-Übertrag:** idempotent **by construction** — er **SETZT**
+      `carryover_days` des Folgejahres, er addiert nicht. **Verfall standardmäßig AUS**
+      (Default NULL): § 7 Abs. 3 BUrlG *erlaubt* den 31.03.-Verfall, ordnet ihn nicht
+      an, und nach BAG/EuGH verfällt Urlaub nur bei erfüllter Hinweisobliegenheit.
+      **Es wird nichts weggerechnet, was der Betrieb nicht ausdrücklich einstellt.**
+    - **Attest (DSGVO Art. 9):** `content.file_link.absence_id`. **Eigenes Tor,
+      unabhängig vom `content`-Recht** — die Disposition hat `content/LESEN|AENDERN` mit
+      Scope ALLE und kommt trotzdem nicht heran. Zugriff nur für den **Betroffenen**
+      oder die **Personalverwaltung** (`hr/LESEN` + `hr/AENDERN`, ALLE). Fremd →
+      **404, nicht 403** (ein 403 bestätigte die Existenz der Krankmeldung). Der
+      Dateiname wird serverseitig neutralisiert; **keine Diagnose** wird gespeichert.
+      UI: `shared/attest`.
+    - **INVARIANTE: Ein Attest bekommt IMMER ein eigenes Speicherobjekt** — der
+      SHA-256-**Dedup ist dafür abgeschaltet**, und der Guard ist **fail-closed** (eine
+      Attest-Verknüpfung sperrt die ganze Datei). (Review-Fund: hängte der Monteur sein
+      Attest **zusätzlich** an seinen eigenen Einsatz, war es über den Dedup für die
+      ganze Disposition lesbar.)
+    - **`/planung/abwesend`** („Wer fehlt?", **ohne Abwesenheitsart**, `workflow/LESEN`,
+      `features/planung-abwesend`) und **`/hr/abwesenheiten.csv`** (**mit** Art →
+      `hr/EXPORTIEREN`). Dieselbe Grenze wie in der Plantafel.
+15. ✔ **Aufmaß-Rechner + die zwei letzten NotizApp-Rechner** (keine Migration).
+    Aufmaß mit **Teilmaßen** (je mit Bezeichnung und Rechenweg), **Abzügen**
+    (Fenster/Türen), **Verschnitt** und Aufrundung auf **Gebinde/VE**. Das Ergebnis geht
+    als **Angebotsposition mit Menge, Einheit und nachvollziehbarer Rechenaufstellung**
+    in den Beleg.
+    - **INVARIANTE gewahrt:** Das Aufmaß liefert eine **Menge, keinen Preis** —
+      `unit_price: null`, der Positionsdialog verlangt ihn, **der Server rechnet
+      weiterhin jede Geldzahl.** Menge als Dezimal-**String** (max. 3 NK = DB-Skala).
+      Das ist die Grenze aus dem Werkzeuge-Slice (Punkt 11) — sie ist nicht aufgeweicht,
+      sondern präzisiert: eine Menge darf aus dem Rechner kommen, eine **Geldzahl nie**.
+    - `WasserinhaltRechner` und `AusdehnungsgefaessRechner` aus `D:\Mitra\NotizApp_Win`
+      fachlich **1:1 portiert** (gegengerechnet; **kein Rechenfehler im Original
+      gefunden**). Das MAG-Ergebnis ist als **Auslegungshilfe/Plausibilisierung**
+      deklariert, **kein Nachweis**; **keine Normtabellen** mitgeliefert (siehe
+      Normrecht oben).
+
+**★ NÄCHSTE SCHRITTE (offen).** Zuerst das, was auf Externe wartet, sichtbar halten:
+
+**Noch offen, ableitbar (selbst entscheidbar):**
+- **§ 35a-Ausweis** — Lohn-, Fahrt- und Maschinenkosten **getrennt vom Material** auf
+  der Privatkundenrechnung. Ohne den Ausweis verliert der Kunde **20 % Steuerbonus**;
+  das ist der greifbarste offene Nutzen.
+- **Plantafel Stufe 1:** Default-Dauer je Terminkategorie, Termine kopieren/wiederholen,
+  Kolonnen-/Team-Modell, Skill-Matching, Board-Einstellungen.
+- **XRechnung** (reines XML, B2G/Leitweg-ID) — optional, User hat 1–2×/Jahr öffentliche
+  Auftraggeber. Das CII-Mapping steht bereits.
+- **Vier-Augen auf weitere Aktionen ausrollen** (Dubletten-Merge, Massenexport,
+  KI-Massenaktionen): Applier in `_APPLIERS` bzw. `claim()` — der Flow steht.
+- **E-Mail-Vorlagenverwaltung.**
+- **Wunschtermin auf der Rückstandskarte anzeigen** — braucht ein Feld in
+  `BacklogJobOut`. Klein, aber die Fälligkeits-Engine legt den Wunschtermin derzeit nur
+  als Notiz am Einsatz ab.
 
 **Wartet auf den User / auf Externe:**
-- **Lexware Office** — ans Ende geschoben. Cloud-API erst ab Tarif XL, der Voucher-Weg
-  ist recherchiert. **Offene Frage: wer macht die USt-Voranmeldung?** Bis dahin reicht
-  DATEV.
+- **Lexware Office** — **vom User ans Ende geschoben.** Cloud-API erst ab Tarif XL, der
+  Voucher-Weg ist recherchiert. **Zwei offene Fragen:** wer macht die
+  USt-Voranmeldung — und öffnet sich `app.lexware.de/addons/public-api` mit
+  „API-Schlüssel erstellen"? Bis dahin reicht DATEV.
 - **DATEV-Roundtrip beim Steuerberater** (echter Import des Buchungsstapels),
   Personenkonten/OPOS.
 - **Anzahlungskonto für steuerfrei und § 13b bestätigen lassen** — aktuell das
@@ -446,16 +579,11 @@ wartet, sichtbar halten:
   (`branch_trade`-Link) vs. je Auftrag/Projekt. Wahrscheinlichste Auslegung: je
   Niederlassung.
 
-**Optional/klein, ableitbar:**
-- **XRechnung** (reines XML, B2G/Leitweg-ID) — User hat 1–2×/Jahr öffentliche
-  Auftraggeber. Das CII-Mapping steht bereits.
-- **Vier-Augen auf weitere Aktionen ausrollen** (Dubletten-Merge, Massenexport,
-  KI-Massenaktionen): Applier in `_APPLIERS` bzw. `claim()` — Flow steht.
-- **E-Mail-Vorlagenverwaltung.**
-
 **Erledigt, aus der Liste gestrichen:** OAuth-Absenderkonten (**verworfen** — es wird
 immer über die Firmen-Mail versendet), veraPDF/Schematron-Gegenprüfung,
-Baustellenbericht am freien Termin, Plantafel Drag & Drop.
+Baustellenbericht am freien Termin, Plantafel Drag & Drop, **EK→VK-Aufschlagsmatrix**,
+**Fälligkeiten-Engine**, **HR-Reste** (Stundenausgleich, Resturlaubs-Übertrag, Attest,
+„Wer fehlt?"), **Aufmaß-Rechner**, **Wasserinhalt-/Ausdehnungsgefäß-Rechner**.
 
 **Bewusst NICHT gebaut:** „Freien Termin zum Auftrag hochstufen". Der Auftragsbezug
 eines Einsatzes ist **unveränderlich** (sonst Torumgehung, s. o.). Wer das will,
@@ -476,8 +604,33 @@ Scratch-Daten; bei Bedarf auf INAKTIV setzen.
   zusammenlegen.
 - **Gesundheitsdaten gehören hinter `hr/LESEN` — nie in eine `workflow`-Schnittstelle.**
   Die Plantafel zeigt „abwesend, von–bis", **nicht** die Abwesenheitsart (DSGVO Art. 9).
-  `api/mitarbeiter.py` zieht dieselbe Grenze; ein Review hat sie im Board-Endpunkt
-  gerissen vorgefunden.
+  `api/mitarbeiter.py` und `/planung/abwesend` ziehen dieselbe Grenze; ein Review hat
+  sie im Board-Endpunkt gerissen vorgefunden. Die Art gibt es nur über
+  `/hr/abwesenheiten.csv` (`hr/EXPORTIEREN`).
+- **Ein Attest bekommt IMMER ein eigenes Speicherobjekt.** Der SHA-256-**Dedup ist für
+  Atteste abgeschaltet**, und der Zugriffs-Guard ist **fail-closed**: eine
+  Attest-Verknüpfung sperrt die ganze Datei. Sonst reicht es, dieselbe Datei ein zweites
+  Mal an ein harmloses Ziel zu hängen (Review-Fund: Attest zusätzlich am eigenen Einsatz
+  → für die ganze Disposition lesbar). Das Attest-Tor hängt **nicht** am
+  `content`-Recht, sondern an Betroffener-oder-`hr`; fremd → **404, nicht 403**.
+- **Niemand gleicht sein eigenes Arbeitszeitkonto aus — auch nicht über den STORNO.**
+  Ein Storno **IST** eine Ausgleichsbuchung. Die Regel liegt im **DB-Trigger**
+  (`hr.enforce_time_adjustment`, Migration 0075), nicht nur im Service — ein Review hat
+  genau diesen Umweg reproduziert. Stundenausgleich wird in **MINUTEN** geführt; nicht
+  „der Einfachheit halber" auf Dezimalstunden umbauen (20 min = 0,333… h).
+- **Beim Resturlaub wird nichts weggerechnet, was der Betrieb nicht ausdrücklich
+  einstellt.** Verfall ist standardmäßig **AUS** (Default NULL): § 7 Abs. 3 BUrlG
+  *erlaubt* den 31.03.-Verfall, ordnet ihn nicht an; nach BAG/EuGH verfällt Urlaub nur
+  bei erfüllter Hinweisobliegenheit. Kein „Default = Verfall" nachrüsten.
+- **Ein Fälligkeitsdatum wird NIE verschoben** (eine Frist ist eine Frist). Verschoben
+  wird nur der abgeleitete **Wunschtermin**. Und: die **Idempotenz der Fälligkeiten
+  garantiert die DATENBANK** (drei partielle UNIQUE-Indizes über Anker + `due_date`,
+  **statusunabhängig**) — nicht der Service. Statusabhängig gemacht, könnte ein
+  **verworfener** Eintrag wieder auferstehen.
+- **Kein Rechtsrat im Produkt.** `due_item.basis` (BGB/VOB/INDIVIDUELL) ist ein
+  **Etikett**; der Code leitet daraus **keine** Frist ab — maßgeblich ist allein die
+  eingestellte `duration_months`. Prüfarten sind Vorschläge (`is_suggestion`), die der
+  Betrieb pflegt. Keine Fristen aus Normen/Gesetzen hart verdrahten.
 - **Vergessenes Ausstempeln wird NICHT automatisch beendet.** Ein erfundenes Ende wäre
   eine Falschaussage in einer gesetzlichen Aufzeichnung (§ 17 MiLoG). Die Buchung
   bleibt offen und wird als **überfällig markiert**. Das ist bewusst unbequem — kein
@@ -520,7 +673,16 @@ Scratch-Daten; bei Bedarf auf INAKTIV setzen.
   ändert rückwirkend Urlaubssalden — bewusst noch nicht getan.
 - **Belegeditor rechnet keine Summen.** Exakte Rundung je Steuergruppe ist in
   JavaScript-`number` nicht verlustfrei; der Server rechnet verbindlich. Nicht
-  „nachrüsten".
+  „nachrüsten". **Auch die Werkzeuge halten diese Grenze:** Heizlast & Co. liefern nur
+  eine **Textposition**, das Aufmaß eine **Menge** (`unit_price: null`) — **kein in
+  JavaScript gerechneter Wert wird je ein Preis.**
+- **Der Verkaufspreis kommt aus genau EINER Rechenstelle** (`aufschlagsmatrix.
+  vk_vorschlag`), und die **Regel ist die einzige Wahrheit**: ein gespeicherter
+  MATRIX-Preis wird nirgends gelesen, sondern live nachgerechnet. Sonst zeigten
+  Artikelansicht und Editor verschiedene Preise, sobald jemand die Regel ändert.
+  Fehlt der EK, ist der VK **`null` = unbekannt — nie 0** (gleiche Konvention wie bei
+  Marge und Auslastung). Die **Mindestmarge wird mit `ROUND_CEILING` quantisiert**: eine
+  abgerundete Untergrenze ist keine Untergrenze (bei 1-Cent-EK fiel sie sonst ganz weg).
 - **`beleg.anzeige_menge_preis()` ist die EINZIGE Vorzeichenstelle für die AUSGABE
   von Kreditbelegen.** Web-Mappe und Editor zeigen bewusst die **DB-Wahrheit**
   (100 × −2,40 €), PDF und XML die **EN16931-Darstellung** (−100 × 2,40 €), weil
@@ -620,8 +782,8 @@ Default `mcn-dev-passwort-2026`):
 **Backend** (`cd backend`, uv):
 ```bash
 uv run python manage.py check
-uv run pytest -p no:cacheprovider -q          # aktuell 2193 grün, 13 skipped
-uv run python manage.py migrate               # Migrationskopf: 0068 (Stand Redaktionsschluss)
+uv run pytest -p no:cacheprovider -q          # aktuell 2431 grün, 13 skipped
+uv run python manage.py migrate               # Migrationskopf: 0075 (einziges Leaf)
 uv run python manage.py runserver 127.0.0.1:8000 --noreload
 uv run python manage.py seed_demo             # idempotenter Demo-Datensatz
 ```
@@ -680,7 +842,8 @@ Anmeldung. Nicht verwechseln.
   Das Frontend holt den Token über `GET /api/auth/csrf` und schickt ihn als
   `X-CSRFToken`.
 - **Rechte** (`security.role`/`user_role`/`role_permission`, Migration 0026,
-  Modul `hr` per 0021 ergänzt): `db_core/services/rechte.py` wertet aus,
+  Modul `hr` per 0021, Modul **`maintenance` per 0071** ergänzt — Wartung lief vorher
+  auf `workflow` mit, kein Rollenverlust): `db_core/services/rechte.py` wertet aus,
   `api/permissions.py` setzt durch. Rollen **addieren** Rechte; beim `row_scope`
   gewinnt die weiteste Sicht (`ALLE`).
 - **Drei Torfunktionen — fail-closed als Grundhaltung:**
@@ -833,10 +996,10 @@ Nav-Reihenfolge (Marks 00–60), alle committet, je Tests + Browser + Review:
 | Dokumente (40) | **Angebote + Rechnungen**: Liste + Mappe, Anlegen bis ENTWURF; **Veröffentlichen (Rechnung→VEROEFFENTLICHT) / Versenden (Angebot→VERSENDET)** inkl. Snapshot+Hash+Beteiligte | `/api/invoicing/…/publish`,`/send`,`/parties` |
 | Aufträge | Detail-Mappe (Übersicht/Beteiligte/Verlauf), Statusautomat bis KAUFMAENNISCH_GEPRUEFT/ABGERECHNET mit DB-Toren | `/api/workflow/work_orders` |
 | Planung (50) | **Einsätze** (`workflow.service_job`): Liste + Einsatz-Mappe (Übersicht, Zuweisungen, Zeiten & Material, Verlauf) + **Plantafel** (Schwimmbahnen-Board, **Drag & Drop per Maus/Tastatur/Touch**, Rückstandsleiste, Mehrtages-Balken, Abwesenheits-/Feiertags-Sperrflächen, Auslastung je Bahn, Termin anlegen/bearbeiten) + **Kalender** (Monatsansicht), Subnav | `/api/planung/einsaetze`, `/api/planung/plantafel` |
-| Wartung (55) | **Wartungsverträge** (`maintenance.*`, NEUES Schema): Liste + Detail-Mappe (Details/Erinnerung/Verlauf), Fälligkeits-Aktionen. Write-Service (create/status/trigger) existiert + getestet | `/api/maintenance/contracts` |
+| Wartung (55) | **Wartungsverträge** (`maintenance.*`, NEUES Schema): Liste + Detail-Mappe (Details/Erinnerung/Verlauf), Fälligkeits-Aktionen. Dazu die **Fälligkeiten-Engine** (0071/0074): Subnav **Fälligkeiten** (Wartung/Prüfung/Gewährleistung unter einem Dach), **Prüffristen** (TrinkwV/KÜO/SV…) und **Gewährleistung**. Eigenes Rechte-Modul `maintenance` | `/api/maintenance/{contracts,faelligkeiten,pruefungen,gewaehrleistung}` |
 | Aufgaben (60) | Liste + Statusaktionen; **neue Tabelle `workflow.task`** | `/api/workflow/tasks` |
 | Mitarbeiter (65) | **Personalstamm** (`hr.*`, NEUES Schema 0019): Liste + Mappe (Persönliches/Vertrag/Abwesenheiten/Urlaub). Write-Service (employee/contract/absence/urlaubskonto) existiert + getestet | `/api/hr/employees` |
-| Artikel (70) | Artikel + Leistungen (Stücklisten), Liste + Detail + **VK-Kalkulation** (Verkaufspreis-Formel je Artikel) | `/api/pricing`, `/articles/{id}/kalkulation` |
+| Artikel (70) | Artikel + Leistungen (Stücklisten), Liste + Detail + **VK-Kalkulation** (Verkaufspreis-Formel je Artikel) + **EK→VK-Aufschlagsmatrix** (Regelpflege, Rabattstaffel, Mindestmarge, Massenpflege mit Vorschau; Artikel-Detail zeigt „Woher der Verkaufspreis kommt") | `/api/pricing`, `/articles/{id}/kalkulation`, `/pricing/aufschlagsmatrix` |
 | Buchhaltung (80) | **Offene Posten** + Detail-Mappe (Übersicht/Zahlungen/Mahnverlauf, **Storno-/Gutschrift-Referenzen**) + **Mahnwesen-Screen**. Services: Zahlung/Mahnung + **Storno/Rechnungskorrektur** (STORNO/GUTSCHRIFT, `POST …/cancel`,`/correction`) getestet | `/api/buchhaltung` |
 | Auswertungen (90) | Landing + **Umsatz-/Projektübersicht** (KPIs, Umsatzverlauf, Projekte nach Gewerk) | `/api/auswertungen/…` |
 | Einstellungen (95) | **Firmenprofil, Mahnstufen (6), Gewerke, Niederlassungen** (`company.*`, NEUES Schema 0023). Das Firmenprofil speist Aussteller und Fußzeile des Beleg-PDF | `/api/company`, `/api/buchhaltung/dunning-levels` |
@@ -844,8 +1007,9 @@ Nav-Reihenfolge (Marks 00–60), alle committet, je Tests + Browser + Review:
 | Belegerfassung (82) | **Eingangsrechnungen** (`accounting.*`, NEUES Schema 0030/0031): Liste + Beleg-Mappe (Positionen/Verlauf), Editor, Statusautomat ERFASST→GEPRUEFT→FREIGEGEBEN→GEBUCHT/ABGELEHNT, Freigabe-Tor (Kontierung je Position), Stammdaten (Buchungskonten/Kostenstellen) | `/api/accounting` |
 | Einstellungen · Rechte | **Rechtematrix-Editor** (Rolle × Modul × Aktion + row_scope) + **Rollenzuordnungen**. Härtungen: keine Selbst-Erweiterung, keine Selbstzuweisung, letzte ADMINISTRATION geschützt | `/api/security/{roles,permissions,users,user-roles}` |
 | Mein Profil | Anzeigename/E-Mail/Rollen read-only + **Passwort ändern** (Sitzung bleibt gültig) | `/api/auth/password` |
-| Meine Zeiten | **Stempeluhr** (Start/Pause/Weiter/Stopp), eigene Zeitbuchungen, Arbeitstag einreichen (`workflow.time_entry`/`work_day`, 0066–0068). Für Auswerter: Stundenliste + CSV | `/api/zeiterfassung` |
-| Werkzeuge (92) | **Heizlast** (überschlägig), Heizkörper-Umrechnung (WP), Volumenstrom, Einheiten. Ergebnis geht nur als **Textposition** in einen Beleg | (rein clientseitig) |
+| Meine Zeiten | **Stempeluhr** (Start/Pause/Weiter/Stopp), eigene Zeitbuchungen, Arbeitstag einreichen (`workflow.time_entry`/`work_day`, 0066–0068). Für Auswerter: Stundenliste + CSV. Dazu **Stundenausgleich** (in Minuten, append-only + Storno, Vier-Augen im DB-Trigger, 0072/0075) | `/api/zeiterfassung` |
+| Mitarbeiter (65) | …zusätzlich **Resturlaubs-Übertrag** und **Attest-Upload** (DSGVO Art. 9, eigenes Tor, `shared/attest`); **„Wer fehlt?"** unter Planung (ohne Abwesenheitsart) | `/api/hr`, `/api/planung/abwesend` |
+| Werkzeuge (92) | **Heizlast** (überschlägig), Heizkörper-Umrechnung (WP), Volumenstrom, Einheiten, **Aufmaß** (Teilmaße/Abzüge/Verschnitt/Gebinde → Angebotsposition mit **Menge, ohne Preis**), **Wasserinhalt**, **Ausdehnungsgefäß** (Auslegungshilfe, kein Nachweis). Ein gerechnetes Ergebnis wird **nie ein Preis** | (rein clientseitig) |
 
 **Der Schreibpfad ist verdrahtet.** In allen Bereichen gibt es „+ Neu",
 Statusaktionen, Freigaben; unumkehrbare Aktionen laufen über einen
@@ -937,10 +1101,12 @@ Veröffentlichung (invoice→VEROEFFENTLICHT / quote→VERSENDET, ohne PDF).
   AKTIV↔INAKTIV→ARCHIVIERT per eigenem Trigger, Belegkreis 'W') + append-only
   `maintenance_event`. Write-Service `services/wartung.py` (create/set_status/
   trigger_action; Aktion AUFGABE erzeugt eine workflow.task). Liste + Detail-Mappe
-  read-only. **Offen:** Fälligkeits-Scheduler (Cron/Worker, erzeugt Folgeobjekte
-  automatisch — aktuell nur manuell über Service), Aktionen PROJEKT/AUFTRAG
-  (aktuell nur protokolliert), Anlege-/Auslöse-UI (mit Auth). Muster für neue
-  Fachtabellen: `migrations/0016_maintenance_wartung.py` (RunSQL + Schutzstandard).
+  read-only. Muster für neue Fachtabellen:
+  `migrations/0016_maintenance_wartung.py` (RunSQL + Schutzstandard).
+  **Die damals notierten Lücken sind inzwischen geschlossen:** Scheduler
+  (`wartung_faellige_ausloesen`), Aktionen PROJEKT/AUFTRAG und die Anlege-/Auslöse-UI
+  stehen; die **Fälligkeiten-Engine** (0071/0074) hat den Scheduler um Prüffristen und
+  Gewährleistung erweitert (siehe Welle 3).
 - ✔ **„Kein-neues-Schema"-Ausbau** (auf vorhandenem Fachschema, User-Wunsch
   „erst das, dann Schema+Login") — **komplett abgearbeitet**:
   - **Mahnwesen-Screen** (UI zu `/buchhaltung/dunning`).
@@ -996,8 +1162,9 @@ Veröffentlichung (invoice→VEROEFFENTLICHT / quote→VERSENDET, ohne PDF).
     `hr.break_rule`, `hr.holiday`, `workflow.work_day` — siehe „Welle 2" oben.
     **Weiterhin ausgeklammert:** Steuer-/Bankdaten (DSGVO Art. 9/32;
     `security.four_eyes_action` kennt bereits 'BANKDATEN', app-seitig nicht
-    durchgesetzt), Niederlassung. **Stundenausgleich** und Resturlaubs-Übertrag baut
-    gerade ein Parallel-Agent (0072).
+    durchgesetzt), Niederlassung. **Stundenausgleich, Resturlaubs-Übertrag und
+    Attest-Upload sind gebaut** (0072/0075, siehe Welle 3) — damit ist der HR-Block
+    bis auf Steuer/Bank vollständig.
   - **DSGVO-Merkposten:** `GET /api/hr/absences` ist der **einzige** Lese-Endpunkt
     mit `auth=django_auth` (Krankheitsdaten über den ganzen Bestand).
     `GET /api/hr/employees/{id}` liefert ebenfalls Krankheitshistorie und ist
