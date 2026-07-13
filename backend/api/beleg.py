@@ -45,6 +45,10 @@ class QuoteOut(Schema):
     net_total: Decimal | None = None
     gross_total: Decimal | None = None
     property: PropertyRefOut
+    # Auftragsbezug (= Soll dieser Baustelle). Steht schon in der Liste, damit die
+    # Auftrags-Mappe die zuordenbaren von den bereits zugeordneten Angeboten
+    # unterscheiden kann, ohne jedes einzeln nachzuladen.
+    work_order_id: UUID | None = None
 
 
 class QuoteListOut(Schema):
@@ -94,11 +98,20 @@ class ProjectRefOut(Schema):
     name: str
 
 
+class WorkOrderRefOut(Schema):
+    id: UUID
+    order_number: str
+    title: str
+
+
 class QuoteDetailOut(QuoteOut):
     valid_until_date: date | None = None
     tax_total: Decimal | None = None
     version: int
     project: ProjectRefOut | None = None
+    # Auftragsbezug (= Soll dieser Baustelle, siehe QuoteIn). null = keinem Auftrag
+    # zugeordnet: das Angebot fließt dann in keinen Soll-Ist-Abgleich ein.
+    work_order: WorkOrderRefOut | None = None
     sent_at: datetime | None = None
     has_snapshot: bool = False
     content_hash: str | None = None
@@ -141,6 +154,11 @@ class QuoteIn(Schema):
     property_id: UUID
     title: str
     project_id: UUID | None = None
+    # Auftragsbezug: die Aussage „dieses Angebot ist das Soll dieser Baustelle".
+    # Der Soll-Ist-Abgleich am Baustellenbericht (0080) stützt sich ausschließlich
+    # darauf. Der Auftrag muss zur selben Liegenschaft (und, falls gesetzt, zum
+    # selben Projekt) gehören — sonst 422.
+    work_order_id: UUID | None = None
     quote_date: date | None = None
     valid_until_date: date | None = None
     rubriken: list[RubrikIn] = []
@@ -198,6 +216,7 @@ def _quote_out(quote):
         net_total=quote.net_total,
         gross_total=quote.gross_total,
         property=_property_ref(quote),
+        work_order_id=quote.work_order_id,
     )
 
 
@@ -288,6 +307,15 @@ def _quote_detail(quote_id):
         if quote.project_id
         else None
     )
+    work_order = (
+        WorkOrderRefOut(
+            id=quote.work_order.id,
+            order_number=quote.work_order.order_number,
+            title=quote.work_order.title,
+        )
+        if quote.work_order_id
+        else None
+    )
     # Empfänger-E-Mail nur für den Versand relevant (nur versendete Angebote
     # lassen sich senden) — für Entwürfe die zusätzliche Auflösung sparen.
     recipient_email = (
@@ -309,6 +337,8 @@ def _quote_detail(quote_id):
         version=quote.version,
         property=_property_ref(quote),
         project=project,
+        work_order_id=quote.work_order_id,
+        work_order=work_order,
         sent_at=quote.sent_at,
         has_snapshot=quote.billing_snapshot is not None,
         content_hash=quote.content_hash,
@@ -330,6 +360,7 @@ def create_quote(request, payload: QuoteIn):
             property_id=payload.property_id,
             title=payload.title,
             project_id=payload.project_id,
+            work_order_id=payload.work_order_id,
             quote_date=payload.quote_date,
             valid_until_date=payload.valid_until_date,
             rubriken=[r.dict() for r in payload.rubriken],
@@ -346,13 +377,23 @@ class QuoteUpdateIn(Schema):
     title: str | None = None
     quote_date: date | None = None
     valid_until_date: date | None = None
+    # Auftragsbezug setzen (oder mit `null` lösen). Weggelassen = unverändert.
+    # In JEDEM Status möglich (0082): der Auftrag entsteht regelmäßig erst NACH der
+    # Annahme des Angebots. Interner Verweis, kein Beleginhalt — B-30 gilt weiter
+    # für alles andere.
+    work_order_id: UUID | None = None
     rubriken: list[RubrikIn] | None = None
     lines: list[QuoteLineIn] | None = None
 
 
 @router.put("/quotes/{quote_id}", response=QuoteDetailOut, auth=django_auth)
 def update_quote(request, quote_id: UUID, payload: QuoteUpdateIn):
-    """Angebotsentwurf ändern. Ab VERSENDET friert die DB den Beleg ein (422)."""
+    """Angebot ändern.
+
+    Ab VERSENDET friert die DB den **Beleginhalt** ein (422): Titel, Daten,
+    Positionen, Abschnitte. Die **Auftragszuordnung** (`work_order_id`) bleibt
+    dagegen in jedem Status setz- und lösbar (Migration 0082).
+    """
     actor, _ = require(request, "invoicing", "AENDERN")
     gesetzt = payload.model_dump(exclude_unset=True)
     try:
@@ -364,6 +405,9 @@ def update_quote(request, quote_id: UUID, payload: QuoteUpdateIn):
             quote_date=payload.quote_date if "quote_date" in gesetzt else ...,
             valid_until_date=(
                 payload.valid_until_date if "valid_until_date" in gesetzt else ...
+            ),
+            work_order_id=(
+                payload.work_order_id if "work_order_id" in gesetzt else ...
             ),
             rubriken=[r.dict() for r in payload.rubriken or []],
             lines=(

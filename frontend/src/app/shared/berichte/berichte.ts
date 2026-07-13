@@ -27,6 +27,7 @@ import { Feld } from '../formular/feld';
 import { ReferenzWahl, RefSuche } from '../formular/referenz-wahl';
 import { UnterschriftPad } from '../unterschrift-pad/unterschrift-pad';
 import { Dateien } from '../dateien/dateien';
+import { BerichtPositionen } from '../bericht-positionen/bericht-positionen';
 import { EinsatzZeiten } from '../einsatz-zeiten/einsatz-zeiten';
 import { VerbotenState, fehlerDetail, fehlerState } from '../http-fehler';
 import { KeinZugriff } from '../kein-zugriff/kein-zugriff';
@@ -74,6 +75,7 @@ type Anker = { art: 'auftrag' | 'einsatz'; id: string };
     ReferenzWahl,
     UnterschriftPad,
     Dateien,
+    BerichtPositionen,
     EinsatzZeiten,
     KeinZugriff,
   ],

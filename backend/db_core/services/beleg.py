@@ -41,6 +41,7 @@ from db_core.models import (
     Quote,
     QuoteLine,
     SalePriceGroup,
+    SiteReportLine,
     TaxCode,
     WorkOrder,
 )
@@ -481,22 +482,63 @@ def _write_lines(prepared, rubrik_ids, *, model, **beleg_fk):
         model.objects.create(id=uuid.uuid4(), **beleg_fk, **daten)
 
 
+def _work_order_pruefen(work_order_id, *, property_id, project_id):
+    """Der Auftragsbezug eines Angebots — der Anker des Soll-Ist-Abgleichs.
+
+    Das Angebot ist das **Soll** eines Auftrags (Migration 0080). Damit sich kein
+    fremdes Soll an eine Baustelle hängen lässt, muss der Auftrag
+
+      * existieren,
+      * zur **selben Liegenschaft** gehören (die DB erzwingt das ohnehin über den
+        zusammengesetzten FK `(work_order_id, property_id)` aus Migration 0018 —
+        hier wird daraus ein verständlicher Fachfehler statt eines 500ers),
+      * und, wenn das Angebot ein Projekt nennt, zu **diesem Projekt** gehören.
+
+    Ein Auftrag ohne Projekt an einem projektlosen Angebot ist der Normalfall.
+    """
+    if work_order_id is None:
+        return None
+    wo = WorkOrder.objects.filter(id=work_order_id).only(
+        "id", "property_id", "project_id"
+    ).first()
+    if wo is None:
+        raise ValueError("Auftrag nicht gefunden.")
+    if str(wo.property_id) != str(property_id):
+        raise ValueError(
+            "Der Auftrag gehört zu einer anderen Liegenschaft als das Angebot."
+        )
+    if project_id is not None and str(wo.project_id or "") != str(project_id):
+        raise ValueError(
+            "Der Auftrag gehört zu einem anderen Projekt als das Angebot."
+        )
+    return wo.id
+
+
 def create_quote(
     actor_app_user_id,
     *,
     property_id,
     title,
     project_id=None,
+    work_order_id=None,
     quote_date=None,
     valid_until_date=None,
     lines=None,
     rubriken=None,
 ):
-    """Legt ein Angebot (Status ENTWURF) mit Positionen und Abschnitten an."""
+    """Legt ein Angebot (Status ENTWURF) mit Positionen und Abschnitten an.
+
+    `work_order_id` ordnet das Angebot einem **Auftrag** zu. Diese Zuordnung ist
+    die Aussage „das ist das Soll dieser Baustelle" — der Soll-Ist-Abgleich am
+    Bericht (0080) stützt sich ausschließlich darauf.
+    """
     if not title or not title.strip():
         raise ValueError("title darf nicht leer sein.")
     ensure_exists(Property, property_id, "Liegenschaft")
     ensure_exists(Project, project_id, "Projekt")
+    work_order_id = _work_order_pruefen(
+        work_order_id, property_id=property_id, project_id=project_id
+    )
     prepared, net_total, tax_total, gross_total = _prepare_lines(lines)
     rubriken_norm = _prepare_rubriken(rubriken, prepared)
 
@@ -505,6 +547,7 @@ def create_quote(
             id=uuid.uuid4(),
             property_id=property_id,
             project_id=project_id,
+            work_order_id=work_order_id,
             title=title.strip(),
             status="ENTWURF",
             quote_date=quote_date,
@@ -529,6 +572,60 @@ def create_quote(
 QUOTE_EDITIERBAR = ("ENTWURF", "INTERN_GEPRUEFT", "FREIGEGEBEN")
 
 
+def _soll_referenzen_pruefen(quote, *, lines_ersetzt, zuordnung_geaendert):
+    """Ein Soll, auf das sich ein Nachweis stützt, darf ihm nicht weggezogen werden.
+
+    Referenziert eine Berichtsposition eine Zeile dieses Angebots
+    (`site_report_line.source_quote_line_id`, Migration 0080), sind ZWEI Eingriffe
+    gesperrt:
+
+    * **Der Positionssatz.** Sein Ersatz ist ein Delete+Insert; das DELETE liefe in
+      die Fremdschlüsselverletzung 23503 und schlüge als 500 durch.
+    * **Die Auftragszuordnung** (`work_order_id`) — ändern *und* lösen. Sie ist die
+      Bedingung dafür, dass die Angebotsposition überhaupt ein zulässiges Soll dieses
+      Berichts ist (`site_report._erlaubte_angebote`). Fällt sie weg, fällt das Soll
+      auf 0, die längst erfasste Position wird im Abgleich zum ZUSATZ — und der
+      Monteur sitzt in der **Sackgasse**: sein Entwurfsbericht ist nicht mehr
+      speicherbar („Die Angebotsposition gehört nicht zu einem Angebot dieses
+      Auftrags"), und es gibt keinen Weg, die Herkunft einer Zeile zu lösen. Ein
+      Ersatzangebot ist der vorgesehene Weg.
+
+    **Diese Funktion läuft INNERHALB der `business_transaction`** — davor wäre sie
+    nebenläufig wertlos.
+
+    Beim Positionsersatz werden die Quellzeilen zusätzlich `FOR UPDATE` gesperrt:
+    ohne die Sperre könnte parallel ein Bericht eine dieser Zeilen als Soll aufnehmen,
+    ohne dass unser `exists()` ihn sähe (READ COMMITTED) — das DELETE liefe dann doch
+    in den 23503. `FOR UPDATE` kollidiert mit dem `FOR KEY SHARE`, das der
+    Fremdschlüssel beim Einfügen der Berichtsposition nimmt: der Nebenläufer wartet,
+    und wir sehen ihn. Für die reine Zuordnungsänderung braucht es die Sperre nicht —
+    dort wird keine Zeile gelöscht, es gibt also auch keinen 23503.
+    """
+    if not (lines_ersetzt or zuordnung_geaendert):
+        return
+    if lines_ersetzt:
+        list(
+            QuoteLine.objects.filter(quote_id=quote.id)
+            .select_for_update()
+            .values_list("id", flat=True)
+        )
+    if not SiteReportLine.objects.filter(
+        source_quote_line__quote_id=quote.id
+    ).exists():
+        return
+    if lines_ersetzt:
+        raise ValueError(
+            "Positionen dieses Angebots sind bereits als Soll in einem "
+            "Baustellenbericht referenziert und können nicht mehr geändert werden. "
+            "Bitte ein Ersatzangebot verwenden."
+        )
+    raise ValueError(
+        "Positionen dieses Angebots sind bereits als Soll in einem "
+        "Baustellenbericht referenziert; die Zuordnung kann nicht gelöst oder auf "
+        "einen anderen Auftrag geändert werden."
+    )
+
+
 def update_quote(
     actor_app_user_id,
     *,
@@ -536,6 +633,7 @@ def update_quote(
     title=None,
     quote_date=...,
     valid_until_date=...,
+    work_order_id=...,
     lines=None,
     rubriken=None,
 ):
@@ -545,15 +643,41 @@ def update_quote(
     übergeben wird — der Editor schickt immer den ganzen Beleg. Ein Teil-Update
     einzelner Positionen wäre bei umsortierten Positionsnummern nicht eindeutig.
 
-    `quote_date`/`valid_until_date` nutzen den Sentinel `...`, damit ein bewusstes
-    Leeren (None) von „nicht ändern" unterscheidbar bleibt.
+    `quote_date`/`valid_until_date`/`work_order_id` nutzen den Sentinel `...`, damit
+    ein bewusstes Leeren (None) von „nicht ändern" unterscheidbar bleibt.
+
+    **`work_order_id` ist in JEDEM Status setz- und lösbar** (Migration 0082). Der
+    reale Ablauf ist „Angebot versenden → Kunde nimmt an → *dann* Auftrag anlegen";
+    wäre die Zuordnung ab Versand gesperrt, wäre sie genau dann nicht möglich, wenn
+    man sie braucht — und das Soll des Abgleichs bliebe leer. Die Zuordnung ist ein
+    interner Verweis, kein Beleginhalt: sie ändert weder Betrag noch Position noch
+    das Sichtbild des Kundendokuments, wird auditiert, und der zusammengesetzte FK
+    `(work_order_id, property_id)` verhindert weiterhin die Zuordnung an einen
+    Auftrag einer fremden Liegenschaft.
+
+    Alles **andere** bleibt ab VERSENDET unveränderlich (B-30): Titel, Daten,
+    Positionen, Abschnitte, Beträge. Der DB-Trigger `invoicing.freeze_sent_quote`
+    ist dabei die letzte Instanz — der Service liefert nur die Fachmeldung.
+
+    **Positionen, die bereits als Soll in einem Baustellenbericht referenziert sind,
+    sperren den Positionssatz UND die Auftragszuordnung** — siehe
+    `_soll_referenzen_pruefen`. Ein Ersatzangebot ist der vorgesehene Weg.
     """
     quote = Quote.objects.filter(id=quote_id).first()
     if quote is None:
         raise ValueError("Angebot nicht gefunden.")
-    if quote.status not in QUOTE_EDITIERBAR:
+    # Der Statuszwang gilt für den BELEGINHALT — nicht für die Auftragszuordnung.
+    # Ein Aufruf, der nur `work_order_id` setzt, läuft auch am versendeten Angebot.
+    inhalt_geaendert = (
+        title is not None
+        or quote_date is not ...
+        or valid_until_date is not ...
+        or lines is not None
+    )
+    if inhalt_geaendert and quote.status not in QUOTE_EDITIERBAR:
         raise ValueError(
-            f"Angebot im Status {quote.status} ist unveränderlich (versendet)."
+            f"Angebot im Status {quote.status} ist unveränderlich (versendet). "
+            "Nur die Auftragszuordnung lässt sich noch ändern."
         )
 
     kopf = {}
@@ -565,6 +689,15 @@ def update_quote(
         kopf["quote_date"] = quote_date
     if valid_until_date is not ...:
         kopf["valid_until_date"] = valid_until_date
+    zuordnung_geaendert = False
+    if work_order_id is not ...:
+        neu = _work_order_pruefen(
+            work_order_id,
+            property_id=quote.property_id,
+            project_id=quote.project_id,
+        )
+        kopf["work_order_id"] = neu
+        zuordnung_geaendert = str(neu or "") != str(quote.work_order_id or "")
 
     prepared = rubriken_norm = None
     if lines is not None:
@@ -576,6 +709,13 @@ def update_quote(
 
     with as_business_error():
         with business_transaction(actor_app_user_id):
+            # Erst das Tor, dann der Schreibvorgang — und beides in DERSELBEN
+            # Transaktion (siehe `_soll_referenzen_pruefen`).
+            _soll_referenzen_pruefen(
+                quote,
+                lines_ersetzt=prepared is not None,
+                zuordnung_geaendert=zuordnung_geaendert,
+            )
             if kopf:
                 for feld, wert in kopf.items():
                     setattr(quote, feld, wert)

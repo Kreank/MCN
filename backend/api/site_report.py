@@ -24,6 +24,12 @@ das, was der Monteur vor Ort schreibt und unterschreiben lässt. Die Grenze hän
   * Die **Auftragssicht** (`?work_order_id=…`) ist eine Dispositionssicht über
     alle Berichte der Baustelle und lässt sich nicht auf eigene Zeilen begrenzen:
     Scope 'EIGENE' → 403 (fail-closed). Der Monteur nimmt den Einsatzweg.
+
+**Positionen und Soll-Ist (Migration 0080).** Der Bericht führt Positionen aus dem
+Artikel-/Leistungsstamm — **ohne Preise** (ein unterschriebener Bericht mit Preisen
+wäre eine Preisvereinbarung; der Preis entsteht erst in der Rechnung). Daraus
+entsteht der Soll-Ist-Abgleich am Auftrag; auch er weist **keine Geldbeträge** aus.
+Der Soll-Ist ist wie die Auftragsliste eine Dispositionssicht → Scope 'EIGENE' 403.
 """
 import base64
 import binascii
@@ -68,6 +74,104 @@ class SiteReportOut(Schema):
 class SiteReportListOut(Schema):
     items: list[SiteReportOut]
     total: int
+
+
+class SiteReportLineOut(Schema):
+    """Berichtsposition. **Trägt bewusst KEINE Preisfelder** (Migration 0080)."""
+
+    id: UUID
+    position_number: int
+    line_type: str
+    description: str
+    quantity: Decimal | None = None
+    unit: str | None = None
+    source_article_id: UUID | None = None
+    source_assembly_id: UUID | None = None
+    planned_quantity: Decimal | None = None
+    source_quote_line_id: UUID | None = None
+    note: str | None = None
+
+
+class SiteReportDetailOut(SiteReportOut):
+    lines: list[SiteReportLineOut] = []
+
+
+class SiteReportLineIn(Schema):
+    """Eingabe einer Berichtsposition. Ohne Preise (Migration 0080).
+
+    `planned_quantity` ist **kein Eingabefeld**: Das Soll wird ausschließlich aus
+    `source_quote_line_id` abgeleitet (ein mitgeschickter Wert wird verworfen), und
+    ohne Herkunft ist es verboten (422). Es steht hier nur, damit ein Fälschungs-
+    versuch als Fachfehler auffällt, statt stillschweigend zu wirken — ein frei
+    gesetztes Soll landete sonst auf einem unterschriebenen Kundendokument.
+    """
+
+    line_type: str
+    description: str | None = None
+    quantity: Decimal | None = None
+    unit: str | None = None
+    source_article_id: UUID | None = None
+    source_assembly_id: UUID | None = None
+    planned_quantity: Decimal | None = None
+    source_quote_line_id: UUID | None = None
+    note: str | None = None
+
+
+class SiteReportLinesIn(Schema):
+    lines: list[SiteReportLineIn] = []
+
+
+class SiteReportLinesOut(Schema):
+    items: list[SiteReportLineOut]
+    total: int
+
+
+class VorbelegenIn(Schema):
+    quote_id: UUID
+
+
+class VorbelegbaresAngebotOut(Schema):
+    """Auswahlkandidat für die Vorbelegung. **Ohne Beträge** — der Bericht führt
+    keine Preise, und die Auswahlliste braucht auch keine."""
+
+    id: UUID
+    quote_number: str | None = None
+    title: str
+    status: str
+
+
+class SollIstPositionOut(Schema):
+    schluessel: str
+    source_article_id: UUID | None = None
+    source_assembly_id: UUID | None = None
+    bezeichnung: str
+    einheit: str | None = None
+    soll: Decimal
+    ist: Decimal
+    differenz: Decimal
+    # MEHRVERBRAUCH | MINDERVERBRAUCH | ZUSATZ | ENTFALLEN | UNVERAENDERT
+    art: str
+
+
+class SollIstAngebotOut(Schema):
+    """Ein Angebot, das in das Soll eingeflossen ist. **Ohne Beträge.**"""
+
+    id: UUID
+    quote_number: str | None = None
+    title: str
+    status: str
+
+
+class SollIstOut(Schema):
+    work_order_id: UUID
+    positionen: list[SollIstPositionOut]
+    # Worauf stützt sich das Soll? Ohne diese Angabe wäre jede Differenz eine
+    # Behauptung. Leer = dem Auftrag ist kein (gültiges) Angebot zugeordnet —
+    # dann ist alles ZUSATZ, und der Nutzer sieht auch, warum.
+    angebote: list[SollIstAngebotOut] = []
+    # Sind unsignierte (= noch änderbare) Berichte eingeflossen? Dann ist das
+    # Ergebnis vorläufig. Wird ausgewiesen, nicht verschwiegen.
+    enthaelt_entwuerfe: bool
 
 
 class SiteReportIn(Schema):
@@ -120,6 +224,29 @@ def _out(report):
         signature_file_id=report.signature_file_id,
         version=report.version,
         created_at=report.created_at,
+    )
+
+
+def _line_out(line):
+    return SiteReportLineOut(
+        id=line.id,
+        position_number=line.position_number,
+        line_type=line.line_type,
+        description=line.description,
+        quantity=line.quantity,
+        unit=line.unit,
+        source_article_id=line.source_article_id,
+        source_assembly_id=line.source_assembly_id,
+        planned_quantity=line.planned_quantity,
+        source_quote_line_id=line.source_quote_line_id,
+        note=line.note,
+    )
+
+
+def _detail_out(report):
+    return SiteReportDetailOut(
+        **_out(report).dict(),
+        lines=[_line_out(l) for l in report_service.list_report_lines(report.id)],
     )
 
 
@@ -209,15 +336,18 @@ def list_site_reports(
     return SiteReportListOut(items=items, total=len(items))
 
 
-@router.get("/site_reports/{report_id}", response=SiteReportOut)
+@router.get("/site_reports/{report_id}", response=SiteReportDetailOut)
 def get_site_report(request, report_id: UUID):
-    """Ein Baustellenbericht im Detail. Fremder Bericht (Scope 'EIGENE') → 404."""
+    """Ein Baustellenbericht im Detail — **mit seinen Positionen**.
+
+    Fremder Bericht (Scope 'EIGENE') → 404.
+    """
     actor, scope = require_scoped(request, "workflow", "LESEN")
     report = report_service.get_report(report_id)
     if report is None:
         raise HttpError(404, "Bericht nicht gefunden.")
     _guard_own_report(report, actor, scope)
-    return _out(report)
+    return _detail_out(report)
 
 
 @router.post("/site_reports", response={201: SiteReportOut}, auth=django_auth)
@@ -308,3 +438,107 @@ def sign_site_report(request, report_id: UUID, payload: SiteReportSignIn):
     except ValueError as exc:
         raise HttpError(422, str(exc))
     return _out(report)
+
+
+# --- Positionen (Migration 0080) -------------------------------------------
+
+@router.put(
+    "/site_reports/{report_id}/positionen",
+    response=SiteReportLinesOut,
+    auth=django_auth,
+)
+def set_site_report_lines(request, report_id: UUID, payload: SiteReportLinesIn):
+    """Die Positionen eines Berichts **vollständig ersetzen** (nur im ENTWURF).
+
+    Der Aufrufer schickt immer den ganzen Positionssatz (wie im Beleg-Editor); die
+    Positionsnummern werden 1-basiert neu vergeben. **Preise gibt es hier nicht** —
+    der Bericht führt Menge und Einheit, der Preis entsteht in der Rechnung.
+    """
+    actor, scope = require_scoped(request, "workflow", "AENDERN")
+    report = report_service.get_report(report_id)
+    if report is None:
+        raise HttpError(404, "Bericht nicht gefunden.")
+    _guard_own_report(report, actor, scope)
+    try:
+        lines = report_service.set_report_lines(
+            actor,
+            report_id=report_id,
+            lines=[l.dict() for l in payload.lines],
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    items = [_line_out(l) for l in lines]
+    return SiteReportLinesOut(items=items, total=len(items))
+
+
+@router.get(
+    "/site_reports/{report_id}/vorbelegen-angebote",
+    response=list[VorbelegbaresAngebotOut],
+)
+def vorbelegbare_angebote(request, report_id: UUID):
+    """Die Angebote, aus denen dieser Bericht vorbelegt werden kann.
+
+    Nur die Auswahlliste für `POST …/vorbelegen` — deshalb hängt sie am **selben**
+    Recht wie die Aktion (`AENDERN`), nicht am bloßen Lesen: eine Nur-Lese-Rolle
+    braucht die Angebotstitel des Auftrags hier nicht zu sehen. Fremder Bericht
+    (Scope 'EIGENE') → 404. Bericht ohne Auftrag (freier Termin) → leere Liste.
+    """
+    actor, scope = require_scoped(request, "workflow", "AENDERN")
+    report = report_service.get_report(report_id)
+    if report is None:
+        raise HttpError(404, "Bericht nicht gefunden.")
+    _guard_own_report(report, actor, scope)
+    return [
+        VorbelegbaresAngebotOut(
+            id=q.id, quote_number=q.quote_number, title=q.title, status=q.status
+        )
+        for q in report_service.angebote_zur_vorbelegung(report_id)
+    ]
+
+
+@router.post(
+    "/site_reports/{report_id}/vorbelegen",
+    response=SiteReportLinesOut,
+    auth=django_auth,
+)
+def vorbelegen_site_report(request, report_id: UUID, payload: VorbelegenIn):
+    """Positionen aus einem Angebot des Auftrags als **Soll** übernehmen.
+
+    Nur in einen leeren Bericht im ENTWURF, nur aus einem Angebot dieses Auftrags,
+    nur die NORMAL-Positionen. Ist startet gleich dem Soll — der Monteur korrigiert
+    nur die Abweichungen.
+    """
+    actor, scope = require_scoped(request, "workflow", "AENDERN")
+    report = report_service.get_report(report_id)
+    if report is None:
+        raise HttpError(404, "Bericht nicht gefunden.")
+    _guard_own_report(report, actor, scope)
+    try:
+        lines = report_service.vorbelegen_aus_angebot(
+            actor, report_id=report_id, quote_id=payload.quote_id
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    items = [_line_out(l) for l in lines]
+    return SiteReportLinesOut(items=items, total=len(items))
+
+
+# --- Soll-Ist-Abgleich am Auftrag ------------------------------------------
+
+@router.get("/work_orders/{work_order_id}/soll-ist", response=SollIstOut)
+def soll_ist_abgleich(request, work_order_id: UUID):
+    """Angebots-Soll gegen Berichts-Ist über alle Berichte des Auftrags.
+
+    Reine Rechenarbeit, **keine Geldbeträge**. Wie die Berichts-Auftragssicht ist
+    das eine Dispositionssicht über die ganze Baustelle — sie lässt sich nicht auf
+    eigene Zeilen begrenzen: Scope 'EIGENE' → 403 (fail-closed).
+    """
+    _actor, scope = require_scoped(request, "workflow", "LESEN")
+    _auftragssicht_verboten(scope)
+    if not WorkOrder.objects.filter(id=work_order_id).exists():
+        raise HttpError(404, "Auftrag nicht gefunden.")
+    try:
+        ergebnis = report_service.soll_ist(work_order_id)
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return SollIstOut(**ergebnis)

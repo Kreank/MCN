@@ -140,6 +140,17 @@
               </div>
             }
 
+            <!-- Positionen: was verbaut/geleistet wurde (Ist) — ohne Preise.
+                 Bearbeitbar nur im ENTWURF; der Trigger erzwingt es ohnehin. -->
+            <div class="bericht__block">
+              <app-bericht-positionen
+                [berichtId]="r.id"
+                [status]="r.status"
+                [hatAuftrag]="!!r.work_order_id"
+                [darfAendern]="darfAendern()"
+              />
+            </div>
+
             <!-- Fotos: eigene Datei-Ablage am Bericht -->
             <div class="bericht__block">
               <h3 class="bericht__h">Fotos &amp; Anhänge</h3>

@@ -38,7 +38,7 @@
       [titel]="daten()!.title"
       [backLink]="daten()!.project ? '/projekte/' + daten()!.project!.id : '/projekte'"
       [backLabel]="daten()!.project ? 'Projekt' : 'Projekte'"
-      [tabs]="tabs"
+      [tabs]="tabs()"
       [(aktiv)]="tab"
     >
       @if (daten()!.is_emergency) {
@@ -188,6 +188,10 @@
 
       @if (tab() === 'berichte') {
         <app-berichte [workOrderId]="daten()!.id" />
+      }
+
+      @if (tab() === 'soll-ist' && darfSollIst()) {
+        <app-soll-ist [workOrderId]="daten()!.id" [propertyId]="daten()!.property.id" />
       }
 
       @if (tab() === 'dateien') {

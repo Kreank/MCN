@@ -21,6 +21,7 @@ import { ServiceJob, ServiceJobStatus, serviceJobStatusLabel } from '../../core/
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { Dateien } from '../../shared/dateien/dateien';
 import { Berichte } from '../../shared/berichte/berichte';
+import { SollIstAbgleich } from '../../shared/soll-ist/soll-ist';
 import { ZielFilter } from '../../core/datei.model';
 import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 import { Dialog } from '../../shared/dialog/dialog';
@@ -68,6 +69,7 @@ const STATUS_KANDIDATEN: WorkOrderStatus[] = [
     Feld,
     ReferenzWahl,
     Berichte,
+    SollIstAbgleich,
   ],
   templateUrl: './auftrag-detail.html',
   styleUrl: './auftrag-detail.scss',
@@ -87,14 +89,22 @@ export class AuftragDetail {
   protected readonly state = signal<ViewState>({ kind: 'loading' });
   private reqId = 0;
 
-  protected readonly tabs: MappeTab[] = [
+  /**
+   * Der Soll-Ist-Abgleich ist eine Dispositionssicht über die ganze Baustelle —
+   * der Endpunkt antwortet Rollen mit row_scope EIGENE mit 403 (fail-closed).
+   * Also gar nicht erst anbieten (Muster `nurAlle` in `app.ts`).
+   */
+  protected readonly darfSollIst = computed(() => this.auth.darfAlle('workflow', 'LESEN'));
+
+  protected readonly tabs = computed<MappeTab[]>(() => [
     { id: 'uebersicht', label: 'Übersicht' },
     { id: 'beteiligte', label: 'Beteiligte' },
     { id: 'termine', label: 'Termine' },
     { id: 'berichte', label: 'Berichte' },
+    ...(this.darfSollIst() ? [{ id: 'soll-ist', label: 'Soll-Ist' }] : []),
     { id: 'verlauf', label: 'Verlauf' },
     { id: 'dateien', label: 'Dateien' },
-  ];
+  ]);
 
   // --- Termine-Tab (Einsätze des Auftrags + Kundenhistorie) -----------------
   // Lazy: erst beim Öffnen des Reiters laden; je Auftrag einmal.
