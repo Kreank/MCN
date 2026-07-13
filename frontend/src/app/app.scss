@@ -5,7 +5,11 @@
 
 .shell {
   display: grid;
-  grid-template-columns: var(--sidebar-w) 1fr;
+  // `--nav-w` setzt das Template beim Einklappen (app.html). Über eine Variable,
+  // nicht über eine zweite Klasse: Komponenten-Styles sind attributgebunden und
+  // schlagen jede globale Klassenregel — die Spalte bliebe sonst breit, obwohl die
+  // Beschriftungen schon weg sind.
+  grid-template-columns: var(--nav-w, var(--sidebar-w)) 1fr;
   min-height: 100vh;
 }
 
@@ -13,6 +17,9 @@
 .shell--auth {
   grid-template-columns: 1fr;
 }
+
+// Die eingeklappte Navigation (.shell--schmal, .nav-toggle) liegt in styles.scss —
+// das Stil-Budget dieser Datei (8 kB) ist ausgereizt. Auslagern, nicht lockern.
 
 // ============================ Sidebar (Navy) =================================
 .sidebar {
@@ -429,6 +436,12 @@
   flex: 1;
   padding: var(--space-6);
   outline: none;
+}
+
+// Die Plantafel bekommt Vorrang vor dem Weißraum: Sie ist das Hauptwerkzeug des
+// Disponenten und lebt von Breite (ganze Woche) und Höhe (viele Bahnen).
+.content:has(.plantafel) {
+  padding: var(--space-3) var(--space-4);
 }
 
 @media (max-width: 720px) {

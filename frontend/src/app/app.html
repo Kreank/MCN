@@ -1,6 +1,11 @@
 <a class="skip-link" href="#inhalt">Zum Inhalt springen</a>
 
-<div class="shell" [class.shell--auth]="!auth.istAngemeldet()">
+<div
+  class="shell"
+  [class.shell--auth]="!auth.istAngemeldet()"
+  [class.shell--schmal]="navSchmal()"
+  [style.--nav-w]="navSchmal() ? '4.5rem' : null"
+>
   <!-- Navy-Kommandoflaeche: Sidebar mit Messkante-Signature — nur angemeldet -->
   @if (auth.istAngemeldet()) {
     <aside class="sidebar" aria-label="Bereichsnavigation">
@@ -12,6 +17,24 @@
         </span>
       </div>
 
+      <!-- Einklappen gibt dem Inhalt gut 11 rem Breite zurück — auf der Plantafel
+           entscheidet das darüber, ob eine ganze Woche in den Schirm passt. -->
+      <button
+        type="button"
+        class="nav-toggle"
+        (click)="navUmschalten()"
+        [attr.aria-expanded]="!navSchmal()"
+        [attr.aria-label]="
+          navSchmal() ? 'Navigation ausklappen' : 'Navigation einklappen'
+        "
+        [title]="navSchmal() ? 'Navigation ausklappen' : 'Navigation einklappen'"
+      >
+        <span class="nav-toggle__glyph" aria-hidden="true">{{
+          navSchmal() ? '»' : '«'
+        }}</span>
+        <span class="nav-toggle__text">Einklappen</span>
+      </button>
+
       <nav class="nav" aria-label="Hauptnavigation">
         <!-- Messkante: Maszband-Leiste; orange Bemaszungsmarke verfaehrt zum aktiven Punkt -->
         <div class="messkante" aria-hidden="true" [style.--active-index]="activeIndex()">
@@ -21,12 +44,16 @@
         <ul class="nav__list">
           @for (item of sichtbareNav(); track item.path) {
             <li>
+              <!-- Eingeklappt sieht ein sehender Nutzer nur noch die Kennung („50").
+                   Der Tooltip nennt den Bereich; der zugängliche Name steht ohnehin
+                   im (nur optisch verborgenen) Label. -->
               <a
                 class="nav__link"
                 [routerLink]="item.path"
                 routerLinkActive="is-active"
                 #rla="routerLinkActive"
                 [attr.aria-current]="rla.isActive ? 'page' : null"
+                [attr.title]="navSchmal() ? item.label : null"
               >
                 <span class="nav__mark" aria-hidden="true">{{ item.mark }}</span>
                 <span class="nav__label">{{ item.label }}</span>

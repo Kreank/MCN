@@ -4,6 +4,8 @@ import { filter } from 'rxjs';
 import { ThemeService } from './core/theme';
 import { AuthService } from './core/auth.service';
 
+const NAV_SPEICHER = 'mcn.nav.schmal';
+
 interface NavItem {
   path: string;
   label: string;
@@ -141,6 +143,37 @@ export class App {
   protected readonly themeLabel = computed(() =>
     this.themeSvc.theme() === 'dark' ? 'Zu hellem Design wechseln' : 'Zu dunklem Design wechseln',
   );
+
+  /**
+   * Eingeklappte Navigation: nur die Bemaßungskennungen, kein Text.
+   *
+   * Für die Plantafel — das Hauptwerkzeug des Disponenten — zählt jede Spalte
+   * Breite: Eingeklappt gibt die Navigation gut 11 rem an das Board zurück, und
+   * eine ganze Woche passt eher in den Schirm. Die Wahl wird gemerkt.
+   *
+   * Die Beschriftungen bleiben dabei IM DOM (nur optisch abgeschnitten) — ein
+   * Link, dessen zugänglicher Name auf „50" zusammenschrumpft, wäre für
+   * Screenreader wertlos.
+   */
+  protected readonly navSchmal = signal(this.navSchmalLaden());
+
+  private navSchmalLaden(): boolean {
+    try {
+      return localStorage.getItem(NAV_SPEICHER) === '1';
+    } catch {
+      return false;
+    }
+  }
+
+  navUmschalten(): void {
+    const schmal = !this.navSchmal();
+    this.navSchmal.set(schmal);
+    try {
+      localStorage.setItem(NAV_SPEICHER, schmal ? '1' : '0');
+    } catch {
+      // Ein gesperrter Speicher darf die Navigation nicht kosten.
+    }
+  }
 
   constructor() {
     this.themeSvc.init();
