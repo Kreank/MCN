@@ -6,13 +6,18 @@ import {
   AppointmentCategory,
   CATEGORY_COLORS,
   CategoryColorToken,
+  Qualifikation,
   Resource,
   RESOURCE_TYPES,
   ResourceType,
+  Zuweisungsvorlage,
   categoryColorClass,
   resourceStatusLabel,
   resourceTypeLabel,
 } from '../../core/einsatz.model';
+import { AufgabeService } from '../../core/aufgabe.service';
+import { AssignableUser } from '../../core/aufgabe.model';
+import { forkJoin } from 'rxjs';
 import { PlanungNav } from '../planung-nav/planung-nav';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { VerbotenState, fehlerDetail, fehlerState, istVerboten } from '../../shared/http-fehler';
@@ -36,6 +41,7 @@ type Meldung = { art: 'erfolg' | 'fehler'; text: string };
 })
 export class PlanungEinstellungen {
   private readonly svc = inject(PlanungStammdatenService);
+  private readonly aufgabeSvc = inject(AufgabeService);
   private readonly auth = inject(AuthService);
   private readonly fb = inject(FormBuilder);
 
@@ -98,9 +104,60 @@ export class PlanungEinstellungen {
     notes: this.fb.control('', { nonNullable: true }),
   });
 
+  // ===================== Qualifikationen (Migration 0078) =================
+  // Der Katalog ist FREI: `kind` ist ein Textfeld, kein Select. Der Betrieb legt
+  // GEWERK, ZERTIFIKAT, HERSTELLERSCHULUNG oder was immer er braucht selbst an —
+  // eine neue Art kostet keinen Deploy (User-Entscheidung: „dynamisch halten").
+  protected readonly qualifikationen = signal<Qualifikation[]>([]);
+  protected readonly qualInaktive = signal(false);
+  protected readonly qualDialogOffen = signal(false);
+  protected readonly qualLaedt = signal(false);
+  protected readonly qualEditId = signal<string | null>(null);
+  protected readonly qualFormularMeldung = signal<string | null>(null);
+
+  protected readonly qualForm = this.fb.group({
+    code: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.required, Validators.maxLength(40)],
+    }),
+    label: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.required, Validators.maxLength(120)],
+    }),
+    kind: this.fb.control('', { nonNullable: true }),
+    description: this.fb.control('', { nonNullable: true }),
+    expires: this.fb.control(false, { nonNullable: true }),
+    sort_order: this.fb.control(0, { nonNullable: true }),
+  });
+
+  /** Bereits vergebene Arten — als Vorschlagsliste (datalist), nicht als Zwang. */
+  protected readonly bekannteArten = computed(() =>
+    [...new Set(this.qualifikationen().map((q) => q.kind).filter((k): k is string => !!k))].sort(),
+  );
+
+  // ===================== Zuweisungs-Vorlagen (lose Gruppen) ===============
+  protected readonly vorlagen = signal<Zuweisungsvorlage[]>([]);
+  protected readonly personen = signal<AssignableUser[]>([]);
+  protected readonly vorlDialogOffen = signal(false);
+  protected readonly vorlLaedt = signal(false);
+  protected readonly vorlEditId = signal<string | null>(null);
+  protected readonly vorlFormularMeldung = signal<string | null>(null);
+  protected readonly vorlMitglieder = signal<{ app_user_id: string; role: string }[]>([]);
+
+  protected readonly vorlForm = this.fb.group({
+    name: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.required, Validators.maxLength(80)],
+    }),
+    description: this.fb.control('', { nonNullable: true }),
+    sort_order: this.fb.control(0, { nonNullable: true }),
+  });
+
   constructor() {
     this.ladeKategorien();
     this.ladeRessourcen();
+    this.ladeQualifikationen();
+    this.ladeVorlagen();
   }
 
   // ---- Laden --------------------------------------------------------------
@@ -123,6 +180,26 @@ export class PlanungEinstellungen {
     if (s.kind === 'forbidden') this.verboten.set(s);
   }
 
+  private ladeQualifikationen(): void {
+    this.svc.listQualifikationen(this.qualInaktive()).subscribe({
+      next: (q) => this.qualifikationen.set(q),
+      error: (err) => this.ladeFehler(err),
+    });
+  }
+
+  private ladeVorlagen(): void {
+    forkJoin({
+      vorlagen: this.svc.listVorlagen(),
+      personen: this.aufgabeSvc.listAssignableUsers(),
+    }).subscribe({
+      next: (r) => {
+        this.vorlagen.set(r.vorlagen);
+        this.personen.set(r.personen);
+      },
+      error: (err) => this.ladeFehler(err),
+    });
+  }
+
   katArchivierteUmschalten(wert: boolean): void {
     this.katArchivierte.set(wert);
     this.ladeKategorien();
@@ -130,6 +207,10 @@ export class PlanungEinstellungen {
   resInaktiveUmschalten(wert: boolean): void {
     this.resInaktive.set(wert);
     this.ladeRessourcen();
+  }
+  qualInaktiveUmschalten(wert: boolean): void {
+    this.qualInaktive.set(wert);
+    this.ladeQualifikationen();
   }
 
   meldungSchliessen(): void {
@@ -143,6 +224,11 @@ export class PlanungEinstellungen {
       name: '', color_token: 'NAVY', description: '', sort_order: 0,
       default_duration_minutes: '',
     });
+    // Den Bedarf MIT zurücksetzen. Sonst erbt eine neue Kategorie stillschweigend
+    // die Häkchen der zuletzt bearbeiteten — eine „Fensterreinigung", die den
+    // Gasschein verlangt, und ab da falsche Warnungen auf jeder Kachel.
+    // (Review-Fund.)
+    this.katBedarf.set([]);
     this.katFormularMeldung.set(null);
     this.katDialogOffen.set(true);
   }
@@ -158,7 +244,33 @@ export class PlanungEinstellungen {
         k.default_duration_minutes != null ? String(k.default_duration_minutes) : '',
     });
     this.katFormularMeldung.set(null);
+    // Den Bedarf dieses Termintyps nachladen (was er IMMER verlangt).
+    this.katBedarf.set([]);
+    this.svc.kategorieBedarf(k.id).subscribe({
+      next: (qs) => this.katBedarf.set(qs.map((q) => q.id)),
+      error: () => this.katBedarf.set([]),
+    });
     this.katDialogOffen.set(true);
+  }
+
+  /**
+   * Der Qualifikationsbedarf der Kategorie — was dieser Termintyp IMMER verlangt.
+   * Am einzelnen Termin lässt sich zusätzlicher Bedarf ergänzen; wirksam ist die
+   * VEREINIGUNG beider.
+   */
+  protected readonly katBedarf = signal<string[]>([]);
+
+  katBedarfUmschalten(qualId: string): void {
+    const liste = this.katBedarf();
+    this.katBedarf.set(
+      liste.includes(qualId)
+        ? liste.filter((x) => x !== qualId)
+        : [...liste, qualId],
+    );
+  }
+
+  katBedarfGesetzt(qualId: string): boolean {
+    return this.katBedarf().includes(qualId);
   }
 
   katDialogSchliessen(): void {
@@ -196,22 +308,46 @@ export class PlanungEinstellungen {
       ? this.svc.updateKategorie(editId, payload)
       : this.svc.createKategorie(payload);
     obs.subscribe({
-      next: () => {
-        this.katLaedt.set(false);
-        this.katDialogOffen.set(false);
-        this.meldung.set({
-          art: 'erfolg',
-          text: editId
-            ? `Kategorie „${payload.name}“ aktualisiert.`
-            : `Kategorie „${payload.name}“ angelegt.`,
+      next: (kat) => {
+        // Der Kopf ist gespeichert. Ab hier ist der Dialog im BEARBEITEN-Modus —
+        // sonst legte ein zweiter Anlauf nach einem Fehler im nächsten Schritt
+        // eine ZWEITE Kategorie an (bzw. liefe in „existiert bereits"), und der
+        // Bediener käme nicht mehr weiter. (Review-Fund.)
+        this.katEditId.set(kat.id);
+        // Den Bedarf im ANSCHLUSS setzen (eigener Endpunkt) — auch beim Anlegen,
+        // damit ein neuer Termintyp seine Qualifikationen sofort mitbringt.
+        this.svc.setKategorieBedarf(kat.id, this.katBedarf()).subscribe({
+          next: () => this.katFertig(editId, payload.name),
+          error: (err) => {
+            // Kopf ist gespeichert, Bedarf nicht — das muss man sagen, nicht
+            // hinter einer Erfolgsmeldung verstecken.
+            this.katLaedt.set(false);
+            this.katFormularMeldung.set(
+              (fehlerDetail(err) ?? 'Der Qualifikationsbedarf ließ sich nicht ' +
+                'speichern.') + ' Die übrigen Angaben sind gespeichert — ' +
+                'ein erneutes Speichern versucht nur noch den Bedarf.',
+            );
+            this.ladeKategorien();
+          },
         });
-        this.ladeKategorien();
       },
       error: (err) => {
         this.katLaedt.set(false);
         this.katFormularMeldung.set(apiFehlerZuweisen(err, this.katForm).formular);
       },
     });
+  }
+
+  private katFertig(editId: string | null, name: string): void {
+    this.katLaedt.set(false);
+    this.katDialogOffen.set(false);
+    this.meldung.set({
+      art: 'erfolg',
+      text: editId
+        ? `Kategorie „${name}“ aktualisiert.`
+        : `Kategorie „${name}“ angelegt.`,
+    });
+    this.ladeKategorien();
   }
 
   katArchivierenFragen(k: AppointmentCategory): void {
@@ -351,6 +487,205 @@ export class PlanungEinstellungen {
   // ---- Darstellungshelfer -------------------------------------------------
   katColorClass(token: CategoryColorToken): string {
     return categoryColorClass(token);
+  }
+
+  // ===================== Qualifikation: Anlegen/Bearbeiten ================
+  qualNeu(): void {
+    this.qualEditId.set(null);
+    this.qualForm.reset({
+      code: '', label: '', kind: '', description: '', expires: false, sort_order: 0,
+    });
+    this.qualForm.controls.code.enable();
+    this.qualFormularMeldung.set(null);
+    this.qualDialogOffen.set(true);
+  }
+
+  qualBearbeiten(q: Qualifikation): void {
+    this.qualEditId.set(q.id);
+    this.qualForm.reset({
+      code: q.code,
+      label: q.label,
+      kind: q.kind ?? '',
+      description: q.description ?? '',
+      expires: q.expires,
+      sort_order: q.sort_order,
+    });
+    // Der Code ist der fachliche Schlüssel, auf den Bedarf und Nachweise zeigen —
+    // er bleibt unveränderlich.
+    this.qualForm.controls.code.disable();
+    this.qualFormularMeldung.set(null);
+    this.qualDialogOffen.set(true);
+  }
+
+  qualDialogSchliessen(): void {
+    if (!this.qualLaedt()) this.qualDialogOffen.set(false);
+  }
+
+  qualAbsenden(): void {
+    if (this.qualLaedt()) return;
+    serverFehlerZuruecksetzen(this.qualForm);
+    this.qualFormularMeldung.set(null);
+    felderAlsBeruehrtMarkieren(this.qualForm);
+    if (this.qualForm.invalid) return;
+
+    const v = this.qualForm.getRawValue();
+    const editId = this.qualEditId();
+    this.qualLaedt.set(true);
+    const obs = editId
+      ? this.svc.updateQualifikation(editId, {
+          label: v.label.trim(),
+          kind: v.kind.trim() || null,
+          description: v.description.trim() || null,
+          expires: v.expires,
+          sort_order: Number(v.sort_order) || 0,
+        })
+      : this.svc.createQualifikation({
+          code: v.code.trim(),
+          label: v.label.trim(),
+          kind: v.kind.trim() || null,
+          description: v.description.trim() || null,
+          expires: v.expires,
+          sort_order: Number(v.sort_order) || 0,
+        });
+    obs.subscribe({
+      next: () => {
+        this.qualLaedt.set(false);
+        this.qualDialogOffen.set(false);
+        this.meldung.set({
+          art: 'erfolg',
+          text: editId
+            ? `Qualifikation „${v.label}“ aktualisiert.`
+            : `Qualifikation „${v.label}“ angelegt.`,
+        });
+        this.ladeQualifikationen();
+      },
+      error: (err) => {
+        this.qualLaedt.set(false);
+        this.qualFormularMeldung.set(apiFehlerZuweisen(err, this.qualForm).formular);
+      },
+    });
+  }
+
+  /** Stilllegen/reaktivieren (statt Löschen — der Bedarf zeigt darauf). */
+  qualAktivSetzen(q: Qualifikation, active: boolean): void {
+    if (this.aktionBusyId()) return;
+    this.aktionBusyId.set(q.id);
+    this.svc.updateQualifikation(q.id, { active }).subscribe({
+      next: () => {
+        this.aktionBusyId.set(null);
+        this.meldung.set({
+          art: 'erfolg',
+          text: active
+            ? `„${q.label}“ ist wieder in Gebrauch.`
+            : `„${q.label}“ ist stillgelegt und wird nicht mehr gefordert.`,
+        });
+        this.ladeQualifikationen();
+      },
+      error: (err) => {
+        this.aktionBusyId.set(null);
+        this.meldung.set({ art: 'fehler', text: fehlerDetail(err) ?? 'Fehlgeschlagen.' });
+      },
+    });
+  }
+
+  // ===================== Vorlage: Anlegen/Bearbeiten ======================
+  vorlNeu(): void {
+    this.vorlEditId.set(null);
+    this.vorlForm.reset({ name: '', description: '', sort_order: 0 });
+    this.vorlMitglieder.set([]);
+    this.vorlFormularMeldung.set(null);
+    this.vorlDialogOffen.set(true);
+  }
+
+  vorlBearbeiten(v: Zuweisungsvorlage): void {
+    this.vorlEditId.set(v.id);
+    this.vorlForm.reset({
+      name: v.name,
+      description: v.description ?? '',
+      sort_order: v.sort_order,
+    });
+    this.vorlMitglieder.set(
+      v.members.map((m) => ({ app_user_id: m.app_user_id, role: m.role })),
+    );
+    this.vorlFormularMeldung.set(null);
+    this.vorlDialogOffen.set(true);
+  }
+
+  vorlDialogSchliessen(): void {
+    if (!this.vorlLaedt()) this.vorlDialogOffen.set(false);
+  }
+
+  vorlMitgliedUmschalten(userId: string): void {
+    const liste = this.vorlMitglieder();
+    this.vorlMitglieder.set(
+      liste.some((m) => m.app_user_id === userId)
+        ? liste.filter((m) => m.app_user_id !== userId)
+        : [...liste, { app_user_id: userId, role: 'TECHNICIAN' }],
+    );
+  }
+
+  vorlIstMitglied(userId: string): boolean {
+    return this.vorlMitglieder().some((m) => m.app_user_id === userId);
+  }
+
+  vorlIstLead(userId: string): boolean {
+    return this.vorlMitglieder().some(
+      (m) => m.app_user_id === userId && m.role === 'LEAD',
+    );
+  }
+
+  /** Rolle umschalten (Techniker ↔ Einsatzleitung). */
+  vorlRolleUmschalten(userId: string): void {
+    this.vorlMitglieder.set(
+      this.vorlMitglieder().map((m) =>
+        m.app_user_id === userId
+          ? { ...m, role: m.role === 'LEAD' ? 'TECHNICIAN' : 'LEAD' }
+          : m,
+      ),
+    );
+  }
+
+  vorlAbsenden(): void {
+    if (this.vorlLaedt()) return;
+    serverFehlerZuruecksetzen(this.vorlForm);
+    this.vorlFormularMeldung.set(null);
+    felderAlsBeruehrtMarkieren(this.vorlForm);
+    if (this.vorlForm.invalid) return;
+
+    const v = this.vorlForm.getRawValue();
+    const editId = this.vorlEditId();
+    const payload = {
+      name: v.name.trim(),
+      description: v.description.trim() || null,
+      sort_order: Number(v.sort_order) || 0,
+      members: this.vorlMitglieder(),
+    };
+    this.vorlLaedt.set(true);
+    const obs = editId
+      ? this.svc.updateVorlage(editId, payload)
+      : this.svc.createVorlage(payload);
+    obs.subscribe({
+      next: () => {
+        this.vorlLaedt.set(false);
+        this.vorlDialogOffen.set(false);
+        this.meldung.set({
+          art: 'erfolg',
+          text: editId
+            ? `Vorlage „${payload.name}“ aktualisiert.`
+            : `Vorlage „${payload.name}“ angelegt.`,
+        });
+        this.ladeVorlagen();
+      },
+      error: (err) => {
+        this.vorlLaedt.set(false);
+        this.vorlFormularMeldung.set(apiFehlerZuweisen(err, this.vorlForm).formular);
+      },
+    });
+  }
+
+  /** Name der Person (für die Mitgliederliste). */
+  personName(id: string): string {
+    return this.personen().find((p) => p.id === id)?.display_name ?? id;
   }
 
   /** Minuten menschenlesbar: 90 → „1 h 30 min", 45 → „45 min", 120 → „2 h". */

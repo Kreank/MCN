@@ -15,6 +15,7 @@ import {
   Resource,
   SerienIntervall,
   ServiceJobStatus,
+  Zuweisungsvorlage,
   categoryColorClass,
   konfliktLabel,
   konfliktSymbol,
@@ -199,6 +200,10 @@ export class Plantafel {
     this.stammSvc.listRessourcen().subscribe({
       next: (r) => this.ressourcen.set(r),
       error: () => this.ressourcen.set([]),
+    });
+    this.stammSvc.listVorlagen().subscribe({
+      next: (v) => this.vorlagen.set(v),
+      error: () => this.vorlagen.set([]),
     });
   }
 
@@ -935,6 +940,47 @@ export class Plantafel {
     const ende = new Date(new Date(startIso).getTime() + dauer * 60_000);
     c.end_datum.setValue(isoVon(ende));
     c.end_zeit.setValue(this.hhmm(ende));
+  }
+
+  // ---- Zuweisungs-Vorlagen (lose Gruppen, Migration 0078) -----------------
+  /**
+   * Eine benannte Personengruppe auf Knopfdruck in den Dialog übernehmen.
+   *
+   * **Ein Vorschlag, keine Bindung** (User-Entscheidung „lose Gruppen,
+   * wechselnd"): Die Mitglieder werden zur Auswahl HINZUGEFÜGT, bestehende
+   * bleiben stehen, und danach lässt sich jeder einzeln wieder abwählen. Es
+   * entsteht kein Team-Objekt am Termin — nur gewöhnliche Einzelzuweisungen.
+   */
+  protected readonly vorlagen = signal<Zuweisungsvorlage[]>([]);
+
+  vorlageUebernehmen(v: Zuweisungsvorlage): void {
+    const vorhanden = new Set(this.gewaehlteMitarbeiter());
+    // Nur Mitglieder übernehmen, die es als Board-Bahn noch gibt: Wurde jemand
+    // seit dem Anlegen der Vorlage deaktiviert, hat er keine Checkbox mehr — er
+    // ließe sich danach nicht wieder abwählen. Und die Übersprungenen werden
+    // BENANNT, nicht verschwiegen.
+    const bahnen = new Set(this.mitarbeiterBahnen().map((l) => l.id));
+    const kandidaten = v.members.map((m) => m.app_user_id);
+    const neu = kandidaten.filter((id) => bahnen.has(id) && !vorhanden.has(id));
+    const entfallen = kandidaten.filter((id) => !bahnen.has(id)).length;
+
+    if (!neu.length) {
+      this.ansage.set(
+        entfallen
+          ? `Aus „${v.name}“ ist niemand einplanbar (${entfallen} Mitglied(er) sind ` +
+              'nicht mehr aktiv).'
+          : `Alle Mitglieder von „${v.name}“ sind bereits gewählt.`,
+      );
+      return;
+    }
+    this.gewaehlteMitarbeiter.set([...this.gewaehlteMitarbeiter(), ...neu]);
+    this.ansage.set(
+      `${neu.length} Mitarbeiter aus „${v.name}“ übernommen.` +
+        (entfallen
+          ? ` ${entfallen} Mitglied(er) sind nicht mehr aktiv und wurden übergangen.`
+          : '') +
+        ' Die Auswahl lässt sich weiter ändern — die Vorlage bindet nichts.',
+    );
   }
 
   /** Die übliche Dauer der aktuell gewählten Kategorie (für den Dialoghinweis). */

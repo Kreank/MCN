@@ -34,6 +34,7 @@ from api.mitarbeiter import router as mitarbeiter_router
 from api.planung import router as planung_router
 from api.projekt import router as projekt_router
 from api.property import router as property_router
+from api.qualifikation import router as qualifikation_router
 from api.security import router as security_router
 from api.site_report import router as site_report_router
 from api.zeiterfassung import hr_router as zeit_stammdaten_router
@@ -57,6 +58,10 @@ api.add_router("/workflow", aufgabe_router, tags=["workflow"])
 api.add_router("/workflow", auftrag_router, tags=["workflow"])
 api.add_router("/workflow", site_report_router, tags=["workflow"])
 api.add_router("/planung", planung_router, tags=["planung"])
+# Qualifikationen + Zuweisungs-Vorlagen (0078). Liegt unter /planung, weil es
+# Planungswerkzeuge sind — die NACHWEISE am Mitarbeiter hängen darin aber am
+# `hr`-Recht (Personalakte), nicht an `workflow`.
+api.add_router("/planung", qualifikation_router, tags=["planung"])
 api.add_router("/invoicing", beleg_router, tags=["invoicing"])
 api.add_router("/buchhaltung", buchhaltung_router, tags=["buchhaltung"])
 api.add_router("/maintenance", maintenance_router, tags=["maintenance"])

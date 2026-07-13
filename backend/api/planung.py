@@ -896,10 +896,12 @@ class BoardLaneOut(Schema):
 class KonfliktOut(Schema):
     """Nicht-blockierender Konflikt an einer Kachel.
 
-    `kind` ∈ DOPPELBELEGUNG | ABWESENHEIT | FEIERTAG | OFFENES_ENDE. Doppelbelegung
-    ist eine bewusst **weiche** Invariante (Migration 0025): Die Plantafel macht
-    sie sichtbar, die DB verbietet sie nicht. `text` ist immer gesetzt — das UI
-    zeigt Text + Symbol, nie nur Farbe (WCAG 1.4.1).
+    `kind` ∈ DOPPELBELEGUNG | ABWESENHEIT | FEIERTAG | OFFENES_ENDE |
+    QUALIFIKATION. Doppelbelegung ist eine bewusst **weiche** Invariante
+    (Migration 0025), die fehlende Qualifikation ebenso (Migration 0078): Die
+    Plantafel macht sie sichtbar, die DB verbietet sie nicht — der Notdienst am
+    Sonntag darf nicht an einem gesperrten Board scheitern. `text` ist immer
+    gesetzt — das UI zeigt Text + Symbol, nie nur Farbe (WCAG 1.4.1).
     """
 
     kind: str

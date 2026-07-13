@@ -3603,3 +3603,183 @@ class PunchoutSession(models.Model):
 
     def __str__(self):
         return f"Punchout {self.action} ({self.status})"
+
+
+# ---------------------------------------------------------------------------
+# Qualifikationen und Zuweisungs-Vorlagen (Migration 0078)
+# ---------------------------------------------------------------------------
+
+class Qualification(models.Model):
+    """hr.qualification — frei pflegbarer Qualifikationskatalog (Migration 0078).
+
+    **`kind` ist eine Gruppierung als DATENWERT, kein Enum im Code** (bewusst ohne
+    CHECK): Der Betrieb legt „GEWERK", „ZERTIFIKAT", „HERSTELLERSCHULUNG" oder was
+    immer er braucht selbst an. Ein fest verdrahtetes Enum verlangte für jede neue
+    Schulungsart eine Migration — der User hat ausdrücklich um Flexibilität gebeten.
+
+    `expires` sagt, ob die Zuordnung ein Gültig-bis verlangt (Gasschein ja,
+    Gesellenbrief nein). Der DB-Trigger setzt das durch.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    code = models.TextField()
+    label = models.TextField()
+    kind = models.TextField(null=True, blank=True)
+    description = models.TextField(null=True, blank=True)
+    expires = models.BooleanField(db_default=models.Value(False))
+    active = models.BooleanField(db_default=models.Value(True))
+    sort_order = models.IntegerField(db_default=models.Value(0))
+    created_by = models.ForeignKey(
+        AppUser, models.DO_NOTHING, db_column="created_by",
+        related_name="created_qualifications",
+    )
+    version = models.IntegerField(db_default=models.Value(1))
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'hr"."qualification'
+
+    def __str__(self):
+        return f"{self.code} {self.label}"
+
+
+class EmployeeQualification(models.Model):
+    """hr.employee_qualification — wer kann was, bis wann (Migration 0078).
+
+    Genau EINE Zeile je (Mitarbeiter, Qualifikation): Eine Verlängerung schreibt
+    `valid_until` fort, sie legt keine zweite Zeile an — sonst wäre „gültig?"
+    mehrdeutig. `valid_until = NULL` heißt „läuft nie ab" (nur erlaubt, wenn der
+    Katalog `expires = false` sagt).
+    """
+
+    id = models.UUIDField(primary_key=True)
+    employee = models.ForeignKey(
+        "Employee", models.DO_NOTHING, db_column="employee_id",
+        related_name="qualifications",
+    )
+    qualification = models.ForeignKey(
+        Qualification, models.DO_NOTHING, db_column="qualification_id",
+        related_name="employee_links",
+    )
+    valid_from = models.DateField(null=True, blank=True)
+    valid_until = models.DateField(null=True, blank=True)
+    evidence_note = models.TextField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        AppUser, models.DO_NOTHING, db_column="created_by",
+        related_name="created_employee_qualifications",
+    )
+    version = models.IntegerField(db_default=models.Value(1))
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'hr"."employee_qualification'
+
+    def __str__(self):
+        return f"{self.employee_id} · {self.qualification_id}"
+
+
+class AppointmentCategoryQualification(models.Model):
+    """workflow.appointment_category_qualification — was ein Termintyp IMMER braucht."""
+
+    id = models.UUIDField(primary_key=True)
+    appointment_category = models.ForeignKey(
+        AppointmentCategory, models.DO_NOTHING, db_column="appointment_category_id",
+        related_name="qualification_links",
+    )
+    qualification = models.ForeignKey(
+        Qualification, models.DO_NOTHING, db_column="qualification_id",
+        related_name="category_links",
+    )
+    created_by = models.ForeignKey(
+        AppUser, models.DO_NOTHING, db_column="created_by",
+        related_name="created_category_qualifications",
+    )
+    created_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'workflow"."appointment_category_qualification'
+
+
+class ServiceJobQualification(models.Model):
+    """workflow.service_job_qualification — was DIESER eine Termin zusätzlich braucht.
+
+    Der wirksame Bedarf ist die VEREINIGUNG aus Kategoriebedarf und Terminbedarf.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    service_job = models.ForeignKey(
+        ServiceJob, models.DO_NOTHING, db_column="service_job_id",
+        related_name="qualification_links",
+    )
+    qualification = models.ForeignKey(
+        Qualification, models.DO_NOTHING, db_column="qualification_id",
+        related_name="job_links",
+    )
+    created_by = models.ForeignKey(
+        AppUser, models.DO_NOTHING, db_column="created_by",
+        related_name="created_job_qualifications",
+    )
+    created_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'workflow"."service_job_qualification'
+
+
+class AssignmentTemplate(models.Model):
+    """workflow.assignment_template — benannte Personengruppe als VORSCHLAG (0078).
+
+    Der Betrieb fährt in „losen Gruppen, wechselnd" (User-Entscheidung) — deshalb
+    KEIN Team-Modell mit eigenen Board-Bahnen, sondern eine Vorlage, die der
+    Termin-Dialog auf Knopfdruck übernimmt. Sie **bindet nichts**: Danach sind es
+    gewöhnliche Einzelzuweisungen, und wer abweicht, weicht ab.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    name = models.TextField()
+    description = models.TextField(null=True, blank=True)
+    active = models.BooleanField(db_default=models.Value(True))
+    sort_order = models.IntegerField(db_default=models.Value(0))
+    created_by = models.ForeignKey(
+        AppUser, models.DO_NOTHING, db_column="created_by",
+        related_name="created_assignment_templates",
+    )
+    version = models.IntegerField(db_default=models.Value(1))
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'workflow"."assignment_template'
+
+    def __str__(self):
+        return self.name
+
+
+class AssignmentTemplateMember(models.Model):
+    """workflow.assignment_template_member — Mitglied einer Zuweisungs-Vorlage."""
+
+    id = models.UUIDField(primary_key=True)
+    template = models.ForeignKey(
+        AssignmentTemplate, models.DO_NOTHING, db_column="template_id",
+        related_name="members",
+    )
+    assignee = models.ForeignKey(
+        AppUser, models.DO_NOTHING, db_column="assignee_user_id",
+        related_name="assignment_template_memberships",
+    )
+    role = models.TextField(db_default="TECHNICIAN")  # TECHNICIAN | LEAD
+    created_by = models.ForeignKey(
+        AppUser, models.DO_NOTHING, db_column="created_by",
+        related_name="created_assignment_template_members",
+    )
+    created_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'workflow"."assignment_template_member'

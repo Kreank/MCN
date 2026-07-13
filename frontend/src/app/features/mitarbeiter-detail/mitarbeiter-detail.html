@@ -240,7 +240,136 @@
           </div>
         </div>
       }
+
+      <!-- ==================== Qualifikationen (0078) ==================== -->
+      @if (tab() === 'qualifikationen') {
+        <p class="note note--info">
+          Nachweise sind ein <strong>Personaldatum</strong>. Die Disposition sieht auf der
+          Plantafel nur die Folge („kein Nachweis für …“) — nicht diese Akte. Fehlt ein
+          Nachweis, <strong>warnt</strong> die Plantafel; blockiert wird nichts.
+        </p>
+        @if (darfAendern()) {
+          <button type="button" class="btn btn--primary" (click)="qualNeu()">
+            + Nachweis eintragen
+          </button>
+        }
+        @if (qualNachweise().length === 0) {
+          <p class="leer">Noch kein Nachweis hinterlegt.</p>
+        } @else {
+          <table class="tabelle">
+            <thead>
+              <tr>
+                <th scope="col">Qualifikation</th>
+                <th scope="col">Gültig ab</th>
+                <th scope="col">Gültig bis</th>
+                <th scope="col">Status</th>
+                <th scope="col">Nachweis</th>
+                <th scope="col"><span class="sr-only">Aktionen</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (n of qualNachweise(); track n.qualification.id) {
+                <tr>
+                  <td>
+                    {{ n.qualification.label }}
+                    @if (n.qualification.kind) {
+                      <span class="zeile-sub">{{ n.qualification.kind }}</span>
+                    }
+                  </td>
+                  <td>{{ n.valid_from ?? '—' }}</td>
+                  <td>
+                    @if (n.valid_until) {
+                      {{ n.valid_until }}
+                    } @else {
+                      <span class="feld__wert--leer">läuft nicht ab</span>
+                    }
+                  </td>
+                  <td>
+                    <!-- Text UND Stempel, nie nur Farbe (WCAG 1.4.1). -->
+                    <span class="stamp" [class.stamp--warn]="!n.gueltig_heute">
+                      {{ n.gueltig_heute ? 'Gültig' : 'Abgelaufen' }}
+                    </span>
+                  </td>
+                  <td>{{ n.evidence_note ?? '—' }}</td>
+                  <td class="zeile-aktionen">
+                    @if (darfAendern()) {
+                      <button type="button" class="btn btn--klein" (click)="qualBearbeiten(n)">
+                        Bearbeiten
+                      </button>
+                      <button
+                        type="button"
+                        class="btn btn--klein"
+                        (click)="qualEntfernenFragen(n)"
+                      >
+                        Entfernen
+                      </button>
+                    }
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        }
+      }
     </app-mappe>
+
+    <!-- ==================== Nachweis eintragen/verlängern ==================== -->
+    <app-dialog
+      [offen]="qualDialogOffen()"
+      titel="Nachweis eintragen"
+      (schliessen)="qualDialogSchliessen()"
+    >
+      <form class="formular" (ngSubmit)="qualAbsenden()" [formGroup]="qualForm">
+        <app-feld
+          [control]="qualForm.controls.qualification_id"
+          label="Qualifikation"
+          typ="select"
+          [optionen]="qualOptionen()"
+          [pflicht]="true"
+          hinweis="Ein erneuter Eintrag derselben Qualifikation VERLÄNGERT sie (er legt keine zweite Zeile an)."
+        />
+        <app-feld [control]="qualForm.controls.valid_from" label="Gültig ab" typ="datum" />
+        <app-feld
+          [control]="qualForm.controls.valid_until"
+          label="Gültig bis"
+          typ="datum"
+          [pflicht]="qualBrauchtAblauf()"
+          hinweis="Bei ablaufpflichtigen Nachweisen (z. B. Gasschein) Pflicht. Der Terminabgleich prüft gegen den TERMINBEGINN, nicht gegen heute."
+        />
+        <app-feld
+          [control]="qualForm.controls.evidence_note"
+          label="Nachweis"
+          hinweis="Woraus geht er hervor? (Urkundennummer, Ablageort) — kein Dateiupload."
+        />
+        @if (qualMeldung(); as m) {
+          <p class="note note--error" role="alert">{{ m }}</p>
+        }
+        <div dialog-aktionen class="dialog__aktionen">
+          <button
+            type="button"
+            class="btn"
+            (click)="qualDialogSchliessen()"
+            [disabled]="qualLaedt()"
+          >
+            Abbrechen
+          </button>
+          <button type="submit" class="btn btn--primary" [disabled]="qualLaedt()">
+            {{ qualLaedt() ? 'Wird gespeichert …' : 'Speichern' }}
+          </button>
+        </div>
+      </form>
+    </app-dialog>
+
+    <app-bestaetigung
+      [offen]="qualEntfernen() !== null"
+      titel="Nachweis entfernen?"
+      text="Der Nachweis wird gelöscht (Fehleintrag). Die Änderung steht im Audit-Log. Fehlt der Nachweis danach für einen geplanten Termin, warnt die Plantafel."
+      bestaetigenLabel="Entfernen"
+      [gefahr]="true"
+      [laedt]="qualLaedt()"
+      (bestaetigen)="qualEntfernenBestaetigen()"
+      (abbrechen)="qualEntfernenAbbrechen()"
+    />
 
     <!-- ============================ Status ändern ==================== -->
     <app-dialog [offen]="statusOffen()" titel="Status ändern" (schliessen)="statusSchliessen()">

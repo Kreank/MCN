@@ -36,6 +36,7 @@ from db_core.models import (
 )
 from db_core.services import einsatz as einsatz_service
 from db_core.services import faelligkeit as faelligkeit_service
+from db_core.services import qualifikation as qualifikation_service
 from db_core.services import zeiterfassung as zeit_service
 from db_core.services._validation import ensure_exists
 
@@ -511,6 +512,13 @@ def belegungs_warnungen(service_job_id):
             "Für den Termin ist kein Ende gepflegt — eine Überlappung mit anderen "
             "Terminen lässt sich nicht vollständig prüfen."
         )
+
+    # Fehlende/abgelaufene Qualifikationen (Migration 0078). Auch hier: WARNUNG,
+    # keine Sperre — der Disponent entscheidet (Notdienst, Einarbeitung, „fährt
+    # heute mit dem Meister mit").
+    for w in qualifikation_service.qualifikations_warnungen(job.id):
+        warnings.append(w["text"])
+
     return sorted(set(warnings))
 
 
@@ -947,6 +955,14 @@ def _board_konflikte(jobs, abwesend_an, feiertage):
                 "Kein Ende gepflegt — die Dauer ist unbekannt und eine Überlappung "
                 "nur eingeschränkt prüfbar.",
             )
+
+    # Fehlende/abgelaufene Qualifikationen (Migration 0078) — dieselbe WEICHE
+    # Invariante wie die Doppelbelegung: sichtbar machen, nicht verbieten. Der
+    # Notdienst am Sonntag darf nicht an einem gesperrten Board scheitern.
+    # Gebündelt (drei Abfragen fürs ganze Board), nicht je Kachel — das wäre ein
+    # N+1 im heißesten Lesepfad des Produkts.
+    for jid, warnungen in qualifikation_service.warnungen_fuer_jobs(jobs).items():
+        ergebnis.setdefault(jid, []).extend(warnungen)
 
     # n:m-Zuweisungen melden dieselbe Kollision mehrfach → entdoppeln, Reihenfolge
     # bleibt stabil.

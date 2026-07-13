@@ -1,4 +1,4 @@
-import { Component, computed, inject, signal } from '@angular/core';
+import { Component, computed, effect, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
@@ -18,6 +18,11 @@ import { deZuApiDezimal, dezimalValidator } from '../../shared/formular/dezimal'
 import { VerbotenState, fehlerDetail, fehlerState, istVerboten } from '../../shared/http-fehler';
 import { MitarbeiterService } from '../../core/mitarbeiter.service';
 import { AuthService } from '../../core/auth.service';
+import { PlanungStammdatenService } from '../../core/planung-stammdaten.service';
+import {
+  MitarbeiterQualifikation,
+  Qualifikation,
+} from '../../core/einsatz.model';
 import {
   ABSENCE_TYPES,
   Absence,
@@ -64,6 +69,7 @@ type Meldung = { art: 'erfolg' | 'fehler'; text: string };
 export class MitarbeiterDetail {
   private readonly route = inject(ActivatedRoute);
   private readonly svc = inject(MitarbeiterService);
+  private readonly planungSvc = inject(PlanungStammdatenService);
   private readonly auth = inject(AuthService);
   private readonly fb = inject(FormBuilder);
 
@@ -83,6 +89,7 @@ export class MitarbeiterDetail {
     { id: 'vertrag', label: 'Vertrag' },
     { id: 'abwesenheiten', label: 'Abwesenheiten' },
     { id: 'urlaub', label: 'Urlaub' },
+    { id: 'qualifikationen', label: 'Qualifikationen' },
   ];
 
   // --- Rechte --------------------------------------------------------------
@@ -191,11 +198,20 @@ export class MitarbeiterDetail {
     this.route.paramMap.pipe(takeUntilDestroyed()).subscribe((pm) => {
       const id = pm.get('id');
       this.tab.set('persoenliches');
+      this.qualNachweise.set([]);
       if (!id) {
         this.state.set({ kind: 'error' });
         return;
       }
       this.load(id);
+    });
+
+    // Qualifikationen erst laden, wenn der Reiter geöffnet wird (wie die übrigen
+    // Nachlade-Tabs) — sie hängen an zwei zusätzlichen Abfragen.
+    effect(() => {
+      if (this.tab() === 'qualifikationen' && this.daten()) {
+        this.qualLaden();
+      }
     });
   }
 
@@ -627,5 +643,129 @@ export class MitarbeiterDetail {
   }
   vacationAria(a: VacationAccount): string {
     return `Urlaub ${this.num(a.used_days)} von ${this.num(a.total_days)} Tagen verbraucht, ${this.num(a.remaining_days)} Tage Rest.`;
+  }
+
+  // ===================== Qualifikationen (Migration 0078) =================
+  // Der NACHWEIS ist ein Personaldatum und hängt am `hr`-Recht. Der Disponent
+  // sieht auf der Plantafel nur die FOLGE („X hat keinen Nachweis für …"), nicht
+  // die Akte — dieselbe Grenze wie bei der Abwesenheitsart (DSGVO).
+  protected readonly qualNachweise = signal<MitarbeiterQualifikation[]>([]);
+  protected readonly qualKatalog = signal<Qualifikation[]>([]);
+  protected readonly qualDialogOffen = signal(false);
+  protected readonly qualLaedt = signal(false);
+  protected readonly qualMeldung = signal<string | null>(null);
+  protected readonly qualEntfernen = signal<MitarbeiterQualifikation | null>(null);
+
+  protected readonly qualForm = this.fb.group({
+    qualification_id: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.required],
+    }),
+    valid_from: this.fb.control('', { nonNullable: true }),
+    valid_until: this.fb.control('', { nonNullable: true }),
+    evidence_note: this.fb.control('', { nonNullable: true }),
+  });
+
+  protected readonly qualOptionen = computed(() =>
+    this.qualKatalog().map((q) => ({
+      wert: q.id,
+      label: q.expires ? q.label + ' (läuft ab)' : q.label,
+    })),
+  );
+
+  /** Verlangt die aktuell gewählte Qualifikation ein Gültig-bis? */
+  qualBrauchtAblauf(): boolean {
+    const id = this.qualForm.controls.qualification_id.value;
+    return !!this.qualKatalog().find((q) => q.id === id)?.expires;
+  }
+
+  qualLaden(): void {
+    const id = this.daten()?.id;
+    if (!id) return;
+    this.planungSvc.mitarbeiterQualifikationen(id).subscribe({
+      next: (n) => this.qualNachweise.set(n),
+      error: () => this.qualNachweise.set([]),
+    });
+    this.planungSvc.listQualifikationen().subscribe({
+      next: (k) => this.qualKatalog.set(k),
+      error: () => this.qualKatalog.set([]),
+    });
+  }
+
+  qualNeu(): void {
+    this.qualForm.reset({
+      qualification_id: '', valid_from: '', valid_until: '', evidence_note: '',
+    });
+    this.qualMeldung.set(null);
+    this.qualDialogOffen.set(true);
+  }
+
+  qualBearbeiten(n: MitarbeiterQualifikation): void {
+    this.qualForm.reset({
+      qualification_id: n.qualification.id,
+      valid_from: n.valid_from ?? '',
+      valid_until: n.valid_until ?? '',
+      evidence_note: n.evidence_note ?? '',
+    });
+    this.qualMeldung.set(null);
+    this.qualDialogOffen.set(true);
+  }
+
+  qualDialogSchliessen(): void {
+    if (!this.qualLaedt()) this.qualDialogOffen.set(false);
+  }
+
+  qualAbsenden(): void {
+    const id = this.daten()?.id;
+    if (!id || this.qualLaedt()) return;
+    this.qualForm.markAllAsTouched();
+    if (this.qualForm.invalid) return;
+    const v = this.qualForm.getRawValue();
+    this.qualLaedt.set(true);
+    this.qualMeldung.set(null);
+    this.planungSvc
+      .setMitarbeiterQualifikation(id, {
+        qualification_id: v.qualification_id,
+        valid_from: v.valid_from || null,
+        valid_until: v.valid_until || null,
+        evidence_note: v.evidence_note.trim() || null,
+      })
+      .subscribe({
+        next: () => {
+          this.qualLaedt.set(false);
+          this.qualDialogOffen.set(false);
+          this.qualLaden();
+        },
+        error: (err) => {
+          this.qualLaedt.set(false);
+          this.qualMeldung.set(
+            fehlerDetail(err) ?? 'Der Nachweis ließ sich nicht speichern.',
+          );
+        },
+      });
+  }
+
+  qualEntfernenFragen(n: MitarbeiterQualifikation): void {
+    this.qualEntfernen.set(n);
+  }
+  qualEntfernenAbbrechen(): void {
+    if (!this.qualLaedt()) this.qualEntfernen.set(null);
+  }
+  qualEntfernenBestaetigen(): void {
+    const n = this.qualEntfernen();
+    const id = this.daten()?.id;
+    if (!n || !id || this.qualLaedt()) return;
+    this.qualLaedt.set(true);
+    this.planungSvc.removeMitarbeiterQualifikation(id, n.qualification.id).subscribe({
+      next: () => {
+        this.qualLaedt.set(false);
+        this.qualEntfernen.set(null);
+        this.qualLaden();
+      },
+      error: () => {
+        this.qualLaedt.set(false);
+        this.qualEntfernen.set(null);
+      },
+    });
   }
 }

@@ -686,6 +686,24 @@
           Mitarbeiter
           <span class="wahl__zahl">{{ gewaehlteMitarbeiter().length }} gewählt</span>
         </legend>
+        <!-- Zuweisungs-Vorlagen: eine benannte Gruppe auf Knopfdruck übernehmen.
+             Ein VORSCHLAG, keine Bindung — die Mitglieder werden zur Auswahl
+             hinzugefügt und lassen sich einzeln wieder abwählen. -->
+        @if (vorlagen().length) {
+          <p class="wahl__hinweis">
+            Gruppe übernehmen:
+            @for (v of vorlagen(); track v.id) {
+              <button
+                type="button"
+                class="btn btn--klein"
+                (click)="vorlageUebernehmen(v)"
+                [attr.aria-label]="'Gruppe ' + v.name + ' zur Auswahl hinzufügen'"
+              >
+                {{ v.name }}
+              </button>
+            }
+          </p>
+        }
         <div class="wahl__liste">
           @for (lane of mitarbeiterBahnen(); track lane.id) {
             <label class="wahl__opt">

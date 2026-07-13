@@ -5,12 +5,19 @@ import {
   AppointmentCategory,
   CategoryCreate,
   CategoryUpdate,
+  MitarbeiterQualifikation,
+  MitarbeiterQualifikationInput,
+  Qualifikation,
+  QualifikationCreate,
+  QualifikationUpdate,
   Resource,
   ResourceAssignResult,
   ResourceCreate,
   ResourceType,
   ResourceUpdate,
   ServiceJob,
+  Zuweisungsvorlage,
+  ZuweisungsvorlageInput,
 } from './einsatz.model';
 
 /** Zugriff auf die Planungs-Stammdaten (Terminkategorien, Ressourcen) und deren
@@ -88,5 +95,102 @@ export class PlanungStammdatenService {
     return this.http.delete<{ detail: string }>(
       `${this.base}/einsaetze/${jobId}/ressourcen/${resourceId}`,
     );
+  }
+
+  // --- Qualifikationen (Migration 0078) ------------------------------------
+  // Katalog und BEDARF sind Planungsstammdaten (`workflow`). Die NACHWEISE am
+  // Mitarbeiter sind ein Personaldatum und hängen am `hr`-Recht — der Disponent
+  // sieht auf dem Board nur die FOLGE („X hat keinen Nachweis"), nicht die Akte.
+
+  listQualifikationen(includeInactive = false): Observable<Qualifikation[]> {
+    let params = new HttpParams();
+    if (includeInactive) params = params.set('include_inactive', 'true');
+    return this.http.get<Qualifikation[]>(`${this.base}/qualifikationen`, { params });
+  }
+
+  createQualifikation(payload: QualifikationCreate): Observable<Qualifikation> {
+    return this.http.post<Qualifikation>(`${this.base}/qualifikationen`, payload);
+  }
+
+  updateQualifikation(
+    id: string,
+    payload: QualifikationUpdate,
+  ): Observable<Qualifikation> {
+    return this.http.patch<Qualifikation>(`${this.base}/qualifikationen/${id}`, payload);
+  }
+
+  /** Was ein Termintyp IMMER verlangt. */
+  kategorieBedarf(categoryId: string): Observable<Qualifikation[]> {
+    return this.http.get<Qualifikation[]>(
+      `${this.base}/kategorien/${categoryId}/qualifikationen`,
+    );
+  }
+
+  setKategorieBedarf(
+    categoryId: string,
+    qualificationIds: string[],
+  ): Observable<Qualifikation[]> {
+    return this.http.put<Qualifikation[]>(
+      `${this.base}/kategorien/${categoryId}/qualifikationen`,
+      { qualification_ids: qualificationIds },
+    );
+  }
+
+  /** Was DIESER Termin zusätzlich verlangt (wirksam ist die Vereinigung). */
+  einsatzBedarf(jobId: string): Observable<Qualifikation[]> {
+    return this.http.get<Qualifikation[]>(
+      `${this.base}/einsaetze/${jobId}/qualifikationen`,
+    );
+  }
+
+  setEinsatzBedarf(jobId: string, qualificationIds: string[]): Observable<Qualifikation[]> {
+    return this.http.put<Qualifikation[]>(
+      `${this.base}/einsaetze/${jobId}/qualifikationen`,
+      { qualification_ids: qualificationIds },
+    );
+  }
+
+  /** Nachweise eines Mitarbeiters — **`hr`-Recht** (Personalakte). */
+  mitarbeiterQualifikationen(employeeId: string): Observable<MitarbeiterQualifikation[]> {
+    return this.http.get<MitarbeiterQualifikation[]>(
+      `${this.base}/mitarbeiter/${employeeId}/qualifikationen`,
+    );
+  }
+
+  setMitarbeiterQualifikation(
+    employeeId: string,
+    payload: MitarbeiterQualifikationInput,
+  ): Observable<MitarbeiterQualifikation> {
+    return this.http.put<MitarbeiterQualifikation>(
+      `${this.base}/mitarbeiter/${employeeId}/qualifikationen`,
+      payload,
+    );
+  }
+
+  removeMitarbeiterQualifikation(
+    employeeId: string,
+    qualificationId: string,
+  ): Observable<void> {
+    return this.http.delete<void>(
+      `${this.base}/mitarbeiter/${employeeId}/qualifikationen/${qualificationId}`,
+    );
+  }
+
+  // --- Zuweisungs-Vorlagen (lose Gruppen) ----------------------------------
+  listVorlagen(includeInactive = false): Observable<Zuweisungsvorlage[]> {
+    let params = new HttpParams();
+    if (includeInactive) params = params.set('include_inactive', 'true');
+    return this.http.get<Zuweisungsvorlage[]>(`${this.base}/vorlagen`, { params });
+  }
+
+  createVorlage(payload: ZuweisungsvorlageInput): Observable<Zuweisungsvorlage> {
+    return this.http.post<Zuweisungsvorlage>(`${this.base}/vorlagen`, payload);
+  }
+
+  updateVorlage(
+    id: string,
+    payload: ZuweisungsvorlageInput,
+  ): Observable<Zuweisungsvorlage> {
+    return this.http.patch<Zuweisungsvorlage>(`${this.base}/vorlagen/${id}`, payload);
   }
 }

@@ -205,6 +205,155 @@
         </p>
       }
     </div>
+
+    <!-- ================= Qualifikationen ================= -->
+    <div class="karte">
+      <div class="karte__kopf">
+        <h2 class="karte__titel">Qualifikationen</h2>
+        <div class="karte__aktionen">
+          <label class="filter-check">
+            <input
+              type="checkbox"
+              [checked]="qualInaktive()"
+              (change)="qualInaktiveUmschalten(!qualInaktive())"
+            />
+            Stillgelegte zeigen
+          </label>
+          @if (darfAnlegen()) {
+            <button type="button" class="btn btn--primary" (click)="qualNeu()">
+              + Qualifikation
+            </button>
+          }
+        </div>
+      </div>
+      <p class="hinweis-text">
+        Der Katalog ist <strong>frei</strong>: Gewerke, nachweispflichtige Befähigungen
+        (Gasschein, Kälteschein) und Herstellerschulungen liegen nebeneinander — die
+        <em>Art</em> ist ein selbst gewähltes Wort, keine feste Liste. Fehlt einem
+        eingeplanten Mitarbeiter ein Nachweis, warnt die Plantafel; sie blockiert nicht.
+      </p>
+      @if (qualifikationen().length === 0) {
+        <p class="leer">Noch keine Qualifikation gepflegt.</p>
+      } @else {
+        <table class="tabelle">
+          <thead>
+            <tr>
+              <th scope="col">Bezeichnung</th>
+              <th scope="col">Kürzel</th>
+              <th scope="col">Art</th>
+              <th scope="col">Läuft ab</th>
+              <th scope="col">Status</th>
+              <th scope="col"><span class="sr-only">Aktionen</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (q of qualifikationen(); track q.id) {
+              <tr>
+                <td>
+                  {{ q.label }}
+                  @if (q.description) {
+                    <span class="zeile-sub">{{ q.description }}</span>
+                  }
+                </td>
+                <td>{{ q.code }}</td>
+                <td>
+                  @if (q.kind) {
+                    {{ q.kind }}
+                  } @else {
+                    <span class="feld__wert--leer">—</span>
+                  }
+                </td>
+                <td>{{ q.expires ? 'ja (Gültig-bis Pflicht)' : 'nein' }}</td>
+                <td>
+                  <span class="stamp" [class.stamp--warn]="!q.active">
+                    {{ q.active ? 'In Gebrauch' : 'Stillgelegt' }}
+                  </span>
+                </td>
+                <td class="zeile-aktionen">
+                  @if (darfAendern()) {
+                    <button type="button" class="btn btn--klein" (click)="qualBearbeiten(q)">
+                      Bearbeiten
+                    </button>
+                    <button
+                      type="button"
+                      class="btn btn--klein"
+                      [disabled]="aktionBusyId() === q.id"
+                      (click)="qualAktivSetzen(q, !q.active)"
+                    >
+                      {{ q.active ? 'Stilllegen' : 'Reaktivieren' }}
+                    </button>
+                  }
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      }
+    </div>
+
+    <!-- ================= Zuweisungs-Vorlagen ================= -->
+    <div class="karte">
+      <div class="karte__kopf">
+        <h2 class="karte__titel">Zuweisungs-Vorlagen</h2>
+        <div class="karte__aktionen">
+          @if (darfAnlegen()) {
+            <button type="button" class="btn btn--primary" (click)="vorlNeu()">
+              + Vorlage
+            </button>
+          }
+        </div>
+      </div>
+      <p class="hinweis-text">
+        Eine benannte Personengruppe als <strong>Vorschlag</strong> für den Termin-Dialog
+        — kein festes Team. Nach der Übernahme sind es gewöhnliche Einzelzuweisungen:
+        Wer abweicht, weicht ab.
+      </p>
+      @if (vorlagen().length === 0) {
+        <p class="leer">Noch keine Vorlage angelegt.</p>
+      } @else {
+        <table class="tabelle">
+          <thead>
+            <tr>
+              <th scope="col">Name</th>
+              <th scope="col">Mitglieder</th>
+              <th scope="col"><span class="sr-only">Aktionen</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (v of vorlagen(); track v.id) {
+              <tr>
+                <td>
+                  {{ v.name }}
+                  @if (v.description) {
+                    <span class="zeile-sub">{{ v.description }}</span>
+                  }
+                </td>
+                <td>
+                  @if (v.members.length === 0) {
+                    <span class="feld__wert--leer">keine</span>
+                  } @else {
+                    @for (m of v.members; track m.app_user_id) {
+                      <span class="chip">
+                        {{ m.display_name }}@if (m.role === 'LEAD') {
+                          <span class="chip__rolle">Leitung</span>
+                        }
+                      </span>
+                    }
+                  }
+                </td>
+                <td class="zeile-aktionen">
+                  @if (darfAendern()) {
+                    <button type="button" class="btn btn--klein" (click)="vorlBearbeiten(v)">
+                      Bearbeiten
+                    </button>
+                  }
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      }
+    </div>
   }
 </section>
 
@@ -241,6 +390,41 @@
       typ="zahl"
       inputmode="numeric"
     />
+
+    <!-- Qualifikationsbedarf: was dieser Termintyp IMMER verlangt. Am einzelnen
+         Termin lässt sich zusätzlicher Bedarf ergänzen; wirksam ist die
+         Vereinigung. Die Plantafel WARNT bei fehlendem Nachweis — sie blockiert
+         nicht (weiche Invariante wie die Doppelbelegung). -->
+    @if (qualifikationen().length) {
+      <fieldset class="wahl">
+        <legend class="wahl__legend">Erforderliche Qualifikationen</legend>
+        <p class="wahl__hinweis">
+          Fehlt einem eingeplanten Mitarbeiter ein Nachweis, <strong>warnt</strong> die
+          Plantafel — geplant werden kann trotzdem. Der Notdienst am Sonntag soll nicht
+          an einem gesperrten Board scheitern.
+        </p>
+        <ul class="wahl__liste">
+          @for (q of qualifikationen(); track q.id) {
+            <li>
+              <label class="wahl__opt">
+                <input
+                  type="checkbox"
+                  [checked]="katBedarfGesetzt(q.id)"
+                  (change)="katBedarfUmschalten(q.id)"
+                />
+                <span>
+                  {{ q.label }}
+                  @if (q.kind) {
+                    <span class="wahl__sub">{{ q.kind }}</span>
+                  }
+                </span>
+              </label>
+            </li>
+          }
+        </ul>
+      </fieldset>
+    }
+
     @if (katFormularMeldung(); as fm) {
       <p class="formular__fehler" role="alert">{{ fm }}</p>
     }
@@ -304,3 +488,138 @@
   (bestaetigen)="resArchivierenBestaetigen()"
   (abbrechen)="resArchivierenAbbrechen()"
 />
+
+<!-- ================= Qualifikation anlegen/bearbeiten ================= -->
+<app-dialog
+  [offen]="qualDialogOffen()"
+  [titel]="qualEditId() ? 'Qualifikation bearbeiten' : 'Neue Qualifikation'"
+  (schliessen)="qualDialogSchliessen()"
+>
+  <form class="formular" (ngSubmit)="qualAbsenden()" [formGroup]="qualForm">
+    <app-feld
+      [control]="qualForm.controls.label"
+      label="Bezeichnung"
+      [pflicht]="true"
+      hinweis="Wie sie im Betrieb heißt — z. B. „Gasschein (TRGI)“, „Kälteschein § 5“, „Viessmann Vitodens“."
+    />
+    <app-feld
+      [control]="qualForm.controls.code"
+      label="Kürzel"
+      [pflicht]="true"
+      hinweis="Der fachliche Schlüssel. Nach dem Anlegen unveränderlich — Bedarf und Nachweise zeigen darauf."
+    />
+    <app-feld
+      [control]="qualForm.controls.kind"
+      label="Art"
+      hinweis="Frei wählbar (z. B. GEWERK, ZERTIFIKAT, HERSTELLERSCHULUNG, SICHERHEIT). Nur eine Gruppierung — eine neue Art ist jederzeit möglich, ohne dass etwas am Programm geändert werden muss."
+    />
+    @if (bekannteArten().length) {
+      <p class="wahl__hinweis">
+        Schon vergeben:
+        @for (a of bekannteArten(); track a) {
+          <button
+            type="button"
+            class="btn btn--klein"
+            (click)="qualForm.controls.kind.setValue(a)"
+          >
+            {{ a }}
+          </button>
+        }
+      </p>
+    }
+    <app-feld
+      [control]="qualForm.controls.expires"
+      label="Läuft ab (Gültig-bis ist dann Pflicht)"
+      typ="checkbox"
+      hinweis="Für nachweispflichtige Befähigungen mit Ablaufdatum. Ein Gesellenbrief läuft nicht ab, ein Gasschein schon."
+    />
+    <app-feld [control]="qualForm.controls.description" label="Beschreibung" typ="textarea" />
+    <app-feld
+      [control]="qualForm.controls.sort_order"
+      label="Sortierung"
+      typ="zahl"
+      inputmode="numeric"
+    />
+    @if (qualFormularMeldung(); as fm) {
+      <p class="note note--error" role="alert">{{ fm }}</p>
+    }
+    <div dialog-aktionen class="dialog__aktionen">
+      <button type="button" class="btn" (click)="qualDialogSchliessen()" [disabled]="qualLaedt()">
+        Abbrechen
+      </button>
+      <button type="submit" class="btn btn--primary" [disabled]="qualLaedt()">
+        {{ qualLaedt() ? 'Wird gespeichert …' : 'Speichern' }}
+      </button>
+    </div>
+  </form>
+</app-dialog>
+
+<!-- ================= Zuweisungs-Vorlage anlegen/bearbeiten ================= -->
+<app-dialog
+  [offen]="vorlDialogOffen()"
+  [titel]="vorlEditId() ? 'Vorlage bearbeiten' : 'Neue Zuweisungs-Vorlage'"
+  (schliessen)="vorlDialogSchliessen()"
+>
+  <form class="formular" (ngSubmit)="vorlAbsenden()" [formGroup]="vorlForm">
+    <p class="note note--info">
+      Die Vorlage ist ein <strong>Vorschlag</strong>: Der Termin-Dialog übernimmt die
+      Gruppe auf Knopfdruck. Danach sind es gewöhnliche Einzelzuweisungen — sie bindet
+      nichts.
+    </p>
+    <app-feld
+      [control]="vorlForm.controls.name"
+      label="Name"
+      [pflicht]="true"
+      hinweis="z. B. „Bad-Team“, „Kolonne Nord“, „Notdienst-Duo“."
+    />
+    <app-feld [control]="vorlForm.controls.description" label="Beschreibung" typ="textarea" />
+
+    <fieldset class="wahl">
+      <legend class="wahl__legend">Mitglieder</legend>
+      @if (personen().length === 0) {
+        <p class="wahl__hinweis">Keine Mitarbeiter verfügbar.</p>
+      }
+      <ul class="wahl__liste">
+        @for (p of personen(); track p.id) {
+          <li>
+            <label class="wahl__opt">
+              <input
+                type="checkbox"
+                [checked]="vorlIstMitglied(p.id)"
+                (change)="vorlMitgliedUmschalten(p.id)"
+              />
+              <span>{{ p.display_name }}</span>
+            </label>
+            @if (vorlIstMitglied(p.id)) {
+              <button
+                type="button"
+                class="btn btn--klein"
+                (click)="vorlRolleUmschalten(p.id)"
+              >
+                {{ vorlIstLead(p.id) ? 'Einsatzleitung' : 'Techniker' }}
+              </button>
+            }
+          </li>
+        }
+      </ul>
+    </fieldset>
+
+    <app-feld
+      [control]="vorlForm.controls.sort_order"
+      label="Sortierung"
+      typ="zahl"
+      inputmode="numeric"
+    />
+    @if (vorlFormularMeldung(); as fm) {
+      <p class="note note--error" role="alert">{{ fm }}</p>
+    }
+    <div dialog-aktionen class="dialog__aktionen">
+      <button type="button" class="btn" (click)="vorlDialogSchliessen()" [disabled]="vorlLaedt()">
+        Abbrechen
+      </button>
+      <button type="submit" class="btn btn--primary" [disabled]="vorlLaedt()">
+        {{ vorlLaedt() ? 'Wird gespeichert …' : 'Speichern' }}
+      </button>
+    </div>
+  </form>
+</app-dialog>

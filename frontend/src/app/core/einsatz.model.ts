@@ -199,7 +199,19 @@ export interface MaterialLogInput {
  * nichts. `text` ist immer gesetzt: Der Konflikt wird als Text + Symbol gezeigt,
  * nie nur über Farbe (WCAG 1.4.1).
  */
-export type KonfliktArt = 'DOPPELBELEGUNG' | 'ABWESENHEIT' | 'FEIERTAG' | 'OFFENES_ENDE';
+export type KonfliktArt =
+  | 'DOPPELBELEGUNG'
+  | 'ABWESENHEIT'
+  | 'FEIERTAG'
+  | 'OFFENES_ENDE'
+  /**
+   * Fehlender oder abgelaufener Qualifikationsnachweis (Migration 0078).
+   *
+   * Wie die Doppelbelegung eine **weiche** Invariante: Die Plantafel macht sie
+   * sichtbar, die DB verbietet sie nicht. Der Notdienst am Sonntag darf nicht an
+   * einem gesperrten Board scheitern — der Disponent entscheidet.
+   */
+  | 'QUALIFIKATION';
 
 export interface Konflikt {
   kind: KonfliktArt;
@@ -345,6 +357,7 @@ const KONFLIKT_LABELS: Record<KonfliktArt, string> = {
   ABWESENHEIT: 'Abwesenheit',
   FEIERTAG: 'Feiertag',
   OFFENES_ENDE: 'Kein Ende',
+  QUALIFIKATION: 'Qualifikation',
 };
 
 export function konfliktLabel(k: KonfliktArt): string {
@@ -357,6 +370,7 @@ const KONFLIKT_SYMBOLE: Record<KonfliktArt, string> = {
   ABWESENHEIT: '⛱',
   FEIERTAG: '★',
   OFFENES_ENDE: '⧖',
+  QUALIFIKATION: '🎓',
 };
 
 export function konfliktSymbol(k: KonfliktArt): string {
@@ -618,4 +632,85 @@ export interface Abwesend {
   end_date: string;
   half_day_start: boolean;
   half_day_end: boolean;
+}
+
+// --- Qualifikationen und Zuweisungs-Vorlagen (Migration 0078) ---------------
+
+/**
+ * Eine Qualifikation aus dem **frei pflegbaren** Katalog.
+ *
+ * `kind` ist bewusst ein **freier String**, kein Union-Typ: Der Betrieb legt
+ * seine Arten selbst an (GEWERK, ZERTIFIKAT, HERSTELLERSCHULUNG, SICHERHEIT …).
+ * Ein Enum im Code verlangte für jede neue Schulungsart einen Deploy — der User
+ * hat ausdrücklich um Flexibilität gebeten.
+ */
+export interface Qualifikation {
+  id: string;
+  code: string;
+  label: string;
+  kind: string | null;
+  description: string | null;
+  /** Verlangt die Zuordnung ein Gültig-bis? (Gasschein ja, Gesellenbrief nein.) */
+  expires: boolean;
+  active: boolean;
+  sort_order: number;
+}
+
+export interface QualifikationCreate {
+  code: string;
+  label: string;
+  kind?: string | null;
+  description?: string | null;
+  expires?: boolean;
+  sort_order?: number;
+}
+
+export interface QualifikationUpdate {
+  label?: string | null;
+  kind?: string | null;
+  description?: string | null;
+  expires?: boolean | null;
+  active?: boolean | null;
+  sort_order?: number | null;
+}
+
+/** Ein Nachweis am Mitarbeiter (Personalakte — `hr`-Recht). */
+export interface MitarbeiterQualifikation {
+  qualification: Qualifikation;
+  valid_from: string | null;
+  valid_until: string | null;
+  evidence_note: string | null;
+  /** Gilt der Nachweis HEUTE? (Der Terminabgleich nutzt den Terminbeginn.) */
+  gueltig_heute: boolean;
+}
+
+export interface MitarbeiterQualifikationInput {
+  qualification_id: string;
+  valid_from?: string | null;
+  valid_until?: string | null;
+  evidence_note?: string | null;
+}
+
+/**
+ * Zuweisungs-Vorlage: eine benannte Personengruppe als **Vorschlag**.
+ *
+ * Kein Team-Modell (User-Entscheidung „lose Gruppen, wechselnd") — die Vorlage
+ * füllt den Termin-Dialog vor und bindet danach nichts.
+ */
+export interface Zuweisungsvorlage {
+  id: string;
+  name: string;
+  description: string | null;
+  active: boolean;
+  sort_order: number;
+  members: { app_user_id: string; display_name: string; role: string }[];
+}
+
+export interface ZuweisungsvorlageInput {
+  name?: string;
+  description?: string | null;
+  active?: boolean;
+  sort_order?: number;
+  /** Weglassen = Mitglieder nicht anfassen; [] = alle entfernen. */
+  members?: { app_user_id: string; role?: string }[];
 }

@@ -1466,3 +1466,45 @@ button {
 .konflikt--offenes_ende .konflikt__sym {
   color: var(--ink-muted);
 }
+
+/* Auswahllisten in Dialogen (Qualifikationsbedarf, Vorlagenmitglieder). */
+.wahl__hinweis {
+  margin: 0 0 var(--space-2);
+  font-size: var(--step--1);
+  color: var(--ink-hint);
+  max-width: 62ch;
+}
+.wahl__liste {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-1);
+}
+.wahl__liste li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.wahl__sub {
+  margin-left: var(--space-2);
+  font-size: 0.7rem;
+  color: var(--ink-hint);
+}
+/* Mitglieder-Chip in der Vorlagenliste. */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: 0 var(--space-1) var(--space-1) 0;
+  padding: 0.1rem 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font-size: var(--step--1);
+}
+.chip__rolle {
+  font-size: 0.64rem;
+  font-weight: 600;
+  color: var(--accent-ink);
+}
