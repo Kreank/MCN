@@ -37,6 +37,21 @@ export interface Quote {
   net_total: string | null;
   gross_total: string | null;
   property: QuotePropertyRef;
+  /**
+   * Auftragsbezug: die Aussage „dieses Angebot ist das **Soll** dieser Baustelle".
+   * Der Soll-Ist-Abgleich am Baustellenbericht stützt sich ausschließlich darauf.
+   * null = keinem Auftrag zugeordnet.
+   *
+   * **In jedem Status änderbar** — auch nach dem Versand (Migration 0082). Der reale
+   * Ablauf ist „Angebot versenden → Kunde nimmt an → *dann* Auftrag anlegen"; wäre die
+   * Zuordnung ab Versand gesperrt (B-30), wäre sie genau dann unmöglich, wenn man sie
+   * braucht. Sie ist ein interner Verweis, kein Beleginhalt.
+   *
+   * Sperre in der Gegenrichtung: Stützt sich bereits eine Berichtsposition auf eine
+   * Position dieses Angebots, lässt sich die Zuordnung **nicht mehr lösen oder
+   * umhängen** (422) — sonst fiele das Soll unter dem Nachweis weg.
+   */
+  work_order_id: string | null;
 }
 
 export interface QuotePage {
@@ -141,11 +156,19 @@ export interface QuoteProjectRef {
   name: string;
 }
 
+export interface QuoteWorkOrderRef {
+  id: string;
+  order_number: string;
+  title: string;
+}
+
 export interface QuoteDetail extends Quote {
   valid_until_date: string | null;
   tax_total: string | null;
   version: number;
   project: QuoteProjectRef | null;
+  /** Aufgelöster Auftragsbezug (null = keinem Auftrag zugeordnet). */
+  work_order: QuoteWorkOrderRef | null;
   sent_at: string | null;
   has_snapshot: boolean;
   content_hash: string | null;
@@ -364,6 +387,9 @@ export interface QuoteCreate {
   property_id: string;
   title: string;
   project_id?: string | null;
+  /** Auftragsbezug (= Soll dieser Baustelle). Der Auftrag muss zur selben
+   *  Liegenschaft/zum selben Projekt gehören, sonst 422. */
+  work_order_id?: string | null;
   quote_date?: string | null;
   valid_until_date?: string | null;
   rubriken?: RubrikInput[];
@@ -380,6 +406,11 @@ export interface QuoteUpdate {
   title?: string | null;
   quote_date?: string | null;
   valid_until_date?: string | null;
+  /** Auftragsbezug setzen (oder mit `null` lösen). Weggelassen = unverändert.
+   *  In jedem Status möglich (Migration 0082) — der eingefrorene Beleginhalt (B-30)
+   *  umfasst die Zuordnung nicht. Ausnahme: Sie ist gesperrt, sobald ein
+   *  Baustellenbericht eine Position dieses Angebots als Soll führt (422). */
+  work_order_id?: string | null;
   rubriken?: RubrikInput[];
   lines?: QuoteLineInput[];
 }

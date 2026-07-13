@@ -4,9 +4,14 @@ import { Observable } from 'rxjs';
 import {
   SiteReport,
   SiteReportCreate,
+  SiteReportDetail,
+  SiteReportLineIn,
+  SiteReportLines,
   SiteReportListe,
   SiteReportSign,
   SiteReportUpdate,
+  SollIst,
+  VorbelegbaresAngebot,
 } from './site-report.model';
 
 /** Typisierter Zugriff auf die Baustellenbericht-API (dev-Proxy: /api -> :8000). */
@@ -30,8 +35,9 @@ export class SiteReportService {
     return this.http.get<SiteReportListe>(this.base, { params });
   }
 
-  get(id: string): Observable<SiteReport> {
-    return this.http.get<SiteReport>(`${this.base}/${id}`);
+  /** Ein Bericht im Detail — **mit seinen Positionen** (`lines`). */
+  get(id: string): Observable<SiteReportDetail> {
+    return this.http.get<SiteReportDetail>(`${this.base}/${id}`);
   }
 
   /** Neuen Bericht anlegen (Status ENTWURF; Recht workflow.ANLEGEN). */
@@ -47,5 +53,37 @@ export class SiteReportService {
   /** Bericht mit der Kundenunterschrift besiegeln (Recht workflow.AENDERN). */
   sign(id: string, payload: SiteReportSign): Observable<SiteReport> {
     return this.http.post<SiteReport>(`${this.base}/${id}/sign`, payload);
+  }
+
+  // --- Positionen ----------------------------------------------------------
+
+  /**
+   * Die Positionen eines Berichts **vollständig ersetzen** (nur im ENTWURF).
+   * Der Editor schickt immer den ganzen Satz — ein Teil-Update wäre bei
+   * umsortierten Positionsnummern nicht eindeutig. **Ohne Preise.**
+   */
+  setLines(id: string, lines: SiteReportLineIn[]): Observable<SiteReportLines> {
+    return this.http.put<SiteReportLines>(`${this.base}/${id}/positionen`, { lines });
+  }
+
+  /** Angebote, aus denen dieser Bericht vorbelegt werden darf (Recht AENDERN). */
+  vorbelegbareAngebote(id: string): Observable<VorbelegbaresAngebot[]> {
+    return this.http.get<VorbelegbaresAngebot[]>(`${this.base}/${id}/vorbelegen-angebote`);
+  }
+
+  /** Angebotspositionen als Soll übernehmen — nur in einen LEEREN Entwurf. */
+  vorbelegen(id: string, quoteId: string): Observable<SiteReportLines> {
+    return this.http.post<SiteReportLines>(`${this.base}/${id}/vorbelegen`, {
+      quote_id: quoteId,
+    });
+  }
+
+  /**
+   * Soll-Ist-Abgleich eines Auftrags (Angebots-Soll gegen Berichts-Ist).
+   * Dispositionssicht über die ganze Baustelle: Rollen mit row_scope EIGENE
+   * bekommen 403 — der Abschnitt wird dann gar nicht erst angezeigt.
+   */
+  sollIst(workOrderId: string): Observable<SollIst> {
+    return this.http.get<SollIst>(`/api/workflow/work_orders/${workOrderId}/soll-ist`);
   }
 }

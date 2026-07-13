@@ -1,0 +1,389 @@
+<section class="bp" aria-labelledby="bp-titel">
+  <header class="bp__kopf">
+    <h3 class="bp__h" id="bp-titel">Positionen</h3>
+    @if (!bearbeitbar() && status() === 'UNTERZEICHNET') {
+      <p class="bp__siegel">
+        <span class="stamp stamp--positive">Unterzeichnet</span>
+        Die Positionen sind mit der Unterschrift besiegelt und unveränderlich.
+      </p>
+    }
+  </header>
+
+  <p class="sr-only" role="status" aria-live="polite">{{ ansage() }}</p>
+
+  @if (zustand() === 'loading') {
+    <p class="lade-hinweis" role="status">Positionen werden geladen …</p>
+  } @else if (zustand() === 'error') {
+    <div class="note note--error" role="alert">
+      <p class="note__text">Die Positionen konnten nicht geladen werden.</p>
+      <div class="note__aktionen">
+        <button type="button" class="btn" (click)="neuLaden()">Erneut versuchen</button>
+      </div>
+    </div>
+  } @else {
+    @if (fehler(); as f) {
+      <div class="melde melde--fehler" role="alert">
+        <span class="melde__mark" aria-hidden="true">!</span>
+        <span class="melde__text"><strong>Fehler:</strong> {{ f }}</span>
+      </div>
+    }
+
+    <div class="bp__raster" [class.bp__raster--nur-liste]="!bearbeitbar()">
+      <!-- ------------------------------ Positionsliste ------------------- -->
+      <div class="bp__liste">
+        @if (positionen().length === 0) {
+          <div class="tab-platzhalter">
+            <p>
+              @if (bearbeitbar()) {
+                Noch keine Positionen. Übernehmen Sie Artikel oder Leistungen aus der
+                Palette — oder belegen Sie aus einem Angebot des Auftrags vor.
+              } @else {
+                Dieser Bericht führt keine Positionen.
+              }
+            </p>
+          </div>
+        } @else {
+          @if (bearbeitbar() && hatVorbelegte()) {
+            <!-- Der Grund für die gesperrten Felder steht SICHTBAR da (nicht nur als
+                 title-Tooltip — der ist für Tastatur und Screenreader unerreichbar). -->
+            <p class="bp__fest-legende">
+              <span class="stamp stamp--type">Aus Angebot</span>
+              Bei diesen Positionen sind <strong>Bezeichnung und Einheit fest</strong>:
+              sie tragen die Sollmenge aus dem Angebot, und nur so finden Soll und Ist
+              zusammen. Frei bleiben <strong>Menge und Notiz</strong> — Ergänzungen wie
+              „Steigstrang, 2. OG" gehören in die Notiz.
+            </p>
+          }
+          <div class="bp__tab-wrap">
+            <table class="bp__tab">
+              <caption class="sr-only">
+                Positionen des Baustellenberichts: Bezeichnung, Menge, Einheit, Notiz und —
+                sofern eine Sollmenge aus dem Angebot vorliegt — die Abweichung.
+                Ohne Preise.
+              </caption>
+              <thead>
+                <tr>
+                  <th scope="col" class="num">Pos.</th>
+                  <th scope="col">Bezeichnung</th>
+                  <th scope="col" class="num">Menge (Ist)</th>
+                  <th scope="col">Einheit</th>
+                  <th scope="col">Notiz</th>
+                  <th scope="col">Soll / Abweichung</th>
+                  @if (bearbeitbar()) {
+                    <th scope="col"><span class="sr-only">Aktion</span></th>
+                  }
+                </tr>
+              </thead>
+              <tbody>
+                @for (p of positionen(); track p.uid; let i = $index) {
+                  <tr [class.bp__zeile--text]="p.line_type === 'TEXT'">
+                    <td class="num bp__nr">{{ i + 1 }}</td>
+
+                    <td class="bp__bez">
+                      @if (bearbeitbar() && !p.source_quote_line_id) {
+                        <input
+                          class="posinp"
+                          type="text"
+                          [value]="p.description"
+                          [attr.aria-label]="'Bezeichnung der Position ' + (i + 1)"
+                          (input)="setBezeichnung(p.uid, $any($event.target).value)"
+                        />
+                      } @else {
+                        <!-- Bezeichnung MIT Herkunft: eingefroren. Sie ist Identität,
+                             nicht Anzeige — eine frei getippte Bezeichnung neben der
+                             Sollmenge einer ganz anderen Angebotsposition stünde sonst
+                             auf dem unterschriebenen, versiegelten Kundendokument
+                             (Trigger 0083 weist das ohnehin ab). Was ergänzt werden
+                             soll, gehört in die Notiz. -->
+                        <span class="bp__text">{{ p.description }}</span>
+                      }
+                      <span class="bp__art">{{ artLabel(p.line_type) }}</span>
+                      @if (p.source_quote_line_id) {
+                        <span class="stamp stamp--type bp__fest-chip">
+                          Aus Angebot
+                          <span class="sr-only">
+                            — Bezeichnung und Einheit sind fest und nicht bearbeitbar;
+                            Ergänzungen gehören in die Notiz.
+                          </span>
+                        </span>
+                      }
+                    </td>
+
+                    <td class="num">
+                      @if (p.line_type === 'TEXT') {
+                        <span class="bp__leer" aria-label="Textzeile ohne Menge">—</span>
+                      } @else if (bearbeitbar()) {
+                        <input
+                          class="posinp posinp--num"
+                          type="text"
+                          inputmode="decimal"
+                          [value]="p.menge"
+                          [attr.aria-label]="'Ist-Menge der Position ' + (i + 1)"
+                          [attr.aria-invalid]="mengeUngueltig(p) ? 'true' : null"
+                          [attr.aria-describedby]="mengeUngueltig(p) ? 'bp-mfehler-' + p.uid : null"
+                          (input)="setMenge(p.uid, $any($event.target).value)"
+                        />
+                        @if (mengeUngueltig(p)) {
+                          <span class="bp__mfehler" [id]="'bp-mfehler-' + p.uid">
+                            Menge fehlt oder ist nicht eindeutig (kein Tausenderpunkt).
+                          </span>
+                        }
+                      } @else {
+                        <span class="poszahl">{{ mengeAnzeige(p) }}</span>
+                      }
+                    </td>
+
+                    <td>
+                      @if (p.line_type === 'TEXT') {
+                        <span class="bp__leer">—</span>
+                      } @else if (bearbeitbar() && !p.source_quote_line_id) {
+                        <input
+                          class="posinp bp__einheit"
+                          type="text"
+                          [value]="p.unit"
+                          [attr.aria-label]="'Einheit der Position ' + (i + 1)"
+                          (input)="setEinheit(p.uid, $any($event.target).value)"
+                        />
+                      } @else if (p.source_quote_line_id) {
+                        <!-- Die Einheit einer vorbelegten Position kommt aus dem
+                             Angebot und ist dort festgeschrieben: sie ist Teil der
+                             Identität, über die Soll und Ist zusammenfinden. Der
+                             sichtbare Grund steht in der Legende über der Tabelle;
+                             hier ergänzt ihn nur die Screenreader-Ansage. -->
+                        <span class="bp__einheit-fest">
+                          {{ p.unit || '—' }}
+                          <span class="sr-only">— fest, aus dem Angebot übernommen</span>
+                        </span>
+                      } @else {
+                        <span>{{ p.unit || '—' }}</span>
+                      }
+                    </td>
+
+                    <td class="bp__notiz">
+                      @if (bearbeitbar()) {
+                        <input
+                          class="posinp"
+                          type="text"
+                          [value]="p.note ?? ''"
+                          placeholder="Ergänzung …"
+                          [attr.aria-label]="'Notiz zur Position ' + (i + 1)"
+                          (input)="setNotiz(p.uid, $any($event.target).value)"
+                        />
+                      } @else if (p.note) {
+                        <span class="bp__text">{{ p.note }}</span>
+                      } @else {
+                        <span class="bp__leer">—</span>
+                      }
+                    </td>
+
+                    <td>
+                      @if (abweichung(p); as a) {
+                        <!-- Die Abweichung steht als TEXT da (Soll/Ist + „Mehrmenge"),
+                             Symbol und Farbe sind nur zusätzliche Kanäle — nie der
+                             einzige (WCAG 2.2 AA, 1.4.1). -->
+                        <span class="bp__sollist">
+                          Soll {{ a.soll }}, Ist {{ a.ist }}
+                        </span>
+                        <span class="stamp {{ a.klasse }}">
+                          <span aria-hidden="true">{{ a.symbol }}</span>
+                          {{ a.differenz }} · {{ a.label }}
+                        </span>
+                      } @else if (p.planned_quantity !== null) {
+                        <span class="bp__sollist">Soll {{ anzeige(p.planned_quantity) }}</span>
+                        <span class="bp__leer">Ist-Menge prüfen</span>
+                      } @else {
+                        <span class="bp__leer">kein Soll (Zusatz)</span>
+                      }
+                    </td>
+
+                    @if (bearbeitbar()) {
+                      <td class="bp__akt">
+                        <button
+                          type="button"
+                          class="ibtn ibtn--weg"
+                          [attr.aria-label]="'Position ' + (i + 1) + ' „' + p.description + '“ entfernen'"
+                          [title]="'Position ' + (i + 1) + ' entfernen'"
+                          (click)="entfernen(p.uid)"
+                        >
+                          <span aria-hidden="true">✕</span>
+                        </button>
+                      </td>
+                    }
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+
+        @if (bearbeitbar()) {
+          <div class="bp__aktionen">
+            <button
+              type="button"
+              class="btn btn--primary"
+              [disabled]="!geaendert() || speichert()"
+              [attr.aria-busy]="speichert()"
+              (click)="speichern()"
+            >
+              {{ speichert() ? 'Wird gespeichert …' : 'Positionen speichern' }}
+            </button>
+            <button
+              type="button"
+              class="btn"
+              [disabled]="!geaendert() || speichert()"
+              (click)="verwerfen()"
+            >
+              Änderungen verwerfen
+            </button>
+            @if (geaendert()) {
+              <span class="bp__dirty" role="status">Nicht gespeicherte Änderungen</span>
+            }
+          </div>
+        }
+      </div>
+
+      <!-- ------------------------------ Palette --------------------------- -->
+      @if (bearbeitbar()) {
+        <aside class="bp__palette" aria-label="Artikel- und Leistungspalette">
+          <h4 class="bp__ph">Hinzufügen</h4>
+
+          @if (vorbelegenMoeglich()) {
+            <button type="button" class="btn bp__voll" (click)="vorbelegenOeffnen()">
+              Aus Angebot vorbelegen
+            </button>
+          }
+
+          <div class="segment bp__seg" role="tablist" aria-label="Palettenquelle">
+            <button
+              type="button"
+              class="segment__btn"
+              role="tab"
+              [class.is-active]="paletteModus() === 'artikel'"
+              [attr.aria-selected]="paletteModus() === 'artikel'"
+              (click)="setPaletteModus('artikel')"
+            >
+              Artikel
+            </button>
+            <button
+              type="button"
+              class="segment__btn"
+              role="tab"
+              [class.is-active]="paletteModus() === 'leistungen'"
+              [attr.aria-selected]="paletteModus() === 'leistungen'"
+              (click)="setPaletteModus('leistungen')"
+            >
+              Leistungen
+            </button>
+          </div>
+
+          <label class="bp__feld">
+            <span class="feld-gruppe__label">Suche</span>
+            <input
+              class="posinp"
+              type="search"
+              [placeholder]="paletteModus() === 'artikel' ? 'Artikel suchen …' : 'Leistung suchen …'"
+              (input)="onPaletteSuche($any($event.target).value)"
+            />
+          </label>
+
+          <button type="button" class="btn bp__voll" (click)="freieTextzeile()">
+            + Freie Textzeile
+          </button>
+
+          <div class="bp__treffer" aria-live="polite">
+            @if (paletteLaedt()) {
+              <p class="bp__hinweis">Wird gesucht …</p>
+            } @else if (paletteFehler()) {
+              <p class="bp__hinweis bp__hinweis--fehler">
+                Palette nicht verfügbar (fehlendes Recht „Artikel lesen" oder Serverfehler).
+              </p>
+            } @else if (paletteTreffer().length === 0) {
+              <p class="bp__hinweis">Keine Treffer. Suchbegriff eingeben.</p>
+            } @else {
+              <ul class="bp__treffer-liste" role="list">
+                @for (t of paletteTreffer(); track t.id) {
+                  <li class="bp__treffer-item">
+                    <div class="bp__treffer-text">
+                      <p class="bp__t1" [title]="t.zeile1">{{ t.zeile1 }}</p>
+                      <p class="bp__t2">{{ t.zeile2 }}</p>
+                    </div>
+                    <button
+                      type="button"
+                      class="ibtn"
+                      (click)="uebernehmen(t)"
+                      [title]="'„' + t.zeile1 + '“ übernehmen'"
+                      [attr.aria-label]="'„' + t.zeile1 + '“ als Position übernehmen'"
+                    >
+                      <span aria-hidden="true">＋</span>
+                    </button>
+                  </li>
+                }
+              </ul>
+            }
+          </div>
+        </aside>
+      }
+    </div>
+  }
+</section>
+
+<!-- ------------------------------ Vorbelegen-Dialog ------------------------ -->
+<app-dialog
+  [offen]="vorbelegenOffen()"
+  titel="Aus Angebot vorbelegen"
+  (schliessen)="vorbelegenSchliessen()"
+>
+  <form
+    id="bp-vorbelegen-form"
+    class="dialog-form"
+    (submit)="$event.preventDefault(); vorbelegenAbsenden()"
+    novalidate
+  >
+    @if (dialogFehler(); as f) {
+      <div class="melde melde--fehler" role="alert">
+        <span class="melde__mark" aria-hidden="true">!</span>
+        <span class="melde__text"><strong>Fehler:</strong> {{ f }}</span>
+      </div>
+    }
+    <p class="bp__dialog-text">
+      Die beauftragten Positionen des Angebots werden als <strong>Soll</strong>
+      übernommen; die Ist-Menge startet gleich dem Soll. Korrigiert wird nur, was vor
+      Ort abweicht. <strong>Preise werden nicht übernommen</strong> — der Bericht
+      führt keine.
+    </p>
+
+    @if (angeboteLaden()) {
+      <p class="lade-hinweis" role="status">Angebote werden geladen …</p>
+    } @else if (angebote().length === 0) {
+      <p class="bp__hinweis">
+        Zu diesem Auftrag gibt es kein übernehmbares Angebot.
+      </p>
+    } @else {
+      <label class="feld-gruppe">
+        <span class="feld-gruppe__label">Angebot</span>
+        <select class="posinp" (change)="onAngebotWahl($any($event.target).value)">
+          <option value="" [selected]="angebotWahl() === ''">Bitte wählen</option>
+          @for (a of angebote(); track a.id) {
+            <option [value]="a.id" [selected]="a.id === angebotWahl()">
+              {{ a.quote_number || 'ohne Nummer' }} · {{ a.title }} ({{ a.status }})
+            </option>
+          }
+        </select>
+      </label>
+    }
+  </form>
+  <div dialog-aktionen class="dialog__aktionen">
+    <button type="button" class="btn" [disabled]="dialogLaedt()" (click)="vorbelegenSchliessen()">
+      Abbrechen
+    </button>
+    <button
+      type="submit"
+      form="bp-vorbelegen-form"
+      class="btn btn--primary"
+      [disabled]="dialogLaedt() || angeboteLaden() || angebote().length === 0"
+      [attr.aria-busy]="dialogLaedt()"
+    >
+      {{ dialogLaedt() ? 'Wird übernommen …' : 'Übernehmen' }}
+    </button>
+  </div>
+</app-dialog>

@@ -1,0 +1,300 @@
+:host {
+  display: block;
+}
+
+.bp {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.bp__kopf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3);
+  justify-content: space-between;
+}
+.bp__h {
+  font-size: var(--step--1);
+  font-family: var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.bp__siegel {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+.bp__raster {
+  display: grid;
+  grid-template-columns: 1fr minmax(15rem, 19rem);
+  gap: var(--space-4);
+  align-items: start;
+
+  @media (max-width: 60rem) {
+    grid-template-columns: 1fr;
+  }
+}
+.bp__raster--nur-liste {
+  grid-template-columns: 1fr;
+}
+.bp__liste {
+  min-width: 0;
+}
+
+// --- Tabelle ---------------------------------------------------------------
+.bp__tab-wrap {
+  overflow-x: auto;
+}
+.bp__tab {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--step--1);
+  min-width: 40rem;
+
+  th,
+  td {
+    padding: var(--space-2) var(--space-3);
+    text-align: left;
+    vertical-align: top;
+    border-bottom: 1px solid var(--line);
+  }
+  th {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+    white-space: nowrap;
+  }
+  tbody tr:last-child td {
+    border-bottom: none;
+  }
+  .num {
+    text-align: right;
+    white-space: nowrap;
+  }
+}
+.bp__nr {
+  font-family: var(--font-mono);
+  color: var(--ink-faint);
+  padding-top: calc(var(--space-2) + 7px);
+}
+.bp__bez {
+  min-width: 14rem;
+}
+.bp__text {
+  display: block;
+}
+.bp__art {
+  display: inline-block;
+  margin-top: 0.2rem;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.bp__einheit {
+  max-width: 6rem;
+}
+/* Einheit einer vorbelegten Position: aus dem Angebot, nicht editierbar (sie ist
+   Teil der Identität, über die Soll und Ist zusammenfinden). Die gepunktete Linie
+   signalisiert „hier steckt eine Erklärung" — der Status hängt nicht an der Farbe. */
+/* Feld aus dem Angebot: fest. KEIN `cursor: help`/title-Tooltip — der Grund steht
+   sichtbar in `.bp__fest-legende` über der Tabelle und zusätzlich als sr-only-Text
+   an der Zeile (ein Tooltip erreicht Tastatur und Screenreader nicht). */
+.bp__einheit-fest {
+  border-bottom: 1px dotted var(--line);
+}
+
+.bp__fest-legende {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0 0 0.75rem;
+  padding: 0.6rem 0.75rem;
+  border-left: 3px solid var(--line);
+  background: var(--surface-sunken);
+  border-radius: var(--radius-sm);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--ink-muted);
+}
+
+.bp__fest-chip {
+  margin-top: 0.2rem;
+  margin-left: 0.4rem;
+}
+
+.bp__notiz .posinp {
+  min-width: 8rem;
+}
+.bp__leer {
+  color: var(--ink-faint);
+}
+.bp__zeile--text td {
+  background: var(--surface-sunken);
+}
+.bp__mfehler {
+  display: block;
+  margin-top: 0.2rem;
+  text-align: right;
+  font-size: var(--step--1);
+  color: var(--warn-ink);
+}
+.bp__sollist {
+  display: block;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-muted);
+  margin-bottom: 0.25rem;
+  white-space: nowrap;
+}
+.bp__akt {
+  text-align: right;
+}
+
+.bp__aktionen {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+.bp__dirty {
+  font-size: var(--step--1);
+  color: var(--warn-ink);
+}
+
+// --- Palette ---------------------------------------------------------------
+.bp__palette {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.bp__ph {
+  font-size: var(--step--1);
+  font-family: var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.bp__voll {
+  width: 100%;
+}
+.bp__seg {
+  display: flex;
+
+  .segment__btn {
+    flex: 1;
+  }
+}
+.bp__feld {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.bp__treffer {
+  border-top: 1px solid var(--line);
+  padding-top: var(--space-3);
+  max-height: 22rem;
+  overflow-y: auto;
+}
+.bp__hinweis {
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--ink-faint);
+}
+.bp__hinweis--fehler {
+  color: var(--warn-ink);
+}
+.bp__treffer-liste {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.bp__treffer-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--paper);
+}
+.bp__treffer-text {
+  flex: 1;
+  min-width: 0;
+}
+.bp__t1 {
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bp__t2 {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  color: var(--ink-faint);
+}
+
+.bp__dialog-text {
+  margin: 0 0 var(--space-2);
+  color: var(--ink-muted);
+  font-size: var(--step--1);
+}
+
+// Das Segment (Artikel | Leistungen) ist lokal, weil es kein globales Token
+// dafür gibt; identische Optik wie in Artikel-/Belegansichten.
+.segment {
+  display: inline-flex;
+  padding: 3px;
+  background: var(--surface-sunken);
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius);
+}
+.segment__btn {
+  min-height: 34px;
+  padding: 0 var(--space-3);
+  border: none;
+  border-radius: calc(var(--radius) - 2px);
+  background: transparent;
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+
+  &:hover {
+    color: var(--ink);
+  }
+  &.is-active {
+    background: var(--command);
+    color: var(--on-command);
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}

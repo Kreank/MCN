@@ -832,8 +832,17 @@ class Quote(models.Model):
 
     Belegnummer wird erst beim Versand vergeben (bleibt im ENTWURF NULL). Ab
     VERSENDET ist der Beleg eingefroren (B-30). Versand verlangt Snapshot +
-    Inhalts-Hash (per DB-Trigger). work_order-Bezug bleibt hier ungenutzt
-    (optional in der DB), aber modelliert.
+    Inhalts-Hash (per DB-Trigger).
+
+    `work_order` ordnet das Angebot einem **Auftrag** zu (optional; zusammengesetzter
+    FK gegen die Liegenschaft, 0018). Diese Zuordnung ist die Aussage „das ist das
+    Soll dieser Baustelle": der Soll-Ist-Abgleich am Baustellenbericht (0080) stützt
+    sich ausschließlich darauf. Gesetzt wird sie über `beleg.create_quote` /
+    `beleg.update_quote` — **in jedem Status, auch nach dem Versand**
+    (Migration 0082): `invoicing.freeze_sent_quote` nimmt `work_order_id` aus der
+    Einfrierung aus, weil sie ein interner Verweis ist und kein Beleginhalt (der
+    reale Ablauf ist „versenden → Kunde nimmt an → *dann* Auftrag anlegen"). Der
+    übrige Beleginhalt bleibt ab VERSENDET unveränderlich (B-30).
     """
 
     id = models.UUIDField(primary_key=True)
@@ -3495,6 +3504,75 @@ class SiteReport(models.Model):
 
     def __str__(self):
         return f"Baustellenbericht {self.report_date} ({self.status})"
+
+
+class SiteReportLine(models.Model):
+    """workflow.site_report_line — Berichtsposition (Migration 0080).
+
+    Was vor Ort tatsächlich verbraucht/geleistet wurde: Artikel/Leistung, Menge,
+    Einheit. Grundlage des Soll-Ist-Abgleichs gegen das Angebot.
+
+    **INVARIANTE: Die Berichtsposition führt KEINE PREISE.** Kein `unit_price`,
+    kein `net_amount`, kein Steuercode — auch nicht „für später". Der Bericht wird
+    vom Kunden unterschrieben und danach versiegelt; ein unterschriebener Bericht
+    mit Preisen wäre eine **Preisvereinbarung**. Der Preis entsteht erst in der
+    Rechnung (Artikelstamm/`aufschlagsmatrix.vk_vorschlag`). Der Bericht liefert
+    die Menge, das Belegwesen den Preis.
+
+    Aus demselben Grund kennt `line_type` **kein ZWISCHENSUMME** (der Bericht
+    summiert nichts).
+
+    Wie die Belegposition ist auch diese Position eine **Kopie, kein Verweis**:
+    `description`/`unit` werden beim Anlegen aus dem Stamm kopiert und eingefroren.
+    `planned_quantity` ist die beim Vorbelegen eingefrorene **Sollmenge** aus dem
+    Angebot (`source_quote_line_id` = Herkunft); NULL = war nicht angeboten
+    (Zusatzleistung).
+
+    Änderbar **nur im ENTWURF** des Berichts — der Trigger
+    `workflow.protect_site_report_lines` sperrt INSERT/UPDATE/DELETE, sobald der
+    Bericht UNTERZEICHNET ist. Kein No-Delete-Trigger (dokumentierte Ausnahme wie
+    bei `invoicing.quote_line`: der Editor ersetzt den ganzen Positionssatz).
+    """
+
+    id = models.UUIDField(primary_key=True)
+    site_report = models.ForeignKey(
+        SiteReport, models.DO_NOTHING, db_column="site_report_id",
+        related_name="lines",
+    )
+    position_number = models.IntegerField()
+    # MATERIAL|ARBEITSZEIT|PAUSCHALE|FREMDLEISTUNG|FAHRT|ZUSCHLAG|TEXT
+    line_type = models.TextField()
+    description = models.TextField()
+    quantity = models.DecimalField(
+        max_digits=15, decimal_places=3, null=True, blank=True
+    )
+    unit = models.TextField(null=True, blank=True)
+    source_article = models.ForeignKey(
+        "Article", models.DO_NOTHING, db_column="source_article_id",
+        null=True, blank=True, related_name="site_report_lines",
+    )
+    source_assembly = models.ForeignKey(
+        "Assembly", models.DO_NOTHING, db_column="source_assembly_id",
+        null=True, blank=True, related_name="site_report_lines",
+    )
+    planned_quantity = models.DecimalField(
+        max_digits=15, decimal_places=3, null=True, blank=True
+    )
+    source_quote_line = models.ForeignKey(
+        "QuoteLine", models.DO_NOTHING, db_column="source_quote_line_id",
+        null=True, blank=True, related_name="site_report_lines",
+    )
+    note = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'workflow"."site_report_line'
+        ordering = ["position_number"]
+
+    def __str__(self):
+        return f"{self.position_number}. {self.description}"
 
 
 class SupplierConnection(models.Model):

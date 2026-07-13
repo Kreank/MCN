@@ -1,0 +1,171 @@
+@switch (zustand().kind) {
+  @case ('loading') {
+    <p class="lade-hinweis" role="status">Soll-Ist-Abgleich wird berechnet …</p>
+  }
+
+  @case ('error') {
+    <div class="note note--error" role="alert">
+      <p class="note__text">Der Soll-Ist-Abgleich konnte nicht geladen werden.</p>
+      <div class="note__aktionen">
+        <button type="button" class="btn" (click)="neuLaden()">Erneut versuchen</button>
+      </div>
+    </div>
+  }
+
+  @case ('ready') {
+    @if ($any(zustand()).daten; as d) {
+      <!-- Grundlage des Solls: Ohne zugeordnetes Angebot gibt es kein Soll. Das
+           muss man sehen — und hier auch ändern können (kein DB-Handgriff). -->
+      <section class="si__grundlage" aria-labelledby="si-grundlage-h">
+        <h3 class="si__h" id="si-grundlage-h">Grundlage des Solls</h3>
+
+        @if (zugeordnet().length === 0) {
+          <p class="si__leer">
+            Diesem Auftrag ist <strong>kein Angebot zugeordnet</strong> — es gibt kein
+            Soll. Alles, was in den Berichten erfasst wird, erscheint deshalb als
+            <em>Zusatz</em>.
+          </p>
+        } @else {
+          <ul class="si__angebote">
+            @for (q of zugeordnet(); track q.id) {
+              <li class="si__angebot">
+                <span class="si__angebot-name">{{ bezeichner(q) }}</span>
+                <span class="stamp">{{ statusLabel(q.status) }}</span>
+                @if (zaehltInsSoll(q)) {
+                  <span class="si__zaehlt">zählt ins Soll</span>
+                } @else {
+                  <span class="si__zaehlt-nicht">
+                    zählt <strong>nicht</strong> ins Soll — ein nicht versendetes Angebot
+                    ist keine Vereinbarung
+                  </span>
+                }
+                @if (darfZuordnen()) {
+                  <button
+                    type="button"
+                    class="btn btn--klein"
+                    [disabled]="speichert()"
+                    (click)="loesen(q)"
+                  >
+                    Zuordnung lösen
+                  </button>
+                }
+              </li>
+            }
+          </ul>
+        }
+
+        @if (darfZuordnen()) {
+          @if (kandidaten().length > 0) {
+            <div class="si__zuordnen">
+              <label class="si__label" for="si-quote">Angebot dem Auftrag zuordnen</label>
+              <select
+                id="si-quote"
+                class="si__select"
+                [value]="wahl()"
+                (change)="wahlSetzen($any($event.target).value)"
+              >
+                <option value="">Angebot wählen …</option>
+                @for (q of kandidaten(); track q.id) {
+                  <option [value]="q.id">
+                    {{ bezeichner(q) }} ({{ statusLabel(q.status) }})
+                  </option>
+                }
+              </select>
+              <button
+                type="button"
+                class="btn btn--primary"
+                [disabled]="!wahl() || speichert()"
+                (click)="zuordnen()"
+              >
+                Zuordnen
+              </button>
+            </div>
+            <p class="si__hinweis">
+              Zuordnen und Lösen ist in <strong>jedem</strong> Status möglich — auch
+              nach dem Versand. Der Auftragsbezug ist ein interner Verweis, kein
+              Beleginhalt; am versendeten Angebot selbst ändert sich nichts (B-30). Ins
+              Soll zählt das Angebot allerdings erst, wenn es hinausgegangen ist.
+            </p>
+          } @else if (zugeordnet().length === 0) {
+            <p class="si__hinweis">
+              Es gibt kein Angebot dieser Liegenschaft, das noch keinem Auftrag
+              zugeordnet ist.
+            </p>
+          }
+        }
+
+        @if (fehler()) {
+          <div class="note note--error" role="alert">
+            <p class="note__text">{{ fehler() }}</p>
+          </div>
+        }
+        <p class="sr-only" role="status">{{ ansage() }}</p>
+      </section>
+
+      @if (d.enthaelt_entwuerfe) {
+        <!-- Vorläufigkeit wird ausgewiesen, nicht verschwiegen: ein Bericht im
+             Entwurf ist noch änderbar, sein Ist damit noch nicht belastbar. -->
+        <div class="note note--warnung si__warnung" role="status">
+          <p class="note__text">
+            <strong>Vorläufiger Abgleich.</strong> In diese Zahlen fließen
+            <strong>nicht unterzeichnete</strong> Baustellenberichte ein. Deren
+            Positionen sind noch änderbar — das Ist kann sich also noch verschieben.
+            Belastbar ist der Abgleich erst, wenn alle Berichte unterzeichnet sind.
+          </p>
+        </div>
+      }
+
+      @if (d.positionen.length === 0) {
+        <div class="tab-platzhalter">
+          <p>
+            Für diesen Auftrag gibt es weder Angebotspositionen (Soll) noch
+            Berichtspositionen (Ist) — es gibt nichts abzugleichen.
+          </p>
+        </div>
+      } @else {
+        <div class="si__wrap">
+          <table class="si">
+            <caption class="sr-only">
+              Soll-Ist-Abgleich: Angebotsmenge gegen die in den Baustellenberichten
+              erfasste Menge. Mengen, keine Beträge.
+            </caption>
+            <thead>
+              <tr>
+                <th scope="col">Bezeichnung</th>
+                <th scope="col">Einheit</th>
+                <th scope="col" class="num">Soll</th>
+                <th scope="col" class="num">Ist</th>
+                <th scope="col" class="num">Differenz</th>
+                <th scope="col">Art</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (p of d.positionen; track p.schluessel) {
+                <tr>
+                  <td>{{ p.bezeichnung }}</td>
+                  <td class="si__einheit">{{ p.einheit || '—' }}</td>
+                  <td class="num">{{ menge(p.soll) }}</td>
+                  <td class="num">{{ menge(p.ist) }}</td>
+                  <td class="num si__diff">{{ differenz(p.differenz) }}</td>
+                  <td>
+                    <!-- Art als TEXT und Symbol — nie nur über Farbe (WCAG 1.4.1). -->
+                    <span class="stamp {{ artClass(p.art) }}">
+                      <span aria-hidden="true">{{ artSymbol(p.art) }}</span>
+                      {{ artLabel(p.art) }}
+                    </span>
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+
+        <p class="si__fuss">
+          Der Abgleich weist <strong>Mengen</strong> aus, keine Beträge: der
+          Baustellenbericht führt keine Preise. Was daraus abzurechnen ist,
+          entscheidet die Rechnung.
+        </p>
+      }
+    }
+  }
+}
