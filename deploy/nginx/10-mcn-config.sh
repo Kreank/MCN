@@ -72,6 +72,28 @@ awk -v guard="$(printf '%b' "${GUARD}" | sed 's/[[:space:]]*$//')" \
     /etc/nginx/mcn/app.conf.template > "${APP_CONF}"
 
 # ---------------------------------------------------------------------------
+# X-Forwarded-Proto ans Backend
+# ---------------------------------------------------------------------------
+# Normalfall: das eigene $scheme (dieser nginx ist die TLS-Tür). Steht der Stack
+# hinter einem VORGELAGERTEN TLS-Proxy (Caddy/Traefik; MCN_TRUST_FORWARDED_PROTO=1),
+# muss dessen X-Forwarded-Proto durchgereicht werden — sonst meldet der
+# HTTP-Bootstrap-Block "http" an Django, und CSRF-Prüfung + Secure-Cookies
+# brechen den Login, obwohl der Browser über HTTPS spricht. Nur "https" wird
+# durchgelassen (Header ist Client-Eingabe); jeder andere Wert fällt auf $scheme
+# zurück. Ohne den Schalter bleibt das Verhalten exakt wie bisher.
+if [ "${MCN_TRUST_FORWARDED_PROTO:-0}" = "1" ]; then
+    echo "[nginx] MCN_TRUST_FORWARDED_PROTO=1 — X-Forwarded-Proto des vorgelagerten Proxys wird durchgereicht."
+    PROTO_MAP="map \$http_x_forwarded_proto \$mcn_forwarded_proto {
+    default \$scheme;
+    https   https;
+}"
+else
+    PROTO_MAP="map \$http_x_forwarded_proto \$mcn_forwarded_proto {
+    default \$scheme;
+}"
+fi
+
+# ---------------------------------------------------------------------------
 # server-Blöcke
 # ---------------------------------------------------------------------------
 # default_server: der Stack ist der einzige Dienst auf dem Port; jeder Host-Header
@@ -79,6 +101,8 @@ awk -v guard="$(printf '%b' "${GUARD}" | sed 's/[[:space:]]*$//')" \
 if [ -f "${CERT_DIR}/fullchain.pem" ] && [ -f "${CERT_DIR}/privkey.pem" ]; then
     echo "[nginx] Zertifikat für ${DOMAIN} gefunden — HTTPS aktiv, HTTP leitet um."
     cat > "${OUT}" <<EOF
+${PROTO_MAP}
+
 server {
     listen 80 default_server;
     listen [::]:80 default_server;
@@ -133,6 +157,8 @@ else
     echo "[nginx] HINWEIS: In diesem Zustand ist der LOGIN nicht möglich"
     echo "[nginx]          (Secure-Cookies). Zuerst 'docker compose run --rm certbot ...'"
     cat > "${OUT}" <<EOF
+${PROTO_MAP}
+
 server {
     listen 80 default_server;
     listen [::]:80 default_server;

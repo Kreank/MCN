@@ -27,7 +27,7 @@ __ADMIN_GUARD__
     proxy_set_header Host $http_host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Proto $mcn_forwarded_proto;
     proxy_redirect off;
 }
 
@@ -47,7 +47,7 @@ location /api/ {
     proxy_set_header Host $http_host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Proto $mcn_forwarded_proto;
     proxy_redirect off;
     # Beleg-PDF/ZUGFeRD rendern und archivieren in einem Aufruf; DATANORM-Importe
     # laufen noch länger. Der 60-s-Default wäre zu knapp.
