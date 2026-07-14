@@ -9,8 +9,10 @@ sondern namentlich die Fälle, an denen es brechen würde:
                                             kein Leak (Rolle DISPOSITION).
   2. `test_ohne_pricing_keine_marge`     — Marge null + marge_sichtbar=False,
                                             Rest des Dossiers vollständig.
-  3. `test_monteur_bekommt_kein_*`       — row_scope EIGENE → 403 (fail-closed),
-                                            NICHT etwa alle Zeilen.
+  3. `test_monteur_ohne_objekt_bekommt_kein_dossier` — row_scope EIGENE ohne Objekt
+                                            → 404 und KEINE Daten (Objektsicht 0099;
+                                            der positive Fall steht in
+                                            `test_monteur_objektsicht.py`).
   4. `test_unbekannte_*_404`             — fremde/unbekannte UUID → 404, nicht 403.
   5. `test_zahlungsverhalten_ohne_zahlung_ist_null` — null, NICHT „0 Tage Verzug".
   6. `test_stornierte_rechnung_*` / `test_gutschrift_ist_keine_verspaetete_zahlung`
@@ -170,7 +172,11 @@ def dispo_client(db):
 
 @pytest.fixture
 def monteur_client(db):
-    """MONTEUR: workflow/content mit row_scope EIGENE → fail-closed (Bruchfall 3)."""
+    """MONTEUR mit row_scope EIGENE — und **ohne jeden Einsatz**, also ohne Objekt.
+
+    Genau das ist Bruchfall 3: Die Objektsicht (0099) gibt ihm nicht „irgendein"
+    Dossier, sondern das seiner Objekte. Hat er keins, bekommt er keins.
+    """
     return logged_in_client("MONTEUR")
 
 
@@ -322,18 +328,23 @@ def test_ohne_pricing_keine_marge(buchhaltung_ohne_pricing, szenario):
 
 
 # ===========================================================================
-# BRUCHFALL 3 — MONTEUR (row_scope EIGENE): 403, nicht „alle Zeilen"
+# BRUCHFALL 3 — MONTEUR (row_scope EIGENE): nur SEINE Objekte, nie fremde
 # ===========================================================================
 
 @pytest.mark.django_db
 @pytest.mark.parametrize("pfad", ["kontakt", "liegenschaft", "projekt", "auftrag"])
-def test_monteur_bekommt_kein_dossier(monteur_client, szenario, pfad):
-    """`require` ist fail-closed: row_scope EIGENE → 403.
+def test_monteur_ohne_objekt_bekommt_kein_dossier(monteur_client, szenario, pfad):
+    """Objektsicht (0099): Der Monteur bekommt das Dossier **seiner Objekte** — der
+    Liegenschaften, an denen er je einen Einsatz hatte. Dieser Monteur hat **keinen**
+    Einsatz, also kein Objekt: **404** auf alle vier Dossiers (nicht mehr 403 — die
+    Existenz der Entität wird nicht verraten).
 
-    Das ist RICHTIG so und wird hier festgeschrieben, damit es niemand
-    „aufweicht": Ein Dossier ist die Gesamtsicht auf ein Objekt; sie lässt sich
-    nicht auf „eigene Zeilen" begrenzen. Ein Monteur bekommt deshalb **gar keins**
-    — und keinesfalls versehentlich alle Zeilen.
+    Entscheidend ist die zweite Zusicherung: **keine Daten in der Antwort**. Ein
+    `require_scoped` ohne Objekt-Guard wäre hier ein 200 mit dem vollen Dossier —
+    genau der stille Datenleak, den dieser Test unmöglich machen soll.
+
+    Der positive Fall (der Monteur MIT Einsatz sieht sein Objekt inkl. der Historie
+    der Kollegen, aber ohne Geld) steht in `test_monteur_objektsicht.py`.
     """
     ziel = {
         "kontakt": szenario["kunde"].id,
@@ -342,10 +353,11 @@ def test_monteur_bekommt_kein_dossier(monteur_client, szenario, pfad):
         "auftrag": szenario["order"].id,
     }[pfad]
     r = monteur_client.get(f"/api/dossier/{pfad}/{ziel}")
-    assert r.status_code == 403, (
-        f"{pfad}: Monteur (EIGENE) darf kein Dossier bekommen — weder Daten noch 200."
+    assert r.status_code == 404, (
+        f"{pfad}: Monteur ohne Einsatz hat kein Objekt — weder Daten noch 200."
     )
     assert "Karla" not in r.content.decode()
+    assert "Lindenstraße" not in r.content.decode()
 
 
 # ===========================================================================

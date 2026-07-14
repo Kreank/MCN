@@ -12,18 +12,21 @@ Schemata und die Rechteprüfung.
 
 ## Das Rechtemodell dieses Routers (zwei Stufen, bewusst getrennt)
 
-**1. Der KERN ist hart getort** (`require`, fail-closed): Kontakt→`identity/LESEN`,
-Liegenschaft→`property/LESEN`, Projekt und Auftrag→`workflow/LESEN`. Fehlt das
-Recht: **403**, keine Antwort. Ein Konto mit row_scope **EIGENE** (Monteur)
-scheitert hier ebenfalls — `require` weitet EIGENE nie zu ALLE auf, und ein
-Dossier ist per Konstruktion eine Gesamtsicht auf ein Objekt, die sich nicht auf
-„eigene Zeilen" begrenzen lässt. Der Monteur bekommt also **kein** Dossier. Das
-ist richtig so: Er sieht seine Einsätze, nicht die Kundenakte.
+**1. Der KERN ist getort**: Kontakt→`identity/LESEN`, Liegenschaft→`property/LESEN`,
+Projekt und Auftrag→`workflow/LESEN`. Fehlt das Recht: **403**, keine Antwort.
 
-**2. Jeder weitere Baustein prüft SEIN eigenes Modul** — mit dem **weichen**
-`check` (das intern wieder `require` ist, also ebenfalls fail-closed). Fehlt das
-Recht, ist der Baustein `null` und ein Flag `<baustein>_sichtbar: false` sagt,
-**warum** er fehlt. Es gibt hier bewusst **keinen** dritten Weg:
+**Neu seit der Objektsicht (Migration 0099):** Ein Konto mit row_scope **EIGENE**
+bekommt das Dossier **seiner Objekte** — der Liegenschaften, an denen es je einen
+Einsatz hatte (`db_core/services/objektsicht.py`). Vorher galt hier „ein MONTEUR
+bekommt gar kein Dossier"; das war der Grund, aus dem er zur „Heizkörper
+kalt"-Meldung fuhr, ohne den Bericht von vorgestern und die Zentralanlage zu kennen.
+Die Entität selbst wird deshalb mit `require_scoped` + Objekt-Guard geprüft:
+**fremdes Objekt → 404** (nicht 403 — die Existenz wird nicht verraten).
+
+**2. Jeder weitere Baustein prüft SEIN eigenes Modul** — weich, über
+`_modul(request, ...)`: Fehlt das Recht, ist der Baustein `null` und ein Flag
+`<baustein>_sichtbar: false` sagt, **warum** er fehlt. Es gibt hier bewusst **keinen**
+dritten Weg:
 
     * Kein 403 auf die ganze Antwort, nur weil ein Teil fehlt (die Disposition
       soll das Projekt sehen, auch ohne Umsatzrecht).
@@ -31,15 +34,22 @@ Recht, ist der Baustein `null` und ein Flag `<baustein>_sichtbar: false` sagt,
     * Kein stilles Weglassen (ein fehlendes Feld wäre von „es gibt nichts"
       nicht zu unterscheiden — deshalb das Flag).
 
-| Baustein | Modul |
-|---|---|
-| Kontaktdaten, Adressen, Kontaktwege, Ansprechpartner | `identity` |
-| Liegenschaft, Gebäude/Einheiten/Anlagen, Beteiligte | `property` |
-| Vorgänge, Aufträge, Einsätze, Zeiten, Berichte, Aufgaben, Soll-Ist | `workflow` |
-| offene Posten, Zahlungsverhalten, Angebote/Rechnungen, Abrechnungsstand | `invoicing` |
-| Marge / Deckungsbeitrag (Umsatz **und** EK) | `invoicing` **+** `pricing` |
-| Wartung, Prüffristen, Gewährleistung | `maintenance` |
-| Dokumente, Kommunikation | `content` |
+| Baustein | Modul | Objektsicht ('EIGENE') |
+|---|---|---|
+| Kontaktdaten, Adressen, Kontaktwege, Ansprechpartner | `identity` | ja (nur Kontakte an meinen Objekten) |
+| Liegenschaft, Gebäude/Einheiten/Anlagen, Beteiligte | `property` | ja (nur meine Objekte) |
+| Vorgänge, Aufträge, Einsätze, Zeiten, Berichte, Soll-Ist | `workflow` | ja (nur an meinen Objekten) |
+| Aufgaben | `workflow` | **nein** — `workflow.task` hängt an keinem Objekt |
+| offene Posten, Zahlungsverhalten, Angebote/Rechnungen, Abrechnungsstand | `invoicing` | **nein** |
+| Marge / Deckungsbeitrag (Umsatz **und** EK) | `invoicing` **+** `pricing` | **nein** |
+| Wartung, Prüffristen, Gewährleistung | `maintenance` | **ja** (Migration 0100 — kein Geld im Schema) |
+| Dokumente am Objekt/Auftrag | `content` | ja |
+| Dokumente am Projekt/Kontakt, Kommunikation | `content` | **nein** (nicht objektgebunden) |
+
+**Die Geld-Bausteine fallen für die Objektsicht von SELBST weg** — nicht durch eine
+Filterzeile, die jemand vergessen könnte, sondern weil die Rolle MONTEUR auf
+`invoicing`/`pricing` **kein einziges Recht** hat (Migration 0026, unverändert).
+„Angebot ohne Preise, nur Mengen" ist ein eigener, späterer Slice.
 
 **Fremde/unbekannte Entität → 404, nicht 403** — sonst verriete die Antwort deren
 Existenz (Hausregel).
@@ -51,9 +61,11 @@ from uuid import UUID
 from ninja import Router, Schema
 from ninja.errors import HttpError
 
-from api.auftrag import OffeneAbrechnungOut
-from api.permissions import check, require
+from api.auftrag import OffeneAbrechnungOut, guard_auftrag
+from api.objektgrenze import guard_objekt, guard_party, guard_projekt
+from api.permissions import actor_id, check, require_scoped
 from api.site_report import SollIstOut
+from db_core.models import WorkOrder
 from db_core.services import dossier as dossier_service
 
 router = Router()
@@ -63,22 +75,55 @@ router = Router()
 # Rechte → Sicht
 # ---------------------------------------------------------------------------
 
-def _sicht(request, *, kern_modul):
-    """Kern hart prüfen (403), alle weiteren Module weich (Baustein-Flags).
+def _modul(request, modul):
+    """(darf_alles, darf_nur_eigene) für ein Modul — weich, ohne Ausnahme.
 
-    `check` liefert bei row_scope EIGENE None (fail-closed) — ein Baustein wird
-    nie „irgendwie eingeschränkt" ausgeliefert, sondern gar nicht.
+    `check` ist fail-closed und liefert bei row_scope EIGENE None; für die
+    Objektsicht brauchen wir den Scope aber **weich** — deshalb zusätzlich
+    `require_scoped` in einem try. Genau dasselbe Muster wie in `api/suche.py`.
     """
-    require(request, kern_modul, "LESEN")
-    return dossier_service.Sicht(
-        identity=check(request, "identity", "LESEN") is not None,
-        property=check(request, "property", "LESEN") is not None,
-        workflow=check(request, "workflow", "LESEN") is not None,
+    if check(request, modul, "LESEN") is not None:
+        return True, False
+    try:
+        _, scope = require_scoped(request, modul, "LESEN")
+    except HttpError:
+        return False, False
+    return False, scope == "EIGENE"
+
+
+def _sicht(request, *, kern_modul):
+    """Kern-Scope zurückgeben und die Sicht auf alle Module bauen.
+
+    Gibt `(actor, scope, sicht)` zurück. Der Aufrufer MUSS den Scope mit einem
+    Objekt-Guard umsetzen — `require_scoped` ohne Guard wäre hier besonders
+    verheerend, weil ein Dossier per Konstruktion alles bündelt.
+    """
+    actor, kern_scope = require_scoped(request, kern_modul, "LESEN")
+
+    identity_alle, identity_eigene = _modul(request, "identity")
+    property_alle, property_eigene = _modul(request, "property")
+    workflow_alle, workflow_eigene = _modul(request, "workflow")
+    content_alle, content_eigene = _modul(request, "content")
+    maintenance_alle, maintenance_eigene = _modul(request, "maintenance")
+
+    sicht = dossier_service.Sicht(
+        identity=identity_alle,
+        property=property_alle,
+        workflow=workflow_alle,
+        content=content_alle,
+        maintenance=maintenance_alle,
+        identity_eigene=identity_eigene,
+        property_eigene=property_eigene,
+        workflow_eigene=workflow_eigene,
+        content_eigene=content_eigene,
+        maintenance_eigene=maintenance_eigene,
+        # GELD: die EINZIGE Ausnahme von „er darf alles sehen" — keine
+        # EIGENE-Variante, hartes `check` (row_scope EIGENE → None).
         invoicing=check(request, "invoicing", "LESEN") is not None,
         pricing=check(request, "pricing", "LESEN") is not None,
-        content=check(request, "content", "LESEN") is not None,
-        maintenance=check(request, "maintenance", "LESEN") is not None,
+        actor_id=actor_id(request),
     )
+    return actor, kern_scope, sicht
 
 
 def _liefern(bauen):
@@ -327,8 +372,12 @@ def kontakt_dossier(request, party_id: UUID):
     offene Posten + **Zahlungsverhalten** (`invoicing`) sowie Kommunikation und
     Dokumente (`content`) kommen nur mit dem jeweiligen Recht — sonst `null` +
     `_sichtbar: false`.
+
+    Objektsicht ('EIGENE'): nur Kontakte, die an einem meiner Objekte hängen (der
+    Mieter, den ich anrufen muss) — jeder andere Kontakt ist **404**.
     """
-    sicht = _sicht(request, kern_modul="identity")
+    actor, scope, sicht = _sicht(request, kern_modul="identity")
+    guard_party(scope, actor, party_id)
     return _liefern(lambda: dossier_service.kontakt_dossier(party_id, sicht))
 
 
@@ -444,8 +493,14 @@ def liegenschaft_dossier(request, property_id: UUID):
     **Zutrittshinweisen mit Herkunft** (`workflow`), Wartung/Prüffristen/
     Gewährleistung (`maintenance`), offene Posten (`invoicing`) und Dokumente
     (`content`) kommen nur mit dem jeweiligen Recht.
+
+    **Das ist die Gesamtsicht, für die dieser Slice gebaut wurde.** Objektsicht
+    ('EIGENE'): meine Objekte — mit Vorgängen, Aufträgen, Einsätzen und Berichten
+    **der Kollegen** (die Heizkörper-Historie), aber **ohne** Geld-Bausteine (kein
+    `invoicing`-Recht → offene Posten `null`). Fremdes Objekt → 404.
     """
-    sicht = _sicht(request, kern_modul="property")
+    actor, scope, sicht = _sicht(request, kern_modul="property")
+    guard_objekt(scope, actor, property_id)
     return _liefern(lambda: dossier_service.liegenschaft_dossier(property_id, sicht))
 
 
@@ -510,8 +565,13 @@ class ProjektDossierOut(Schema):
     liegenschaften: list[ProjektLiegenschaftOut]
     vorgaenge: list[VorgangOut]
     auftraege: list[AuftragZeileOut]
-    checklisten: list[ChecklistOut]
-    logbuch: list[LogbuchOut]
+    # Checklisten und Logbuch sind FREITEXT OHNE OBJEKTBEZUG — sie lassen sich als
+    # einzige Bausteine nicht auf „meine Objekte" begrenzen (ein Eintrag kann ein
+    # fremdes Objekt beim Namen nennen). Für die Objektsicht deshalb `null` +
+    # `projektsteuerung_sichtbar: false`, nicht eine stille leere Liste.
+    projektsteuerung_sichtbar: bool
+    checklisten: list[ChecklistOut] | None = None
+    logbuch: list[LogbuchOut] | None = None
     aufgaben: list[AufgabeOut]
     belege_sichtbar: bool
     angebote: list[AngebotZeileOut] | None = None
@@ -535,8 +595,14 @@ def projekt_dossier(request, project_id: UUID):
     `invoicing/LESEN`; die **Marge** zusätzlich `pricing/LESEN` (sie ist Umsatz
     minus Einkauf — ohne EK-Recht gibt es keine Marge, und ohne EK-Daten ist sie
     `null`, nie 0 %).
+
+    Objektsicht ('EIGENE'): Projekte, die **mindestens eine** meiner Liegenschaften
+    tragen — und darin **nur** meine Objekte samt deren Vorgängen und Aufträgen (der
+    Service filtert nach; siehe `dossier_service.projekt_dossier`). Sonst wäre die
+    Projektakte der Nebeneingang zum fremden Objekt.
     """
-    sicht = _sicht(request, kern_modul="workflow")
+    actor, scope, sicht = _sicht(request, kern_modul="workflow")
+    guard_projekt(scope, actor, project_id)
     return _liefern(lambda: dossier_service.projekt_dossier(project_id, sicht))
 
 
@@ -656,6 +722,13 @@ def auftrag_dossier(request, work_order_id: UUID):
     Kern (alles ohne Geldbetrag). Der **Abrechnungsstand** (`offene_abrechnung` —
     er führt Einzelpreise), Angebote/Rechnungen und die offenen Posten brauchen
     `invoicing/LESEN`; Dokumente `content/LESEN`.
+
+    Objektsicht ('EIGENE'): Aufträge an meinen Objekten — **auch die der Kollegen**
+    (Zeiten, Material, Berichte, Soll-Ist: alles ohne Geldbetrag). Fremdes Objekt →
+    404. Preise bleiben weg, weil `invoicing` fehlt.
     """
-    sicht = _sicht(request, kern_modul="workflow")
+    actor, scope, sicht = _sicht(request, kern_modul="workflow")
+    if not WorkOrder.objects.filter(id=work_order_id).exists():
+        raise HttpError(404, "Auftrag nicht gefunden.")
+    guard_auftrag(work_order_id, actor, scope)
     return _liefern(lambda: dossier_service.auftrag_dossier(work_order_id, sicht))

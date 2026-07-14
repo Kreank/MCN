@@ -1,9 +1,21 @@
 """Auftrags-API — Aufträge (workflow.work_order) inkl. Beteiligten und
 Statusverlauf.
 
-Wie die übrigen APIs: Lesen in der Dev-Phase ohne Auth, Schreiben verlangt
-Django-Session + zugeordnetes app_user. Views bleiben dünn und rufen die
-Service-Schicht; Model-Instanzen verlassen die API nicht.
+Views bleiben dünn und rufen die Service-Schicht; Model-Instanzen verlassen die
+API nicht.
+
+**row_scope 'EIGENE' (Objektsicht, Migration 0099) — nur LESEN.**
+Der Auftrag des Kollegen an *meinem* Objekt ist genau die Information, um die es
+geht: „Zwei Tage vorher hat bei einem anderen Mieter der Heizkörper geleckt." Also:
+
+  * **Lesen** (Liste, Detail, Statusverlauf): Aufträge an meinen Objekten
+    (`objektsicht`). Ein Auftrag an einem fremden Objekt ist **404**.
+  * **Jeder Schreibpfad** (anlegen, Beteiligte, Verantwortung, Nachweis,
+    Abrechnungsart, Statuswechsel) bleibt `require` → **403** bei 'EIGENE'.
+    Objekthistorie lesen heißt nicht, den Auftrag der Kollegin freizugeben.
+  * `offene-abrechnung` verlangt zusätzlich `invoicing/LESEN` — das hat der Monteur
+    nicht (Migration 0026, unverändert). Preise bleiben unsichtbar; hier ist nichts zu
+    filtern, weil das Recht schlicht fehlt.
 """
 from datetime import date, datetime
 from decimal import Decimal
@@ -15,10 +27,12 @@ from ninja.errors import HttpError
 from ninja.responses import Status
 from ninja.security import django_auth
 
-from api.permissions import require
-from db_core.models import StatusChange, WorkOrder
+from api.objektgrenze import guard_objekt
+from api.permissions import require, require_scoped
+from db_core.models import StatusChange, TechnicalAsset, WorkOrder
 from db_core.services import abrechnung as abrechnung_service
 from db_core.services import auftrag as auftrag_service
+from db_core.services import objektsicht
 
 router = Router()
 
@@ -82,6 +96,11 @@ class WorkOrderDetailOut(WorkOrderOut):
     customer_reference: str | None = None
     order_evidence_reference: str | None = None
     responsibility_confirmed_at: datetime | None = None
+    # Technische Anlage (property.technical_asset, 0004/0013). Für den Monteur die
+    # entscheidende Angabe: „Heizkörper kalt" heißt bei einer ZENTRALEN Anlage
+    # etwas anderes als bei einer Etagentherme.
+    asset_id: UUID | None = None
+    asset_name: str | None = None
     # PAUSCHAL (Default) | REGIE — steuert, WORAUS die Rechnung entsteht
     # (Angebotskopie vs. Bericht + Zeiten), Migration 0084.
     billing_mode: str = "PAUSCHAL"
@@ -100,6 +119,9 @@ class WorkOrderIn(Schema):
     desired_date: date | None = None
     customer_reference: str | None = None
     is_emergency: bool = False
+    # Optional: die technische Anlage, um die es geht. Muss zur Liegenschaft
+    # gehören (zusammengesetzter FK; der Service weist sonst mit 422 ab).
+    asset_id: UUID | None = None
 
 
 class WorkOrderPartyIn(Schema):
@@ -169,7 +191,30 @@ def _work_order_out(order):
     )
 
 
-# --- Lesende Endpoints (Dev-Phase ohne Auth) -------------------------------
+# --- Zeilenbegrenzung ('EIGENE') -------------------------------------------
+
+def guard_auftrag(work_order_id, actor, scope):
+    """Scope 'EIGENE': Der Auftrag muss an einem meiner Objekte hängen, sonst 404.
+
+    Gemeinsame Grenze für Auftrag, Baustellenberichte und Soll-Ist — deshalb hier
+    öffentlich (ohne Unterstrich): `api/site_report.py` zieht von hier, damit es die
+    Regel nicht ein zweites Mal ausformuliert.
+    """
+    if scope != "EIGENE":
+        return
+    prop_id = (
+        WorkOrder.objects.filter(id=work_order_id)
+        .values_list("property_id", flat=True)
+        .first()
+    )
+    guard_objekt(scope, actor, prop_id, "Auftrag nicht gefunden.")
+
+
+# Interner Alias — der Rest des Moduls liest sich damit wie die übrigen Guards.
+_guard_auftrag = guard_auftrag
+
+
+# --- Lesende Endpoints ------------------------------------------------------
 
 @router.get("/work_orders", response=WorkOrderListOut)
 def list_work_orders(
@@ -178,11 +223,15 @@ def list_work_orders(
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=100),
 ):
-    """Aufträge auflisten: Suche (Titel/Nummer), Status-/Projekt-/Objekt-/Vorgangsfilter."""
-    require(request, "workflow", "LESEN")
+    """Aufträge auflisten: Suche (Titel/Nummer), Status-/Projekt-/Objekt-/Vorgangsfilter.
+
+    Scope 'EIGENE': nur Aufträge an meinen Objekten.
+    """
+    actor, scope = require_scoped(request, "workflow", "LESEN")
     qs = WorkOrder.objects.select_related(
         "property__address", "project", "service_case"
     )
+    qs = objektsicht.begrenzen(qs, scope, actor, "property_id")
     if filters.q:
         needle = filters.q.strip()
         qs = qs.filter(Q(title__icontains=needle) | Q(order_number__icontains=needle))
@@ -241,6 +290,16 @@ def _work_order_detail(work_order_id):
         for c in changes
     ]
 
+    # asset_id ist ein zusammengesetzter FK (kein ORM-FK) — der Name kommt per
+    # Einzelabfrage, und nur wenn überhaupt eine Anlage dranhängt.
+    asset_name = (
+        TechnicalAsset.objects.filter(id=order.asset_id)
+        .values_list("name", flat=True)
+        .first()
+        if order.asset_id
+        else None
+    )
+
     base = _work_order_out(order)
     return WorkOrderDetailOut(
         **base.dict(),
@@ -248,6 +307,8 @@ def _work_order_detail(work_order_id):
         customer_reference=order.customer_reference,
         order_evidence_reference=order.order_evidence_reference,
         responsibility_confirmed_at=order.responsibility_confirmed_at,
+        asset_id=order.asset_id,
+        asset_name=asset_name,
         billing_mode=order.billing_mode,
         version=order.version,
         parties=parties,
@@ -257,8 +318,12 @@ def _work_order_detail(work_order_id):
 
 @router.get("/work_orders/{work_order_id}", response=WorkOrderDetailOut)
 def get_work_order(request, work_order_id: UUID):
-    """Detail eines Auftrags inkl. Beteiligter und Statusverlauf."""
-    require(request, "workflow", "LESEN")
+    """Detail eines Auftrags inkl. Beteiligter und Statusverlauf.
+
+    Scope 'EIGENE': Auftrag an einem fremden Objekt → 404.
+    """
+    actor, scope = require_scoped(request, "workflow", "LESEN")
+    _guard_auftrag(work_order_id, actor, scope)
     return _work_order_detail(work_order_id)
 
 
@@ -272,7 +337,14 @@ class KundenhistorieOut(Schema):
 @router.get("/work_orders/{work_order_id}/kundenhistorie", response=KundenhistorieOut)
 def work_order_kundenhistorie(request, work_order_id: UUID):
     """Auftraggeber des Auftrags + wie viele Aufträge/Termine dieser Kunde
-    insgesamt hat (rein lesend, workflow/LESEN)."""
+    insgesamt hat (rein lesend, workflow/LESEN).
+
+    `require` (fail-closed → 403 bei 'EIGENE'): Die Kennzahlen zählen über den
+    **gesamten** Bestand dieses Kunden — auch über Objekte, die der Akteur nicht
+    sehen darf. Eine Zahl ist keine Zeile, aber sie ist eine Auskunft über fremde
+    Zeilen. Der Monteur sieht die Historie **seines Objekts** (Dossier), nicht die
+    Geschäftsbeziehung des Kunden.
+    """
     require(request, "workflow", "LESEN")
     if not WorkOrder.objects.filter(id=work_order_id).exists():
         raise HttpError(404, "Auftrag nicht gefunden.")
@@ -297,6 +369,7 @@ def create_work_order(request, payload: WorkOrderIn):
             desired_date=payload.desired_date,
             customer_reference=payload.customer_reference,
             is_emergency=payload.is_emergency,
+            asset_id=payload.asset_id,
         )
     except ValueError as exc:
         raise HttpError(422, str(exc))

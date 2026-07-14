@@ -444,19 +444,33 @@ def test_monteur_ohne_einsatzbezug_darf_nicht_anlegen():
 
 
 @pytest.mark.django_db
-def test_monteur_darf_auftragssicht_nicht_lesen():
+def test_monteur_darf_auftragssicht_eines_fremden_objekts_nicht_lesen():
+    """Objektsicht (0099): Die Auftragssicht ist für 'EIGENE' nicht mehr pauschal
+    gesperrt — sie ist auf **meine Objekte** begrenzt. Ein Auftrag an einem fremden
+    Objekt ist **404** (die Existenz wird nicht verraten), nicht mehr 403.
+
+    Der Monteur hier hängt an einem freien Termin ohne Liegenschaft; der Auftrag
+    gehört zu einem Objekt, an dem er nie war."""
     dispo = make_app_user("Dispo")
     client, _monteur, _job = _monteur_am_termin(dispo)
     order = _order(dispo.id)
     r = client.get(f"/api/workflow/site_reports?work_order_id={order.id}")
-    assert r.status_code == 403, r.content
+    assert r.status_code == 404, r.content
 
 
 @pytest.mark.django_db
-def test_monteur_sieht_reinen_auftragsbericht_am_eigenen_einsatz_nicht():
-    """Datenleck-Probe: Der Monteur ist einem Einsatz DES AUFTRAGS zugewiesen. Ein
-    Bericht, der nur am Auftrag hängt (ohne Einsatz), bleibt ihm trotzdem
-    verborgen — seine Sicht hängt allein an der Zuweisung."""
+def test_monteur_sieht_reinen_auftragsbericht_an_seinem_objekt():
+    """**Der Kern der Objektsicht (0099)** — und die Umkehr der früheren Regel.
+
+    Vorher: „Ein Bericht, der nur am Auftrag hängt (ohne Einsatz), bleibt ihm
+    verborgen — seine Sicht hängt allein an der Zuweisung." Das war genau der Fehler:
+    Der Monteur fuhr zur Meldung „Heizkörper kalt" und fand den Bericht von
+    vorgestern nicht, in dem stand, dass am Nachbar-Heizkörper ein Leck war.
+
+    Jetzt: Der Monteur ist einem Einsatz DES AUFTRAGS zugewiesen → dessen
+    Liegenschaft ist **sein Objekt** → er liest jeden Bericht daran, auch den ohne
+    Einsatzbezug. **Ändern** darf er ihn weiterhin nicht (dafür bräuchte er die
+    Einsatzzuweisung)."""
     dispo = make_app_user("Dispo")
     order = _order(dispo.id)
     client, _monteur, _job = _monteur_am_termin(dispo, work_order_id=order.id)
@@ -464,7 +478,17 @@ def test_monteur_sieht_reinen_auftragsbericht_am_eigenen_einsatz_nicht():
         dispo.id, work_order_id=order.id, report_date="2026-07-15",
         activity_text="Nur am Auftrag",
     )
-    assert client.get(f"/api/workflow/site_reports/{nur_auftrag.id}").status_code == 404
+    r = client.get(f"/api/workflow/site_reports/{nur_auftrag.id}")
+    assert r.status_code == 200, r.content
+    assert r.json()["activity_text"] == "Nur am Auftrag"
+
+    # Lesen ja — schreiben nein. Die Schreibgrenze bleibt die Einsatzzuweisung.
+    r = client.put(
+        f"/api/workflow/site_reports/{nur_auftrag.id}",
+        data={"remarks": "Heimlich geändert"},
+        content_type=JSON,
+    )
+    assert r.status_code == 404, r.content
 
 
 @pytest.mark.django_db
@@ -573,12 +597,16 @@ def test_monteur_darf_kein_foto_an_fremden_bericht_haengen(fake_storage):
 
     assert _foto(client, site_report_id=fremder.id).status_code == 404
     assert _foto(client, service_job_id=fremder_job.id).status_code == 404
-    # Nicht scopebare Zielarten sind für ihn ganz zu (fail-closed).
+    # HOCHLADEN an einen Auftrag ist für 'EIGENE' ganz zu — auch am eigenen Objekt
+    # (die Objektsicht ist eine LESE-Sicht): 403, fail-closed.
     assert _foto(client, work_order_id=order.id).status_code == 403
     assert (
         client.get(f"/api/content/files?site_report_id={fremder.id}").status_code == 404
     )
-    assert client.get(f"/api/content/files?work_order_id={order.id}").status_code == 403
+    # LESEN am Auftrag ist seit der Objektsicht (0099) grundsätzlich möglich — hier
+    # aber an einem FREMDEN Objekt, also **404** (nicht mehr 403: die Zielart ist
+    # zulässig, das Objekt ist es nicht — die Existenz wird nicht verraten).
+    assert client.get(f"/api/content/files?work_order_id={order.id}").status_code == 404
 
 
 @pytest.mark.django_db

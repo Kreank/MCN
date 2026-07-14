@@ -1,0 +1,110 @@
+<app-dialog [offen]="offen()" [titel]="titel()" (schliessen)="schliessen()">
+  <form
+    id="anlage-form"
+    class="dialog-form"
+    (submit)="$event.preventDefault(); absenden()"
+    novalidate
+  >
+    @if (formularMeldung(); as fm) {
+      <div class="melde melde--fehler" role="alert">
+        <span class="melde__mark" aria-hidden="true">!</span>
+        <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+      </div>
+    }
+
+    <fieldset class="satz">
+      <legend class="satz__titel">Was ist es?</legend>
+      <app-feld
+        [control]="form.controls.name"
+        label="Bezeichnung"
+        [pflicht]="true"
+        hinweis="Wie der Monteur sie nennt, z. B. „Heizzentrale Vorderhaus“."
+      />
+      <app-feld
+        [control]="form.controls.asset_type"
+        label="Anlagenart"
+        typ="select"
+        [pflicht]="true"
+        platzhalter="Bitte wählen"
+        [optionen]="artOptionen"
+      />
+      <app-feld
+        [control]="form.controls.supply_type"
+        label="Versorgung"
+        typ="select"
+        [optionen]="versorgungOptionen"
+        hinweis="Die entscheidende Angabe für den Einsatz: Eine zentrale Anlage versorgt das ganze Objekt, eine Etagentherme nur ihre Einheit."
+      />
+    </fieldset>
+
+    <fieldset class="satz">
+      <legend class="satz__titel">Wo steht sie?</legend>
+      <app-feld
+        [control]="form.controls.building_id"
+        label="Gebäude"
+        typ="select"
+        platzhalter="Ganze Liegenschaft"
+        [optionen]="gebaeudeOptionen()"
+        hinweis="Leer = die Anlage gehört zur Liegenschaft als Ganzes."
+      />
+      <app-feld
+        [control]="form.controls.unit_id"
+        label="Einheit"
+        typ="select"
+        [platzhalter]="
+          form.controls.building_id.value ? 'Keine bestimmte Einheit' : 'Erst Gebäude wählen'
+        "
+        [optionen]="einheitOptionen()"
+        hinweis="Eine Einheit setzt ein Gebäude voraus."
+      />
+      <app-feld
+        [control]="form.controls.location_note"
+        label="Aufstellort"
+        hinweis="Freitext, z. B. „Keller, Heizraum links“ — das findet der Monteur vor Ort."
+      />
+    </fieldset>
+
+    <fieldset class="satz">
+      <legend class="satz__titel">Gerät</legend>
+      <app-feld [control]="form.controls.manufacturer" label="Hersteller" />
+      <app-feld [control]="form.controls.model" label="Modell / Typ" />
+      <app-feld [control]="form.controls.serial_number" label="Seriennummer" />
+      <app-feld
+        [control]="form.controls.year_built"
+        label="Baujahr"
+        typ="zahl"
+        inputmode="numeric"
+        hinweis="Vierstellig, z. B. 1998. Unbekannt bleibt leer."
+      />
+      <app-feld
+        [control]="form.controls.energy_source"
+        label="Energieträger"
+        typ="select"
+        platzhalter="Unbekannt"
+        [optionen]="energieOptionen"
+      />
+      <app-feld
+        [control]="form.controls.power_kw"
+        label="Nennleistung (kW)"
+        typ="zahl"
+        hinweis="Unbekannt bleibt leer — 0 ist keine Leistung."
+      />
+      <app-feld [control]="form.controls.note" label="Notiz" typ="textarea" [zeilen]="3" />
+    </fieldset>
+  </form>
+
+  <div dialog-aktionen class="dialog__aktionen">
+    <button type="button" class="btn" [disabled]="laedt()" (click)="schliessen()">
+      Abbrechen
+    </button>
+    <button
+      type="submit"
+      form="anlage-form"
+      class="btn btn--primary"
+      [disabled]="laedt()"
+      [attr.aria-busy]="laedt()"
+    >
+      {{ laedt() ? 'Wird gespeichert …' : bearbeiten() ? 'Änderungen speichern' : 'Anlage erfassen' }}
+    </button>
+  </div>
+</app-dialog>

@@ -245,12 +245,29 @@ def test_monteur_bekommt_404_auf_fremder_aufgabe():
 
 
 @pytest.mark.django_db
-def test_monteur_403_auf_projekte_fail_closed():
-    """Projekte-Liste wertet den Scope nicht aus → fail-closed 403 für EIGENE."""
+def test_monteur_ohne_objekt_sieht_kein_projekt():
+    """Objektsicht (0099): Die Projektliste **filtert** jetzt (statt fail-closed 403).
+
+    Ein Monteur ohne jeden Einsatz hat kein Objekt → keine Zeile. Der Test prüft
+    damit die Zeilenbegrenzung selbst, nicht nur eine geschlossene Tür: Ein
+    `require_scoped` ohne Filter (der klassische stille Datenleak) fiele hier durch,
+    weil das fremde Projekt in der Liste stünde."""
+    from db_core.services import projekt as projekt_service
+
+    creator = make_app_user("Dispo")
+    prop = property_service.create_property(
+        creator.id, name="Fremdobjekt", property_type="WEG",
+        street="Weg", house_number="1", postal_code="12345", city="Fremdstadt",
+    )
+    projekt_service.create_project(
+        creator.id, name="Fremdprojekt", property_ids=[prop.id]
+    )
+
     client, _monteur = _monteur_client()
     r = client.get("/api/workflow/projects")
-    assert r.status_code == 403, r.content
-    assert "eigene" in r.json()["detail"].lower()
+    assert r.status_code == 200, r.content
+    assert r.json()["items"] == []
+    assert r.json()["total"] == 0
 
 
 # --- Einsätze (workflow.service_job) ---------------------------------------

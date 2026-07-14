@@ -162,36 +162,85 @@ def test_angebotsnummer_ist_direkttreffer_auf_position_eins(admin_client, welt):
 
 
 @pytest.mark.django_db
-def test_monteur_findet_nur_eigene_einsaetze_und_sonst_nichts(welt):
-    """DER Bruchfall. Alles andere hier wäre ein Datenleck.
+def test_monteur_findet_sein_objekt_aber_niemals_einen_beleg(welt):
+    """DER Bruchfall — Objektsicht (0099). Alles darüber hinaus wäre ein Datenleck.
 
-    Der Monteur hat row_scope EIGENE auf workflow (und content) — und auf
-    identity/property/invoicing/pricing gar kein Recht. Die Suche darf ihm daher
-    ausschließlich seine eigenen Einsätze zeigen. Kein 403 auf die Gesamtsuche;
-    die Kategorien fallen einfach weg.
+    Der Monteur ist einem Einsatz am Objekt „Badensche Straße 53" zugewiesen. Damit
+    ist es **sein Objekt**, und er findet:
+
+      * die **Liegenschaft** — inkl. **Straße** im Untertitel (genau das war der
+        Auslöser: er fand seinen Einsatz, aber nicht die Adresse, zu der er fährt),
+      * **Projekt**, **Vorgang** und **Auftrag** daran — auch die der Kollegen,
+      * den **Kontakt** (die WEG, der Melder) — er muss anrufen können,
+      * seinen **eigenen** Einsatz (der fremde bleibt weg: die Einsatzsicht hängt
+        weiterhin an der ZUWEISUNG, nicht am Objekt — sonst würde ein freier Termin
+        öffentlich).
+
+    Und er findet **nie** ein ANGEBOT oder eine RECHNUNG — auch nicht über die exakte
+    Belegnummer. Das ist kein Filter, sondern die Abwesenheit des Rechts (`invoicing`
+    steht für MONTEUR auf false).
     """
     c = Client()
     c.force_login(welt["monteur_user"])
 
     daten = _suche(c, "Badensche")
-    assert _typen(daten) <= {"EINSATZ"}, daten["treffer"]
+    typen = _typen(daten)
+    assert "LIEGENSCHAFT" in typen, daten["treffer"]
+    assert {"ANGEBOT", "RECHNUNG"} & typen == set(), daten["treffer"]
+    assert _ids(daten, "LIEGENSCHAFT") == {str(welt["obj"].id)}
+    # Die Straße steht im Untertitel — ohne sie fährt er nirgendwohin.
+    liegenschaft = next(
+        t for t in daten["treffer"] if t["typ"] == "LIEGENSCHAFT"
+    )
+    assert "Badensche Straße" in liegenschaft["untertitel"]
+
+    # Objekthistorie: Vorgang, Auftrag, Projekt — auch die der Kollegen.
+    assert _ids(daten, "VORGANG") == {str(welt["vorgang"].id)}
+    assert _ids(daten, "AUFTRAG") == {str(welt["auftrag"].id)}
+    assert _ids(daten, "PROJEKT") == {str(welt["projekt"].id)}
+    # Kontakt: die WEG hängt als Beteiligte an seinem Objekt.
+    assert str(welt["weg"].id) in _ids(daten, "KONTAKT")
+    # Einsatz: weiterhin NUR der eigene (Zuweisung, nicht Objekt).
     assert _ids(daten, "EINSATZ") == {str(welt["eigen"].id)}
     assert str(welt["fremd"].id) not in _ids(daten, "EINSATZ")
 
-    # Auch gezielte Kennungen öffnen ihm keine Tür.
-    for begriff in (
-        welt["auftrag"].order_number,
-        welt["obj"].property_number,
-        welt["angebot"].quote_number,
-    ):
-        daten = _suche(c, begriff)
-        assert daten["direkttreffer"] is None, begriff
-        assert _typen(daten) <= {"EINSATZ"}, begriff
+    # Der Direkttreffer auf die Objektnummer öffnet ihm SEIN Objekt …
+    daten = _suche(c, welt["obj"].property_number)
+    assert daten["direkttreffer"] is not None
+    assert daten["direkttreffer"]["id"] == str(welt["obj"].id)
+
+    # … die exakte Angebotsnummer aber öffnet ihm nichts. Kein Beleg, nie.
+    daten = _suche(c, welt["angebot"].quote_number)
+    assert daten["direkttreffer"] is None
+    assert {"ANGEBOT", "RECHNUNG"} & _typen(daten) == set(), daten["treffer"]
 
     # Und die Kennung SEINES Einsatzes findet ihn sehr wohl.
     daten = _suche(c, welt["eigen"].job_number)
     assert daten["direkttreffer"] is not None
     assert daten["direkttreffer"]["id"] == str(welt["eigen"].id)
+
+
+@pytest.mark.django_db
+def test_monteur_findet_ein_fremdes_objekt_auch_ueber_die_objektnummer_nicht(welt):
+    """Der Direkttreffer-Pfad ist der klassische Nebeneingang — hier ist er zu.
+
+    Ein zweites Objekt, an dem der Monteur nie war: weder über den Namen noch über
+    die **exakte Objektnummer** (Rang 0, eigener Query-Pfad!) taucht es auf. Beide
+    Pfade ziehen aus derselben rechtegefilterten Grundmenge (`_basis_qs`).
+    """
+    fremd = property_service.create_property(
+        welt["chef"].id, name="Kantstraße 42 Ladenlokal", property_type="COMMERCIAL",
+        street="Kantstraße", house_number="42", postal_code="10625", city="Berlin",
+    )
+    c = Client()
+    c.force_login(welt["monteur_user"])
+
+    daten = _suche(c, "Kantstraße")
+    assert str(fremd.id) not in _ids(daten, "LIEGENSCHAFT"), daten["treffer"]
+
+    daten = _suche(c, fremd.property_number)
+    assert daten["direkttreffer"] is None, daten["treffer"]
+    assert str(fremd.id) not in _ids(daten, "LIEGENSCHAFT"), daten["treffer"]
 
 
 @pytest.mark.django_db

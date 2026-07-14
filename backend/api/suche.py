@@ -25,12 +25,20 @@ Kein 403, nur weil EINE Kategorie fehlt: Jede Kategorie hängt an ihrem Modul;
 fehlt das Recht, fehlt die Kategorie — die Suche antwortet trotzdem. **403 gibt es
 genau dann, wenn gar nichts lesbar ist** (Konto ohne jede Rolle): Wer nirgends
 lesen darf, bekommt keine leere 200 („nichts gefunden"), sondern die Wahrheit
-(„du darfst nicht suchen"). Geprüft wird mit `check` (fail-closed, es ist intern
-`require` — row_scope EIGENE ergibt None). Die **einzige** Kategorie mit
-definierter EIGENE-Semantik ist der **Einsatz** (eigene Zuweisung); dafür — und
-nur dafür — wird der Scope zusätzlich weich über `require_scoped` gelesen. Alle
-anderen Kategorien bleiben bei EIGENE komplett weg, statt ungefilterte Zeilen
-auszuliefern. Ein Monteur findet damit seine Einsätze und sonst nichts.
+(„du darfst nicht suchen").
+
+**row_scope EIGENE = die Objektsicht** (Migration 0099). Für `identity`, `property`
+und `workflow` wird der Scope **weich** gelesen (`require_scoped` im try) und als
+`*_eigene`-Flagge weitergereicht; der Service begrenzt die Grundmenge jeder Kategorie
+auf **meine Objekte** (`db_core/services/objektsicht.py`). `invoicing`, `pricing` und
+`hr` bleiben beim harten `check` (fail-closed → EIGENE ergibt None): Belege, Preise
+und Personaldaten haben in diesem Slice keine Objektsicht — und die Rolle MONTEUR hat
+dort ohnehin kein Recht.
+
+Der Monteur findet damit sein Objekt, dessen Vorgänge, Aufträge, Einsätze und
+Kontakte — und **kein** Angebot, **keine** Rechnung, **kein** fremdes Objekt (auch
+nicht über dessen exakte Objektnummer: der Direkttreffer-Pfad zieht aus derselben
+rechtegefilterten Grundmenge).
 """
 from uuid import UUID
 
@@ -71,29 +79,48 @@ class SucheOut(Schema):
     kategorien: list[KategorieOut]
 
 
+# Module mit Objektsicht: Hier wird der row_scope WEICH gelesen (ALLE oder EIGENE).
+# `invoicing`/`pricing`/`hr` stehen bewusst nicht darin — sie kennen in diesem Slice
+# keine Objektsicht und bleiben beim harten, fail-closed `check`.
+_OBJEKTSICHT_MODULE = ("identity", "property", "workflow")
+
+
 def _sicht(request):
-    """Rechtematrix → `suche.Sicht`. Fail-closed, ohne die Suche zu töten."""
+    """Rechtematrix → `suche.Sicht`. Fail-closed, ohne die Suche zu töten.
+
+    Der `require_scoped`-Aufruf steht **absichtlich hier** und nicht in einem
+    Unterhelfer: `api/tests/test_endpoint_schutz.py` weist statisch nach, dass jede
+    View ein Recht prüft — direkt oder über EINEN Modul-Helfer. Eine zweite
+    Delegationsstufe würde der Scanner nicht mehr finden, und `GET /api/suche` (der
+    Endpunkt, den jeder aufruft) sähe für ihn ungeschützt aus.
+    """
     # Ein Konto ohne app_user hat keine fachliche Identität → 403 (Hausregel,
     # gilt für jeden fachlichen Endpunkt).
     actor = actor_id(request)
 
-    # Weich: fehlendes Recht ODER row_scope EIGENE → None. Für alle Kategorien
-    # ohne definierte EIGENE-Semantik ist genau das die richtige Antwort
-    # (Kategorie entfällt).
-    workflow_alle = check(request, "workflow", "LESEN") is not None
-
-    # Einsätze: der einzige Ort mit definierter EIGENE-Semantik. `require_scoped`
-    # wirft nur, wenn das Recht ganz fehlt — hier weich abgefangen.
-    try:
-        _, workflow_scope = require_scoped(request, "workflow", "LESEN")
-    except HttpError:
-        workflow_scope = None
+    # ALLE | EIGENE | None je Modul mit Objektsicht.
+    scopes = {}
+    for modul in _OBJEKTSICHT_MODULE:
+        if check(request, modul, "LESEN") is not None:
+            scopes[modul] = "ALLE"
+            continue
+        # `check` ist fail-closed (intern `require`) und liefert bei EIGENE None —
+        # den Scope holt deshalb `require_scoped`; es wirft nur, wenn das Recht ganz
+        # fehlt, und das wird hier weich abgefangen (keine 403 auf die Gesamtsuche).
+        try:
+            _, scopes[modul] = require_scoped(request, modul, "LESEN")
+        except HttpError:
+            scopes[modul] = None
 
     sicht = suche_service.Sicht(
-        identity=check(request, "identity", "LESEN") is not None,
-        property=check(request, "property", "LESEN") is not None,
-        workflow=workflow_alle,
-        workflow_eigene=(workflow_scope == "EIGENE"),
+        identity=scopes["identity"] == "ALLE",
+        property=scopes["property"] == "ALLE",
+        workflow=scopes["workflow"] == "ALLE",
+        identity_eigene=scopes["identity"] == "EIGENE",
+        property_eigene=scopes["property"] == "EIGENE",
+        workflow_eigene=scopes["workflow"] == "EIGENE",
+        # Geld, Preise, Personal: KEINE Objektsicht in diesem Slice — hartes `check`
+        # (row_scope EIGENE → None → Kategorie entfällt).
         invoicing=check(request, "invoicing", "LESEN") is not None,
         pricing=check(request, "pricing", "LESEN") is not None,
         hr=check(request, "hr", "LESEN") is not None,

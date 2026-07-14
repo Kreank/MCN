@@ -295,12 +295,18 @@ def test_ansprechpartner_unbekannte_person_422(admin_client, seeded):
 
 
 @pytest.mark.django_db
-def test_kontaktweg_lesen_ohne_recht_403(client_with_role, seeded):
-    """Eine Rolle ohne identity/LESEN wird bei den Kontaktweg-Listen abgewiesen."""
+def test_kontaktweg_eines_objektfremden_kontakts_404(client_with_role, seeded):
+    """Objektsicht (0099): Der MONTEUR hat jetzt `identity/LESEN` mit row_scope
+    EIGENE — er soll den **Mieter anrufen** können, der die Meldung gemacht hat.
+
+    Sichtbar ist damit aber ausschließlich, wer an einem **seiner Objekte** hängt.
+    Dieser Monteur hat keinen Einsatz → kein Objekt → jeder Kontakt ist für ihn
+    **404** (nicht 403: seine Existenz geht ihn nichts an). Das Adressbuch des
+    Betriebs bleibt zu."""
     party = seeded["persons"][0]
-    c = client_with_role("MONTEUR")  # MONTEUR hat kein identity-Recht
+    c = client_with_role("MONTEUR")
     r = c.get(f"/api/identity/parties/{party.id}/contact-points")
-    assert r.status_code == 403
+    assert r.status_code == 404, r.content
 
 
 @pytest.mark.django_db

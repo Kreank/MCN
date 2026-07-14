@@ -1,0 +1,303 @@
+<p class="sr-only" role="status">{{ ansage() }}</p>
+
+@switch (state().kind) {
+  @case ('loading') {
+    <p class="lade-hinweis" role="status">Anlage wird geladen …</p>
+  }
+
+  @case ('forbidden') {
+    <app-kein-zugriff [detail]="$any(state()).detail" />
+  }
+
+  @case ('error') {
+    <div class="note note--error" role="alert">
+      <h2 class="note__titel">Anlage konnte nicht geladen werden</h2>
+      <p class="note__text">
+        Die Anlage existiert nicht, oder sie gehört zu einer Liegenschaft, die Sie nicht sehen
+        dürfen.
+      </p>
+      <div class="note__aktionen">
+        <button type="button" class="btn btn--primary" (click)="retry()">
+          Erneut versuchen
+        </button>
+        <a class="btn" routerLink="/liegenschaften">Zum Objektregister</a>
+      </div>
+    </div>
+  }
+
+  @case ('ready') {
+    <app-mappe
+      kicker="Technische Anlage"
+      [titel]="daten()!.name"
+      [backLink]="'/liegenschaften/' + daten()!.property_id"
+      backLabel="Liegenschaft"
+      [tabs]="tabs"
+      [(aktiv)]="tab"
+    >
+      <span mappe-kopf class="stamp stamp--type">{{ art(daten()!.asset_type) }}</span>
+      <span mappe-kopf [class]="versorgungClass(daten()!.supply_type)">
+        {{ versorgung(daten()!.supply_type) }}
+      </span>
+      @if (stillgelegt()) {
+        <span mappe-kopf class="stamp stamp--negativ">Stillgelegt</span>
+      }
+      <!-- Je @if-Block genau EIN projizierter Knoten — sonst landet er nicht im
+           `mappe-kopf`-Slot (NG8011). -->
+      @if (darfAendern()) {
+        <button mappe-kopf type="button" class="btn" (click)="bearbeiten()">Bearbeiten</button>
+      }
+      @if (darfAendern() && stillgelegt()) {
+        <button
+          mappe-kopf
+          type="button"
+          class="btn"
+          [disabled]="statusLaeuft()"
+          (click)="reaktivieren()"
+        >
+          Wieder in Betrieb
+        </button>
+      }
+      @if (darfAendern() && !stillgelegt()) {
+        <button
+          mappe-kopf
+          type="button"
+          class="btn"
+          [disabled]="statusLaeuft()"
+          (click)="stilllegenFragen()"
+        >
+          Stilllegen
+        </button>
+      }
+
+      @if (aktionsFehler(); as af) {
+        <div class="melde melde--fehler" role="alert">
+          <span class="melde__mark" aria-hidden="true">!</span>
+          <span class="melde__text"><strong>Fehler:</strong> {{ af }}</span>
+        </div>
+      }
+
+      <!-- ---------------------------- Stammdaten ---------------------------- -->
+      @if (tab() === 'stammdaten') {
+        @if (daten()!.supply_type === 'UNBEKANNT') {
+          <div class="hinweis" role="note">
+            <strong>Versorgung nicht erfasst.</strong> Ob die Anlage das ganze Objekt versorgt
+            oder nur eine Einheit, entscheidet über den Einsatz. Unbekannt heißt hier wirklich
+            unbekannt — nicht „dezentral“.
+          </div>
+        }
+
+        <dl class="feld-raster">
+          <div class="feld">
+            <dt class="feld__label">Anlagenart</dt>
+            <dd class="feld__wert">{{ art(daten()!.asset_type) }}</dd>
+          </div>
+          <div class="feld">
+            <dt class="feld__label">Versorgung</dt>
+            <dd class="feld__wert">{{ versorgung(daten()!.supply_type) }}</dd>
+          </div>
+          <div class="feld">
+            <dt class="feld__label">Gebäude</dt>
+            <dd class="feld__wert" [class.feld__wert--leer]="!daten()!.building_label">
+              {{ oder(daten()!.building_label) }}
+            </dd>
+          </div>
+          <div class="feld">
+            <dt class="feld__label">Einheit</dt>
+            <dd class="feld__wert" [class.feld__wert--leer]="!daten()!.unit_label">
+              {{ oder(daten()!.unit_label) }}
+            </dd>
+          </div>
+          <div class="feld">
+            <dt class="feld__label">Aufstellort</dt>
+            <dd class="feld__wert" [class.feld__wert--leer]="!daten()!.location_note">
+              {{ oder(daten()!.location_note) }}
+            </dd>
+          </div>
+          <div class="feld">
+            <dt class="feld__label">Hersteller</dt>
+            <dd class="feld__wert" [class.feld__wert--leer]="!daten()!.manufacturer">
+              {{ oder(daten()!.manufacturer) }}
+            </dd>
+          </div>
+          <div class="feld">
+            <dt class="feld__label">Modell / Typ</dt>
+            <dd class="feld__wert" [class.feld__wert--leer]="!daten()!.model">
+              {{ oder(daten()!.model) }}
+            </dd>
+          </div>
+          <div class="feld">
+            <dt class="feld__label">Baujahr</dt>
+            <dd class="feld__wert" [class.feld__wert--leer]="!daten()!.year_built">
+              {{ oder(daten()!.year_built) }}
+            </dd>
+          </div>
+          <div class="feld">
+            <dt class="feld__label">Seriennummer</dt>
+            <dd class="feld__wert" [class.feld__wert--leer]="!daten()!.serial_number">
+              {{ oder(daten()!.serial_number) }}
+            </dd>
+          </div>
+          <div class="feld">
+            <dt class="feld__label">Energieträger</dt>
+            <dd class="feld__wert">{{ energie(daten()!.energy_source) }}</dd>
+          </div>
+          <div class="feld">
+            <dt class="feld__label">Nennleistung</dt>
+            <!-- Fehlt sie, steht „unbekannt“ — niemals 0 kW. -->
+            <dd class="feld__wert" [class.feld__wert--leer]="daten()!.power_kw === null">
+              {{ kw(daten()!.power_kw) }}
+            </dd>
+          </div>
+        </dl>
+
+        @if (daten()!.note) {
+          <section class="notiz">
+            <h3 class="block__titel">Notiz</h3>
+            <p class="notiz__text">{{ daten()!.note }}</p>
+          </section>
+        }
+      }
+
+      <!-- ------------------------ Wartung & Prüfungen ------------------------ -->
+      <!-- Der Baustein hängt am Modul `maintenance`, nicht an `property`. Fehlt
+           das Recht, wird das AUSGESPROCHEN — eine leere Liste hieße „es gibt
+           nichts", und das wäre gelogen. -->
+      @if (tab() === 'wartung' && !daten()!.maintenance_sichtbar) {
+        <div class="hinweis hinweis--sperre" role="note">
+          <strong>Wartung und Prüfungen sind für Sie nicht sichtbar.</strong> Dafür fehlt
+          Ihrem Konto das Recht <code>maintenance/LESEN</code>. Ob an dieser Anlage
+          Verträge, Prüfungen oder Fälligkeiten hängen, sagt Ihnen diese Seite deshalb
+          nicht — sie behauptet aber auch nicht, dass es keine gibt.
+        </div>
+      }
+
+      @if (tab() === 'wartung' && daten()!.maintenance_sichtbar) {
+        <section class="block">
+          <h3 class="block__titel">Offene Fälligkeiten an dieser Anlage</h3>
+          @if (daten()!.faelligkeiten.length === 0) {
+            <p class="block__leer">Keine offene Fälligkeit.</p>
+          } @else {
+            <ul class="zeilen">
+              @for (f of daten()!.faelligkeiten; track f.id) {
+                <li class="zeile">
+                  <span class="stamp">{{ f.kind }}</span>
+                  <span class="zeile__text">{{ f.title }}</span>
+                  <span class="zeile__meta">fällig {{ f.due_date }}</span>
+                </li>
+              }
+            </ul>
+          }
+        </section>
+
+        <section class="block">
+          <h3 class="block__titel">Prüfungen an dieser Anlage</h3>
+          @if (daten()!.pruefungen.length === 0) {
+            <p class="block__leer">
+              Keine Prüfung erfasst (z. B. Trinkwasser, Kehr- und Überprüfung, Sachverständige).
+            </p>
+          } @else {
+            <ul class="zeilen">
+              @for (p of daten()!.pruefungen; track p.id) {
+                <li class="zeile">
+                  <span class="stamp">{{ p.status }}</span>
+                  <span class="zeile__text">{{ p.name }}</span>
+                  <span class="zeile__meta">
+                    {{ p.next_due_date ? 'nächste Fälligkeit ' + p.next_due_date : 'ohne Termin' }}
+                  </span>
+                </li>
+              }
+            </ul>
+          }
+        </section>
+
+        <section class="block">
+          <h3 class="block__titel">Wartungsverträge</h3>
+          <!-- Ehrlichkeit statt vorgetäuschter Genauigkeit: Ein Wartungsvertrag
+               hängt im Schema an der LIEGENSCHAFT, nicht an der Anlage. Das wird
+               ausgesprochen, statt die Verträge als „Verträge dieser Anlage“ zu
+               verkaufen. -->
+          <p class="block__hinweis">
+            Wartungsverträge werden zur <strong>Liegenschaft</strong> geführt, nicht zur
+            einzelnen Anlage. Die folgenden Verträge gelten für dieses Objekt — welche Anlage
+            sie abdecken, sagt das System (noch) nicht.
+          </p>
+          @if (daten()!.wartungsvertraege.length === 0) {
+            <p class="block__leer">Kein Wartungsvertrag an dieser Liegenschaft.</p>
+          } @else {
+            <ul class="zeilen">
+              @for (v of daten()!.wartungsvertraege; track v.id) {
+                <li class="zeile">
+                  <span class="stamp">{{ v.status }}</span>
+                  <span class="zeile__text">
+                    <span class="zeile__nr">{{ v.contract_number }}</span> {{ v.name }}
+                  </span>
+                  <span class="zeile__meta">
+                    {{ v.next_due_date ? 'nächste Fälligkeit ' + v.next_due_date : 'ohne Termin' }}
+                  </span>
+                </li>
+              }
+            </ul>
+          }
+        </section>
+      }
+
+      <!-- ------------------------------ Aufträge ----------------------------- -->
+      <!-- Hängt am Modul `workflow`. Auch hier: fehlendes Recht wird benannt. -->
+      @if (tab() === 'auftraege' && !daten()!.workflow_sichtbar) {
+        <div class="hinweis hinweis--sperre" role="note">
+          <strong>Aufträge sind für Sie nicht sichtbar.</strong> Dafür fehlt Ihrem Konto
+          das Recht <code>workflow/LESEN</code>. Das heißt nicht, dass es keine gibt.
+        </div>
+      }
+
+      @if (tab() === 'auftraege' && daten()!.workflow_sichtbar) {
+        <p class="block__hinweis">
+          Was an dieser Anlage schon einmal gemacht wurde. Das ist die Historie, die dem
+          Monteur die Fahrt spart.
+        </p>
+        @if (daten()!.auftraege.length === 0) {
+          <div class="tab-platzhalter">
+            <p>
+              Noch kein Auftrag zu dieser Anlage. Beim Anlegen eines Auftrags lässt sich die
+              Anlage angeben — dann erscheint er hier.
+            </p>
+          </div>
+        } @else {
+          <ul class="zeilen">
+            @for (a of daten()!.auftraege; track a.id) {
+              <li class="zeile">
+                <span class="stamp">{{ a.status }}</span>
+                <a class="zeile__text" [routerLink]="['/auftraege', a.id]">
+                  <span class="zeile__nr">{{ a.order_number }}</span> {{ a.title }}
+                </a>
+              </li>
+            }
+          </ul>
+        }
+      }
+    </app-mappe>
+
+    <app-anlage-dialog
+      [offen]="dialogOffen()"
+      [propertyId]="daten()!.property_id"
+      [gebaeude]="gebaeude()"
+      [anlage]="daten()"
+      (gespeichert)="gespeichert($any($event))"
+      (abbrechen)="dialogSchliessen()"
+    />
+
+    <app-bestaetigung
+      [offen]="stilllegenOffen()"
+      titel="Anlage stilllegen"
+      [text]="
+        'Die Anlage „' +
+        daten()!.name +
+        '“ wird stillgelegt. Sie wird NICHT gelöscht: Aufträge, Prüfungen und Berichte zeigen weiter auf sie. Wieder in Betrieb nehmen können Sie sie jederzeit.'
+      "
+      bestaetigenLabel="Stilllegen"
+      [laedt]="statusLaeuft()"
+      (bestaetigen)="stilllegenBestaetigen()"
+      (abbrechen)="stilllegenAbbrechen()"
+    />
+  }
+}

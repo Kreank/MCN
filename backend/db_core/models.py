@@ -350,10 +350,24 @@ class Property(models.Model):
 class TechnicalAsset(models.Model):
     """property.technical_asset — technische Anlage (Therme, Aufzug, Hebeanlage …).
 
-    Existiert seit db/migrations/0004; bis zur Fälligkeiten-Engine (0071) gab es
-    dafür kein Model. Wird für den Anlagenbezug einer Prüfung gebraucht.
+    Existiert seit db/migrations/0004, war aber bis zum Anlagen-Slice **totes
+    Schema**. Migration **0101** macht sie zur Fachentität: echte Spalten mit
+    CHECKs statt Freitext-JSON, und der Schutzstandard (Audit/No-Delete/
+    No-Truncate) wie bei `property.room`.
+
+    **Kein Löschen** — `status` AKTIV/INAKTIV (der No-Delete-Trigger erzwingt es
+    jetzt physisch, nicht mehr nur der Service).
+
+    `supply_type` (ZENTRAL|DEZENTRAL|UNBEKANNT) ist der fachliche Kern: „Mieter
+    meldet Heizkörper kalt" heißt bei einer Zentralanlage etwas anderes als bei
+    einer Etagentherme. **UNBEKANNT ist ein echter Wert**, kein geratenes
+    „dezentral".
+
+    `power_kw = NULL` heißt **unbekannt**, nie 0 kW (CHECK: > 0).
+
     `building_id`/`unit_id` sind zusammengesetzte FKs (Composite-Ziel) und
-    deshalb hier als reine UUIDs geführt.
+    deshalb hier als reine UUIDs geführt. `attributes` bleibt für echte
+    Zusatzfakten ohne eigenes Feld.
     """
 
     id = models.UUIDField(primary_key=True)
@@ -363,7 +377,19 @@ class TechnicalAsset(models.Model):
     building_id = models.UUIDField(null=True, blank=True)
     unit_id = models.UUIDField(null=True, blank=True)
     name = models.TextField()
-    asset_type = models.TextField(null=True, blank=True)
+    asset_type = models.TextField()  # CHECK-Codeliste, siehe services/anlage.py
+    status = models.TextField(db_default="AKTIV")  # AKTIV | INAKTIV
+    supply_type = models.TextField(db_default="UNBEKANNT")
+    manufacturer = models.TextField(null=True, blank=True)
+    model = models.TextField(null=True, blank=True)
+    serial_number = models.TextField(null=True, blank=True)
+    year_built = models.IntegerField(null=True, blank=True)
+    energy_source = models.TextField(null=True, blank=True)
+    power_kw = models.DecimalField(
+        max_digits=7, decimal_places=2, null=True, blank=True
+    )
+    location_note = models.TextField(null=True, blank=True)
+    note = models.TextField(null=True, blank=True)
     attributes = models.JSONField(db_default={})
     created_at = models.DateTimeField(db_default=Now())
     updated_at = models.DateTimeField(db_default=Now())

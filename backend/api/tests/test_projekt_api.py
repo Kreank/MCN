@@ -512,14 +512,20 @@ def test_board_terminal_default_ausgeblendet(admin_client, app_user):
 
 
 @pytest.mark.django_db
-def test_board_recht_gate_eigene_403(client_with_role, app_user):
-    """MONTEUR hat höchstens row_scope EIGENE; diese Ansicht wertet den Scope
-    nicht aus und liefert deshalb fail-closed 403 (kein stiller Datenleak),
-    analog zu list_projects."""
+def test_board_zeigt_dem_monteur_ohne_objekt_keine_zeile(client_with_role, app_user):
+    """Objektsicht (0099): Das Board wertet den row_scope jetzt aus — es zeigt die
+    Vorgänge **meiner Objekte**. Ein MONTEUR ohne jeden Einsatz hat kein Objekt und
+    sieht deshalb **null** Zeilen (200 mit leerer Liste, kein 403).
+
+    Das ist die schärfere Probe als das frühere 403: Sie beweist nicht, dass der
+    Endpunkt zumacht, sondern dass er **filtert** — ein `require_scoped` ohne Filter
+    fiele hier auf (die Liste wäre nicht leer)."""
     _vorgang_unter_projekt(app_user)
     c = client_with_role("MONTEUR")
     r = c.get("/api/workflow/service_cases")
-    assert r.status_code == 403
+    assert r.status_code == 200, r.content
+    assert r.json()["items"] == []
+    assert r.json()["total"] == 0
 
 
 @pytest.mark.django_db

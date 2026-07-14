@@ -1,9 +1,18 @@
 """Projekt-API — Projekte (workflow.project) inkl. verknüpfter Liegenschaften
 und Vorgänge (service_case).
 
-Wie die übrigen APIs: Lesen in der Dev-Phase ohne Auth, Schreiben verlangt
-Django-Session + zugeordnetes app_user. Views bleiben dünn, rufen die
-Service-Schicht; Model-Instanzen verlassen die API nicht.
+Views bleiben dünn, rufen die Service-Schicht; Model-Instanzen verlassen die API
+nicht.
+
+**row_scope 'EIGENE' (Objektsicht, Migration 0099) — nur LESEN.**
+Der Vorgang „Heizkörper leckt" von vorgestern gehört zur Objekthistorie, die der
+Monteur braucht. Also:
+
+  * **Lesen** (Projekte, Vorgänge, Board, Logbuch, Checklisten, Übergänge): begrenzt
+    auf meine Objekte. Der Projektbezug läuft über `workflow.project_property` — ein
+    Projekt ist „meins", wenn **mindestens eine** seiner Liegenschaften meine ist.
+  * **Jeder Schreibpfad** (Projekt/Vorgang anlegen, Statuswechsel, Logbuch,
+    Checkliste, Schnellerfassung, Hochstufen) bleibt `require` → **403** bei 'EIGENE'.
 """
 from datetime import date, datetime
 from uuid import UUID
@@ -14,10 +23,12 @@ from ninja.errors import HttpError
 from ninja.responses import Status
 from ninja.security import django_auth
 
-from api.permissions import require, require_create
+from api.objektgrenze import guard_objekt, guard_projekt, verbiete_eigene
+from api.permissions import require, require_scoped
 from db_core.db_context import run_business_transaction
 from db_core.models import Checklist, Project, ProjectLog, ServiceCase, StatusChange
 from db_core.services import identity as identity_service
+from db_core.services import objektsicht
 from db_core.services import projekt as projekt_service
 from db_core.services import property as property_service
 
@@ -87,7 +98,34 @@ class ProjectFilter(Schema):
     category_id: UUID | None = None
 
 
-# --- Lesende Endpoints (Dev-Phase ohne Auth) -------------------------------
+# --- Zeilenbegrenzung ('EIGENE') -------------------------------------------
+
+def _eigene_objekte(scope, actor):
+    """Set meiner property_ids — oder None bei Scope ALLE (= nicht filtern).
+
+    Einmal je Request materialisiert; die Alternative wäre, dieselbe Subquery in
+    jeder Listen-Comprehension erneut zu fahren.
+    """
+    if scope != "EIGENE":
+        return None
+    return {
+        r["objekt_id"] for r in objektsicht.eigene_property_ids(actor)
+    }
+
+
+def _guard_vorgang(case_id, actor, scope):
+    """Scope 'EIGENE': Der Vorgang muss an einem meiner Objekte hängen, sonst 404."""
+    if scope != "EIGENE":
+        return
+    prop_id = (
+        ServiceCase.objects.filter(id=case_id)
+        .values_list("property_id", flat=True)
+        .first()
+    )
+    guard_objekt(scope, actor, prop_id, "Vorgang nicht gefunden.")
+
+
+# --- Lesende Endpoints ------------------------------------------------------
 
 @router.get("/projects", response=ProjectListOut)
 def list_projects(
@@ -96,9 +134,19 @@ def list_projects(
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=100),
 ):
-    """Projekte auflisten: Suche (Name/Nummer), Status-/Kategoriefilter, Seiten."""
-    require(request, "workflow", "LESEN")
+    """Projekte auflisten: Suche (Name/Nummer), Status-/Kategoriefilter, Seiten.
+
+    Scope 'EIGENE': nur Projekte, die **mindestens eine** meiner Liegenschaften
+    tragen (`workflow.project_property`). `distinct()`, weil ein Projekt über mehrere
+    meiner Objekte laufen kann — sonst stünde es mehrfach in der Liste und `total`
+    zählte es doppelt.
+    """
+    actor, scope = require_scoped(request, "workflow", "LESEN")
     qs = Project.objects.select_related("category")
+    if scope == "EIGENE":
+        qs = objektsicht.begrenzen(
+            qs, scope, actor, "property_links__property_id"
+        ).distinct()
 
     if filters.q:
         needle = filters.q.strip()
@@ -135,7 +183,15 @@ def _project_out(project):
     )
 
 
-def _project_detail(project_id):
+def _project_detail(project_id, *, eigene_objekte=None):
+    """Projektdetail. `eigene_objekte` (Set von property_ids) begrenzt die Sicht.
+
+    Ein Projekt kann über **mehrere** Liegenschaften laufen — und „meins" ist es
+    schon, wenn EINE davon meine ist. Die übrigen dürfen darin nicht auftauchen:
+    Sonst wäre die Projektakte das Schlupfloch, über das Name, Nummer und Ort eines
+    fremden Objekts (und die Vorgänge daran) doch noch sichtbar würden. Bei Scope
+    ALLE ist `eigene_objekte` None und es wird nichts gefiltert.
+    """
     project = (
         Project.objects.filter(id=project_id)
         .select_related("category")
@@ -148,6 +204,16 @@ def _project_detail(project_id):
     if project is None:
         raise HttpError(404, "Projekt nicht gefunden.")
 
+    links = sorted(
+        project.property_links.all(), key=lambda l: l.property.property_number
+    )
+    faelle = sorted(
+        project.service_cases.all(), key=lambda c: c.received_at, reverse=True
+    )
+    if eigene_objekte is not None:
+        links = [l for l in links if l.property_id in eigene_objekte]
+        faelle = [c for c in faelle if c.property_id in eigene_objekte]
+
     properties = [
         PropertyRefOut(
             id=link.property.id,
@@ -155,9 +221,7 @@ def _project_detail(project_id):
             name=link.property.name,
             city=link.property.address.city,
         )
-        for link in sorted(
-            project.property_links.all(), key=lambda l: l.property.property_number
-        )
+        for link in links
     ]
     service_cases = [
         ServiceCaseOut(
@@ -168,7 +232,7 @@ def _project_detail(project_id):
             priority=c.priority,
             received_at=c.received_at,
         )
-        for c in sorted(project.service_cases.all(), key=lambda c: c.received_at, reverse=True)
+        for c in faelle
     ]
 
     return ProjectDetailOut(
@@ -209,9 +273,15 @@ def create_project(request, payload: ProjectIn):
 
 @router.get("/projects/{project_id}", response=ProjectDetailOut)
 def get_project(request, project_id: UUID):
-    """Detail eines Projekts inkl. Liegenschaften und Vorgängen."""
-    require(request, "workflow", "LESEN")
-    return _project_detail(project_id)
+    """Detail eines Projekts inkl. Liegenschaften und Vorgängen.
+
+    Scope 'EIGENE': fremdes Projekt → 404. Ein Projekt, das über **mehrere** Objekte
+    läuft, zeigt nur die meinen (siehe `_project_detail`) — sonst wäre die
+    Projektakte der Nebeneingang zum fremden Objekt.
+    """
+    actor, scope = require_scoped(request, "workflow", "LESEN")
+    guard_projekt(scope, actor, project_id)
+    return _project_detail(project_id, eigene_objekte=_eigene_objekte(scope, actor))
 
 
 # --- Vorgangs-Board: Vorgänge über alle Projekte ---------------------------
@@ -278,11 +348,11 @@ def list_service_cases(
 ):
     """Vorgänge über alle Projekte fürs Kanban-Board (Spalten = Statuskatalog).
 
-    Recht workflow.LESEN über `require` (fail-closed), nicht `require_scoped`:
-    diese Ansicht wertet den row_scope nicht aus und listet Vorgänge quer über
-    alle Projekte — ein Konto mit Scope EIGENE (Monteur) erhält deshalb 403 statt
-    fremde Vorgänge zu sehen (analog zu list_projects und den übrigen
-    Vorgangs-Endpunkten).
+    Scope 'EIGENE' (Objektsicht): Das Board zeigt die Vorgänge **meiner Objekte** —
+    auch die der Kollegen. Genau darum geht es: „Zwei Tage vorher hat bei einem
+    anderen Mieter der Heizkörper geleckt" ist ein Vorgang, den ein anderer angelegt
+    hat. `service_case.property_id` ist NOT NULL, die Begrenzung deshalb ein direkter
+    Filter (kein Coalesce nötig wie beim Einsatz).
 
     Filter: project_id, status (exakt), q (Freitext auf Nummer/Betreff). Ohne
     expliziten status-Filter werden Endspalten-Vorgänge (ABGESCHLOSSEN/ABGELEHNT)
@@ -290,8 +360,9 @@ def list_service_cases(
     select_related('project'); die Spalten kommen aus einem eigenen (zeilenzahl-
     unabhängigen) Katalog-Query.
     """
-    require(request, "workflow", "LESEN")
+    actor, scope = require_scoped(request, "workflow", "LESEN")
     qs = ServiceCase.objects.select_related("project")
+    qs = objektsicht.begrenzen(qs, scope, actor, "property_id")
 
     if filters.project_id:
         qs = qs.filter(project_id=filters.project_id)
@@ -380,8 +451,34 @@ class ChecklistOut(Schema):
 
 @router.get("/projects/{project_id}/log", response=list[LogEntryOut])
 def get_project_log(request, project_id: UUID):
-    """Logbuch-Einträge eines Projekts (neueste zuerst)."""
-    require(request, "workflow", "LESEN")
+    """Logbuch-Einträge eines Projekts (neueste zuerst).
+
+    **Scope 'EIGENE' → 403 (fail-closed). Bewusst, nicht vergessen.**
+
+    Der Rest dieses Slices begrenzt Projektinhalte auf **meine Objekte** — der
+    Projekt-Detail filtert seine Liegenschaften und Vorgänge, das Dossier ebenso. Das
+    Logbuch lässt sich so **nicht** begrenzen: Ein Eintrag ist **Freitext ohne
+    Objektbezug**. Ein Projekt gilt schon als „meins", wenn EINE seiner
+    Liegenschaften meine ist — der Eintrag „Abstimmung mit der Verwaltung wegen
+    Badensche 53, Mieter dort will Termin verschieben" nennt Objekt B beim Namen, und
+    keine Spalte der Welt sagt mir das vorher.
+
+    Es ist die einzige Stelle im Slice, an der Projektinhalte ohne Objektbezug an die
+    Objektsicht gingen. Ein stilles Durchreichen wäre ein Leak; eine leere Liste wäre
+    eine Lüge („es gibt nichts" statt „du darfst es nicht"). Also 403 mit Grund.
+
+    **Fachlich ist das auch das Richtige:** Das Logbuch ist Bürokommunikation
+    (Abstimmungen, Telefonate, Entscheidungen), kein Baustellenwissen. Was der Monteur
+    braucht — Objekthistorie, Berichte der Kollegen, Wartungslage — bekommt er über
+    das Liegenschafts-Dossier, und zwar objektgenau.
+    """
+    actor, scope = require_scoped(request, "workflow", "LESEN")
+    verbiete_eigene(
+        scope,
+        "Ihre Rolle erlaubt nur den Zugriff auf eigene Objekte; das Projektlogbuch "
+        "ist Freitext ohne Objektbezug und lässt sich darauf nicht begrenzen.",
+    )
+    guard_projekt(scope, actor, project_id)
     entries = (
         ProjectLog.objects.filter(project_id=project_id)
         .select_related("created_by")
@@ -400,8 +497,24 @@ def get_project_log(request, project_id: UUID):
 
 @router.get("/projects/{project_id}/checklists", response=list[ChecklistOut])
 def get_project_checklists(request, project_id: UUID):
-    """Checklisten eines Projekts inkl. Punkten (erledigt-Status)."""
-    require(request, "workflow", "LESEN")
+    """Checklisten eines Projekts inkl. Punkten (erledigt-Status).
+
+    **Scope 'EIGENE' → 403 (fail-closed)** — dieselbe Begründung wie beim Logbuch:
+    Ein Checklistenpunkt (`label`) ist **Freitext ohne Objektbezug** („Zählerstand
+    Badensche 53 ablesen"). Ein Projekt über mehrere Objekte reicht damit Inhalte zu
+    fremden Objekten durch, und keine Spalte erlaubt eine belastbare Begrenzung.
+
+    Die Checkliste ist Projektsteuerung, nicht Baustellenwissen. Was der Monteur
+    abarbeiten soll, steht in **seiner Aufgabe** (`workflow.task`, eigene Zuweisung)
+    und in **seinem Einsatz** — beides sieht er.
+    """
+    actor, scope = require_scoped(request, "workflow", "LESEN")
+    verbiete_eigene(
+        scope,
+        "Ihre Rolle erlaubt nur den Zugriff auf eigene Objekte; Projektchecklisten "
+        "sind Freitext ohne Objektbezug und lassen sich darauf nicht begrenzen.",
+    )
+    guard_projekt(scope, actor, project_id)
     checklists = (
         Checklist.objects.filter(project_id=project_id)
         .prefetch_related("items__done_by")
@@ -490,8 +603,12 @@ def _service_case_detail(case_id):
 @router.get("/service_cases/{case_id}", response=ServiceCaseDetailOut)
 def get_service_case(request, case_id: UUID):
     """Detail eines Vorgangs inkl. Liegenschaft, Projekt, Melder und
-    Statusverlauf (append-only aus workflow.status_change)."""
-    require(request, "workflow", "LESEN")
+    Statusverlauf (append-only aus workflow.status_change).
+
+    Scope 'EIGENE': Vorgang an einem fremden Objekt → 404.
+    """
+    actor, scope = require_scoped(request, "workflow", "LESEN")
+    _guard_vorgang(case_id, actor, scope)
     return _service_case_detail(case_id)
 
 
@@ -518,11 +635,17 @@ class ServiceCaseStatusIn(Schema):
 def get_service_case_transitions(request, case_id: UUID):
     """Erlaubte nächste Status eines Vorgangs — zur Laufzeit aus
     workflow.status_transition gelesen (seit 0042 konfigurierbar), Labels aus
-    workflow.status_catalog. Read-only (Recht workflow.LESEN)."""
-    require(request, "workflow", "LESEN")
+    workflow.status_catalog. Read-only (Recht workflow.LESEN).
+
+    Scope 'EIGENE': fremder Vorgang → 404. Dass die Liste **möglicher** Übergänge
+    sichtbar ist, heißt nicht, dass der Akteur sie ausführen darf — der Statuswechsel
+    selbst bleibt für 'EIGENE' fail-closed (403).
+    """
+    actor, scope = require_scoped(request, "workflow", "LESEN")
     case = ServiceCase.objects.filter(id=case_id).only("id", "status").first()
     if case is None:
         raise HttpError(404, "Vorgang nicht gefunden.")
+    _guard_vorgang(case_id, actor, scope)
     return projekt_service.service_case_transitions(case.status)
 
 

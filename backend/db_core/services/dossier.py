@@ -39,14 +39,36 @@ wissen). Kein EK → Marge `None` + `ek_vollstaendig=False`, nie 0 % und nie 100
 Keine abgeschlossene Zeitbuchung → Stundensumme `None`, nicht 0,0 h.
 
 **3. Rechte: der KERN ist hart getort, JEDER Baustein einzeln.**
-Der Kern der Entität hängt am `require()` des eigenen Moduls (Kontakt→identity,
-Liegenschaft→property, Projekt/Auftrag→workflow) — fehlt es, gibt es 403 und
-keine Antwort. Jeder **weitere** Baustein prüft sein **eigenes** Modul weich
-(`api.permissions.check`): Fehlt das Recht, ist der Baustein `None` und ein Flag
+Der Kern der Entität hängt am `require()`/`require_scoped()` des eigenen Moduls
+(Kontakt→identity, Liegenschaft→property, Projekt/Auftrag→workflow) — fehlt es, gibt
+es 403 und keine Antwort. Jeder **weitere** Baustein prüft sein **eigenes** Modul
+weich: Fehlt das Recht, ist der Baustein `None` und ein Flag
 `<baustein>_sichtbar=False` sagt, warum. Ein Dossier weist also nie die ganze
 Antwort ab, weil ein Teil fehlt — und es liefert nie einen ungetorten Teil mit.
 Die Zuordnung Baustein → Modul ist bewusst dieselbe wie an den bestehenden
 Endpunkten; wo sie strenger ist, steht es am Baustein dabei.
+
+**3a. Die OBJEKTSICHT (row_scope 'EIGENE', Migration 0099).**
+Bis zu diesem Slice galt: „Ein MONTEUR bekommt gar kein Dossier." Das war falsch —
+und es war der Grund, aus dem er zur „Heizkörper kalt"-Meldung fuhr, ohne zu wissen,
+dass zwei Tage zuvor am Nachbar-Heizkörper ein Leck war und dass im Haus eine
+Zentralanlage steht. Er bekommt jetzt das Dossier **seiner Objekte** — der
+Liegenschaften, an denen er je einen Einsatz hatte (`services/objektsicht.py`).
+
+Zwei Dinge halten das dicht:
+
+  * **Die Geld-Bausteine fallen von selbst weg.** Offene Posten, Zahlungsverhalten,
+    Marge, Angebote, Rechnungen, Abrechnungsstand hängen an `invoicing`/`pricing` —
+    Module, auf denen die Rolle MONTEUR **kein einziges Recht** hat (0026,
+    unverändert). `sicht.invoicing` ist damit False, der Baustein `None`, das Flag
+    `False`. Es gibt hier nichts zu unterdrücken und nichts zu vergessen: Die
+    Sperre ist die **Abwesenheit des Rechts**, nicht eine Filterzeile, die jemand
+    übersehen könnte.
+  * **Wo eine Entität über MEHRERE Objekte läuft** (das Projekt, der Kontakt), wird
+    innerhalb des Dossiers **noch einmal** gefiltert: Ein Projekt ist schon „meins",
+    wenn EINE seiner Liegenschaften meine ist — seine übrigen Objekte, deren
+    Vorgänge und deren Aufträge dürfen darin nicht auftauchen. Genau hier läge sonst
+    der Nebeneingang zum fremden Objekt.
 
 **4. Rein lesend.** Kein `business_transaction`, kein Schreibpfad, kein
 Seiteneffekt. Ein Dossier darf nichts verändern — ein statischer Test hält das
@@ -95,6 +117,7 @@ from db_core.services import buchhaltung as buchhaltung_service
 from db_core.services import dateien as dateien_service
 from db_core.services import faelligkeit as faelligkeit_service
 from db_core.services import identity as identity_service
+from db_core.services import objektsicht
 from db_core.services import site_report as report_service
 from db_core.services.auftrag import WORK_ORDER_TRANSITIONS
 
@@ -126,11 +149,25 @@ class DossierNichtGefunden(LookupError):
 
 @dataclass(frozen=True)
 class Sicht:
-    """Welche Module darf dieses Konto lesen? (row_scope EIGENE zählt als NEIN)
+    """Welche Module darf dieses Konto lesen — und mit welcher Reichweite?
 
-    Wird in `api/dossier.py` aus `permissions.check(...)` gebaut — `check` ist
-    fail-closed: Bei row_scope 'EIGENE' liefert es None, also False. Ein Monteur
-    scheitert damit schon am Kern-`require`; er bekommt gar kein Dossier.
+    Zwei Ebenen je Modul, und sie dürfen nie verwechselt werden:
+
+    * `identity`/`property`/`workflow`/`content` = row_scope **ALLE** (das ganze Haus).
+    * `*_eigene` = row_scope **EIGENE**: dasselbe Modul, aber ausschließlich auf
+      **meinen Objekten** (`services/objektsicht.py`). `actor_id` ist dann Pflicht —
+      ohne Akteur gibt es keine „eigenen" Zeilen, also gar keine (fail-closed).
+
+    `invoicing` und `pricing` haben **bewusst keine EIGENE-Variante**: Geld ist die
+    **einzige** Ausnahme von „er darf alles sehen". Die Rechtematrix gibt der Rolle
+    MONTEUR dort kein Recht — es gibt also gar nichts zu filtern, und eine
+    Flag-Variante anzubieten, die niemand setzt, wäre eine Einladung, sie später
+    versehentlich zu setzen.
+
+    `maintenance` **hat** eine EIGENE-Variante (Migration 0100): Ein Wartungsvertrag
+    ist keine Rechnung. Das Schema führt keine einzige Geldspalte, und die Auskunft
+    „diese Anlage steht unter Wartungsvertrag, nächste Fälligkeit im März" ist genau
+    das, was der Monteur vor der Zentralanlage braucht.
     """
 
     identity: bool = False
@@ -140,15 +177,53 @@ class Sicht:
     pricing: bool = False
     content: bool = False
     maintenance: bool = False
+    # --- Objektsicht (row_scope EIGENE) --------------------------------------
+    identity_eigene: bool = False
+    property_eigene: bool = False
+    workflow_eigene: bool = False
+    content_eigene: bool = False
+    maintenance_eigene: bool = False
+    actor_id: object = None
 
     # Achtung: Das Feld heißt `property` (das Modul heißt so). Im Klassenkörper ist
-    # der Builtin `property` damit verschattet — `marge` ist deshalb eine ganz
-    # normale Methode und kein @property.
+    # der Builtin `property` damit verschattet — die folgenden sind deshalb ganz
+    # normale Methoden und keine @property.
+    def darf_identity(self):
+        return self.identity or self.identity_eigene
+
+    def darf_property(self):
+        return self.property or self.property_eigene
+
+    def darf_workflow(self):
+        return self.workflow or self.workflow_eigene
+
+    def darf_content(self):
+        return self.content or self.content_eigene
+
+    def darf_maintenance(self):
+        return self.maintenance or self.maintenance_eigene
+
+    def objektgrenze(self):
+        """`actor_id`, wenn irgendein Modul nur die Objektsicht hat — sonst None.
+
+        `None` heißt „nicht filtern" (Scope ALLE). Ein Aufrufer, der diesen Wert
+        ignoriert, während eine `*_eigene`-Flagge gesetzt ist, baut ein Datenleck.
+        """
+        if (
+            self.identity_eigene
+            or self.property_eigene
+            or self.workflow_eigene
+            or self.maintenance_eigene
+        ):
+            return self.actor_id
+        return None
+
     def darf_marge(self):
         """Marge = Umsatz (invoicing) MINUS Einkauf (pricing) → beide Rechte nötig.
 
         Das Auswertungs-Dashboard zieht dieselbe Grenze: der Umsatz hängt an
-        `invoicing/LESEN`, der EK zusätzlich an `pricing/LESEN`.
+        `invoicing/LESEN`, der EK zusätzlich an `pricing/LESEN`. Keine
+        EIGENE-Variante — siehe Klassen-Docstring.
         """
         return self.invoicing and self.pricing
 
@@ -475,8 +550,15 @@ def kontakt_dossier(party_id, sicht: Sicht):
     ]
 
     # --- Liegenschaftsrollen (property/LESEN) ------------------------------
+    # Objektsicht: nur die Rollen an MEINEN Objekten. Ein Verwalter kann 40 Häuser
+    # betreuen — der Monteur sieht seine Rolle an dem einen, an dem er war.
     liegenschaften = None
-    if sicht.property:
+    if sicht.darf_property():
+        rollen_qs = PropertyPartyRole.objects.filter(party_id=party_id)
+        if sicht.property_eigene:
+            rollen_qs = rollen_qs.filter(
+                objektsicht.objekt_q(sicht.actor_id, "property_id")
+            )
         liegenschaften = [
             {
                 "property_id": r.property_id,
@@ -490,27 +572,37 @@ def kontakt_dossier(party_id, sicht: Sicht):
                 # nicht mehr (gleiche Regel wie in api/property.py).
                 "is_current": r.valid_until is None or r.valid_until > heute,
             }
-            for r in PropertyPartyRole.objects.filter(party_id=party_id)
-            .select_related("property__address")
-            .order_by("-valid_from", "property__property_number")
+            for r in rollen_qs.select_related("property__address").order_by(
+                "-valid_from", "property__property_number"
+            )
         ]
 
     # --- Vorgänge/Aufträge/Aufgaben (workflow/LESEN) -----------------------
     vorgaenge = auftraege = aufgaben = None
-    if sicht.workflow:
-        vorgaenge = [
-            _vorgang_zeile(c)
-            for c in ServiceCase.objects.filter(reported_by_party_id=party_id)
-            .exclude(status__in=VORGANG_ENDSTATUS)
-            .order_by("-received_at")
-        ]
-        auftraege = [
-            _auftrag_zeile(o)
-            for o in WorkOrder.objects.filter(parties__party_id=party_id)
+    if sicht.darf_workflow():
+        faelle = ServiceCase.objects.filter(reported_by_party_id=party_id).exclude(
+            status__in=VORGANG_ENDSTATUS
+        )
+        orders = (
+            WorkOrder.objects.filter(parties__party_id=party_id)
             .exclude(status__in=AUFTRAG_ENDSTATUS)
             .distinct()
-            .order_by("-created_at")
-        ]
+        )
+        if sicht.workflow_eigene:
+            faelle = objektsicht.begrenzen(
+                faelle, "EIGENE", sicht.actor_id, "property_id"
+            )
+            orders = objektsicht.begrenzen(
+                orders, "EIGENE", sicht.actor_id, "property_id"
+            )
+        vorgaenge = [_vorgang_zeile(c) for c in faelle.order_by("-received_at")]
+        auftraege = [_auftrag_zeile(o) for o in orders.order_by("-created_at")]
+
+    # Aufgaben hängen an KEINEM Objekt (`workflow.task` kennt keine Liegenschaft) —
+    # sie lassen sich für die Objektsicht nicht begrenzen und bleiben deshalb an
+    # `workflow` mit Scope ALLE. Der Monteur sieht seine Aufgaben dort, wo sie ihm
+    # gehören: unter `GET /workflow/tasks` (eigene Zuweisung).
+    if sicht.workflow:
         aufgaben = _aufgaben(party_id=party_id)
 
     # --- Geld (invoicing/LESEN) --------------------------------------------
@@ -549,9 +641,9 @@ def kontakt_dossier(party_id, sicht: Sicht):
         "adressen": adressen,
         "kontaktwege": kontaktwege,
         "ansprechpartner": ansprechpartner,
-        "liegenschaften_sichtbar": sicht.property,
+        "liegenschaften_sichtbar": sicht.darf_property(),
         "liegenschaften": liegenschaften,
-        "vorgaenge_sichtbar": sicht.workflow,
+        "vorgaenge_sichtbar": sicht.darf_workflow(),
         "vorgaenge": vorgaenge,
         "auftraege": auftraege,
         "aufgaben_sichtbar": sicht.workflow,
@@ -642,8 +734,13 @@ def liegenschaft_dossier(property_id, sicht: Sicht):
     ]
 
     # --- Vorgänge/Aufträge/Einsätze + Zutritt (workflow/LESEN) -------------
+    # Objektsicht: KEIN zusätzlicher Filter nötig — jede Zeile hier hängt per
+    # Konstruktion an *dieser* Liegenschaft, und dass sie meine ist, hat der
+    # Endpunkt bereits geprüft (`guard_objekt`). Deshalb sieht der Monteur hier den
+    # Vorgang, den Auftrag, den Einsatz und den Bericht **des Kollegen** — genau
+    # dafür ist dieser Slice gebaut.
     vorgaenge = auftraege = einsaetze = zutrittshinweise = None
-    if sicht.workflow:
+    if sicht.darf_workflow():
         vorgaenge = [
             _vorgang_zeile(c)
             for c in ServiceCase.objects.filter(property_id=property_id).order_by(
@@ -683,8 +780,11 @@ def liegenschaft_dossier(property_id, sicht: Sicht):
         ]
 
     # --- Wartung/Prüfung/Gewährleistung (maintenance/LESEN) ----------------
+    # Objektsicht: KEIN zusätzlicher Filter nötig — beide Abfragen sind auf *diese*
+    # Liegenschaft gebunden, und dass sie meine ist, hat der Endpunkt bereits
+    # geprüft. Genau dieser Baustein fehlte dem Monteur vor der Zentralanlage.
     faelligkeiten = wartungsvertraege = None
-    if sicht.maintenance:
+    if sicht.darf_maintenance():
         faelligkeiten = [
             {
                 "id": d.id,
@@ -718,7 +818,11 @@ def liegenschaft_dossier(property_id, sicht: Sicht):
             Invoice.objects.filter(property_id=property_id), heute
         )
 
-    dokumente = _dokumente(property_id=property_id) if sicht.content else None
+    # Dokumente am Objekt: für die Objektsicht lesbar — deckungsgleich mit dem
+    # Ziel-Guard der Datei-API (`property_id` ist dort für 'EIGENE' lesbar). Wer das
+    # hier öffnet und dort nicht (oder umgekehrt), erzeugt eine Liste mit Dateien,
+    # die sich nicht herunterladen lassen.
+    dokumente = _dokumente(property_id=property_id) if sicht.darf_content() else None
 
     return {
         "liegenschaft": {
@@ -735,18 +839,20 @@ def liegenschaft_dossier(property_id, sicht: Sicht):
         "gebaeude": struktur,
         "anlagen": anlagen,
         "beteiligte": beteiligte,
-        "vorgaenge_sichtbar": sicht.workflow,
+        "vorgaenge_sichtbar": sicht.darf_workflow(),
         "vorgaenge": vorgaenge,
         "auftraege": auftraege,
         "einsaetze": einsaetze,
         # Herkunft mitgeliefert: welcher Einsatz, wann. Kein Objektfeld erfunden.
         "zutrittshinweise": zutrittshinweise,
-        "wartung_sichtbar": sicht.maintenance,
+        "wartung_sichtbar": sicht.darf_maintenance(),
         "faelligkeiten": faelligkeiten,
         "wartungsvertraege": wartungsvertraege,
+        # Geld: KEINE EIGENE-Variante. Die Rolle MONTEUR hat auf `invoicing` kein
+        # Recht → False → Baustein null. Die Sperre ist die Abwesenheit des Rechts.
         "offene_posten_sichtbar": sicht.invoicing,
         "offene_posten": offene_posten,
-        "dokumente_sichtbar": sicht.content,
+        "dokumente_sichtbar": sicht.darf_content(),
         "dokumente": dokumente,
     }
 
@@ -788,43 +894,8 @@ def _abschlagslage(project_id):
     return zeilen
 
 
-def projekt_dossier(project_id, sicht: Sicht):
-    """Alles zu einem Projekt: Vorgänge, Aufträge, Liegenschaften, Checklisten,
-    Logbuch, Aufgaben (Kern) · Angebote/Rechnungen inkl. Abschlagslage und offene
-    Posten (invoicing) · realisierte und geplante Marge (invoicing + pricing) ·
-    Dokumente (content).
-    """
-    project = (
-        Project.objects.filter(id=project_id)
-        .select_related("category")
-        .prefetch_related("property_links__property__address")
-        .first()
-    )
-    if project is None:
-        raise DossierNichtGefunden("Projekt nicht gefunden.")
-    heute = date.today()
-
-    liegenschaften = [
-        {
-            "property_id": l.property.id,
-            "property_number": l.property.property_number,
-            "name": l.property.name,
-            "city": l.property.address.city,
-        }
-        for l in sorted(
-            project.property_links.all(), key=lambda l: l.property.property_number
-        )
-    ]
-    vorgaenge = [
-        _vorgang_zeile(c)
-        for c in ServiceCase.objects.filter(project_id=project_id).order_by(
-            "-received_at"
-        )
-    ]
-    auftraege = [
-        _auftrag_zeile(o)
-        for o in WorkOrder.objects.filter(project_id=project_id).order_by("-created_at")
-    ]
+def _projektsteuerung(project_id):
+    """(checklisten, logbuch) — **nur für Scope ALLE**. Siehe `projekt_dossier`."""
     checklisten = [
         {
             "id": cl.id,
@@ -858,6 +929,70 @@ def projekt_dossier(project_id, sicht: Sicht):
         .select_related("created_by")
         .order_by("-created_at")[:_LETZTE]
     ]
+    return checklisten, logbuch
+
+
+def projekt_dossier(project_id, sicht: Sicht):
+    """Alles zu einem Projekt: Vorgänge, Aufträge, Liegenschaften, Checklisten,
+    Logbuch, Aufgaben (Kern) · Angebote/Rechnungen inkl. Abschlagslage und offene
+    Posten (invoicing) · realisierte und geplante Marge (invoicing + pricing) ·
+    Dokumente (content).
+
+    **Objektsicht: Checklisten und Logbuch fallen weg** (`projektsteuerung_sichtbar`
+    = False) — als einzige Bausteine, die sich **nicht** auf ein Objekt begrenzen
+    lassen. Begründung am Baustein.
+    """
+    project = (
+        Project.objects.filter(id=project_id)
+        .select_related("category")
+        .prefetch_related("property_links__property__address")
+        .first()
+    )
+    if project is None:
+        raise DossierNichtGefunden("Projekt nicht gefunden.")
+    heute = date.today()
+
+    # Objektsicht: Ein Projekt ist schon „meins", wenn EINE seiner Liegenschaften
+    # meine ist. Seine übrigen Objekte — und deren Vorgänge und Aufträge — dürfen
+    # deshalb NICHT im Dossier stehen: Genau hier läge sonst der Nebeneingang zum
+    # fremden Objekt. Bei Scope ALLE ist `grenze` None und es wird nicht gefiltert.
+    grenze = sicht.objektgrenze()
+    links = sorted(
+        project.property_links.all(), key=lambda l: l.property.property_number
+    )
+    faelle = ServiceCase.objects.filter(project_id=project_id)
+    orders = WorkOrder.objects.filter(project_id=project_id)
+    if grenze is not None:
+        meine = set(
+            r["objekt_id"] for r in objektsicht.eigene_property_ids(grenze)
+        )
+        links = [l for l in links if l.property_id in meine]
+        faelle = faelle.filter(property_id__in=meine)
+        orders = orders.filter(property_id__in=meine)
+
+    liegenschaften = [
+        {
+            "property_id": l.property.id,
+            "property_number": l.property.property_number,
+            "name": l.property.name,
+            "city": l.property.address.city,
+        }
+        for l in links
+    ]
+    vorgaenge = [_vorgang_zeile(c) for c in faelle.order_by("-received_at")]
+    auftraege = [_auftrag_zeile(o) for o in orders.order_by("-created_at")]
+    # --- Projektsteuerung: Checklisten + Logbuch --------------------------------
+    # **Für die Objektsicht fail-closed** (`grenze is not None` → None + Flag).
+    # Beide sind FREITEXT OHNE OBJEKTBEZUG: Ein Logbucheintrag („Abstimmung mit der
+    # Verwaltung wegen Badensche 53") oder ein Checklistenpunkt („Zählerstand
+    # Badensche 53 ablesen") nennt ein fremdes Objekt beim Namen — und keine Spalte
+    # sagt mir das vorher. Ein Projekt gilt aber schon als „meins", wenn EINE seiner
+    # Liegenschaften meine ist. Genau hier gingen Projektinhalte ungefiltert an die
+    # Objektsicht; dieselbe Grenze zieht `api/projekt.py` (403 auf Logbuch und
+    # Checklisten). Fachlich ist beides Projektsteuerung, kein Baustellenwissen.
+    checklisten = logbuch = None
+    if grenze is None:
+        checklisten, logbuch = _projektsteuerung(project_id)
     aufgaben = _aufgaben(project_id=project_id)
 
     # --- Belege + Geld (invoicing/LESEN) -----------------------------------
@@ -907,6 +1042,11 @@ def projekt_dossier(project_id, sicht: Sicht):
         marge = auswertungen_service.marge_je_projekt(project_id)
         geplante_marge = auswertungen_service.geplante_marge_je_projekt(project_id)
 
+    # Projektdokumente hängen am PROJEKT, nicht an einem Objekt — die Datei-API
+    # verweigert `project_id` für Scope 'EIGENE' (403). Hier deshalb bewusst
+    # `sicht.content` (ALLE) und nicht `darf_content()`: Die beiden Grenzen müssen
+    # deckungsgleich bleiben, sonst listet das Dossier Dateien auf, die der Abrufer
+    # nicht herunterladen kann.
     dokumente = _dokumente(project_id=project_id) if sicht.content else None
 
     return {
@@ -922,6 +1062,9 @@ def projekt_dossier(project_id, sicht: Sicht):
         "liegenschaften": liegenschaften,
         "vorgaenge": vorgaenge,
         "auftraege": auftraege,
+        # Freitext ohne Objektbezug → für die Objektsicht null + Flag=False, nie eine
+        # stille leere Liste („es gibt nichts" ist etwas anderes als „du darfst nicht").
+        "projektsteuerung_sichtbar": grenze is None,
         "checklisten": checklisten,
         "logbuch": logbuch,
         "aufgaben": aufgaben,
@@ -1111,7 +1254,9 @@ def auftrag_dossier(work_order_id, sicht: Sicht):
             Invoice.objects.filter(work_order_id=order.id), heute
         )
 
-    dokumente = _dokumente(work_order_id=order.id) if sicht.content else None
+    # Auftragsdokumente: für die Objektsicht lesbar (die Datei-API lässt
+    # `work_order_id` an meinen Objekten zu) — deckungsgleich mit `_ziel_guard`.
+    dokumente = _dokumente(work_order_id=order.id) if sicht.darf_content() else None
 
     return {
         "auftrag": {
@@ -1150,6 +1295,6 @@ def auftrag_dossier(work_order_id, sicht: Sicht):
         "rechnungen": rechnungen,
         "offene_posten_sichtbar": sicht.invoicing,
         "offene_posten": offene_posten,
-        "dokumente_sichtbar": sicht.content,
+        "dokumente_sichtbar": sicht.darf_content(),
         "dokumente": dokumente,
     }

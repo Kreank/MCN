@@ -2,8 +2,28 @@
 
 Liegt unter demselben Präfix wie die Liegenschafts-API (`/api/property`) und
 hängt am selben Recht: der Raum ist **Objektstammdatum**, kein Vorgangswert
-(Modulkopf der Migration 0086). Das Modul `property` kennt keine Rolle mit
-row_scope 'EIGENE' — deshalb `require` bzw. `require_create` (fail-closed).
+(Modulkopf der Migration 0086).
+
+**row_scope 'EIGENE' (Objektsicht, Migration 0099).** Das Raumaufmaß ist der
+Schreibfall, für den der Monteur die Objektsicht überhaupt bekommen hat: Er nimmt
+vor Ort auf, was er misst. Die Grenze ist überall dieselbe — **meine Objekte**
+(`db_core/services/objektsicht.py`); ein fremdes Objekt bzw. ein Raum daran ist
+**404**.
+
+**Der Bauteilkatalog ist die Ausnahme: er ist GLOBAL.** Eine Vorlage
+(„Doppelkastenfenster", „Außenwand 24 cm") hängt an keinem Objekt — sie gilt für
+alle. Deshalb:
+
+  * **Lesen** (`GET /component-templates`): für 'EIGENE' erlaubt, **ohne** Filter —
+    es gibt keinen, und ohne Katalog könnte der Monteur kein Aufmaß erfassen.
+  * **Anlegen/Ändern**: fail-closed **403** (`require`). Wer den Katalog ändert,
+    ändert ihn für **jedes** Objekt und jede Kollegin — das ist keine
+    Baustellenentscheidung.
+
+**Die Auslegungsdaten der Liegenschaft** (`PATCH /properties/{id}/auslegung`) bleiben
+ebenfalls fail-closed (403): Norm-Außentemperatur und Heizlast-Kennwert sind eine
+Planungsvorgabe, die der Betrieb verantwortet — sie ändern die Heizlast **aller**
+Räume des Objekts. Der Monteur liest sie (sie stehen in jeder Kennzahl mit drin).
 
 Die View rechnet nichts: sämtliche Kennzahlen und die Heizlast kommen aus
 `db_core.services.raum` (die einzige Rechenstelle). Fachfehler → 422, fehlende
@@ -38,7 +58,8 @@ from ninja import Query, Router, Schema
 from ninja.errors import HttpError
 from ninja.responses import Status
 
-from api.permissions import require, require_create
+from api.objektgrenze import guard_objekt
+from api.permissions import require, require_scoped
 from db_core.models import Property
 from db_core.services import bauteilkatalog as katalog_service
 from db_core.services import raum as raum_service
@@ -479,6 +500,17 @@ def _vorgabe_fuer_raum(room, filters=None):
     )
 
 
+def _room_or_404_scoped(room_id, actor, scope):
+    """Raum laden — und bei Scope 'EIGENE' prüfen, dass er an meinem Objekt hängt.
+
+    Ein Raum an einem fremden Objekt ist **404**, nicht 403: Er soll nicht einmal
+    als existent erkennbar sein.
+    """
+    room = _get_room_or_404(room_id)
+    guard_objekt(scope, actor, room.property_id, "Raum nicht gefunden.")
+    return room
+
+
 # --- Endpunkte -------------------------------------------------------------
 
 @router.get("/component-templates", response=list[TemplateOut])
@@ -488,8 +520,14 @@ def list_component_templates(request, filters: TemplateFilter = Query(...)):
     Der Katalog macht aus „U-Wert 2,7 eintippen" ein „Doppelkastenfenster
     auswählen". Er wird **ohne U-Werte** ausgeliefert (Normrecht) — eine Vorlage
     ohne Wert ist der Normalzustand, kein Fehler.
+
+    **Global, deshalb ungefiltert** — und deshalb `require_scoped` OHNE anschließende
+    Begrenzung: Eine Vorlage hängt an keinem Objekt, es gibt nichts zu begrenzen. Das
+    ist die **einzige** Stelle dieses Slices, an der `require_scoped` ohne Filter
+    steht; sie ist hier ausdrücklich begründet, damit sie nicht als Vorbild für die
+    objektgebundenen Endpunkte missverstanden wird.
     """
-    require(request, "property", "LESEN")
+    require_scoped(request, "property", "LESEN")
     try:
         templates = katalog_service.list_templates(
             kind=filters.kind, nur_aktive=filters.nur_aktive
@@ -501,8 +539,13 @@ def list_component_templates(request, filters: TemplateFilter = Query(...)):
 
 @router.post("/component-templates", response={201: TemplateOut})
 def create_component_template(request, payload: TemplateIn):
-    """Eigene Bauteilvorlage anlegen (der Betrieb pflegt seinen Katalog selbst)."""
-    actor = require_create(request, "property", "ANLEGEN")
+    """Eigene Bauteilvorlage anlegen (der Betrieb pflegt seinen Katalog selbst).
+
+    `require` (fail-closed → 403 bei Scope 'EIGENE'): Der Katalog ist **global**. Wer
+    hier schreibt, schreibt in jedes Objekt und für jede Kollegin — es gibt keine
+    „eigene" Vorlage, auf die sich die Zeilenbegrenzung stützen könnte.
+    """
+    actor, _ = require(request, "property", "ANLEGEN")
     try:
         t = katalog_service.create_template(actor, payload.dict(exclude_unset=True))
     except ValueError as exc:
@@ -518,6 +561,9 @@ def update_component_template(request, template_id: UUID, payload: TemplatePatch
     Aufmaß steckt, würde ihre Herkunftsangabe ins Leere zeigen lassen. Stillgelegt
     wird über `status = 'INAKTIV'` — sie ist dann nicht mehr wählbar, bestehende
     Aufmaße bleiben unberührt (ihr U-Wert ist eine Kopie).
+
+    `require` (fail-closed → 403 bei 'EIGENE'): globaler Katalog, siehe
+    `create_component_template`.
     """
     actor, _ = require(request, "property", "AENDERN")
     try:
@@ -547,9 +593,12 @@ def list_rooms(
     Die Auslegungsdaten der Liegenschaft werden **einmal** gelesen und in jeden
     Raum gereicht (kein N+1) — die Heizlast steht damit auch in der Liste, ohne
     dass der Client etwas mitschickt.
+
+    Scope 'EIGENE': fremdes Objekt → 404.
     """
-    require(request, "property", "LESEN")
+    actor, scope = require_scoped(request, "property", "LESEN")
     prop = _property_or_404(property_id)
+    guard_objekt(scope, actor, property_id)
     try:
         vorgabe = raum_service.auslegung(
             prop, filters.aussentemperatur_c, filters.kennwert_w_m2
@@ -564,9 +613,16 @@ def list_rooms(
 
 @router.post("/properties/{property_id}/rooms", response={201: RoomOut})
 def create_room(request, property_id: UUID, payload: RoomIn):
-    """Raum an einer Liegenschaft aufnehmen."""
-    actor = require_create(request, "property", "ANLEGEN")
+    """Raum an einer Liegenschaft aufnehmen (Scope 'EIGENE': nur an meiner).
+
+    `require_scoped` + `guard_objekt` statt `require_create`: Die erzeugte Zeile trägt
+    ihr Elternobjekt (die Liegenschaft) im Pfad — genau der Fall, für den
+    `require_create` laut eigenem Docstring NICHT gedacht ist. Sonst legte ein Monteur
+    Räume an Objekten an, die er nie betreten hat.
+    """
+    actor, scope = require_scoped(request, "property", "ANLEGEN")
     prop = _property_or_404(property_id)
+    guard_objekt(scope, actor, property_id)
     try:
         room = raum_service.create_room(
             actor, property_id, payload.dict(exclude_unset=True)
@@ -578,8 +634,8 @@ def create_room(request, property_id: UUID, payload: RoomIn):
 
 @router.get("/rooms/{room_id}", response=RoomOut)
 def get_room(request, room_id: UUID, filters: AufmassFilter = Query(...)):
-    require(request, "property", "LESEN")
-    room = _get_room_or_404(room_id)
+    actor, scope = require_scoped(request, "property", "LESEN")
+    room = _room_or_404_scoped(room_id, actor, scope)
     try:
         return _room_out(room, _vorgabe_fuer_raum(room, filters))
     except ValueError as exc:
@@ -588,9 +644,9 @@ def get_room(request, room_id: UUID, filters: AufmassFilter = Query(...)):
 
 @router.patch("/rooms/{room_id}", response=RoomOut)
 def update_room(request, room_id: UUID, payload: RoomPatch):
-    """Teil-Update: nur gesendete Felder werden geändert."""
-    actor, _ = require(request, "property", "AENDERN")
-    _get_room_or_404(room_id)
+    """Teil-Update: nur gesendete Felder werden geändert (Scope 'EIGENE': nur an meinem Objekt)."""
+    actor, scope = require_scoped(request, "property", "AENDERN")
+    _room_or_404_scoped(room_id, actor, scope)
     try:
         room = raum_service.update_room(
             actor, room_id, payload.dict(exclude_unset=True)
@@ -606,9 +662,11 @@ def set_aufbau(request, room_id: UUID, payload: AufbauIn):
 
     Die Öffnungen zeigen über `surface_ref` auf die Wand desselben Payloads; der
     Service löst den Schlüssel auf die neu erzeugte UUID auf.
+
+    Scope 'EIGENE': nur an meinem Objekt (sonst 404).
     """
-    actor, _ = require(request, "property", "AENDERN")
-    _get_room_or_404(room_id)
+    actor, scope = require_scoped(request, "property", "AENDERN")
+    _room_or_404_scoped(room_id, actor, scope)
     try:
         room = raum_service.set_aufbau(
             actor,
@@ -632,9 +690,11 @@ def set_grundriss(request, room_id: UUID, payload: GrundrissIn):
 
     Leeres Array = Umriss entfernen (Fläche/Umfang sind danach wieder Handeingabe;
     `edge_index` und `position_m` fallen dabei auf `null` — sie zeigten ins Leere).
+
+    Scope 'EIGENE': nur an meinem Objekt (sonst 404).
     """
-    actor, _ = require(request, "property", "AENDERN")
-    _get_room_or_404(room_id)
+    actor, scope = require_scoped(request, "property", "AENDERN")
+    _room_or_404_scoped(room_id, actor, scope)
     try:
         room = raum_service.set_grundriss(
             actor, room_id, [v.dict() for v in payload.vertices]
@@ -654,6 +714,11 @@ def set_auslegung(request, property_id: UUID, payload: AuslegungIn):
     die er verantwortet.
 
     Nicht gesendet = unverändert; ausdrücklich `null` = zurückgesetzt.
+
+    `require` (fail-closed → 403 bei Scope 'EIGENE'): Diese beiden Werte sind eine
+    **Planungsvorgabe des Betriebs**, keine Baustellenmessung — sie ändern die
+    Heizlast **jedes** Raumes dieses Objekts. Der Monteur liest sie (sie stecken in
+    jeder Kennzahl), er setzt sie nicht.
     """
     actor, _ = require(request, "property", "AENDERN")
     _property_or_404(property_id)
@@ -676,9 +741,12 @@ def aufmass(request, property_id: UUID, filters: AufmassFilter = Query(...)):
     Eine Heizlastsumme ist `None`, sobald ein Raum unbekannt ist — die fehlenden
     Räume als 0 W mitzusummieren machte die Auslegung still zu klein. Die
     wirksamen Auslegungsdaten stehen im Ergebnis.
+
+    Scope 'EIGENE': fremdes Objekt → 404.
     """
-    require(request, "property", "LESEN")
+    actor, scope = require_scoped(request, "property", "LESEN")
     _property_or_404(property_id)
+    guard_objekt(scope, actor, property_id)
     try:
         return AufmassOut(
             **raum_service.aufmass_property(

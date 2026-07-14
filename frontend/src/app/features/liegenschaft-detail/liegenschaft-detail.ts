@@ -18,6 +18,7 @@ import {
 } from '../../core/property.model';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { Dateien } from '../../shared/dateien/dateien';
+import { Anlagen } from '../anlagen/anlagen';
 import { Raumaufmass } from '../raumaufmass/raumaufmass';
 import { ZielFilter } from '../../core/datei.model';
 import { VerbotenState, fehlerState } from '../../shared/http-fehler';
@@ -44,6 +45,7 @@ type Meldung = { art: 'erfolg' | 'fehler'; text: string };
     Dateien,
     Dialog,
     Feld,
+    Anlagen,
     Raumaufmass,
   ],
   templateUrl: './liegenschaft-detail.html',
@@ -63,6 +65,9 @@ export class LiegenschaftDetail {
   protected readonly tabs: MappeTab[] = [
     { id: 'uebersicht', label: 'Übersicht' },
     { id: 'struktur', label: 'Struktur' },
+    // Direkt hinter der Struktur: Die Anlage ist das technische Herz des Objekts
+    // — was hier steht, entscheidet über jeden Einsatz („zentral oder Therme?").
+    { id: 'anlagen', label: 'Anlagen' },
     { id: 'raeume', label: 'Räume' },
     { id: 'beteiligte', label: 'Beteiligte' },
     { id: 'eigentum', label: 'Eigentum' },

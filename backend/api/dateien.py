@@ -5,7 +5,7 @@ Rechte-Tore (Modul `content`):
   * Auflisten und Herunterladen: `LESEN`
   * Verknüpfung lösen: `AENDERN` (die Datei selbst bleibt bestehen)
 
-**row_scope 'EIGENE' (Monteur) — echt umgesetzt, nicht mehr ignoriert.**
+**row_scope 'EIGENE' — echt umgesetzt, nicht mehr ignoriert.**
 Eine Verknüpfung trägt ihr **Zielobjekt im Payload** (`site_report_id`,
 `work_order_id`, `project_id` …). Damit ist sie genau der Fall, für den
 `api/permissions.require_create` laut eigenem Docstring NICHT gedacht ist: Der
@@ -13,18 +13,22 @@ Erzeuger kann die Zeile einem fremden Elternobjekt zuordnen. Vorher konnte ein
 Monteur ein Foto in den GoBD-relevanten Nachweis einer Baustelle einschleusen,
 die er nie gesehen hat (Review-Befund).
 
-Deshalb hier `require_scoped` + Ziel-Guard. Der Monteur hat genau eine Grenze —
-die **Einsatzzuweisung** (`workflow.job_assignment`), wie überall sonst auch:
+Deshalb hier `require_scoped` + Ziel-Guard. Seit der **Objektsicht** (Migration
+0099) hat die Grenze zwei Ausprägungen — und die Datei-API ist der Ort, an dem beide
+zusammenkommen:
 
-  * `service_job_id`: nur ein Einsatz, dem er zugewiesen ist → sonst **404**.
-  * `site_report_id`: nur ein Bericht an einem solchen Einsatz → sonst **404**.
-  * jedes andere Ziel (Projekt, Auftrag, Kontakt, Beleg …): **403** — für diese
-    Objekte gibt es keine „eigene Zeile", an der die Sicht hängen könnte
-    (fail-closed; `EIGENE` wird nie zu `ALLE` aufgeweitet).
+| Ziel | Grenze bei Scope 'EIGENE' |
+|---|---|
+| `service_job_id` | **meine Einsatzzuweisung** (`workflow.job_assignment`) |
+| `site_report_id` | Bericht an einem solchen Einsatz |
+| `property_id`, `unit_id`, `asset_id`, `work_order_id`, `service_case_id` | **mein Objekt** (`objektsicht`) — der Wartungsplan der Zentralanlage, das Datenblatt der Therme, das Foto vom Vorgang des Kollegen |
+| `project_id`, `party_id`, `quote_id`, `invoice_id`, `article_id` | **403** — Projekt- und Kontaktakte, Belege und Artikelstamm sind nicht objektgebunden bzw. nicht seine Welt (fail-closed; `EIGENE` wird nie zu `ALLE` aufgeweitet) |
 
-Der Download ist an dieselbe Grenze gebunden: eine Datei ist für den Monteur nur
-abrufbar, wenn **mindestens eine** ihrer Verknüpfungen auf einen eigenen Einsatz
-oder einen Bericht daran zeigt — sonst 404.
+Der Download spiegelt exakt dieselbe Menge (`_datei_guard`): eine Datei ist für die
+Objektsicht abrufbar, wenn **mindestens eine** ihrer Verknüpfungen in diese Liste
+fällt — sonst 404. Ziel-Guard und Datei-Guard müssen deckungsgleich bleiben; liefe
+der eine dem anderen davon, wäre entweder etwas hochladbar-aber-nicht-lesbar oder
+lesbar-aber-nicht-hochladbar. Ein Test hält beide gegeneinander.
 
 **Das Attest (`absence_id`) — besondere Kategorie, eigenes Tor (Migration 0072).**
 Eine Arbeitsunfähigkeitsbescheinigung ist ein **Gesundheitsdatum** und damit eine
@@ -79,8 +83,18 @@ from ninja.responses import Status
 from ninja.security import django_auth
 
 from api.permissions import check, require, require_scoped
-from db_core.models import Absence, FileLink, JobAssignment, SiteReport
+from db_core.models import (
+    Absence,
+    FileLink,
+    JobAssignment,
+    ServiceCase,
+    SiteReport,
+    TechnicalAsset,
+    Unit,
+    WorkOrder,
+)
 from db_core.services import dateien as dateien_service
+from db_core.services import objektsicht
 
 router = Router()
 
@@ -137,7 +151,36 @@ def _eigener_job(job_id, actor):
     ).exists()
 
 
-def _ziel_guard(ziele: dict, actor, scope, request):
+# Objektgebundene Zielarten (Objektsicht) → ORM-Pfad von der Zieltabelle zur
+# Liegenschaft. **Eine** Tabelle, aus der sowohl `_ziel_guard` als auch
+# `_datei_guard` ziehen — sonst liefen Upload- und Download-Grenze auseinander.
+_OBJEKT_ZIELE = {
+    "property_id": (None, "id"),
+    "unit_id": (Unit, "property_id"),
+    "asset_id": (TechnicalAsset, "property_id"),
+    "work_order_id": (WorkOrder, "property_id"),
+    "service_case_id": (ServiceCase, "property_id"),
+}
+
+# Fehlermeldung je objektgebundener Zielart (404 — die Existenz wird nicht verraten).
+_OBJEKT_MELDUNG = {
+    "property_id": "Liegenschaft nicht gefunden.",
+    "unit_id": "Einheit nicht gefunden.",
+    "asset_id": "Anlage nicht gefunden.",
+    "work_order_id": "Auftrag nicht gefunden.",
+    "service_case_id": "Vorgang nicht gefunden.",
+}
+
+
+def _objekt_der_zielart(art, wert):
+    """Liegenschaft hinter einem objektgebundenen Ziel — `None`, wenn es nicht existiert."""
+    model, feld = _OBJEKT_ZIELE[art]
+    if model is None:  # property_id zeigt direkt auf die Liegenschaft
+        return wert
+    return model.objects.filter(id=wert).values_list(feld, flat=True).first()
+
+
+def _ziel_guard(ziele: dict, actor, scope, request, *, schreibend=False):
     """Setzt die Grenzen auf dem Zielobjekt der Verknüpfung durch.
 
     Zwei Grenzen, unabhängig voneinander:
@@ -145,8 +188,20 @@ def _ziel_guard(ziele: dict, actor, scope, request):
     1. **`absence_id` (Attest)** — geprüft **immer**, auch bei Scope 'ALLE':
        Gesundheitsdaten hängen nicht am content-Recht (sonst läse die Disposition
        mit). Siehe Modul-Docstring.
-    2. **row_scope 'EIGENE'** (Monteur) — nur eigener Einsatz und Berichte daran;
-       jede andere Zielart ist 403 (fail-closed).
+    2. **row_scope 'EIGENE'** — und hier ist **Lesen weiter als Schreiben**:
+
+       * **Lesen** (`schreibend=False`, `GET /files`): eigener Einsatz, Berichte
+         daran **und** die objektgebundenen Ziele an meinen Objekten
+         (`_OBJEKT_ZIELE`) — das Datenblatt der Zentralanlage, das Foto vom Vorgang
+         des Kollegen, der Wartungsplan am Objekt.
+       * **Schreiben** (`schreibend=True`, `POST /files`): **nur** eigener Einsatz
+         und Berichte daran — unverändert wie vor der Objektsicht. Ein Upload ist
+         eine Aussage über eine Akte; „ich war an diesem Haus" ist kein Grund, in die
+         Objektakte oder in den Auftrag der Kollegin hineinzuschreiben. Wer Fotos
+         hinterlassen will, hängt sie an seinen Einsatz oder seinen Bericht — dort
+         gehören sie hin, und dort sind sie am Objekt sichtbar.
+
+       Jede andere Zielart (Projekt, Kontakt, Beleg, Artikel) ist 403 (fail-closed).
     """
     if len(ziele) != 1:
         if scope == "EIGENE" or "absence_id" in ziele:
@@ -175,10 +230,22 @@ def _ziel_guard(ziele: dict, actor, scope, request):
         if not _eigener_job(report.service_job_id, actor):
             raise HttpError(404, "Bericht nicht gefunden.")
         return
+    if art in _OBJEKT_ZIELE and not schreibend:
+        prop_id = _objekt_der_zielart(art, wert)
+        if not objektsicht.ist_eigenes_objekt(actor, prop_id):
+            raise HttpError(404, _OBJEKT_MELDUNG[art])
+        return
+    if art in _OBJEKT_ZIELE:
+        raise HttpError(
+            403,
+            "Ihre Rolle erlaubt nur den Zugriff auf eigene Datensätze; hochladen "
+            "können Sie an Ihrem Einsatz und an dessen Berichten.",
+        )
     raise HttpError(
         403,
         "Ihre Rolle erlaubt nur den Zugriff auf eigene Datensätze; Dateien sind "
-        "für Sie am eigenen Einsatz und an dessen Berichten möglich.",
+        "für Sie an Ihren Einsätzen, deren Berichten und an Ihren Objekten "
+        "möglich.",
     )
 
 
@@ -204,9 +271,20 @@ def _datei_guard(file_id, actor, scope, request):
     Gesundheitsdatum ist damit physisch nie dieselbe Datei wie ein
     Projektdokument — diese Prüfung hier ist der Gürtel zum Hosenträger.
 
-    **2. row_scope 'EIGENE'** (Monteur): mindestens eine Verknüpfung muss auf
-    einen eigenen Einsatz, einen Bericht daran **oder eine eigene Abwesenheit**
-    zeigen (sonst sähe er sein eigenes Attest nicht).
+    **2. row_scope 'EIGENE'**: mindestens eine Verknüpfung muss zeigen auf
+
+      * einen **eigenen Einsatz** oder einen Bericht daran (Zuweisung), oder
+      * eines meiner **Objekte** — direkt (`property_id`) oder über Einheit, Anlage,
+        Auftrag, Vorgang (`_OBJEKT_ZIELE`), oder
+      * eine **eigene Abwesenheit** (sonst sähe er sein eigenes Attest nicht).
+
+    **Diese Menge ist exakt die Lesemenge von `_ziel_guard`** (`schreibend=False`).
+    Die beiden dürfen nicht auseinanderlaufen: Was in einer Liste erscheint, muss
+    herunterladbar sein — und was nicht erscheinen darf, darf auch nicht über eine
+    geratene `file_id` fallen. Ein Test hält beide gegeneinander.
+
+    Der **Upload** ist bewusst enger (nur eigener Einsatz/Bericht) — das ist kein
+    Widerspruch, sondern die Asymmetrie „Lesen weiter als Schreiben".
     """
     attest_ids = list(
         FileLink.objects.filter(file_id=file_id, absence_id__isnull=False)
@@ -222,10 +300,24 @@ def _datei_guard(file_id, actor, scope, request):
     eigene_jobs = JobAssignment.objects.filter(assignee_id=actor).values(
         "service_job_id"
     )
+    objekte = objektsicht.eigene_property_ids(actor)
     sichtbar = FileLink.objects.filter(file_id=file_id).filter(
         Q(service_job_id__in=eigene_jobs)
         | Q(site_report__service_job_id__in=eigene_jobs)
         | Q(absence__employee__app_user_id=actor)
+        # Objektsicht — dieselben fünf Zielarten wie in `_OBJEKT_ZIELE`.
+        | Q(property_id__in=objekte)
+        | Q(unit__property_id__in=objekte)
+        | Q(work_order__property_id__in=objekte)
+        | Q(service_case__property_id__in=objekte)
+        # `file_link.asset_id` ist in der DB ein FK, im Model aber ein rohes
+        # UUID-Feld (technical_asset war beim Bau von 0021 nicht abgebildet) —
+        # deshalb hier eine Subquery statt eines Joins.
+        | Q(
+            asset_id__in=TechnicalAsset.objects.filter(
+                property_id__in=objekte
+            ).values("id")
+        )
     ).exists()
     if not sichtbar:
         raise HttpError(404, "Datei nicht gefunden.")
@@ -303,7 +395,10 @@ def datei_hochladen(
     """
     actor, scope = require_scoped(request, "content", "ANLEGEN")
     ziele = {k: v for k, v in ziel.dict().items() if v}
-    _ziel_guard(ziele, actor, scope, request)
+    # `schreibend=True`: Die Objektsicht ist eine LESE-Sicht. Hochladen darf die
+    # Rolle mit Scope 'EIGENE' nur an ihrem Einsatz und dessen Berichten — sie
+    # schreibt nicht in die Objektakte oder in den Auftrag der Kollegin.
+    _ziel_guard(ziele, actor, scope, request, schreibend=True)
 
     dateiname = datei.name
     if ziele.get("absence_id"):

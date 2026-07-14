@@ -584,30 +584,63 @@ def test_zweistelliger_begriff_durchsucht_den_artikelstamm_nicht(welt):
 
 
 @pytest.mark.django_db
-def test_monteur_findet_ausschliesslich_eigene_einsaetze(welt):
-    """DER Bruchfall: row_scope EIGENE auf workflow.
+def test_monteur_ohne_property_recht_findet_nur_eigene_einsaetze(welt):
+    """Nur `workflow_eigene`, sonst nichts — die Kategorien ohne Recht fallen weg.
 
-    Der Monteur darf seine Einsätze finden — und sonst NICHTS. Kein Auftrag, kein
-    Vorgang, kein Kontakt, keine Liegenschaft, keine Rechnung. Jede andere
-    Kategorie hat für ihn keine definierte Zeilenbegrenzung; sie fällt deshalb
-    ganz weg (fail-closed), statt ungefilterte Zeilen preiszugeben.
+    Das ist NICHT die Sicht der Rolle MONTEUR (die hat seit 0099 auch
+    `identity_eigene` und `property_eigene`), sondern die Probe darauf, dass die
+    Flaggen **unabhängig** wirken: Wer nur workflow/EIGENE hat, findet Projekt,
+    Vorgang und Auftrag an seinen Objekten — aber keine Liegenschaft und keinen
+    Kontakt, und niemals einen Beleg.
     """
     sicht = Sicht(workflow_eigene=True, actor_id=welt["monteur"].id)
     e = suche_service.suche("Badensche", sicht=sicht)
 
-    assert _typen(e) <= {"EINSATZ"}
+    assert _typen(e) <= {"EINSATZ", "PROJEKT", "VORGANG", "AUFTRAG"}
+    assert "LIEGENSCHAFT" not in _typen(e)
+    assert "KONTAKT" not in _typen(e)
+    assert {"ANGEBOT", "RECHNUNG"} & _typen(e) == set()
     assert _ids(e, "EINSATZ") == {welt["einsatz_eigen"].id}
     assert welt["einsatz_fremd"].id not in _ids(e, "EINSATZ")
-
-    # Auch die Kennung des Auftrags öffnet ihm keine Tür (Direkttreffer-Pfad
-    # respektiert dieselben Rechte).
-    e = suche_service.suche(welt["auftrag"].order_number, sicht=sicht)
-    assert e.direkttreffer is None
-    assert _typen(e) <= {"EINSATZ"}
 
     # Und ohne Akteur (kein app_user) gibt es auch keine „eigenen" Zeilen.
     e = suche_service.suche("Badensche", sicht=Sicht(workflow_eigene=True))
     assert e.treffer == []
+
+
+@pytest.mark.django_db
+def test_monteur_objektsicht_findet_objekt_und_historie_aber_keinen_beleg(welt):
+    """**Die Sicht der Rolle MONTEUR seit Migration 0099** — der Kern des Slices.
+
+    Er hat einen Einsatz an der Badenschen Straße 53. Also findet er das Objekt, die
+    Vorgänge und Aufträge daran (auch die der Kollegen) und die Beteiligten — und
+    **nie** ein Angebot oder eine Rechnung, auch nicht über die exakte Belegnummer.
+    """
+    sicht = Sicht(
+        identity_eigene=True, property_eigene=True, workflow_eigene=True,
+        actor_id=welt["monteur"].id,
+    )
+    e = suche_service.suche("Badensche", sicht=sicht)
+
+    assert _ids(e, "LIEGENSCHAFT") == {welt["obj"].id}
+    assert _ids(e, "VORGANG") == {welt["vorgang"].id}
+    assert _ids(e, "AUFTRAG") == {welt["auftrag"].id}
+    assert _ids(e, "PROJEKT") == {welt["projekt"].id}
+    assert welt["weg"].id in _ids(e, "KONTAKT")
+    assert _ids(e, "EINSATZ") == {welt["einsatz_eigen"].id}
+    assert {"ANGEBOT", "RECHNUNG"} & _typen(e) == set(), e.treffer
+
+    # Die zweite Liegenschaft (Kantstraße 42) ist NICHT seine — auch nicht über die
+    # exakte Objektnummer (Direkttreffer-Pfad).
+    assert welt["obj42"].id not in _ids(e, "LIEGENSCHAFT")
+    e42 = suche_service.suche(welt["obj42"].property_number, sicht=sicht)
+    assert e42.direkttreffer is None
+    assert welt["obj42"].id not in _ids(e42, "LIEGENSCHAFT")
+
+    # Die exakte Angebotsnummer öffnet ihm keinen Beleg.
+    e_an = suche_service.suche(welt["angebot"].quote_number, sicht=sicht)
+    assert e_an.direkttreffer is None
+    assert {"ANGEBOT", "RECHNUNG"} & _typen(e_an) == set()
 
 
 @pytest.mark.django_db

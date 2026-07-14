@@ -19,6 +19,30 @@ Entscheidung als sie zu erledigen, und nicht jede Rolle darf sie.
 **Keine Rechtsauskunft.** Prüfarten sind vom Betrieb gepflegte Stammdaten (ein
 paar Vorschläge sind mitgeliefert, `is_suggestion`); Gewährleistungsfristen sind
 je Auftrag einstellbar. Das Produkt leitet aus `basis` (BGB/VOB) keine Frist ab.
+
+## row_scope 'EIGENE' — die Objektsicht (Migration 0100)
+
+0071 hatte MONTEUR hier **ganz** ausgesperrt („Fälligkeitsplanung ist kein
+Monteurs-Arbeitsbereich"). Das war für die **Planung** richtig und für die
+**Auskunft** falsch: Wer vor der Zentralanlage steht, muss wissen, ob sie unter
+Wartungsvertrag steht, wann zuletzt geprüft wurde und ob noch Gewährleistung läuft.
+Der User war eindeutig: *„Er muss und darf alles sehen — Rechnungen sind die einzige
+Ausnahme."* Das Schema `maintenance` führt **keine einzige Geldspalte**.
+
+Seit 0100 hat MONTEUR `maintenance/LESEN` mit Scope EIGENE:
+
+| Endpunkt | Grenze bei 'EIGENE' |
+|---|---|
+| Verträge (Liste, Detail inkl. Auslöse-Historie) | `property_id` ∈ meine Objekte |
+| Prüffristen (`inspection`) | `property_id` ∈ meine Objekte |
+| Gewährleistungen (`warranty`) | `property_id` ∈ meine Objekte |
+| Fälligkeiten (`due_item`) | über `property_id` **oder den Anker** (`objektsicht.due_item_q`) — als einzige der vier ist die Spalte nullable |
+| **Prüfarten** (`inspection_type`) | **kein Objektbezug** — globales Stammdatum wie der Bauteilkatalog: lesbar, **nicht** schreibbar |
+| **Jeder Schreibpfad** | `require` → **403** (fail-closed) |
+
+Er liest den Vertrag; er schließt keinen, verschiebt keine Frist und verwirft keine
+Fälligkeit. Die Zeilenbegrenzung selbst wird hier **nicht nachgebaut** — sie hat eine
+Heimat: `db_core/services/objektsicht.py`.
 """
 from datetime import date, datetime
 from uuid import UUID
@@ -29,7 +53,8 @@ from ninja.errors import HttpError
 from ninja.responses import Status
 from ninja.security import django_auth
 
-from api.permissions import require
+from api.objektgrenze import guard_objekt
+from api.permissions import require, require_scoped
 from db_core.models import (
     DueItem,
     Inspection,
@@ -40,6 +65,7 @@ from db_core.models import (
 )
 from db_core.services import faelligkeit as faelligkeit_service
 from db_core.services import gewaehrleistung as gewaehrleistung_service
+from db_core.services import objektsicht
 from db_core.services import pruefung as pruefung_service
 from db_core.services import wartung as wartung_service
 
@@ -171,8 +197,11 @@ def list_contracts(
     page_size: int = Query(25, ge=1, le=100),
 ):
     """Wartungsverträge auflisten: Suche (Name/Nummer), Status-/Objekt-/
-    Fälligkeitsfilter. Sortiert nach nächster Fälligkeit (fällige zuerst)."""
-    require(request, "maintenance", "LESEN")
+    Fälligkeitsfilter. Sortiert nach nächster Fälligkeit (fällige zuerst).
+
+    Scope 'EIGENE': nur Verträge an meinen Objekten (`property_id` ist NOT NULL).
+    """
+    actor, scope = require_scoped(request, "maintenance", "LESEN")
     if filters.status and filters.status not in CONTRACT_STATUSES:
         raise HttpError(422, f"Unbekannter Status '{filters.status}'.")
 
@@ -180,6 +209,7 @@ def list_contracts(
     qs = MaintenanceContract.objects.select_related(
         "property__address", "party", "project"
     )
+    qs = objektsicht.begrenzen(qs, scope, actor, "property_id")
     if filters.q:
         needle = filters.q.strip()
         qs = qs.filter(
@@ -201,8 +231,13 @@ def list_contracts(
 
 @router.get("/contracts/{contract_id}", response=ContractDetailOut)
 def get_contract(request, contract_id: UUID):
-    """Detail eines Wartungsvertrags inkl. Auslöse-Historie."""
-    require(request, "maintenance", "LESEN")
+    """Detail eines Wartungsvertrags inkl. Auslöse-Historie.
+
+    Scope 'EIGENE': Vertrag an einem fremden Objekt → 404 (nicht 403 — auch die
+    Existenz eines Vertrags ist eine Auskunft über ein fremdes Objekt; sie liefe
+    sonst über die geratene UUID doch heraus).
+    """
+    actor, scope = require_scoped(request, "maintenance", "LESEN")
     today = date.today()
     contract = (
         MaintenanceContract.objects.filter(id=contract_id)
@@ -211,6 +246,9 @@ def get_contract(request, contract_id: UUID):
     )
     if contract is None:
         raise HttpError(404, "Wartungsvertrag nicht gefunden.")
+    guard_objekt(
+        scope, actor, contract.property_id, "Wartungsvertrag nicht gefunden."
+    )
 
     events = [
         EventOut(
@@ -433,8 +471,19 @@ def list_due_items(
 
     Filter: Status (Default OFFEN), Art, Liegenschaft, Zeitraum. Sortiert nach
     Fälligkeitsdatum (überfällige zuerst).
+
+    Scope 'EIGENE': nur Fälligkeiten an meinen Objekten. `due_item.property_id` ist
+    als einzige der vier Wartungs-Entitäten **nullable** — die Begrenzung läuft
+    deshalb über `objektsicht.due_item_q` (Spalte ODER Anker), nicht über den
+    Standard-`begrenzen`.
+
+    **Auch die beiden Zähler unten sind begrenzt.** `offen_total` und
+    `ueberfaellig_total` liefen vorher über den **ganzen Bestand** — eine Zahl ist
+    keine Zeile, aber sie ist eine Auskunft über fremde Zeilen („der Betrieb hat 240
+    offene Fälligkeiten"). Ein Scope, der die Liste filtert und die Summe darunter
+    nicht, ist ein halber Scope.
     """
-    require(request, "maintenance", "LESEN")
+    actor, scope = require_scoped(request, "maintenance", "LESEN")
     status = filters.status or "OFFEN"
     if status not in faelligkeit_service.STATUSES:
         raise HttpError(422, f"Unbekannter Status '{status}'.")
@@ -450,6 +499,16 @@ def list_due_items(
         bis=filters.bis,
         stichtag=today,
     )
+    # Die beiden Zähler ziehen aus DERSELBEN Grundmenge wie die Liste — sonst
+    # widersprächen sie ihr.
+    offen_qs = DueItem.objects.filter(status="OFFEN")
+    ueberfaellig_qs = offen_qs.filter(due_date__lt=today)
+    if scope == "EIGENE":
+        eigene = objektsicht.due_item_q(actor)
+        qs = qs.filter(eigene)
+        offen_qs = offen_qs.filter(eigene)
+        ueberfaellig_qs = ueberfaellig_qs.filter(eigene)
+
     total = qs.count()
     start = (page - 1) * page_size
     seite = list(qs[start:start + page_size])
@@ -465,8 +524,8 @@ def list_due_items(
         total=total,
         page=page,
         page_size=page_size,
-        offen_total=DueItem.objects.filter(status="OFFEN").count(),
-        ueberfaellig_total=faelligkeit_service.ueberfaellig_count(today),
+        offen_total=offen_qs.count(),
+        ueberfaellig_total=ueberfaellig_qs.count(),
     )
 
 
@@ -574,8 +633,15 @@ def list_inspection_types(request, nur_aktive: bool = Query(True)):
 
     `is_suggestion=true` markiert die mitgelieferten Vorschläge — sie sind ein
     Startpunkt, KEIN Normkatalog und keine Rechtsauskunft.
+
+    **Die eine Entität ohne Objektbezug** (`inspection_type` trägt keine
+    `property_id`): Eine Prüfart („TrinkwV-Beprobung, jährlich") ist **globales
+    Stammdatum**, genau wie der Bauteilkatalog. Deshalb `require_scoped` **ohne**
+    anschließende Begrenzung — es gibt nichts zu begrenzen; ohne die Prüfart wäre die
+    Prüffrist am eigenen Objekt eine namenlose Zeile. **Schreiben** bleibt
+    fail-closed 403: Wer hier ändert, ändert die Prüfarten des ganzen Betriebs.
     """
-    require(request, "maintenance", "LESEN")
+    require_scoped(request, "maintenance", "LESEN")
     qs = InspectionType.objects.all()
     if nur_aktive:
         qs = qs.filter(is_active=True)
@@ -702,12 +768,16 @@ def list_inspections(
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=100),
 ):
-    """Prüffristen — wiederkehrende Prüfungen an Liegenschaft/Anlage."""
-    require(request, "maintenance", "LESEN")
+    """Prüffristen — wiederkehrende Prüfungen an Liegenschaft/Anlage.
+
+    Scope 'EIGENE': nur Prüfungen an meinen Objekten (`property_id` ist NOT NULL).
+    """
+    actor, scope = require_scoped(request, "maintenance", "LESEN")
     if status and status not in CONTRACT_STATUSES:
         raise HttpError(422, f"Unbekannter Status '{status}'.")
     today = date.today()
     qs = Inspection.objects.select_related("property__address", "inspection_type")
+    qs = objektsicht.begrenzen(qs, scope, actor, "property_id")
     if q:
         qs = qs.filter(name__icontains=q.strip())
     if status:
@@ -887,10 +957,15 @@ def list_warranties(
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=100),
 ):
-    """Gewährleistungen (je Auftrag höchstens eine). Sortiert nach Fristende."""
-    require(request, "maintenance", "LESEN")
+    """Gewährleistungen (je Auftrag höchstens eine). Sortiert nach Fristende.
+
+    Scope 'EIGENE': nur Gewährleistungen an meinen Objekten (`property_id` ist NOT
+    NULL und laut DB deckungsgleich mit der Liegenschaft des Auftrags).
+    """
+    actor, scope = require_scoped(request, "maintenance", "LESEN")
     today = date.today()
     qs = Warranty.objects.select_related("property__address", "work_order")
+    qs = objektsicht.begrenzen(qs, scope, actor, "property_id")
     if work_order_id:
         qs = qs.filter(work_order_id=work_order_id)
     if property_id:

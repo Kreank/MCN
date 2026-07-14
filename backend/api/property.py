@@ -1,9 +1,21 @@
 """Property-API — Liegenschaften (Objektwelt: property.property).
 
-Aufbau wie die Identity-API: lesende Endpoints laufen in der Dev-Phase ohne
-Auth (die Rechtematrix greift später), schreibende Endpoints verlangen eine
-Django-Session und ein zugeordnetes security.app_user. Views bleiben dünn und
-rufen die Service-Schicht; Model-Instanzen verlassen die API nicht.
+Views bleiben dünn und rufen die Service-Schicht; Model-Instanzen verlassen die
+API nicht.
+
+**row_scope 'EIGENE' (Monteur) — die Objektsicht (Migration 0099).**
+Seit dem Objektsicht-Slice hat der Monteur `property` mit Scope EIGENE. „Eigen"
+heißt hier **nicht** „von mir angelegt", sondern: *eine Liegenschaft, an der ich je
+einen Einsatz hatte*. Die Definition steht an genau einer Stelle
+(`db_core/services/objektsicht.py`) — jeder Endpunkt hier zieht von dort.
+
+  * **Lesen** (Liste, Detail, Beteiligte): nur meine Objekte. Ein fremdes Objekt ist
+    **404**, nicht 403 (seine Existenz wird nicht verraten).
+  * **Gebäude/Einheiten anlegen**: an meinen Objekten erlaubt — der Monteur nimmt vor
+    Ort auf, was er vorfindet.
+  * **Eine neue Liegenschaft anlegen**: **verboten** (`require`, fail-closed → 403).
+    Wer Objekte erfinden kann, baut sich seine eigene Sichtbarkeit.
+  * **Beteiligtenrollen pflegen**: verboten (Dispositionsdatum, `require` → 403).
 """
 from datetime import date
 from decimal import Decimal
@@ -15,8 +27,10 @@ from ninja.errors import HttpError
 from ninja.responses import Status
 from ninja.security import django_auth
 
-from api.permissions import require, require_create
+from api.objektgrenze import guard_objekt
+from api.permissions import require, require_scoped
 from db_core.models import Building, Property, PropertyPartyRole, Unit
+from db_core.services import objektsicht
 from db_core.services import property as property_service
 
 router = Router()
@@ -112,9 +126,13 @@ def list_properties(
 
     Die Ortsangabe stammt aus der verknüpften identity.address; sie wird per
     select_related mitgeladen, damit die Liste ohne N+1 auskommt.
+
+    Scope 'EIGENE': nur die Objekte, an denen der Akteur je einen Einsatz hatte
+    (`objektsicht.begrenzen` auf dem Primärschlüssel).
     """
-    require(request, "property", "LESEN")
+    actor, scope = require_scoped(request, "property", "LESEN")
     qs = Property.objects.select_related("address")
+    qs = objektsicht.begrenzen(qs, scope, actor, "id")
 
     if filters.q:
         needle = filters.q.strip()
@@ -215,7 +233,13 @@ def _property_detail(property_id):
 
 @router.post("/properties", response={201: PropertyDetailOut}, auth=django_auth)
 def create_property(request, payload: PropertyIn):
-    """Neue Liegenschaft anlegen (identity.address + property.property)."""
+    """Neue Liegenschaft anlegen (identity.address + property.property).
+
+    `require` (fail-closed): Scope 'EIGENE' → **403**. Ein Konto mit Objektsicht darf
+    keine Liegenschaft **erfinden** — es hätte sich damit selbst ein Objekt in sein
+    Sichtfeld geschrieben. Anlegen darf es nur **an** seinen Objekten (Gebäude,
+    Einheiten, Räume, technische Anlagen).
+    """
     actor, _ = require(request, "property", "ANLEGEN")
     try:
         prop = property_service.create_property(
@@ -236,16 +260,23 @@ def create_property(request, payload: PropertyIn):
 
 @router.get("/properties/{property_id}", response=PropertyDetailOut)
 def get_property(request, property_id: UUID):
-    """Detail einer Liegenschaft inkl. Adresse, Gebäude/Einheiten und Rollen."""
-    require(request, "property", "LESEN")
+    """Detail einer Liegenschaft inkl. Adresse, Gebäude/Einheiten und Rollen.
+
+    Scope 'EIGENE': fremdes Objekt → 404 (die Existenz wird nicht verraten).
+    """
+    actor, scope = require_scoped(request, "property", "LESEN")
+    guard_objekt(scope, actor, property_id)
     return _property_detail(property_id)
 
 
 # --- Schreibende Unterstruktur-Endpoints (Session-Auth Pflicht) ------------
-# row_scope: Das Modul `property` kennt keine Rolle mit Scope 'EIGENE' (nur
-# workflow: Monteur). Die erzeugten Zeilen (Gebäude/Einheit/Party-Rolle) tragen
-# kein Owner-Feld. ANLEGEN daher über `require_create`; die Rollen-Zuordnung
-# (fachlich AENDERN am Liegenschaftsbestand) über `require` (fail-closed).
+# row_scope 'EIGENE' (Objektsicht): Gebäude und Einheiten darf der Monteur an
+# **seinen** Objekten anlegen (er nimmt vor Ort auf, was er vorfindet) — an fremden
+# nicht (404). Deshalb `require_scoped` + `guard_objekt`, NICHT `require_create`:
+# Die erzeugte Zeile trägt ihr Elternobjekt im Payload, und genau dafür ist
+# `require_create` laut eigenem Docstring nicht gedacht.
+#
+# Die Party-Rollen bleiben Dispositionsdatum (`require`, fail-closed → 403).
 
 class BuildingIn(Schema):
     building_number: str
@@ -282,10 +313,11 @@ def _building_out(building):
     auth=django_auth,
 )
 def add_building(request, property_id: UUID, payload: BuildingIn):
-    """Gebäude an einer bestehenden Liegenschaft anlegen."""
-    actor = require_create(request, "property", "ANLEGEN")
+    """Gebäude an einer bestehenden Liegenschaft anlegen (Scope 'EIGENE': nur an meiner)."""
+    actor, scope = require_scoped(request, "property", "ANLEGEN")
     if not Property.objects.filter(id=property_id).exists():
         raise HttpError(404, "Liegenschaft nicht gefunden.")
+    guard_objekt(scope, actor, property_id)
     try:
         building = property_service.add_building(
             actor,
@@ -309,11 +341,14 @@ def add_unit(request, building_id: UUID, payload: UnitIn):
     wird deshalb hier aus dem Gebäude abgeleitet, nicht aus dem Payload
     übernommen — so kann keine Einheit einer fremden Liegenschaft untergeschoben
     werden.
+
+    Scope 'EIGENE': Das Gebäude muss an einem meiner Objekte hängen, sonst 404.
     """
-    actor = require_create(request, "property", "ANLEGEN")
+    actor, scope = require_scoped(request, "property", "ANLEGEN")
     building = Building.objects.filter(id=building_id).first()
     if building is None:
         raise HttpError(404, "Gebäude nicht gefunden.")
+    guard_objekt(scope, actor, building.property_id, "Gebäude nicht gefunden.")
     try:
         unit = property_service.add_unit(
             actor,
@@ -337,9 +372,10 @@ def add_unit(request, building_id: UUID, payload: UnitIn):
 def add_party_role(request, property_id: UUID, payload: PartyRoleIn):
     """Einer Liegenschaft eine Party-Rolle mit Gültigkeit zuordnen.
 
-    Torfunktion `require` (AENDERN): pflegt den Rollenbestand einer Liegenschaft;
-    der Endpunkt wertet keinen row_scope aus, und `property` kennt ohnehin keine
-    'EIGENE'-Rolle.
+    Torfunktion `require` (AENDERN), **fail-closed → 403 bei Scope 'EIGENE'**: Wer
+    ist Eigentümer, Betreiber, Hausmeister — das ist Stammdatenpflege der Verwaltung,
+    kein Baustellenbefund. Der Monteur **liest** die Beteiligten seines Objekts (er
+    muss den Mieter anrufen können); er schreibt sie nicht.
     """
     actor, _ = require(request, "property", "AENDERN")
     if not Property.objects.filter(id=property_id).exists():

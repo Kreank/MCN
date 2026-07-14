@@ -132,6 +132,14 @@
         }
       }
 
+      <!-- ------------------------------ Anlagen --------------------------- -->
+      <!-- Technische Anlagen (Heizung, Therme, Aufzug …). Die Gebäude gehen als
+           Eingabe mit: Der Erfassungsdialog bindet die Anlage an Gebäude/Einheit,
+           und die Daten liegen hier bereits geladen vor (keine zweite Anfrage). -->
+      @if (tab() === 'anlagen') {
+        <app-anlagen [propertyId]="daten()!.id" [gebaeude]="daten()!.buildings" />
+      }
+
       <!-- ------------------------------ Räume ----------------------------- -->
       <!-- Raumaufmaß: Grundlage für Heizlast, Leitungslängen und die spätere
            3D-Planung. Die Kennzahlen rechnet der Server — hier wird nur

@@ -27,6 +27,7 @@ from db_core.models import (
     Property,
     ServiceCase,
     ServiceJob,
+    TechnicalAsset,
     WorkOrder,
     WorkOrderParty,
 )
@@ -128,12 +129,21 @@ def create_work_order(
     desired_date=None,
     customer_reference=None,
     is_emergency=False,
+    asset_id=None,
 ):
     """Legt einen workflow.work_order (Auftrag) im Initialstatus ENTWURF an.
 
     property_id ist Pflicht (Liegenschaftsbezug). Der Trigger erzwingt ENTWURF als
     Startstatus; responsibility_scope startet als UNKNOWN und wird später über
     confirm_responsibility bestätigt.
+
+    `asset_id` bindet den Auftrag an eine **technische Anlage** (Therme, Aufzug …).
+    Die Spalte liegt seit 0013 in der DB und wurde bis zum Anlagen-Slice von
+    **keinem Produktpfad** gesetzt — dasselbe Muster wie `quote.work_order_id`
+    (Welle 5): ein Bezug, den nur Tests herstellen, ist im Betrieb keiner. Die DB
+    erzwingt über den zusammengesetzten FK (asset_id, property_id), dass die Anlage
+    zu dieser Liegenschaft gehört; hier wird es vorab geprüft, damit daraus ein 422
+    wird und kein 500.
     """
     if not title or not title.strip():
         raise ValueError("title darf nicht leer sein.")
@@ -144,6 +154,16 @@ def create_work_order(
     ensure_exists(Property, property_id, "Liegenschaft")
     ensure_exists(Project, project_id, "Projekt")
     ensure_exists(ServiceCase, service_case_id, "Vorgang")
+    if asset_id is not None:
+        asset_property_id = (
+            TechnicalAsset.objects.filter(pk=asset_id)
+            .values_list("property_id", flat=True)
+            .first()
+        )
+        if asset_property_id is None:
+            raise ValueError(f"Anlage {asset_id} existiert nicht")
+        if asset_property_id != property_id:
+            raise ValueError("Die Anlage gehört nicht zur angegebenen Liegenschaft")
 
     with business_transaction(actor_app_user_id):
         order = WorkOrder.objects.create(
@@ -153,6 +173,7 @@ def create_work_order(
             title=title.strip(),
             description=description,
             property_id=property_id,
+            asset_id=asset_id,
             responsibility_scope="UNKNOWN",
             status="ENTWURF",
             priority=priority,

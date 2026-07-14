@@ -3,8 +3,13 @@ Gewährleistung).
 
 Schwerpunkt neben dem Fachlichen: die **Rechte**. Das Modul heißt `maintenance`
 (Migration 0071). Verwerfen hängt an **STORNIEREN** — die DISPOSITION darf eine
-Fälligkeit erledigen, aber nicht bewusst verstreichen lassen; der MONTEUR hat im
-Modul gar nichts zu suchen.
+Fälligkeit erledigen, aber nicht bewusst verstreichen lassen.
+
+Der **MONTEUR** war hier ursprünglich ganz ausgesperrt. Seit der Objektsicht
+(Migration 0100) **liest** er die Wartung **seiner** Objekte: Ein Wartungsvertrag ist
+keine Rechnung, das Schema führt keine einzige Geldspalte, und wer vor der
+Zentralanlage steht, muss wissen, ob sie unter Vertrag steht. Verwalten darf er
+nichts.
 """
 import uuid
 from datetime import date, timedelta
@@ -239,10 +244,93 @@ def test_verworfene_faelligkeit_kommt_nicht_zurueck(admin_client, welt, app_user
 # ---------------------------------------------------------------------------
 
 @pytest.mark.django_db
-def test_monteur_sieht_keine_faelligkeiten(client_with_role, welt):
-    """MONTEUR hat im Modul `maintenance` kein Recht — fail-closed 403."""
+def test_monteur_sieht_faelligkeiten_seines_objekts_und_nicht_die_fremden(
+    app_user, welt
+):
+    """Objektsicht (Migration 0100): MONTEUR hat `maintenance/LESEN` mit row_scope
+    EIGENE — ein Wartungsvertrag ist keine Rechnung, und wer vor der Zentralanlage
+    steht, muss die nächste Fälligkeit kennen. Vorher war das Modul für ihn ganz zu
+    (403); der User hat entschieden: *„Er muss und darf alles sehen — Rechnungen sind
+    die einzige Ausnahme."*
+
+    **Der Test dreht bewusst nicht bloß den Statuscode.** Ein Test, der „erwartet
+    jetzt 200" sagt, wäre grün geblieben, wenn `require_scoped` **ohne Filter**
+    dastünde — also genau im Leak-Fall. Deshalb wird hier die eigentliche Regel
+    geprüft, mit einem zweiten Objekt als Gegenprobe:
+
+      * Der Monteur hat einen Einsatz an `welt["obj"]` → er sieht **dessen**
+        Fälligkeiten (Wartung UND Prüfung).
+      * Ein **zweites** Objekt mit eigenem Wartungsvertrag und eigener Fälligkeit
+        taucht **nicht** auf — weder als Zeile noch in den **Zählern** (die liefen
+        vorher über den ganzen Bestand und hätten die Fälligkeitslage des Betriebs
+        verraten: „der Betrieb hat 240 offene Fälligkeiten" ist keine Zeile, aber
+        sehr wohl eine Auskunft über fremde Zeilen).
+
+    Schreiben bleibt zu (siehe `test_monteur_objektsicht.py`).
+    """
+    from db_core.services import einsatz as einsatz_service
+
+    from .conftest import logged_in_client, make_role_user
+
+    # Ein FREMDES Objekt mit eigener Fälligkeit — die Gegenprobe.
+    fremd_obj = property_service.create_property(
+        app_user.id, name="Fremdhaus", property_type="WEG",
+        street="Fremdweg", house_number="9", postal_code="12345", city="Fremdstadt",
+    )
+    wartung_service.create_contract(
+        app_user.id, property_id=fremd_obj.id, name="Fremdwartung",
+        start_date=HEUTE, interval_kind="JAEHRLICH",
+        due_action="BENACHRICHTIGUNG", lead_time_days=0,
+    )
+
+    # Der Monteur bekommt EINEN Einsatz an `welt["obj"]` — mehr braucht die
+    # Objektsicht nicht. Ein freier Termin genügt (kein Auftrag nötig).
+    user, monteur = make_role_user("MONTEUR")
+    job = einsatz_service.create_service_job(
+        app_user.id, title="Begehung Prüfhaus", property_id=welt["obj"].id,
+    )
+    einsatz_service.assign_user(
+        app_user.id, service_job_id=job.id, assignee_user_id=monteur.id,
+    )
+    faelligkeit_service.generiere(app_user.id, stichtag=HEUTE)
+
+    from django.test import Client
+
+    c = Client()
+    c.force_login(user)
+
+    r = c.get("/api/maintenance/due-items")
+    assert r.status_code == 200, r.content
+    d = r.json()
+
+    # Er sieht die Fälligkeiten SEINES Objekts …
+    assert d["total"] > 0
+    assert {i["property"]["id"] for i in d["items"]} == {str(welt["obj"].id)}
+    assert {i["kind"] for i in d["items"]} >= {"WARTUNG", "PRUEFUNG"}
+
+    # … und keine Zeile und keinen Zähler des fremden Objekts.
+    assert "Fremdwartung" not in r.content.decode()
+    assert "Fremdhaus" not in r.content.decode()
+    assert d["offen_total"] == d["total"]
+
+    # Gegenprobe: Für Scope ALLE ist der Bestand echt größer — der Filter greift
+    # also, er läuft nicht bloß ins Leere.
+    admin = logged_in_client("ADMINISTRATION")
+    alle = admin.get("/api/maintenance/due-items").json()
+    assert alle["offen_total"] > d["offen_total"]
+
+
+@pytest.mark.django_db
+def test_monteur_ohne_objekt_sieht_keine_faelligkeit(client_with_role, welt):
+    """Kein Einsatz → kein Objekt → null Zeilen (200, nicht 403) und Zähler auf 0."""
     c = client_with_role("MONTEUR")
-    assert c.get("/api/maintenance/due-items").status_code == 403
+    r = c.get("/api/maintenance/due-items")
+    assert r.status_code == 200, r.content
+    d = r.json()
+    assert d["items"] == []
+    assert d["total"] == 0
+    assert d["offen_total"] == 0
+    assert d["ueberfaellig_total"] == 0
 
 
 @pytest.mark.django_db

@@ -584,13 +584,22 @@ def test_monteur_am_fremden_bericht_404():
 
 
 @pytest.mark.django_db
-def test_monteur_darf_soll_ist_nicht_lesen():
-    """Die Auftragssicht lässt sich nicht auf eigene Zeilen begrenzen → 403."""
+def test_monteur_liest_soll_ist_am_eigenen_objekt_aber_nicht_am_fremden():
+    """Objektsicht (0099): Der Soll-Ist führt **keine Geldbeträge** — er ist für den
+    Monteur an SEINEM Objekt lesbar (er soll wissen, was geplant war und was drin
+    steckt). An einem fremden Objekt: 404, nicht 403 — die Zielart ist zulässig, das
+    Objekt ist es nicht."""
     dispo = make_app_user("Dispo")
     auftrag = _auftrag(dispo.id)
     c, _monteur, _job = _monteur_am_auftragstermin(dispo, auftrag)
+
     r = c.get(f"/api/workflow/work_orders/{auftrag.id}/soll-ist")
-    assert r.status_code == 403, r.content
+    assert r.status_code == 200, r.content
+    assert r.json()["work_order_id"] == str(auftrag.id)
+
+    fremd = _auftrag(dispo.id)
+    r = c.get(f"/api/workflow/work_orders/{fremd.id}/soll-ist")
+    assert r.status_code == 404, r.content
 
 
 @pytest.mark.django_db

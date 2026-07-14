@@ -579,11 +579,16 @@ def test_aufmass_unbekannte_liegenschaft_404(admin_client, objekt):
 # --- Rechteweg -------------------------------------------------------------
 
 @pytest.mark.django_db
-def test_lesen_ohne_recht_403(client_with_role, objekt):
+def test_raeume_eines_fremden_objekts_404(client_with_role, objekt):
+    """Objektsicht (0099): Der MONTEUR hat `property/LESEN` mit row_scope EIGENE —
+    aber nur an Objekten, an denen er einen Einsatz hatte. Dieser hat keinen: **404**
+    (nicht 403 — die Existenz der Liegenschaft wird nicht verraten).
+
+    Der positive Fall (Räume lesen UND anlegen am eigenen Objekt) steht in
+    `test_monteur_objektsicht.py`."""
     c = client_with_role("MONTEUR")
     r = c.get(f"/api/property/properties/{objekt.id}/rooms")
-    # MONTEUR hat kein property/LESEN (oder nur EIGENE → fail-closed). Beides 403.
-    assert r.status_code == 403
+    assert r.status_code == 404, r.content
 
 
 @pytest.mark.django_db

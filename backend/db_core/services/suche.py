@@ -92,12 +92,33 @@ Untertitel. Das ist **bewusst** so: Genau daran scheiterte das Vorgängersystem
 Preis ist ein Raten-und-Bestätigen-Orakel ohne Wertpreisgabe — man muss die Adresse
 bereits kennen, um sie zu bestätigen. Diese Abwägung ist getroffen, nicht übersehen.
 
-`row_scope='EIGENE'` wird nur dort ausgewertet, wo die Semantik **definiert** ist:
-beim **Einsatz** (eigene Zuweisung, `workflow.job_assignment` — dasselbe Muster wie
-`api/planung.py::list_einsaetze`). Für alle anderen Kategorien gibt es bei EIGENE
-keine definierte Zeilenbegrenzung, also **keine Zeilen**: Der Monteur findet seine
-Einsätze und sonst nichts. Das ist Absicht — eine Suche, die ihm den Kontakt oder
-die Rechnung zeigt, wäre ein Datenleck.
+### `row_scope='EIGENE'` — die Objektsicht (Migration 0099)
+
+Bis zu diesem Slice galt: „Der Monteur findet seine Einsätze und sonst nichts." Das
+war zu wenig. Wer zur Meldung „Heizkörper kalt" fährt, muss das **Objekt** finden —
+und daran den Vorgang von vorgestern, den Auftrag der Kollegin, die Nummer des
+Mieters. Die Zeilenbegrenzung ist jetzt für **jede** Kategorie definiert, an genau
+einer Stelle (`db_core/services/objektsicht.py`):
+
+| Kategorie | Begrenzung bei EIGENE |
+|---|---|
+| LIEGENSCHAFT | meine Objekte |
+| PROJEKT | Projekte mit mindestens einer meiner Liegenschaften |
+| VORGANG · AUFTRAG | an meinen Objekten |
+| KONTAKT | Parties, die an einem meiner Objekte hängen |
+| EINSATZ | **unverändert: eigene Zuweisung** — nicht das Objekt |
+| ANGEBOT · RECHNUNG · ARTIKEL · LEISTUNG · MITARBEITER | **keine Zeilen** (kein Recht) |
+
+Der **EINSATZ** bleibt bewusst an der Zuweisung: Sonst würde ein freier Termin
+(Begehung, Beratung) für jeden auffindbar, der einmal am Objekt war. Über das
+Objekt-Dossier sieht der Monteur die Einsätze der Kollegen ohnehin — dort ist es
+eine Objekthistorie, hier wäre es eine Terminliste.
+
+ANGEBOT und RECHNUNG fallen weg, weil `invoicing` der Rolle MONTEUR schlicht fehlt
+(0026, unverändert) — **die Sperre ist die Abwesenheit des Rechts**, nicht eine
+Filterzeile. Und **die Adresse**: Sie hing an `sicht.property`; jetzt an
+`sicht.darf_property()`. Der Monteur darf die Straße seines Objekts natürlich sehen —
+genau das war der Auslöser dieses Slices.
 
 ## Grenzen (ehrlich benannt)
 
@@ -151,6 +172,7 @@ from db_core.models import (
     WorkOrder,
     WorkOrderParty,
 )
+from db_core.services import objektsicht
 from db_core.services.artikel import build_article_search_q
 
 # Zeilen, die je Kategorie aus der DB geholt werden, bevor in Python gerangt und
@@ -287,20 +309,41 @@ def tokenisieren(begriff):
 class Sicht:
     """Was der Suchende sehen darf — aus der Rechtematrix, nicht aus der Suche.
 
-    `workflow` = row_scope ALLE auf workflow (Projekte/Vorgänge/Aufträge/Einsätze).
-    `workflow_eigene` = row_scope EIGENE: **nur Einsätze**, und nur die eigenen
-    (`actor_id` ist dann Pflicht — ohne Akteur gibt es keine „eigenen" Zeilen,
-    also gar keine).
+    Je Modul zwei Ebenen:
+
+    * `identity`/`property`/`workflow` = row_scope **ALLE** (das ganze Haus).
+    * `*_eigene` = row_scope **EIGENE**, die **Objektsicht**: dieselben Kategorien,
+      aber nur auf meinen Objekten (`services/objektsicht.py`). `actor_id` ist dann
+      Pflicht — ohne Akteur gibt es keine „eigenen" Zeilen, also gar keine.
+
+    `workflow_eigene` deckt PROJEKT/VORGANG/AUFTRAG (objektbegrenzt) **und** EINSATZ
+    ab — der Einsatz aber weiterhin über die **Zuweisung**, nicht über das Objekt
+    (siehe Modul-Docstring).
+
+    `invoicing`, `pricing` und `hr` haben **keine** EIGENE-Variante: Belege, Preise
+    und Personaldaten sind in diesem Slice nicht die Welt des Monteurs, und die Matrix
+    gibt ihm dort auch kein Recht.
     """
 
     identity: bool = False
     property: bool = False
     workflow: bool = False
+    identity_eigene: bool = False
+    property_eigene: bool = False
     workflow_eigene: bool = False
     invoicing: bool = False
     pricing: bool = False
     hr: bool = False
     actor_id: uuid.UUID | None = None
+
+    def darf_identity(self):
+        return self.identity or self.identity_eigene
+
+    def darf_property(self):
+        return self.property or self.property_eigene
+
+    def darf_workflow(self):
+        return self.workflow or self.workflow_eigene
 
     def hat_recht(self):
         """Darf der Suchende überhaupt irgendetwas sehen?
@@ -310,7 +353,8 @@ class Sicht:
         ein 403 — nichts sehen dürfen ist etwas anderes als nichts finden.
         """
         return any((
-            self.identity, self.property, self.workflow, self.workflow_eigene,
+            self.identity, self.property, self.workflow,
+            self.identity_eigene, self.property_eigene, self.workflow_eigene,
             self.invoicing, self.pricing, self.hr,
         ))
 
@@ -493,11 +537,17 @@ def _adresse_text(adresse, sicht):
     Schemata. Ein Untertitel, der sie trotzdem zeigte, wäre der bequemste Weg, an
     genau der Toren vorbei zu lesen (und die Suche ist ein Endpunkt, den jeder
     aufruft).
+
+    **Objektsicht:** `darf_property()`, nicht `property` — der Monteur SOLL die
+    Straße seines Objekts sehen. Genau daran scheiterte er vorher: Er fand seinen
+    Einsatz, aber nicht die Adresse, zu der er fahren musste. Die Zeilen, die er
+    überhaupt sieht, sind bereits auf seine Objekte begrenzt (`_basis_qs`) — die
+    Adresse verrät ihm also nichts, was er nicht ohnehin lesen darf.
     """
     if adresse is None:
         return None
     ort = " ".join(x for x in (adresse.postal_code, adresse.city) if x)
-    if not sicht.property:
+    if not sicht.darf_property():
         return ort or None
     strasse = " ".join(x for x in (adresse.street, adresse.house_number) if x)
     return ", ".join(x for x in (strasse, ort) if x) or None
@@ -635,25 +685,58 @@ def _direkttreffer(begriff, sicht):
 
 
 def _basis_qs(typ, sicht):
-    """Grundmenge einer Kategorie MIT Rechtefilter — None heißt „darf nicht"."""
-    if typ == "KONTAKT" and sicht.identity:
+    """Grundmenge einer Kategorie MIT Rechtefilter — None heißt „darf nicht".
+
+    **Die einzige Stelle**, an der eine Kategorie ihre Zeilen bekommt: der
+    Direkttreffer-Pfad zieht von hier genauso wie die Ähnlichkeitssuche. Deshalb
+    öffnet eine exakte Kennung (`OBJ-00002`) keine Tür, die die Ähnlichkeitssuche
+    verschlossen hält — der Bruchfall, an dem so etwas üblicherweise scheitert.
+    """
+    if typ == "KONTAKT" and sicht.darf_identity():
         # MERGED-Parties sind fachlich verschwunden (Dublette) — nie ein Treffer.
-        return Party.objects.exclude(status="MERGED")
-    if typ == "LIEGENSCHAFT" and sicht.property:
+        qs = Party.objects.exclude(status="MERGED")
+        if not sicht.identity:
+            if sicht.actor_id is None:
+                return None
+            qs = qs.filter(objektsicht.eigene_party_q(sicht.actor_id)).distinct()
+        return qs
+    if typ == "LIEGENSCHAFT" and sicht.darf_property():
         # Die Einheitenzahl gehört zum Untertitel — sie hängt an der Grundmenge,
         # nicht an der Ähnlichkeitssuche, sonst zeigte der Direkttreffer
         # („OBJ-00001") sie als einziger Weg nicht an.
-        return Property.objects.select_related("address").annotate(
+        qs = Property.objects.select_related("address").annotate(
             einheiten=Count("units", distinct=True)
         )
-    if typ == "PROJEKT" and sicht.workflow:
-        return Project.objects.all()
-    if typ == "VORGANG" and sicht.workflow:
-        return ServiceCase.objects.select_related(
+        if not sicht.property:
+            if sicht.actor_id is None:
+                return None
+            qs = objektsicht.begrenzen(qs, "EIGENE", sicht.actor_id, "id")
+        return qs
+    if typ == "PROJEKT" and sicht.darf_workflow():
+        qs = Project.objects.all()
+        if not sicht.workflow:
+            if sicht.actor_id is None:
+                return None
+            qs = objektsicht.begrenzen(
+                qs, "EIGENE", sicht.actor_id, "property_links__property_id"
+            ).distinct()
+        return qs
+    if typ == "VORGANG" and sicht.darf_workflow():
+        qs = ServiceCase.objects.select_related(
             "property__address", "reported_by_party"
         )
-    if typ == "AUFTRAG" and sicht.workflow:
-        return WorkOrder.objects.select_related("property__address")
+        if not sicht.workflow:
+            if sicht.actor_id is None:
+                return None
+            qs = objektsicht.begrenzen(qs, "EIGENE", sicht.actor_id, "property_id")
+        return qs
+    if typ == "AUFTRAG" and sicht.darf_workflow():
+        qs = WorkOrder.objects.select_related("property__address")
+        if not sicht.workflow:
+            if sicht.actor_id is None:
+                return None
+            qs = objektsicht.begrenzen(qs, "EIGENE", sicht.actor_id, "property_id")
+        return qs
     if typ == "EINSATZ" and (sicht.workflow or sicht.workflow_eigene):
         qs = ServiceJob.objects.select_related(
             "work_order", "property__address", "work_order__property__address"
@@ -712,8 +795,12 @@ def _kontaktweg_gruppe(label, werte, sicht):
     Zuschnitt haben: Sonst begründete die Antwort einen Treffer mit einem
     „Kontaktweg des Beteiligten", über den die DB nie gesucht hat — und verriete
     damit genau das, was das fehlende Recht schützen soll.
+
+    `darf_identity()`: Die Objektsicht darf über die Kontaktwege ihrer Objekt-Parties
+    suchen — das ist der Sinn (die Nummer des Mieters). Die Grundmenge ist in
+    `_basis_qs` bereits begrenzt.
     """
-    return Feldgruppe(label, werte if sicht.identity else [], ziffern=True)
+    return Feldgruppe(label, werte if sicht.darf_identity() else [], ziffern=True)
 
 
 def _gruppen(typ, obj, sicht):
@@ -862,7 +949,7 @@ def _name_wenn_erlaubt(name, sicht):
     Sonst entstünde aus Suche + Untertitel ein Auskunftsdienst: „E-Mail rein,
     Name raus" — für ein Konto, das identity gerade NICHT lesen darf.
     """
-    return name if sicht.identity else None
+    return name if sicht.darf_identity() else None
 
 
 def _titel_untertitel(typ, obj, sicht):
@@ -1044,7 +1131,7 @@ def _liegenschaften(tokens, sicht):
             .annotate(n_party=_norm("party__display_name"))
             .filter(n_party__contains=token)
         )
-        if not sicht.identity:
+        if not sicht.darf_identity():
             return [Exists(namen)]
         # Auch der Kontaktweg der Eigentümergemeinschaft findet ihre Liegenschaft
         # („eine Mail, die darin vorkommt") — aber nur mit `identity/LESEN`.
@@ -1109,7 +1196,7 @@ def _vorgaenge(tokens, sicht):
     # einer E-Mail-Adresse den zugehörigen Vorgang (und über den Untertitel den
     # Namen) auflöst — für ein Konto, das Kontaktdaten gar nicht lesen darf.
     def beziehungen(token):
-        if not sicht.identity:
+        if not sicht.darf_identity():
             return []
         sub = (
             ContactPoint.objects.filter(party=OuterRef("reported_by_party"))
@@ -1141,7 +1228,7 @@ def _auftraege(tokens, sicht):
             .annotate(n_party=_norm("party__display_name"))
             .filter(n_party__contains=token)
         )
-        if not sicht.identity:
+        if not sicht.darf_identity():
             return [Exists(namen)]
         wege = (
             ContactPoint.objects
@@ -1215,7 +1302,7 @@ def _rechnungen(tokens, sicht):
             .annotate(n_party=_norm("party__display_name"))
             .filter(n_party__contains=token)
         )
-        if not sicht.identity:
+        if not sicht.darf_identity():
             return [Exists(namen)]
         # Die Rechnung hat keinen Titel — der Kontaktweg des Schuldners ist einer
         # der wenigen sprechenden Wege zu ihr. Genau die Beschwerde des Nutzers.

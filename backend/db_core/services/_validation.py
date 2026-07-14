@@ -11,7 +11,7 @@ Rennbedingungen bleiben bewusst der Datenbank überlassen — ihre Constraints u
 Trigger fangen sie weiterhin ab; hier geht es nur um die saubere Meldung des
 Normalfalls. Fehlermeldungen nennen keine Tabellen-/Spaltennamen.
 """
-from db_core.models import Party
+from db_core.models import Building, Party, Unit
 
 
 def ensure_exists(model, obj_id, label):
@@ -41,6 +41,44 @@ def ensure_all_exist(model, ids, label):
     if missing:
         fehlend = ", ".join(str(m) for m in sorted(missing, key=str))
         raise ValueError(f"{label}: unbekannte ID(s): {fehlend}")
+
+
+def ensure_standort(property_id, building_id, unit_id):
+    """Gebäude/Einheit müssen zur Liegenschaft passen (sonst FK-Fehler → 500).
+
+    Die **eine** Definition der Standortkonsistenz. Sie bildet die
+    zusammengesetzten Fremdschlüssel ab, die `property.technical_asset` (0004)
+    und `property.room` (0086) gleichlautend tragen — 0086 nennt die Anlage
+    ausdrücklich als Vorbild. Beide Aufrufer teilen sie sich; ein Nachbau je
+    Modul wären zwei Wahrheiten über dieselbe DB-Regel.
+
+    (Lag bis zum Anlagen-Review als `raum._pruefe_zuordnung` modulintern. Der
+    Unterstrich log, sobald ein zweites Modul sie brauchte.)
+    """
+    if unit_id is not None and building_id is None:
+        raise ValueError(
+            "Eine Einheit setzt ein Gebäude voraus (unit_id ohne building_id)."
+        )
+    if building_id is not None:
+        b_prop = (
+            Building.objects.filter(pk=building_id)
+            .values_list("property_id", flat=True)
+            .first()
+        )
+        if b_prop is None:
+            raise ValueError(f"Gebäude {building_id} existiert nicht")
+        if b_prop != property_id:
+            raise ValueError("Das Gebäude gehört nicht zur angegebenen Liegenschaft")
+    if unit_id is not None:
+        u_build = (
+            Unit.objects.filter(pk=unit_id)
+            .values_list("building_id", flat=True)
+            .first()
+        )
+        if u_build is None:
+            raise ValueError(f"Einheit {unit_id} existiert nicht")
+        if u_build != building_id:
+            raise ValueError("Die Einheit gehört nicht zum angegebenen Gebäude")
 
 
 def ensure_party_usable(party_id, label="Partei"):

@@ -14,22 +14,30 @@ Rechte-Tore (Modul `workflow`):
   * Ändern:     `AENDERN`
   * Unterschreiben (Abnahme): `AENDERN`
 
-**row_scope 'EIGENE' (Monteur)** ist hier echt umgesetzt — der Bericht ist genau
-das, was der Monteur vor Ort schreibt und unterschreiben lässt. Die Grenze hängt
-(wie überall bei Einsätzen) allein an `workflow.job_assignment`:
+**row_scope 'EIGENE' — zwei verschiedene Grenzen, und das ist der Kern dieses Moduls.**
 
-  * Berichte **seines** Einsatzes: lesen, anlegen, ändern, unterschreiben lassen.
-  * Bericht ohne Einsatzbezug oder an einem fremden Einsatz: **404** — die
-    Existenz fremder Berichte wird nicht verraten (Muster `api/planung.py`).
-  * Die **Auftragssicht** (`?work_order_id=…`) ist eine Dispositionssicht über
-    alle Berichte der Baustelle und lässt sich nicht auf eigene Zeilen begrenzen:
-    Scope 'EIGENE' → 403 (fail-closed). Der Monteur nimmt den Einsatzweg.
+Seit der Objektsicht (Migration 0099) gilt hier NICHT mehr eine Grenze, sondern zwei
+— je nachdem, ob gelesen oder geschrieben wird:
+
+| Was | Grenze | Warum |
+|---|---|---|
+| **LESEN** (Bericht, Berichtsliste, Soll-Ist) | **mein Objekt** | „Zwei Tage vorher hat bei einem anderen Mieter der Heizkörper geleckt" — der Bericht des Kollegen an *diesem Haus* ist genau die Information, für die dieser Slice gebaut wurde. Sie ihm vorzuenthalten war der Fehler. |
+| **SCHREIBEN** (anlegen, ändern, unterschreiben, Positionen, vorbelegen) | **mein Einsatz** (`workflow.job_assignment`) | Ein Baustellenbericht ist ein **Nachweis**, der unterschrieben und versiegelt wird. Wer ihn schreibt, behauptet, dort gewesen zu sein. Objektkenntnis ist kein Recht, im Namen einer Kollegin zu quittieren. |
+
+Vorher warf `_auftragssicht_verboten` bei Scope 'EIGENE' **403** auf jede
+Auftragssicht — das war genau die Sperre, die dem Monteur die Berichte der Kollegen
+vorenthielt. Sie ist durch `_guard_auftragssicht` ersetzt: dieselbe Sicht, aber auf
+meine Objekte begrenzt (fremd → **404**, die Existenz wird nicht verraten).
+
+Ein Bericht **ohne Einsatzbezug** (reiner Auftragsbericht) ist damit für die
+Objektsicht **lesbar** (er hängt am Auftrag, der an meinem Objekt hängt) — aber
+weiterhin **nicht änderbar**: `_guard_own_report` verlangt zum Schreiben die
+Einsatzzuweisung.
 
 **Positionen und Soll-Ist (Migration 0080).** Der Bericht führt Positionen aus dem
 Artikel-/Leistungsstamm — **ohne Preise** (ein unterschriebener Bericht mit Preisen
-wäre eine Preisvereinbarung; der Preis entsteht erst in der Rechnung). Daraus
-entsteht der Soll-Ist-Abgleich am Auftrag; auch er weist **keine Geldbeträge** aus.
-Der Soll-Ist ist wie die Auftragsliste eine Dispositionssicht → Scope 'EIGENE' 403.
+wäre eine Preisvereinbarung; der Preis entsteht erst in der Rechnung). Auch der
+Soll-Ist weist **keine Geldbeträge** aus — deshalb ist er für die Objektsicht lesbar.
 """
 import base64
 import binascii
@@ -42,6 +50,8 @@ from ninja.errors import HttpError
 from ninja.responses import Status
 from ninja.security import django_auth
 
+from api.auftrag import guard_auftrag
+from api.objektgrenze import guard_objekt
 from api.permissions import require_scoped
 from db_core.models import JobAssignment, ServiceJob, WorkOrder
 from db_core.services import site_report as report_service
@@ -263,21 +273,36 @@ def _dekodiere_signatur(base64_wert: str) -> bytes:
 
 # --- Zeilenbegrenzung ('EIGENE') -------------------------------------------
 
+def _eigener_job(job_id, actor):
+    """Bin ich diesem Einsatz zugewiesen? (`workflow.job_assignment`)"""
+    return JobAssignment.objects.filter(
+        service_job_id=job_id, assignee_id=actor
+    ).exists()
+
+
 def _guard_own_job(job_id, actor, scope):
-    """Scope 'EIGENE': nur ein Einsatz, dem der Akteur zugewiesen ist. Sonst 404.
-    Muster: `api/planung.py::_guard_own_job`."""
+    """**SCHREIB**-Grenze: Scope 'EIGENE' → nur ein Einsatz, dem der Akteur
+    zugewiesen ist. Sonst 404. Muster: `api/planung.py::_guard_own_job`.
+
+    Fürs **Lesen** gilt die weitere Grenze `_guard_job_lesen` (Zuweisung ODER Objekt).
+    """
     if scope != "EIGENE":
         return
-    if not JobAssignment.objects.filter(
-        service_job_id=job_id, assignee_id=actor
-    ).exists():
+    if not _eigener_job(job_id, actor):
         raise HttpError(404, "Einsatz nicht gefunden.")
 
 
 def _guard_own_report(report, actor, scope):
-    """Scope 'EIGENE': nur Berichte an einem Einsatz, dem der Akteur zugewiesen
-    ist. Ein reiner Auftragsbericht (ohne Einsatz) ist für ihn **nicht** sichtbar
-    — er hat keine Zuweisung, an der die Sicht hängen könnte. 404 statt 403."""
+    """**SCHREIB**-Grenze: Scope 'EIGENE' → nur Berichte an einem Einsatz, dem der
+    Akteur zugewiesen ist. Ein reiner Auftragsbericht (ohne Einsatz) ist für ihn
+    **nicht schreibbar** — er hat keine Zuweisung, an der das Recht hängen könnte.
+    404 statt 403.
+
+    **Nicht** für das Lesen verwenden: Dafür gilt `_guard_report_lesen` (mein
+    Objekt). Wer diese Funktion versehentlich in einen Lesepfad zurückschreibt, nimmt
+    dem Monteur genau die Berichte der Kollegen wieder weg, für die dieser Slice
+    gebaut wurde.
+    """
     if scope != "EIGENE":
         return
     if report.service_job_id is None:
@@ -288,15 +313,85 @@ def _guard_own_report(report, actor, scope):
         raise HttpError(404, "Bericht nicht gefunden.")
 
 
-def _auftragssicht_verboten(scope):
-    """Die Auftragssicht zeigt alle Berichte der Baustelle — sie lässt sich nicht
-    auf eigene Zeilen begrenzen. Scope 'EIGENE' → 403 (fail-closed)."""
-    if scope == "EIGENE":
-        raise HttpError(
-            403,
-            "Ihre Rolle erlaubt nur den Zugriff auf eigene Datensätze; "
-            "Berichte sind für Sie über den eigenen Einsatz erreichbar.",
+def _report_property_id(report):
+    """Die Liegenschaft, an der der Bericht hängt — über Einsatz ODER Auftrag.
+
+    Dieselbe Coalesce-Kette wie überall (freier Termin trägt sie selbst, der
+    auftragsgebundene Einsatz oft nur über seinen Auftrag). `None` heißt: an keiner —
+    dann fällt der Guard auf 404.
+    """
+    if report.work_order_id is not None:
+        return (
+            WorkOrder.objects.filter(id=report.work_order_id)
+            .values_list("property_id", flat=True)
+            .first()
         )
+    if report.service_job_id is not None:
+        job = (
+            ServiceJob.objects.filter(id=report.service_job_id)
+            .values("property_id", "work_order__property_id")
+            .first()
+        )
+        if job is not None:
+            return job["property_id"] or job["work_order__property_id"]
+    return None
+
+
+def _guard_job_lesen(job_id, actor, scope):
+    """**LESE**-Grenze am Einsatz: eigene Zuweisung **ODER** mein Objekt.
+
+    Die Objektsicht **erweitert** die alte Grenze, sie ersetzt sie nicht. Das ist
+    keine Feinheit, sondern ein realer Bruchfall: Ein **freier Termin** (Begehung
+    ohne Auftrag, Migration 0062) darf `property_id` NULL tragen — er hängt dann an
+    **gar keinem** Objekt. Prüfte man nur das Objekt, verlöre der Monteur den Bericht
+    an seinem **eigenen** freien Termin (404), obwohl er ihn selbst geschrieben hat.
+    (Genau das ist beim ersten Anlauf dieses Slices passiert.)
+    """
+    if scope != "EIGENE":
+        return
+    if _eigener_job(job_id, actor):
+        return
+    job = (
+        ServiceJob.objects.filter(id=job_id)
+        .values("property_id", "work_order__property_id")
+        .first()
+    )
+    prop_id = (
+        (job["property_id"] or job["work_order__property_id"])
+        if job is not None
+        else None
+    )
+    guard_objekt(scope, actor, prop_id, "Einsatz nicht gefunden.")
+
+
+def _guard_report_lesen(report, actor, scope):
+    """**LESE**-Grenze am Bericht: eigener Einsatz **ODER** mein Objekt.
+
+    Der Bericht des Kollegen an meinem Objekt ist der Zweck dieses Slices: Wer heute
+    zur „Heizkörper kalt"-Meldung fährt, muss den Bericht von vorgestern lesen können,
+    in dem steht, dass am Nachbar-Heizkörper ein Leck war. Der Bericht am **eigenen
+    freien Termin** (ohne Objekt) bleibt daneben lesbar — siehe `_guard_job_lesen`.
+    """
+    if scope != "EIGENE":
+        return
+    if report.service_job_id is not None and _eigener_job(
+        report.service_job_id, actor
+    ):
+        return
+    guard_objekt(
+        scope, actor, _report_property_id(report), "Bericht nicht gefunden."
+    )
+
+
+def _guard_auftragssicht(work_order_id, actor, scope):
+    """Auftragssicht (alle Berichte / Soll-Ist einer Baustelle): mein Objekt, sonst 404.
+
+    Ersetzt das frühere pauschale 403. Die Sicht **lässt** sich sehr wohl begrenzen —
+    nur eben am Objekt, nicht an der Zuweisung. Ein Auftrag trägt IMMER eine
+    Liegenschaft (`work_order.property_id` ist NOT NULL) — hier gibt es die
+    NULL-Falle des freien Termins also nicht.
+    """
+    guard_auftrag(work_order_id, actor, scope)
 
 
 # --- Endpoints -------------------------------------------------------------
@@ -312,6 +407,16 @@ def list_site_reports(
     Genau einer der beiden Filter ist zu setzen. Die Auftragsliste enthält auch
     die Berichte der Einsätze dieses Auftrags (der Bericht am auftragsgebundenen
     Einsatz trägt zwingend dessen Auftrag).
+
+    Scope 'EIGENE' (Objektsicht):
+
+      * `?work_order_id=…` → **alle** Berichte dieses Auftrags, sofern er an einem
+        meiner Objekte hängt (auch die der Kollegen). Fremder Auftrag → 404.
+      * `?service_job_id=…` → die Berichte dieses Einsatzes, wenn er **mir zugewiesen
+        ist ODER an einem meiner Objekte hängt**. Beides, nicht nur das Zweite: Der
+        **freie Termin** darf ohne Liegenschaft existieren (0062) — prüfte man nur das
+        Objekt, verlöre der Monteur den Bericht an seinem eigenen freien Termin.
+        Weder das eine noch das andere → 404.
     """
     # Rechteprüfung VOR der Parametervalidierung: die Filter sind bewusst
     # optional, damit ein rollenloser Aufruf 403 (nicht 422) bekommt und die
@@ -324,11 +429,11 @@ def list_site_reports(
     if service_job_id is not None:
         if not ServiceJob.objects.filter(id=service_job_id).exists():
             raise HttpError(404, "Einsatz nicht gefunden.")
-        _guard_own_job(service_job_id, actor, scope)
+        _guard_job_lesen(service_job_id, actor, scope)
     else:
-        _auftragssicht_verboten(scope)
         if not WorkOrder.objects.filter(id=work_order_id).exists():
             raise HttpError(404, "Auftrag nicht gefunden.")
+        _guard_auftragssicht(work_order_id, actor, scope)
     reports = report_service.list_reports(
         work_order_id=work_order_id, service_job_id=service_job_id
     )
@@ -340,13 +445,14 @@ def list_site_reports(
 def get_site_report(request, report_id: UUID):
     """Ein Baustellenbericht im Detail — **mit seinen Positionen**.
 
-    Fremder Bericht (Scope 'EIGENE') → 404.
+    Scope 'EIGENE': jeder Bericht an einem meiner Objekte — auch der eines Kollegen.
+    Bericht an einem fremden Objekt → 404.
     """
     actor, scope = require_scoped(request, "workflow", "LESEN")
     report = report_service.get_report(report_id)
     if report is None:
         raise HttpError(404, "Bericht nicht gefunden.")
-    _guard_own_report(report, actor, scope)
+    _guard_report_lesen(report, actor, scope)
     return _detail_out(report)
 
 
@@ -529,14 +635,15 @@ def vorbelegen_site_report(request, report_id: UUID, payload: VorbelegenIn):
 def soll_ist_abgleich(request, work_order_id: UUID):
     """Angebots-Soll gegen Berichts-Ist über alle Berichte des Auftrags.
 
-    Reine Rechenarbeit, **keine Geldbeträge**. Wie die Berichts-Auftragssicht ist
-    das eine Dispositionssicht über die ganze Baustelle — sie lässt sich nicht auf
-    eigene Zeilen begrenzen: Scope 'EIGENE' → 403 (fail-closed).
+    Reine Rechenarbeit, **keine Geldbeträge** — deshalb für die Objektsicht lesbar:
+    Scope 'EIGENE' → begrenzt auf meine Objekte (fremder Auftrag: 404). Der Soll-Ist
+    sagt dem Monteur, was am Auftrag geplant war und was tatsächlich verbaut wurde;
+    Preise stehen nicht darin (und `invoicing` hat er ohnehin nicht).
     """
-    _actor, scope = require_scoped(request, "workflow", "LESEN")
-    _auftragssicht_verboten(scope)
+    actor, scope = require_scoped(request, "workflow", "LESEN")
     if not WorkOrder.objects.filter(id=work_order_id).exists():
         raise HttpError(404, "Auftrag nicht gefunden.")
+    _guard_auftragssicht(work_order_id, actor, scope)
     try:
         ergebnis = report_service.soll_ist(work_order_id)
     except ValueError as exc:

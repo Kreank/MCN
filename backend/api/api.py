@@ -15,6 +15,7 @@ erreichbar sein müssen, bevor eine Sitzung besteht.
 from ninja import NinjaAPI
 from ninja.security import django_auth
 
+from api.anlage import router as anlage_router
 from api.artikel import router as artikel_router
 from api.aufgabe import router as aufgabe_router
 from api.auftrag import router as auftrag_router
@@ -59,6 +60,8 @@ api.add_router("/property", property_router, tags=["property"])
 # Raumaufmaß (0086): derselbe Präfix, dasselbe Recht — der Raum ist
 # Objektstammdatum, kein Vorgangswert.
 api.add_router("/property", raum_router, tags=["property"])
+# Technische Anlagen (0004): ebenfalls Objektstammdatum, ebenfalls Recht `property`.
+api.add_router("/property", anlage_router, tags=["property"])
 api.add_router("/workflow", projekt_router, tags=["workflow"])
 api.add_router("/workflow", aufgabe_router, tags=["workflow"])
 api.add_router("/workflow", auftrag_router, tags=["workflow"])

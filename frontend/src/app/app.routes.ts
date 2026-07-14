@@ -134,6 +134,16 @@ export const routes: Routes = [
           ),
       },
       {
+        // Anlagenmappe. EIGENE Route (kein Ausklapp-Panel im Liegenschaftsreiter):
+        // Aufträge, Prüfungen und Fälligkeiten hängen an der Anlage und müssen
+        // umgekehrt auf sie verlinken können — ein Panel hat keine Adresse.
+        path: 'anlagen/:id',
+        title: 'Technische Anlage — MCN Leitstand',
+        canActivate: [darfGuard('property', 'LESEN')],
+        loadComponent: () =>
+          import('./features/anlage-detail/anlage-detail').then((m) => m.AnlageDetail),
+      },
+      {
         path: 'projekte',
         title: 'Projekte — MCN Leitstand',
         canActivate: [darfGuard('workflow', 'LESEN')],

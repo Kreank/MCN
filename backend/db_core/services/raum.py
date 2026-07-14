@@ -89,7 +89,7 @@ from db_core.models import (
     RoomVertex,
     Unit,
 )
-from db_core.services._validation import ensure_exists
+from db_core.services._validation import ensure_exists, ensure_standort
 
 # --- Codelisten (Migration 0086) -------------------------------------------
 
@@ -668,31 +668,13 @@ def get_room(room_id):
 # --- Validierung -----------------------------------------------------------
 
 def _pruefe_zuordnung(property_id, building_id, unit_id):
-    """Gebäude/Einheit müssen zur Liegenschaft passen (sonst FK-Fehler → 500)."""
-    if unit_id is not None and building_id is None:
-        raise ValueError(
-            "Eine Einheit setzt ein Gebäude voraus (unit_id ohne building_id)."
-        )
-    if building_id is not None:
-        b_prop = (
-            Building.objects.filter(pk=building_id)
-            .values_list("property_id", flat=True)
-            .first()
-        )
-        if b_prop is None:
-            raise ValueError(f"Gebäude {building_id} existiert nicht")
-        if b_prop != property_id:
-            raise ValueError("Das Gebäude gehört nicht zur angegebenen Liegenschaft")
-    if unit_id is not None:
-        u_build = (
-            Unit.objects.filter(pk=unit_id)
-            .values_list("building_id", flat=True)
-            .first()
-        )
-        if u_build is None:
-            raise ValueError(f"Einheit {unit_id} existiert nicht")
-        if u_build != building_id:
-            raise ValueError("Die Einheit gehört nicht zum angegebenen Gebäude")
+    """Gebäude/Einheit müssen zur Liegenschaft passen (sonst FK-Fehler → 500).
+
+    Die Regel liegt in `_validation.ensure_standort` — sie gilt gleichlautend für
+    die technische Anlage (0004) und den Raum (0086). Hier bleibt nur der
+    hausinterne Name stehen.
+    """
+    ensure_standort(property_id, building_id, unit_id)
 
 
 def _pruefe_raum(daten):

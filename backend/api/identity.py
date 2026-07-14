@@ -1,12 +1,24 @@
 """Identity-API — Kontakte (Parties: Personen/Organisationen).
 
-Lesende Endpoints laufen in der Dev-Phase bewusst ohne Auth; die Durchsetzung
-der Rechtematrix (C-11 / B-35) übernimmt das später. Schreibende Endpoints
-erfordern eine Django-Session (ninja django_auth) und einen zugeordneten
-security.app_user (accounts.User.app_user_id) — sonst lehnt db_context ab.
-
 Views bleiben dünn: sie validieren, rufen die Service-Schicht und mappen auf
 saubere Schemas. Keine Model-Instanzen verlassen die API.
+
+**row_scope 'EIGENE' (Objektsicht, Migration 0099) — nur LESEN.**
+Der Monteur bekam `identity/LESEN` aus einem einzigen, konkreten Grund: **Er muss
+den Mieter anrufen können**, der „Heizkörper kalt" gemeldet hat. Also genau so viel
+und nicht mehr:
+
+  * **Lesen** (Liste, Detail, Adressen, Kontaktwege, Ansprechpartner): nur Kontakte,
+    die an **einem meiner Objekte** hängen — Beteiligte der Liegenschaft, Beteiligte
+    eines Auftrags dort, Melder eines Vorgangs dort, Ansprechpartner vor Ort an einem
+    Einsatz dort. Die Definition steht in `db_core/services/objektsicht.py`
+    (`eigene_party_q`), nicht hier.
+  * Ein Kontakt **ohne** Objektbezug (Lieferant, fremder Kunde, das Adressbuch des
+    Betriebs): **404** — nicht 403; seine Existenz geht den Monteur nichts an.
+  * **Schreiben** (Person/Organisation anlegen, Adresse, Kontaktweg, Ansprechpartner,
+    Akquisekanal): **403**. Die Matrix gibt ihm dafür ohnehin kein Recht (0099 setzt
+    nur `identity/LESEN`); `_require_party` weist es zusätzlich ausdrücklich ab, damit
+    eine spätere Matrixänderung nicht still einen Schreibpfad öffnet.
 """
 from datetime import date
 from uuid import UUID
@@ -16,22 +28,37 @@ from ninja.errors import HttpError
 from ninja.responses import Status
 from ninja.security import django_auth
 
-from api.permissions import require
+from api.objektgrenze import guard_party
+from api.permissions import require, require_scoped
 from db_core.models import ContactPoint, Party, PartyAddress, PartyRelationship
 from db_core.services import identity as identity_service
+from db_core.services import objektsicht
 
 router = Router()
 
 
 def _require_party(request, party_id, action="LESEN"):
-    """Prüft das Recht und dass der Kontakt existiert; sonst 404.
+    """Prüft das Recht und dass der Kontakt existiert (sonst 404) — scope-bewusst.
 
-    Gibt (actor_id, row_scope) zurück (wie require). Ein fremder/unbekannter
-    Kontakt führt zu 404, damit dessen Existenz nicht verraten wird.
+    Gibt (actor_id, row_scope) zurück (wie require).
+
+    * Scope 'EIGENE' **und** eine schreibende Aktion → **403**: Die Objektsicht ist
+      eine Lesesicht. (Praktisch greift schon die Matrix — der Monteur hat kein
+      `identity/ANLEGEN`/`AENDERN`. Dieser Riegel steht trotzdem hier: Ein Recht, das
+      jemand später in der Matrixpflege setzt, darf nicht still einen ungefilterten
+      Schreibpfad aufmachen.)
+    * Scope 'EIGENE' und LESEN → nur ein Kontakt an einem meiner Objekte, sonst 404.
     """
-    actor, scope = require(request, "identity", action)
+    actor, scope = require_scoped(request, "identity", action)
+    if scope == "EIGENE" and action != "LESEN":
+        raise HttpError(
+            403,
+            "Ihre Rolle erlaubt nur den Zugriff auf eigene Datensätze; "
+            "Kontaktdaten können Sie einsehen, aber nicht ändern.",
+        )
     if not Party.objects.filter(id=party_id).exists():
         raise HttpError(404, "Kontakt nicht gefunden.")
+    guard_party(scope, actor, party_id)
     return actor, scope
 
 
@@ -191,9 +218,14 @@ def list_parties(
 
     Ohne expliziten Statusfilter werden zusammengeführte (MERGED) Parties
     ausgeblendet; wer MERGED sehen will, setzt status=MERGED gezielt.
+
+    Scope 'EIGENE': nur Kontakte an meinen Objekten (`distinct()` — derselbe Kontakt
+    kann über mehrere Wege an mehreren meiner Objekte hängen).
     """
-    require(request, "identity", "LESEN")
+    actor, scope = require_scoped(request, "identity", "LESEN")
     qs = Party.objects.all()
+    if scope == "EIGENE":
+        qs = qs.filter(objektsicht.eigene_party_q(actor)).distinct()
 
     if filters.q:
         qs = qs.filter(display_name__icontains=filters.q)
@@ -289,8 +321,14 @@ def create_organization(request, payload: OrganizationIn):
 
 @router.get("/parties/{party_id}", response=PartyDetailOut)
 def get_party(request, party_id: UUID):
-    """Detail einer Party inkl. Subtyp-Feldern (Person ODER Organisation)."""
-    require(request, "identity", "LESEN")
+    """Detail einer Party inkl. Subtyp-Feldern (Person ODER Organisation).
+
+    Scope 'EIGENE': Kontakt ohne Bezug zu einem meiner Objekte → 404.
+    """
+    actor, scope = require_scoped(request, "identity", "LESEN")
+    if not Party.objects.filter(id=party_id).exists():
+        raise HttpError(404, "Party nicht gefunden.")
+    guard_party(scope, actor, party_id, "Party nicht gefunden.")
     return _party_detail(party_id)
 
 

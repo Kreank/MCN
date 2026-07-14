@@ -1,0 +1,157 @@
+<!-- Höflichkeitsmeldungen für Screenreader; sichtbar ist die Liste selbst. -->
+<p class="sr-only" role="status">{{ ansage() }}</p>
+
+@if (zustand() === 'loading') {
+  <p class="lade-hinweis" role="status">Anlagen werden geladen …</p>
+}
+
+@if (zustand() === 'error') {
+  <div class="note note--error" role="alert">
+    <h3 class="note__titel">Anlagen konnten nicht geladen werden</h3>
+    <p class="note__text">{{ fehler() }}</p>
+    <div class="note__aktionen">
+      <button type="button" class="btn btn--primary" (click)="neuLaden()">
+        Erneut versuchen
+      </button>
+    </div>
+  </div>
+}
+
+@if (zustand() === 'ready') {
+  <div class="kopf">
+    <p class="kopf__text">
+      Die technische Ausstattung dieses Objekts. <strong>Zentral oder dezentral</strong> ist
+      die Angabe, die einen Einsatz verändert — sie steht deshalb an jeder Anlage.
+    </p>
+    <div class="kopf__aktionen">
+      @if (inaktivAnzahl() > 0 || mitInaktiven()) {
+        <button
+          type="button"
+          class="btn btn--klein"
+          [attr.aria-pressed]="mitInaktiven()"
+          (click)="inaktiveUmschalten()"
+        >
+          {{ mitInaktiven() ? 'Stillgelegte ausblenden' : 'Stillgelegte anzeigen' }}
+        </button>
+      }
+      @if (darfAnlegen()) {
+        <button type="button" class="btn btn--primary" (click)="anlegen()">
+          <span aria-hidden="true">＋</span> Anlage
+        </button>
+      }
+    </div>
+  </div>
+
+  @if (aktionsFehler(); as af) {
+    <div class="melde melde--fehler" role="alert">
+      <span class="melde__mark" aria-hidden="true">!</span>
+      <span class="melde__text"><strong>Fehler:</strong> {{ af }}</span>
+    </div>
+  }
+
+  @if (anlagen().length === 0) {
+    <div class="tab-platzhalter">
+      <h3 class="tab-platzhalter__titel">Noch keine Anlage erfasst</h3>
+      <p>
+        Ohne Anlage weiß der Monteur vor der Fahrt nicht, ob er eine Zentralheizung oder eine
+        Etagentherme antrifft. Erfassen Sie mindestens die Wärmeerzeugung.
+      </p>
+    </div>
+  } @else {
+    @for (g of gruppen(); track g.key) {
+      <section class="gruppe">
+        <h3 class="gruppe__titel">
+          {{ g.label }}
+          <span class="gruppe__zahl">{{ g.anlagen.length }}</span>
+        </h3>
+        <ul class="liste">
+          @for (a of g.anlagen; track a.id) {
+            <li class="karte" [class.karte--still]="stillgelegt(a)">
+              <div class="karte__kopf">
+                <a class="karte__name" [routerLink]="['/anlagen', a.id]">{{ a.name }}</a>
+                <span [class]="versorgungClass(a)">{{ versorgung(a.supply_type) }}</span>
+                @if (stillgelegt(a)) {
+                  <span class="stamp stamp--negativ">Stillgelegt</span>
+                }
+              </div>
+
+              <dl class="karte__daten">
+                <div class="paar">
+                  <dt>Standort</dt>
+                  <dd>{{ ort(a) }}</dd>
+                </div>
+                <div class="paar">
+                  <dt>Gerät</dt>
+                  <dd>{{ geraet(a) }}</dd>
+                </div>
+                <div class="paar">
+                  <dt>Energie / Leistung</dt>
+                  <dd>{{ energie(a.energy_source) }} · {{ kw(a.power_kw) }}</dd>
+                </div>
+                @if (a.serial_number) {
+                  <div class="paar">
+                    <dt>Seriennummer</dt>
+                    <dd class="paar__mono">{{ a.serial_number }}</dd>
+                  </div>
+                }
+              </dl>
+
+              <div class="karte__aktionen">
+                <a class="btn btn--klein" [routerLink]="['/anlagen', a.id]">
+                  Details, Wartung &amp; Aufträge
+                </a>
+                @if (darfAendern()) {
+                  <button type="button" class="btn btn--klein" (click)="bearbeiten(a)">
+                    Bearbeiten
+                  </button>
+                  @if (stillgelegt(a)) {
+                    <button
+                      type="button"
+                      class="btn btn--klein"
+                      [disabled]="statusLaeuft()"
+                      (click)="reaktivieren(a)"
+                    >
+                      Wieder in Betrieb
+                    </button>
+                  } @else {
+                    <button
+                      type="button"
+                      class="btn btn--klein"
+                      [disabled]="statusLaeuft()"
+                      (click)="stilllegenFragen(a)"
+                    >
+                      Stilllegen
+                    </button>
+                  }
+                }
+              </div>
+            </li>
+          }
+        </ul>
+      </section>
+    }
+  }
+}
+
+<app-anlage-dialog
+  [offen]="dialogOffen()"
+  [propertyId]="propertyId()"
+  [gebaeude]="gebaeude()"
+  [anlage]="bearbeitet()"
+  (gespeichert)="gespeichert($event)"
+  (abbrechen)="dialogSchliessen()"
+/>
+
+<app-bestaetigung
+  [offen]="stillzulegen() !== null"
+  titel="Anlage stilllegen"
+  [text]="
+    'Die Anlage „' +
+    (stillzulegen()?.name ?? '') +
+    '“ wird stillgelegt. Sie wird NICHT gelöscht: Aufträge, Prüfungen und Berichte zeigen weiter auf sie, und sie bleibt über „Stillgelegte anzeigen“ lesbar. Wieder in Betrieb nehmen können Sie sie jederzeit.'
+  "
+  bestaetigenLabel="Stilllegen"
+  [laedt]="statusLaeuft()"
+  (bestaetigen)="stilllegenBestaetigen()"
+  (abbrechen)="stilllegenAbbrechen()"
+/>
