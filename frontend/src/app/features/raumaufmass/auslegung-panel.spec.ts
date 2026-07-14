@@ -239,7 +239,10 @@ describe('AuslegungPanel', () => {
     expect(auslegungPruefen('-12', '').ok).toBe(true);
   });
 
-  it('ohne Änderungsrecht ist Speichern gesperrt', () => {
+  // Ein Knopf, den der Nutzer nicht drücken darf, wird nicht ausgegraut — er ist
+  // gar nicht da. Der GRUND steht als Text: fehlender Inhalt wird benannt, tote
+  // Bedienelemente verschwinden. Die Werte selbst bleiben lesbar.
+  it('ohne Änderungsrecht gibt es keinen Speichern-Knopf, nur die Begründung', () => {
     fixture.componentRef.setInput('darfAendern', false);
     fixture.componentRef.setInput('auslegung', {
       design_outdoor_temp_c: null,
@@ -248,8 +251,8 @@ describe('AuslegungPanel', () => {
     fixture.detectChanges();
     const btn = (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>(
       'button[type="submit"]',
-    )!;
-    expect(btn.disabled).toBe(true);
+    );
+    expect(btn).toBeNull();
     expect(text()).toContain('fehlt das Recht');
   });
 });

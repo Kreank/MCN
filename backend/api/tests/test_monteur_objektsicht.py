@@ -14,9 +14,11 @@ Liegenschaft, Kontakte, Objekthistorie: 403.
 
 1. **Zeitfenster: keines.** Wer je einen Einsatz auf einem Objekt hatte, sieht es
    dauerhaft.
-2. **Er darf alles sehen — außer Geld.** Angebote UND Rechnungen bleiben in diesem
-   Slice **komplett** unsichtbar (nicht „ohne Preise" — das ist ein eigener, späterer
-   Slice; eine halbe Preisunterdrückung wäre schlimmer als keine).
+2. **Er darf alles sehen — außer Geld.** Seit Migration **0102** sieht er das
+   **Angebot** seines Objekts (versendet/angenommen) — mit **Mengen, ohne Preise**;
+   die **Rechnung** bleibt die eine, vollständige Ausnahme. Geprüft wird das nicht an
+   einer Feldliste, sondern am **serialisierten Antwortkörper** (`_kein_geld`):
+   Betrag als Text UND Geldfeldname. Eine Feldliste vergisst `unit_cost`.
 3. **Lesen ist weiter als Schreiben.** Schreiben darf er: Räume/Aufmaß, Gebäude und
    Einheiten **an seinen Objekten**; Dateien an **eigenen Einsätzen/Berichten**. Sonst
    nichts — kein Statuswechsel, keine neue Liegenschaft, kein Bauteilkatalog-Eintrag,
@@ -154,12 +156,34 @@ def _objekt(chef, *, name, strasse, hausnummer, plz, ort):
         activity_text=f"Heizkoerper undicht, getauscht. Zentralanlage im Keller ({name}).",
     )
 
+    # --- Das Angebot (0102) -------------------------------------------------
+    # MARKANTE Beträge: Sie sind der eigentliche Prüfstein. `unit_cost` (Einkauf)
+    # und `markup_percent` (Aufschlag) stehen nicht einmal auf dem Kundenbeleg —
+    # sie stehen aber in `QuoteLineOut`, und genau daran scheitert dieser Slice,
+    # wenn die Mengensicht als „Feldliste minus unit_price" gebaut wird.
+    # Alle Zahlen tragen einen Dezimalpunkt: So kann kein UUID-Hex sie zufällig
+    # enthalten, und der Textscan über die Antwort wird nicht flaky.
     angebot = beleg_service.create_quote(
         u, property_id=obj.id, title="Heizkörper Material und Montage",
-        work_order_id=auftrag.id,
+        work_order_id=auftrag.id, project_id=projekt.id,
         lines=[{
-            "line_type": "MATERIAL", "description": "Heizkörper Typ 22",
-            "quantity": "1", "unit": "Stk", "unit_price": "289.00",
+            "line_type": "MATERIAL", "description": "Kupferrohr DN20",
+            "quantity": "12", "unit": "m", "unit_price": "1234.56",
+            "unit_cost": "999.99", "markup_percent": "37.25",
+            "tax_code": "DE_19",
+        }],
+    )
+    # VERSENDET: erst damit ist das Angebot eine Aussage nach außen (und für den
+    # Monteur überhaupt sichtbar). Die DB vergibt die Nummer und friert ein.
+    angebot = beleg_service.send_quote(u, quote_id=angebot.id)
+
+    # Ein ENTWURF am selben Objekt — er darf dem Monteur NIE erscheinen: Inhalt und
+    # Preise ändern sich noch, und was hier steht, hat niemand beauftragt.
+    angebot_entwurf = beleg_service.create_quote(
+        u, property_id=obj.id, title=f"Fassade {name} — Vorabschätzung",
+        lines=[{
+            "line_type": "MATERIAL", "description": "Gerüst (geschätzt)",
+            "quantity": "1", "unit": "psch", "unit_price": "4321.00",
             "tax_code": "DE_19",
         }],
     )
@@ -167,7 +191,7 @@ def _objekt(chef, *, name, strasse, hausnummer, plz, ort):
         u, property_id=obj.id, work_order_id=auftrag.id,
         lines=[{
             "line_type": "MATERIAL", "description": "Heizkörper Typ 22",
-            "quantity": "1", "unit": "Stk", "unit_price": "289.00",
+            "quantity": "1", "unit": "Stk", "unit_price": "5678.90",
             "tax_code": "DE_19",
         }],
     )
@@ -220,7 +244,8 @@ def _objekt(chef, *, name, strasse, hausnummer, plz, ort):
         "obj": obj, "gebaeude": gebaeude, "einheit": einheit, "mieter": mieter,
         "projekt": projekt, "vorgang": vorgang, "auftrag": auftrag,
         "kollege": kollege, "kollegen_job": kollegen_job, "bericht": bericht,
-        "angebot": angebot, "rechnung": rechnung,
+        "angebot": angebot, "angebot_entwurf": angebot_entwurf,
+        "rechnung": rechnung,
         "datei_id": link.file_id, "link_id": link.id,
         "vertrag": vertrag, "pruefart": pruefart, "pruefung": pruefung,
         "gewaehrleistung": gewaehrleistung,
@@ -651,53 +676,385 @@ def test_monteur_sieht_kontakte_ohne_objektbezug_nicht(welt):
     assert c.get(f"/api/dossier/kontakt/{fremder.id}").status_code == 404
 
 
-@pytest.mark.django_db
-def test_monteur_sieht_NIEMALS_ein_angebot_oder_eine_rechnung(welt):
-    """**Die härteste Regel dieses Slices** — und sie gilt auch an SEINEM Objekt A.
+# ===========================================================================
+# DAS ANGEBOT (Migration 0102): Mengen ja — Geld nie
+# ===========================================================================
+#
+# Jeder Betrag der Fixture trägt einen Dezimalpunkt, damit der Textscan über die
+# **serialisierte** Antwort nicht zufällig in einem UUID-Hex anschlägt.
+#
+#   1234.56  Einzelpreis (VK)          999.99  EINKAUFSPREIS (unit_cost)
+#   37.25    Aufschlag (markup)      14814.72  Positions-/Nettobetrag (12 × 1234.56)
+#   17629.52 Bruttobetrag             4321.00  Preis im ENTWURF (nie sichtbar)
+#   5678.90  Rechnungsbetrag
+GELDSPUREN = (
+    "1234.56", "999.99", "37.25", "14814.72", "17629.52", "4321.00", "5678.90",
+)
+# Die Feldnamen selbst — der zweite Gürtel. Ein leerer/nuller Betrag würde beim
+# Zahlenscan durchrutschen; das FELD verrät die Absicht trotzdem.
+GELDFELDER = (
+    '"unit_price"', '"unit_cost"', '"markup_percent"', '"net_amount"',
+    '"net_total"', '"gross_total"', '"tax_total"', '"discount_percent"',
+    '"tax_rate_percent"', '"labour_net_amount"',
+)
 
-    „Angebot ohne Preise, nur Mengen" ist ein eigener, späterer Slice. In DIESEM
-    bleiben Beleg und Betrag komplett unsichtbar (fail-closed durch die Abwesenheit
-    des `invoicing`-Rechts). Der Test durchsucht die Antworten deshalb auch **nach
-    dem Betrag als Text** — ein Feld, das versehentlich durchrutscht, fällt so auf.
+
+def _kein_geld(response, *, wo):
+    """Die serialisierte Antwort enthält KEINEN Betrag und KEIN Geldfeld.
+
+    Bewusst über den **Rohkörper**, nicht über eine Feldliste: Ein Test, der prüft,
+    ob `unit_price` fehlt, übersieht `unit_cost` — genau der Fehler, den dieser
+    Slice vermeiden soll. Was hier durchrutscht, rutscht auch zum Monteur durch.
+    """
+    text = response.content.decode()
+    for betrag in GELDSPUREN:
+        assert betrag not in text, f"{wo}: Betrag {betrag} ist durchgerutscht."
+    for feld in GELDFELDER:
+        assert feld not in text, f"{wo}: Geldfeld {feld} ist durchgerutscht."
+
+
+@pytest.mark.django_db
+def test_monteur_sieht_das_angebot_seines_objekts_mit_mengen(welt):
+    """**Der Kern dieses Slices.** „12 m Kupferrohr DN20" — sonst baut er das Falsche.
+
+    Er sieht die Position, die Menge und die Einheit. Er sieht **keinen** Preis,
+    **keinen** Einkaufspreis und **keinen** Aufschlag — nicht einmal als Feldnamen.
+    """
+    c, a = welt["client"], welt["A"]
+
+    liste = c.get("/api/invoicing/quotes/mengen")
+    assert liste.status_code == 200, liste.content
+    items = liste.json()["items"]
+    assert {i["id"] for i in items} == {str(a["angebot"].id)}, (
+        "nur das versendete Angebot MEINES Objekts"
+    )
+    assert items[0]["preise_ausgeblendet"] is True
+    _kein_geld(liste, wo="Angebotsliste (Mengen)")
+
+    detail = c.get(f"/api/invoicing/quotes/{a['angebot'].id}/mengen")
+    assert detail.status_code == 200, detail.content
+    d = detail.json()
+    assert d["quote_number"] == a["angebot"].quote_number
+    assert d["work_order"]["id"] == str(a["auftrag"].id)
+    (pos,) = d["lines"]
+    assert pos["description"] == "Kupferrohr DN20"
+    assert pos["quantity"] == "12.000" and pos["unit"] == "m"
+    assert pos["line_kind"] == "NORMAL"
+    _kein_geld(detail, wo="Angebotsdetail (Mengen)")
+
+
+@pytest.mark.django_db
+def test_monteur_sieht_weder_entwurf_noch_fremdes_angebot(welt):
+    """Zwei Grenzen an einem Endpunkt: der **Status** und das **Objekt**.
+
+    Der ENTWURF an seinem eigenen Objekt A ist Bürokram (Inhalt noch änderbar, nichts
+    beauftragt) → 404. Das versendete Angebot am fremden Objekt B → 404 (nie 403: die
+    Existenz wird nicht verraten) — auch nicht über die exakte Belegnummer im
+    Direkttreffer-Pfad der Suche.
     """
     c, a, b = welt["client"], welt["A"], welt["B"]
 
-    # Beleg-API: zu, an beiden Objekten.
-    for beleg in (a, b):
-        assert c.get(f"/api/invoicing/quotes/{beleg['angebot'].id}").status_code == 403
-        assert (
-            c.get(f"/api/invoicing/invoices/{beleg['rechnung'].id}").status_code == 403
-        )
-    assert c.get("/api/invoicing/quotes").status_code == 403
-    assert c.get("/api/invoicing/invoices").status_code == 403
+    assert (
+        c.get(f"/api/invoicing/quotes/{a['angebot_entwurf'].id}/mengen").status_code
+        == 404
+    )
+    assert c.get(f"/api/invoicing/quotes/{b['angebot'].id}/mengen").status_code == 404
 
-    # Suche: keine Beleg-Kategorie, auch nicht über die exakte Nummer.
+    # Die Liste zeigt beide nicht (sie ist dieselbe Regel, nicht eine zweite).
+    ids = {i["id"] for i in c.get("/api/invoicing/quotes/mengen").json()["items"]}
+    assert str(a["angebot_entwurf"].id) not in ids
+    assert str(b["angebot"].id) not in ids
+
+    # Der Direkttreffer-Pfad der Suche zieht aus derselben Grundmenge.
+    b["angebot"].refresh_from_db()
+    r = c.get("/api/suche", {"q": b["angebot"].quote_number})
+    assert r.status_code == 200
+    assert r.json()["direkttreffer"] is None
+    assert str(b["angebot"].id) not in {t["id"] for t in r.json()["treffer"]}
+
+
+@pytest.mark.django_db
+def test_projekt_ueber_zwei_objekte_zeigt_nur_mein_angebot(welt):
+    """**Der Nebeneingang, der zu bleiben hat.** Ein Projekt gilt schon als „meins",
+    wenn EINE seiner Liegenschaften meine ist — seine Angebote am **fremden** Objekt
+    dürfen darin trotzdem nicht auftauchen.
+
+    Genau dieser Fall fehlt der Fixture (dort hat jedes Objekt sein eigenes Projekt),
+    und genau er wäre das Leck: Das Projekt-Dossier filtert die Angebote deshalb noch
+    einmal über `objektsicht.angebote_begrenzen`, nicht bloß über `project_id`.
+    """
+    c, chef, a, b = welt["client"], welt["chef"], welt["A"], welt["B"]
+
+    # EIN Projekt über BEIDE Objekte — A ist meins, B nicht.
+    gemeinsam = projekt_service.create_project(
+        chef.id, name="Quartierssanierung Alpha+Beta",
+        property_ids=[a["obj"].id, b["obj"].id],
+    )
+    # Je ein versendetes Angebot in diesem Projekt: eines an A, eines an B.
+    meins = beleg_service.create_quote(
+        chef.id, property_id=a["obj"].id, project_id=gemeinsam.id,
+        title="Steigleitung Alpha",
+        lines=[{"line_type": "MATERIAL", "description": "Steigleitung",
+                "quantity": "8", "unit": "m", "unit_price": "1234.56",
+                "tax_code": "DE_19"}],
+    )
+    meins = beleg_service.send_quote(chef.id, quote_id=meins.id)
+    fremdes = beleg_service.create_quote(
+        chef.id, property_id=b["obj"].id, project_id=gemeinsam.id,
+        title="Steigleitung Beta",
+        lines=[{"line_type": "MATERIAL", "description": "Steigleitung",
+                "quantity": "8", "unit": "m", "unit_price": "5678.90",
+                "tax_code": "DE_19"}],
+    )
+    fremdes = beleg_service.send_quote(chef.id, quote_id=fremdes.id)
+
+    r = c.get(f"/api/dossier/projekt/{gemeinsam.id}")
+    assert r.status_code == 200, r.content
+    d = r.json()
+    ids = {z["id"] for z in d["angebote_mengen"]}
+    assert ids == {str(meins.id)}, "das Angebot am FREMDEN Objekt ist durchgerutscht"
+    # Und die Liegenschaftsliste des Projekts zeigt B ebenfalls nicht.
+    assert {l["property_id"] for l in d["liegenschaften"]} == {str(a["obj"].id)}
+    _kein_geld(r, wo="Projekt-Dossier über zwei Objekte")
+
+    # Dasselbe an der Beleg-API: das fremde Angebot ist 404, meines 200.
+    assert c.get(f"/api/invoicing/quotes/{fremdes.id}/mengen").status_code == 404
+    assert c.get(f"/api/invoicing/quotes/{meins.id}/mengen").status_code == 200
+
+
+@pytest.mark.django_db
+def test_monteur_findet_sein_angebot_in_der_suche_ohne_betrag(welt):
+    """Die Suche ist der Endpunkt, den jeder aufruft — und damit das bequemste Leck."""
+    c, a = welt["client"], welt["A"]
     a["angebot"].refresh_from_db()
+
+    r = c.get("/api/suche", {"q": a["angebot"].quote_number})
+    assert r.status_code == 200
+    assert r.json()["direkttreffer"]["id"] == str(a["angebot"].id)
+    _kein_geld(r, wo="Suche (Direkttreffer Angebot)")
+
     r = c.get("/api/suche", {"q": "Heizkörper"})
     assert r.status_code == 200
-    assert {"ANGEBOT", "RECHNUNG"} & {t["typ"] for t in r.json()["treffer"]} == set()
+    typen = {t["typ"] for t in r.json()["treffer"]}
+    assert "RECHNUNG" not in typen, "Die Rechnung bleibt die eine Ausnahme."
+    _kein_geld(r, wo="Suche (Volltext)")
 
-    # Dossier: die Geld-Bausteine fehlen — und 289 taucht nirgends auf.
-    r = c.get(f"/api/dossier/liegenschaft/{a['obj'].id}")
-    assert r.json()["offene_posten"] is None
-    assert "289" not in r.content.decode(), "Ein Betrag ist durchgerutscht."
+
+@pytest.mark.django_db
+def test_monteur_sieht_das_angebot_im_dossier_preisfrei(welt):
+    """Auftrags- und Projekt-Dossier: `angebote_mengen` ja, alles mit Geld nein."""
+    c, a, b = welt["client"], welt["A"], welt["B"]
 
     r = c.get(f"/api/dossier/auftrag/{a['auftrag'].id}")
     assert r.status_code == 200, r.content
     d = r.json()
+    assert d["angebote_mengen_sichtbar"] is True
+    assert [z["id"] for z in d["angebote_mengen"]] == [str(a["angebot"].id)]
+    # Die preisführenden Bausteine bleiben zu — an DEMSELBEN Dossier.
     assert d["belege_sichtbar"] is False
     assert d["angebote"] is None and d["rechnungen"] is None
     assert d["abrechnung_sichtbar"] is False and d["abrechnung"] is None
-    assert d["offene_posten"] is None
-    assert "289" not in r.content.decode(), "Ein Betrag ist durchgerutscht."
+    assert d["offene_posten_sichtbar"] is False and d["offene_posten"] is None
+    _kein_geld(r, wo="Auftrags-Dossier")
 
-    # Und der Abrechnungs-Endpunkt am eigenen Objekt bleibt zu (invoicing/LESEN).
-    assert (
-        c.get(
-            f"/api/workflow/work_orders/{a['auftrag'].id}/offene-abrechnung"
-        ).status_code
-        == 403
+    r = c.get(f"/api/dossier/projekt/{a['projekt'].id}")
+    assert r.status_code == 200, r.content
+    d = r.json()
+    assert d["angebote_mengen_sichtbar"] is True
+    assert [z["id"] for z in d["angebote_mengen"]] == [str(a["angebot"].id)]
+    assert d["marge_sichtbar"] is False and d["marge"] is None
+    assert d["belege_sichtbar"] is False
+    _kein_geld(r, wo="Projekt-Dossier")
+
+    # Liegenschafts- und Kontakt-Dossier: unverändert ohne Geld-Baustein.
+    for pfad in (
+        f"/api/dossier/liegenschaft/{a['obj'].id}",
+        f"/api/dossier/kontakt/{a['mieter'].id}",
+    ):
+        r = c.get(pfad)
+        assert r.status_code == 200, r.content
+        assert r.json()["offene_posten"] is None
+        _kein_geld(r, wo=pfad)
+
+    # Der Soll-Ist-Abgleich liest die ANGEBOTSZEILEN (das Soll) — er ist damit der
+    # zweite Weg, auf dem ein Einzelpreis in die Objektsicht geraten könnte.
+    # Er darf Mengen führen und sonst nichts.
+    r = c.get(f"/api/workflow/work_orders/{a['auftrag'].id}/soll-ist")
+    assert r.status_code == 200, r.content
+    assert r.json()["angebote"], "das Soll stützt sich auf das Angebot"
+    _kein_geld(r, wo="Soll-Ist")
+
+    r = c.get(f"/api/workflow/work_orders/{a['auftrag'].id}")
+    assert r.status_code == 200, r.content
+    _kein_geld(r, wo="Auftragsdetail")
+
+    # Das fremde Objekt bleibt fremd — auch mit invoicing/LESEN in der Tasche.
+    assert c.get(f"/api/dossier/auftrag/{b['auftrag'].id}").status_code == 404
+
+
+@pytest.mark.django_db
+def test_monteur_sieht_NIEMALS_eine_rechnung(welt):
+    """**Die eine Ausnahme, wörtlich vom User.** Jeder Lesepfad der Rechnung, einzeln.
+
+    Seit 0102 schützt die Rechnung nicht mehr die Abwesenheit des Rechts, sondern
+    `permissions.require` (403 bei row_scope EIGENE). Diese Liste ist der Beweis,
+    dass kein Rechnungs-Endpunkt versehentlich auf `require_scoped` steht.
+    """
+    c, a, b = welt["client"], welt["A"], welt["B"]
+
+    for beleg in (a, b):
+        rid = beleg["rechnung"].id
+        for pfad in (
+            f"/api/invoicing/invoices/{rid}",
+            f"/api/invoicing/invoices/{rid}/pdf",
+            f"/api/invoicing/invoices/{rid}/zugferd.pdf",
+            f"/api/invoicing/invoices/{rid}/zugferd.xml",
+            f"/api/invoicing/invoices/{rid}/kalkulation",
+            f"/api/buchhaltung/invoices/{rid}",
+        ):
+            assert c.get(pfad).status_code == 403, f"{pfad} ist offen!"
+
+    for pfad in (
+        "/api/invoicing/invoices",
+        "/api/invoicing/invoices/anrechenbare-abschlaege"
+        f"?work_order_id={a['auftrag'].id}",
+        "/api/buchhaltung/invoices",
+        "/api/buchhaltung/dunning",
+        "/api/buchhaltung/mahnlauf/vorschau",
+        "/api/buchhaltung/datev-export.csv",
+        "/api/auswertungen/dashboards",
+        "/api/auswertungen/kunden",
+        "/api/auswertungen/projekte",
+        f"/api/workflow/work_orders/{a['auftrag'].id}/offene-abrechnung",
+    ):
+        assert c.get(pfad).status_code == 403, f"{pfad} ist offen!"
+
+    # Die exakte RECHNUNGSNUMMER im Direkttreffer-Pfad der Suche: nichts. (Die
+    # Rechnung muss dafür veröffentlicht sein — vorher hat sie keine Nummer. Das
+    # Freigabetor A-28 verlangt genau einen primären Empfänger.)
+    beleg_service.add_invoice_party(
+        welt["chef"].id, invoice_id=a["rechnung"].id, party_id=a["mieter"].id,
+        role="INVOICE_RECIPIENT", is_primary=True,
     )
+    # A-27: Der Schuldner der Rechnung muss am AUFTRAG als Rechnungsschuldner
+    # bestätigt sein (sonst stellt der Betrieb jemandem etwas in Rechnung, den
+    # niemand beauftragt hat).
+    auftrag_service.add_work_order_party(
+        welt["chef"].id, work_order_id=a["auftrag"].id, party_id=a["mieter"].id,
+        role="INVOICE_DEBTOR", is_primary=True,
+    )
+    # B-08: veröffentlicht wird nur auf einem kaufmännisch geprüften Auftrag.
+    auftrag_service.advance_status(
+        welt["chef"].id, work_order_id=a["auftrag"].id,
+        to_status="KAUFMAENNISCH_GEPRUEFT",
+    )
+    rechnung = beleg_service.publish_invoice(
+        welt["chef"].id, invoice_id=a["rechnung"].id
+    )
+    assert rechnung.invoice_number, "Voraussetzung: die DB hat eine Nummer vergeben"
+    r = c.get("/api/suche", {"q": rechnung.invoice_number})
+    assert r.status_code == 200
+    assert r.json()["direkttreffer"] is None
+    assert "RECHNUNG" not in {t["typ"] for t in r.json()["treffer"]}
+    _kein_geld(r, wo="Suche (exakte Rechnungsnummer)")
+
+    # Und das preisführende Angebot (inkl. PDF und Kalkulation) bleibt ebenfalls zu.
+    qid = a["angebot"].id
+    for pfad in (
+        "/api/invoicing/quotes",
+        f"/api/invoicing/quotes/{qid}",
+        f"/api/invoicing/quotes/{qid}/pdf",
+        f"/api/invoicing/quotes/{qid}/kalkulation",
+    ):
+        assert c.get(pfad).status_code == 403, f"{pfad} ist offen!"
+
+
+@pytest.mark.django_db
+def test_monteur_kommt_nicht_ueber_die_datei_api_an_den_beleg(welt):
+    """Der Umweg, den man vergisst: **das archivierte Beleg-PDF**.
+
+    Das Angebots-PDF trägt Preise, die ZUGFeRD-Datei sogar maschinenlesbar. Beide
+    werden beim ersten Abruf als `content.file` archiviert und hängen an `quote_id`
+    bzw. `invoice_id`. Die Datei-API (`api/dateien.py::_ziel_guard`) kennt diese
+    Zielarten für row_scope EIGENE **nicht** — sie sind fail-closed 403, und der
+    Download-Guard führt keinen Beleg-Zweig. Dieser Test hält das fest: Es ist die
+    Stelle, an der ein „kleiner Komfort-Zweig" den ganzen Slice aufhebeln würde.
+    """
+    c, a = welt["client"], welt["A"]
+
+    for query in (
+        f"quote_id={a['angebot'].id}",
+        f"invoice_id={a['rechnung'].id}",
+    ):
+        r = c.get(f"/api/content/files?{query}")
+        assert r.status_code == 403, f"{query}: {r.status_code}"
+
+
+@pytest.mark.django_db
+def test_monteur_schreibt_kein_angebot(welt):
+    """Lesen ist nicht Schreiben: kein Anlegen, kein Ändern, kein Versenden."""
+    c, a = welt["client"], welt["A"]
+
+    r = c.post(
+        "/api/invoicing/quotes",
+        data={"property_id": str(a["obj"].id), "title": "Eigenes Angebot"},
+        content_type=JSON,
+    )
+    assert r.status_code == 403, r.content
+    r = c.put(
+        f"/api/invoicing/quotes/{a['angebot_entwurf'].id}",
+        data={"title": "Umbenannt"},
+        content_type=JSON,
+    )
+    assert r.status_code == 403, r.content
+    r = c.post(
+        f"/api/invoicing/quotes/{a['angebot_entwurf'].id}/send", data={},
+        content_type=JSON,
+    )
+    assert r.status_code == 403, r.content
+    r = c.post(
+        "/api/invoicing/invoices/aus-angebot",
+        data={"quote_id": str(a["angebot"].id)},
+        content_type=JSON,
+    )
+    assert r.status_code == 403, r.content
+
+
+@pytest.mark.django_db
+def test_scope_alle_sieht_unveraendert_alles(welt):
+    """**Regression.** Die Objektsicht darf niemandem etwas wegnehmen.
+
+    Ein Konto mit row_scope ALLE (ADMINISTRATION) liest Angebot und Rechnung
+    weiterhin mit **allen** Beträgen — inklusive Einkaufspreis und Aufschlag.
+    """
+    a = welt["A"]
+    c = logged_in_client("ADMINISTRATION")
+
+    r = c.get(f"/api/invoicing/quotes/{a['angebot'].id}")
+    assert r.status_code == 200, r.content
+    (pos,) = r.json()["lines"]
+    assert pos["unit_price"] == "1234.56"
+    assert pos["unit_cost"] == "999.99"
+    # numeric(x,3) → „37.250". Der Textscan über die Mengensicht sucht „37.25" und
+    # trifft damit auch diese Schreibweise (Teilstring) — Absicht.
+    assert pos["markup_percent"] == "37.250"
+    assert r.json()["net_total"] == "14814.72"
+
+    assert c.get(f"/api/invoicing/invoices/{a['rechnung'].id}").status_code == 200
+    assert c.get("/api/invoicing/quotes").json()["total"] >= 4
+
+    # Und die Mengensicht gibt es auch für ihn — als Arbeitsansicht, ohne Beschnitt-
+    # Behauptung: `preise_ausgeblendet` ist false, und sie zeigt ALLE Angebote.
+    r = c.get("/api/invoicing/quotes/mengen")
+    assert r.status_code == 200, r.content
+    daten = r.json()
+    assert daten["total"] >= 4, "Scope ALLE sieht auch die Entwürfe."
+    assert all(i["preise_ausgeblendet"] is False for i in daten["items"])
+
+    # Dossier: alle Geld-Bausteine da, die Mengenliste bleibt weg (kein EIGENE).
+    d = c.get(f"/api/dossier/auftrag/{a['auftrag'].id}").json()
+    assert d["belege_sichtbar"] is True and d["angebote"] is not None
+    assert d["angebote_mengen_sichtbar"] is False and d["angebote_mengen"] is None
 
 
 # ===========================================================================

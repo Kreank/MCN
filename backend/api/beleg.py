@@ -1,7 +1,33 @@
-"""Beleg-API — Angebote (invoicing.quote) inkl. Positionen.
+"""Beleg-API — Angebote (invoicing.quote) und Rechnungen (invoicing.invoice).
 
-Lesen in der Dev-Phase ohne Auth; Anlegen verlangt Django-Session + app_user.
-Deckt Anlage bis ENTWURF sowie Liste/Detail ab (Versand-Workflow folgt separat).
+## Die Rechte-Landkarte dieses Routers (seit Migration 0102 tragend)
+
+Bis 0102 hatte die Rolle MONTEUR auf `invoicing` **kein** Recht; jeder Endpunkt
+hier antwortete ihr mit 403, ohne dass eine Zeile Code das tun musste. Seit 0102
+trägt sie `invoicing/LESEN` mit **row_scope EIGENE** — „er darf das Angebot seines
+Objekts sehen, aber ohne Preise". Damit hängt die Sperre nicht mehr an der
+Abwesenheit des Rechts, sondern an **diesen Torfunktionen**:
+
+| Endpunkt | Tor | EIGENE bekommt |
+|---|---|---|
+| alles zur **RECHNUNG** (Liste, Detail, PDF, ZUGFeRD, Anrechnung) | `require` | **403** — fail-closed, ohne eine einzige Filterzeile |
+| **Angebot** mit Preisen (Liste, Detail, PDF, Kalkulation) | `require` | **403** |
+| **Angebot ohne Preise** (`/quotes/mengen`, `/quotes/{id}/mengen`) | `require_scoped` | die versendeten/angenommenen Angebote **seiner** Objekte, **preisfrei** |
+| jeder Schreibpfad (anlegen, ändern, versenden, stornieren, fakturieren) | `require` | **403** |
+
+`require` wirft bei Scope EIGENE **immer** 403 (`api/permissions.py`) — deshalb ist
+jeder Endpunkt dieser Datei, der nicht ausdrücklich `require_scoped` benutzt,
+automatisch dicht. **Wer hier einen Lesepfad auf `require_scoped` umstellt, öffnet
+ihn für den Monteur** und muss dann selbst zeilen- UND feldbegrenzen.
+
+## Die Falle: Geldfelder stehen nicht nur da, wo man sie vermutet
+
+`QuoteLineOut` führt neben `unit_price`/`net_amount` auch **`unit_cost` (den
+Einkaufspreis)** und **`markup_percent` (den Aufschlag)** — den internen
+Kalkulations-Snapshot, der nicht einmal auf dem Kundenbeleg steht. Wer eine
+preisfreie Sicht als „QuoteLineOut minus unit_price" baut, gibt dem Monteur die
+**Marge**. Deshalb ist die Mengensicht **additiv**: `QuoteLineMengenOut` führt nur
+die ausdrücklich erlaubten Felder. Was nicht drinsteht, kann nicht durchrutschen.
 """
 from datetime import date, datetime
 from decimal import Decimal
@@ -14,7 +40,7 @@ from ninja.errors import HttpError
 from ninja.responses import Status
 from ninja.security import django_auth
 
-from api.permissions import require
+from api.permissions import require, require_scoped
 from db_core.mail_crypto import MailKeyError
 from db_core.models import BillingLink, Invoice, Quote
 from db_core.services import abrechnung as abrechnung_service
@@ -22,6 +48,7 @@ from db_core.services import beleg as beleg_service
 from db_core.services import beleg_pdf as beleg_pdf_service
 from db_core.services import beleg_versand as beleg_versand_service
 from db_core.services import erechnung as erechnung_service
+from db_core.services import objektsicht
 from db_core.services.mail import MailSendError
 
 router = Router()
@@ -130,6 +157,71 @@ class QuoteDetailOut(QuoteOut):
     recipient_email: str | None = None
     rubriken: list[RubrikOut] = []
     lines: list[QuoteLineOut]
+
+
+# --- Die Mengensicht: das Angebot OHNE Geld (Migration 0102) ---------------
+#
+# **Additiv gebaut, nicht subtraktiv.** Diese Schemata erben NICHT von QuoteOut /
+# QuoteLineOut und listen kein Geldfeld auf — sie führen ausschließlich, was der
+# Monteur sehen darf. Eine Vererbung „QuoteLineOut ohne unit_price" wäre eine
+# Feldliste, die man beim nächsten neuen Betragsfeld (und es kamen bisher fünf
+# dazu: discount_percent, labour_net_amount, unit_cost, markup_percent,
+# tax_rate_percent) stillschweigend vergisst.
+
+class QuoteLineMengenOut(Schema):
+    """Eine Angebotsposition, wie der Monteur sie braucht: **was und wie viel**.
+
+    Kein `unit_price`, kein `net_amount`, kein `discount_percent`, kein
+    `tax_rate_percent`, kein `labour_net_amount` — und vor allem **kein `unit_cost`
+    und kein `markup_percent`** (Einkaufspreis und Aufschlag; sie stehen nicht
+    einmal auf dem Kundenbeleg).
+
+    `line_kind` bleibt drin und ist wichtig: Eine ALTERNATIV- oder BEDARFS-Position
+    ist **nicht beauftragt**. Sie wegzulassen wäre gefährlicher, als sie zu zeigen —
+    der Monteur baute sie sonst als Teil des Auftrags ein.
+    """
+    position_number: int
+    line_type: str
+    line_kind: str = "NORMAL"
+    rubrik: int | None = None
+    description: str
+    quantity: Decimal | None = None
+    unit: str | None = None
+    # Artikel-/Leistungsbezug: die Brücke in den Artikelstamm („welches Rohr genau?").
+    # Der Artikelstamm selbst bleibt hinter `pricing/LESEN` — die ID verrät keinen Preis.
+    source_article_id: UUID | None = None
+    source_assembly_id: UUID | None = None
+
+
+class QuoteMengenOut(Schema):
+    """Angebotskopf ohne Summen (`net_total`/`tax_total`/`gross_total` fehlen)."""
+    id: UUID
+    quote_number: str | None = None
+    title: str
+    status: str
+    quote_date: date | None = None
+    valid_until_date: date | None = None
+    property: PropertyRefOut
+    work_order_id: UUID | None = None
+    # Sagt dem UI ins Gesicht, was fehlt — statt Spalten stillschweigend wegzulassen.
+    # Für Scope ALLE false: dort ist die Mengensicht eine Arbeitsansicht (Kommission,
+    # Materialliste), keine Beschneidung.
+    preise_ausgeblendet: bool = False
+
+
+class QuoteMengenListOut(Schema):
+    items: list[QuoteMengenOut]
+    total: int
+    page: int
+    page_size: int
+
+
+class QuoteMengenDetailOut(QuoteMengenOut):
+    project: ProjectRefOut | None = None
+    work_order: WorkOrderRefOut | None = None
+    sent_at: datetime | None = None
+    rubriken: list[RubrikOut] = []
+    lines: list[QuoteLineMengenOut]
 
 
 class QuoteLineIn(Schema):
@@ -356,6 +448,141 @@ def _quote_detail(quote_id):
     )
 
 
+# --- Die Mengensicht: Endpunkte (Migration 0102) ---------------------------
+#
+# Die EINZIGEN beiden Lesepfade dieses Routers mit `require_scoped`. Sie sind der
+# Grund, aus dem alle anderen bei `require` bleiben dürfen.
+#
+# ⚠️ REIHENFOLGE: `/quotes/mengen` MUSS vor der ERSTEN Operation auf
+# `/quotes/{quote_id}` stehen (das ist `PUT`, weiter unten). django-ninja registriert
+# eine URL an der Stelle ihrer **ersten** Operation und bindet den Pfadparameter als
+# **String** — steht `/quotes/{quote_id}` zuerst, schluckt es „mengen" und pydantic
+# antwortet mit 422 (nicht 404, nicht 403). Genau das ist hier einmal passiert;
+# `api/tests/test_endpoint_schutz.py` hat es gefangen.
+
+def _mengen_kopf(quote, *, preise_ausgeblendet):
+    return {
+        "id": quote.id,
+        "quote_number": quote.quote_number,
+        "title": quote.title,
+        "status": quote.status,
+        "quote_date": quote.quote_date,
+        "valid_until_date": quote.valid_until_date,
+        "property": _property_ref(quote),
+        "work_order_id": quote.work_order_id,
+        "preise_ausgeblendet": preise_ausgeblendet,
+    }
+
+
+@router.get("/quotes/mengen", response=QuoteMengenListOut)
+def list_quotes_mengen(
+    request,
+    filters: QuoteFilter = Query(...),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=100),
+):
+    """Angebote **ohne Preise** — die Liste, die der Monteur sehen darf.
+
+    Scope EIGENE: nur Angebote an **meinen** Objekten und nur im Status
+    VERSENDET/ANGENOMMEN (`objektsicht.angebote_begrenzen` — die eine Heimat der
+    Regel; die Begründung für den Statusfilter steht dort). Scope ALLE: dieselbe
+    Liste über alle Angebote — die Mengensicht ist dort eine Arbeitsansicht
+    (Kommissionierung), keine Beschneidung, und `preise_ausgeblendet` ist false.
+    """
+    actor, scope = require_scoped(request, "invoicing", "LESEN")
+    qs = objektsicht.angebote_begrenzen(
+        Quote.objects.select_related("property__address"), scope, actor
+    )
+
+    if filters.q:
+        needle = filters.q.strip()
+        qs = qs.filter(Q(title__icontains=needle) | Q(quote_number__icontains=needle))
+    if filters.status:
+        qs = qs.filter(status=filters.status)
+    if filters.property_id:
+        qs = qs.filter(property_id=filters.property_id)
+    if filters.project_id:
+        qs = qs.filter(project_id=filters.project_id)
+
+    qs = qs.order_by("-created_at", "id")
+    total = qs.count()
+    start = (page - 1) * page_size
+    items = [
+        QuoteMengenOut(**_mengen_kopf(q, preise_ausgeblendet=scope == "EIGENE"))
+        for q in qs[start:start + page_size]
+    ]
+    return QuoteMengenListOut(
+        items=items, total=total, page=page, page_size=page_size
+    )
+
+
+@router.get("/quotes/{quote_id}/mengen", response=QuoteMengenDetailOut)
+def get_quote_mengen(request, quote_id: UUID):
+    """Ein Angebot **ohne Preise**: Positionen mit Menge und Einheit.
+
+    Fachlich der Kern dieses Slices: Der Monteur muss wissen, **was beauftragt ist**
+    (12 m Kupferrohr DN20, sechs Thermostatventile) — sonst baut er das Falsche ein
+    oder übersieht eine Position. Was es kostet, geht ihn nichts an.
+
+    Scope EIGENE: fremdes Objekt oder ein Angebot im Entwurf → **404** (keine
+    Existenzaussage, Hausregel). Ein **PDF** gibt es dafür bewusst nicht: Das
+    Angebots-PDF trägt Preise, und `GET /quotes/{id}/pdf` bleibt deshalb bei
+    `require` (403).
+    """
+    actor, scope = require_scoped(request, "invoicing", "LESEN")
+    if scope == "EIGENE" and not objektsicht.ist_eigenes_angebot(actor, quote_id):
+        raise HttpError(404, "Angebot nicht gefunden.")
+
+    quote = (
+        Quote.objects.filter(id=quote_id)
+        .select_related("property__address", "project", "work_order")
+        .prefetch_related("lines", "rubriken")
+        .first()
+    )
+    if quote is None:
+        raise HttpError(404, "Angebot nicht gefunden.")
+
+    nummern = _rubrik_nummern(quote)
+    lines = [
+        QuoteLineMengenOut(
+            position_number=l.position_number,
+            line_type=l.line_type,
+            line_kind=l.line_kind,
+            rubrik=nummern.get(l.rubrik_id),
+            description=l.description,
+            quantity=l.quantity,
+            unit=l.unit,
+            source_article_id=l.source_article_id,
+            source_assembly_id=l.source_assembly_id,
+        )
+        for l in sorted(quote.lines.all(), key=lambda l: l.position_number)
+    ]
+    return QuoteMengenDetailOut(
+        **_mengen_kopf(quote, preise_ausgeblendet=scope == "EIGENE"),
+        project=(
+            ProjectRefOut(
+                id=quote.project.id,
+                project_number=quote.project.project_number,
+                name=quote.project.name,
+            )
+            if quote.project_id
+            else None
+        ),
+        work_order=(
+            WorkOrderRefOut(
+                id=quote.work_order.id,
+                order_number=quote.work_order.order_number,
+                title=quote.work_order.title,
+            )
+            if quote.work_order_id
+            else None
+        ),
+        sent_at=quote.sent_at,
+        rubriken=_rubriken_out(quote),
+        lines=lines,
+    )
+
+
 # --- Schreibender Endpoint (Session-Auth Pflicht) --------------------------
 
 @router.post("/quotes", response={201: QuoteDetailOut}, auth=django_auth)
@@ -456,6 +683,43 @@ def send_quote(request, quote_id: UUID):
     return _quote_detail(quote_id)
 
 
+class QuoteStatusIn(Schema):
+    """Der Ausgang eines versendeten Angebots.
+
+    Nur die Kanten, die der DB-Statusautomat kennt (Migration 0016) UND die ohne
+    Zusatzobjekt auskommen: ANGENOMMEN | ABGELEHNT | ABGELAUFEN. **ERSETZT steht
+    hier bewusst nicht** — es verlangt ein Nachfolgeangebot (DB-CHECK, 0018) und ist
+    damit der Vorgang „Ersatzangebot anlegen", kein Statuswechsel.
+    """
+    to_status: str
+    reason: str | None = None
+
+
+@router.post("/quotes/{quote_id}/status", response=QuoteDetailOut, auth=django_auth)
+def set_quote_status(request, quote_id: UUID, payload: QuoteStatusIn):
+    """Angebot annehmen / ablehnen / als abgelaufen festhalten.
+
+    Der Statusautomat erlaubt VERSENDET → ANGENOMMEN seit Migration 0016 — **gesetzt
+    hat den Status nie ein Produktpfad**. Ein Angebot blieb für immer „versendet",
+    auch wenn der Kunde längst zugesagt hatte.
+
+    **B-30 bleibt unangetastet**: Snapshot und Inhalts-Hash des versendeten Angebots
+    ändern sich nicht; geschrieben wird ausschließlich die Statusspalte.
+
+    Recht `invoicing/AENDERN`: Der Ausgang eines Angebots ist eine kaufmännische
+    Feststellung, kein Versand und kein Storno.
+    """
+    actor, _ = require(request, "invoicing", "AENDERN")
+    try:
+        beleg_service.set_quote_status(
+            actor, quote_id=quote_id, to_status=payload.to_status,
+            reason=payload.reason,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _quote_detail(quote_id)
+
+
 @router.get("/quotes/{quote_id}/pdf")
 def quote_pdf(request, quote_id: UUID):
     """PDF-Ausfertigung eines versendeten Angebots.
@@ -524,7 +788,12 @@ def send_quote_email(request, quote_id: UUID, payload: QuoteEmailIn):
 
 @router.get("/quotes/{quote_id}", response=QuoteDetailOut)
 def get_quote(request, quote_id: UUID):
-    """Detail eines Angebots inkl. Positionen."""
+    """Detail eines Angebots inkl. Positionen **und Preisen**.
+
+    `require` (nicht `require_scoped`): Scope EIGENE → 403. Der Monteur liest sein
+    Angebot über `/quotes/{id}/mengen` — hier steht die Kalkulation (`unit_cost`,
+    `markup_percent`), und die geht ihn nichts an.
+    """
     require(request, "invoicing", "LESEN")
     return _quote_detail(quote_id)
 
@@ -976,6 +1245,23 @@ class PreisKlaerungFehlerOut(Schema):
     preis_unbekannt: list[PreisKlaerungOut]
 
 
+class EinheitKonfliktOut(Schema):
+    """Ein Posten, dessen Mengen in verschiedenen Einheiten vorliegen.
+
+    Fail-closed: Derselbe Artikel/dieselbe Leistung ist schon unter einer anderen
+    Einheit in Rechnung (z. B. Nachtrag „Stk", Angebot „Stück"). Nicht summierbar,
+    nicht durchlassbar — ein Mensch vereinheitlicht oder entscheidet.
+    """
+    identitaet: str
+    bezeichnung: str
+    einheiten: list[str]
+
+
+class EinheitUneindeutigFehlerOut(Schema):
+    detail: str
+    einheit_uneindeutig: list[EinheitKonfliktOut]
+
+
 class RechnungAusAngebotIn(Schema):
     quote_id: UUID
     invoice_date: date | None = None
@@ -1005,7 +1291,11 @@ class RechnungAusAuftragIn(Schema):
     show_labour_costs: bool = True
 
 
-@router.post("/invoices/aus-angebot", response={201: InvoiceDetailOut}, auth=django_auth)
+@router.post(
+    "/invoices/aus-angebot",
+    response={201: InvoiceDetailOut, 422: EinheitUneindeutigFehlerOut},
+    auth=django_auth,
+)
 def rechnung_aus_angebot(request, payload: RechnungAusAngebotIn):
     """Rechnung (ENTWURF) aus einem Angebot — die **Angebotskopie**.
 
@@ -1013,6 +1303,10 @@ def rechnung_aus_angebot(request, payload: RechnungAusAngebotIn):
     akzeptiert, nicht den heutigen Listenpreis); ALTERNATIV/BEDARF bleiben außen
     vor. Jede übernommene Betragsposition bekommt eine **Abrechnungsbindung** —
     ein zweiter Lauf über dasselbe Angebot scheitert (422).
+
+    Ist derselbe Posten bereits über einen **Nachtrag** unter einer anderen Einheit
+    fakturiert (z. B. „Stk"/„Stück"), antwortet der Endpunkt fail-closed mit **422
+    und `einheit_uneindeutig`** — die Angebotskopie käme sonst doppelt obendrauf.
     """
     actor, _ = require(request, "invoicing", "ANLEGEN")
     try:
@@ -1025,6 +1319,14 @@ def rechnung_aus_angebot(request, payload: RechnungAusAngebotIn):
             discount_percent=payload.discount_percent,
             discount_days=payload.discount_days,
             show_labour_costs=payload.show_labour_costs,
+        )
+    except abrechnung_service.EinheitUneindeutig as exc:
+        return Status(
+            422,
+            EinheitUneindeutigFehlerOut(
+                detail=str(exc),
+                einheit_uneindeutig=[EinheitKonfliktOut(**k) for k in exc.konflikte],
+            ),
         )
     except ValueError as exc:
         raise HttpError(422, str(exc))
@@ -1074,6 +1376,107 @@ def rechnung_aus_auftrag(request, payload: RechnungAusAuftragIn):
             PreisKlaerungFehlerOut(
                 detail=str(exc),
                 preis_unbekannt=[PreisKlaerungOut(**p) for p in exc.positionen],
+            ),
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return Status(201, _invoice_detail(invoice.id))
+
+
+class NachtragKlaerungOut(Schema):
+    """Preisklärung des Nachtrags — **derselbe Weg**, andere Klärungseinheit.
+
+    Geklärt wird je **Abweichung** (Schlüssel des Soll-Ist, z. B.
+    `ARTIKEL:<uuid>:stk`), nicht je Berichtszeile: Der Mehrverbrauch entsteht aus
+    der Summe über alle Berichte des Auftrags. Deshalb ist `quelle_id` hier ein
+    **String** und keine UUID — die Freitextposition (ZUSATZ ohne Artikelbezug) hat
+    gar keine ID im Stamm, und gerade sie braucht die Klärung am dringendsten.
+    """
+    quelle_art: str               # ABWEICHUNG
+    quelle_id: str
+    bezeichnung: str
+    menge: Decimal | None = None
+    einheit: str | None = None
+    grund: str
+    grund_text: str
+    vorschlaege: list[PreisVorschlagOut] = []
+
+
+class NachtragKlaerungFehlerOut(Schema):
+    detail: str
+    # Genau eine der beiden Listen trägt Einträge: fehlende Preise ODER
+    # uneindeutige Einheiten (fail-closed). Das UI unterscheidet daran, ob es die
+    # Preisklärung öffnet oder auf die Einheiten-Vereinheitlichung hinweist.
+    preis_unbekannt: list[NachtragKlaerungOut] = []
+    einheit_uneindeutig: list[EinheitKonfliktOut] = []
+
+
+class RechnungAusNachtragIn(Schema):
+    work_order_id: UUID
+    # Pflicht und bewusst ohne Default — wie beim Regieweg: Welcher Steuersatz
+    # gilt, ist eine steuerliche Entscheidung des Belegs, kein Ratespiel.
+    tax_code: str
+    # {schluessel → Einzelpreis} — nur, wo der Server keinen Preis hat.
+    preise: dict[str, Decimal] = {}
+    invoice_date: date | None = None
+    due_date: date | None = None
+    payment_term_days: int | None = None
+    discount_percent: Decimal | None = None
+    discount_days: int | None = None
+    show_labour_costs: bool = True
+
+
+@router.post(
+    "/invoices/aus-nachtrag",
+    response={201: InvoiceDetailOut, 422: NachtragKlaerungFehlerOut},
+    auth=django_auth,
+)
+def rechnung_aus_nachtrag(request, payload: RechnungAusNachtragIn):
+    """Rechnung (ENTWURF) über die **Abweichungen** eines PAUSCHAL-Auftrags.
+
+    Die Lücke, die dieser Endpunkt schließt: Der Soll-Ist wies den Mehrverbrauch
+    sauber aus — abrechnen ließ er sich nur von Hand. Jetzt entsteht daraus ein
+    Beleg: MEHRVERBRAUCH mit der **Differenzmenge**, ZUSATZ mit der vollen Menge,
+    beides nur aus **unterzeichneten** Berichten und nur, soweit noch nicht
+    fakturiert. Jede Position bindet ihre Berichtszeilen — die Doppelabrechnung ist
+    physisch gesperrt, der Storno gibt sie wieder frei.
+
+    Fehlt ein Preis: **422 mit Klärungsliste** (`preis_unbekannt`) — niemals eine
+    Position über 0,00 €. Recht wie bei den anderen Abrechnungswegen
+    (`invoicing/ANLEGEN`): Der Monteur schreibt Berichte, er stellt keine Rechnungen.
+    """
+    actor, _ = require(request, "invoicing", "ANLEGEN")
+    try:
+        invoice = abrechnung_service.rechnung_aus_nachtrag(
+            actor,
+            work_order_id=payload.work_order_id,
+            tax_code=payload.tax_code,
+            preise={str(k): v for k, v in (payload.preise or {}).items()},
+            invoice_date=payload.invoice_date,
+            due_date=payload.due_date,
+            payment_term_days=payload.payment_term_days,
+            discount_percent=payload.discount_percent,
+            discount_days=payload.discount_days,
+            show_labour_costs=payload.show_labour_costs,
+        )
+    except abrechnung_service.EinheitUneindeutig as exc:
+        # Muss VOR PreisUnbekannt/ValueError stehen (Unterklasse). Fail-closed:
+        # kein Beleg, sondern die strukturierte Einheiten-Klärung.
+        return Status(
+            422,
+            NachtragKlaerungFehlerOut(
+                detail=str(exc),
+                einheit_uneindeutig=[
+                    EinheitKonfliktOut(**k) for k in exc.konflikte
+                ],
+            ),
+        )
+    except abrechnung_service.PreisUnbekannt as exc:
+        return Status(
+            422,
+            NachtragKlaerungFehlerOut(
+                detail=str(exc),
+                preis_unbekannt=[NachtragKlaerungOut(**p) for p in exc.positionen],
             ),
         )
     except ValueError as exc:

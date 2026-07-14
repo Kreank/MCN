@@ -49,16 +49,21 @@ Rollenzuordnung (`security.user_role.valid_until`) und sein Login.
   Termin (Begehung, Beratung) für jeden „öffentlich", der einmal am Objekt war.
   Über das Objekt (Dossier, Objekthistorie) sieht er die Einsätze der Kollegen
   **lesend**; disponieren und bearbeiten kann er weiterhin nur die eigenen.
-* **Belege**: Angebote und Rechnungen bleiben in diesem Slice für `EIGENE`
-  vollständig unsichtbar. Der Monteur hat auf `invoicing`/`pricing` kein einziges
-  Recht (Migration 0026, unverändert) — es gibt also gar nichts zu filtern.
-  „Angebot ohne Preise, nur Mengen" ist ein **eigener, späterer** Slice; eine halbe
-  Preisunterdrückung wäre schlimmer als keine.
+* **Die RECHNUNG.** Sie ist die **eine** Ausnahme von „er darf alles sehen" und hat
+  hier bewusst **keine** Funktion: Es gibt kein `eigene_rechnungen`. Seit Migration
+  0102 trägt MONTEUR `invoicing/LESEN` (EIGENE) — die Rechnung bleibt trotzdem
+  gesperrt, und zwar dort, wo sie gelesen wird: Jeder Rechnungs-Endpunkt benutzt
+  `api/permissions.require`, das bei Scope EIGENE **403** wirft (fail-closed). Wer
+  hier eine Rechnungs-Begrenzung einbaut, hebt genau diese Sperre auf.
+* **Der PREIS.** Was der Monteur am Angebot sieht, begrenzt nicht diese Datei,
+  sondern das **Schema**: `api/beleg.py::QuoteMengenDetailOut` führt kein Geldfeld.
+  Die Zeilenbegrenzung steht hier (`eigene_angebote`), die Feldbegrenzung dort —
+  beide zusammen, keine ersetzt die andere.
 """
 from django.db.models import Q
 from django.db.models.functions import Coalesce
 
-from db_core.models import Party, Project, Property, ServiceJob
+from db_core.models import Party, Project, Property, Quote, ServiceJob
 
 
 def eigene_property_ids(actor_id):
@@ -157,7 +162,7 @@ def due_item_q(actor_id):
 def eigene_party_q(actor_id):
     """`Q` auf `identity.party`: „dieser Kontakt hängt an einem meiner Objekte".
 
-    Vier Wege — mehr kennt das Schema nicht, und mehr darf der Monteur nicht sehen:
+    Acht Wege — mehr kennt das Schema nicht, und mehr darf der Monteur nicht sehen:
 
     | Weg | Tabelle |
     |---|---|
@@ -165,10 +170,29 @@ def eigene_party_q(actor_id):
     | Beteiligter eines Auftrags an meinem Objekt | `workflow.work_order_party` |
     | Melder eines Vorgangs an meinem Objekt | `workflow.service_case.reported_by_party` |
     | Ansprechpartner vor Ort an einem Einsatz meines Objekts | `workflow.service_job.on_site_contact_party` |
+    | **Mieter/Nutzer einer Einheit meines Objekts** | `tenure.occupancy_party` |
+    | **Verwalter meines Objekts** | `management.management_mandate.management_party` |
+    | **Auftraggeber des Mandats** (die WEG) | `management.management_mandate.principal_party` |
+    | **Standardkontakt und Zuständige des Mandats** | `…mandate.default_contact_party`, `management.management_responsibility` |
 
-    Alles andere (Lieferanten, Rechnungsschuldner fremder Belege, der Kontaktbestand
-    des Betriebs) bleibt unsichtbar. Der Monteur braucht die Nummer des Mieters, den
-    er anruft — nicht das Adressbuch der Firma.
+    Die vier neuen Wege kamen mit dem Belegungs-/Verwaltungs-Slice (0103) dazu, und
+    sie sind **der Grund für ihn**: Der Monteur fährt zur Badenschen Straße und muss
+    in die Wohnung EG rechts. Ohne Namen und Telefonnummer des Mieters kommt er
+    nicht hinein; ohne den Verwalter weiß er nicht, wen er anruft, wenn niemand
+    aufmacht. Genau das stand vorher hinter 403 — obwohl der Docstring dieser Datei
+    es schon versprach.
+
+    **Die Grenze bleibt das Objekt.** Der Mieter einer fremden Liegenschaft ist für
+    ihn nicht vorhanden — auch nicht über die Suche, auch nicht über eine geratene
+    ID (`api/objektgrenze.guard_party` → 404). Alles andere (Lieferanten,
+    Rechnungsschuldner fremder Belege, der Kontaktbestand des Betriebs) bleibt
+    unsichtbar. Der Monteur braucht die Nummer des Mieters, den er anruft — nicht
+    das Adressbuch der Firma.
+
+    **Die Belegung hängt über die Einheit am Objekt**, nicht direkt: `occupancy` →
+    `unit` → `property`. Ein `occupancy.property_id` gibt es nicht (und soll es
+    nicht geben — es wäre eine zweite, verwaisungsfähige Wahrheit über dieselbe
+    Zugehörigkeit, die der zusammengesetzte FK der Einheit bereits garantiert).
     """
     objekte = eigene_property_ids(actor_id)
     return (
@@ -177,6 +201,13 @@ def eigene_party_q(actor_id):
         | Q(reported_cases__property_id__in=objekte)
         | Q(on_site_service_jobs__property_id__in=objekte)
         | Q(on_site_service_jobs__work_order__property_id__in=objekte)
+        # Belegung (0103): der Mieter der Einheit — über die Einheit ans Objekt.
+        | Q(occupancy_roles__occupancy__unit__property_id__in=objekte)
+        # Verwaltung (0103): Verwalter, Auftraggeber, Standardkontakt, Zuständige.
+        | Q(mandates_as_manager__property_id__in=objekte)
+        | Q(mandates_as_principal__property_id__in=objekte)
+        | Q(mandates_as_contact__property_id__in=objekte)
+        | Q(mandate_responsibilities__mandate__property_id__in=objekte)
     )
 
 
@@ -191,3 +222,73 @@ def ist_eigene_party(actor_id, party_id):
     if actor_id is None or party_id is None:
         return False
     return eigene_parties(actor_id).filter(id=party_id).exists()
+
+
+# ---------------------------------------------------------------------------
+# Angebote (Migration 0102) — die Zeilenbegrenzung. NICHT die Feldbegrenzung.
+# ---------------------------------------------------------------------------
+
+# Welche Angebote der Objektsicht überhaupt gezeigt werden.
+#
+# **Nur VERSENDET und ANGENOMMEN** — die beiden Status, in denen das Angebot eine
+# Aussage nach außen ist:
+#
+#   * ENTWURF / INTERN_GEPRUEFT / FREIGEGEBEN sind **Bürokram**: Der Beleginhalt ist
+#     dort noch änderbar (`beleg.QUOTE_EDITIERBAR`; erst der Versand friert ihn ein).
+#     Ein Monteur, der eine Kalkulation von heute Vormittag als „das ist beauftragt"
+#     liest, baut das Falsche ein — und die Position, die die Chefin nachmittags
+#     streicht, hat er dann schon montiert.
+#   * ABGELEHNT / ABGELAUFEN / ERSETZT sind ausdrücklich **nicht (mehr) das Soll**.
+#     Sie anzuzeigen wäre die gefährlichste Variante: eine verbindlich aussehende
+#     Mengenliste, die niemand bestellt hat. Das ERSETZT-Angebot hat einen
+#     Nachfolger — und der ist, sobald er versendet ist, sichtbar.
+#
+# Der Bericht bezieht sein Soll über `work_order` aus genau denselben Belegen; die
+# Grenze läuft also nicht gegen den Soll-Ist-Abgleich, sie deckt sich mit ihm.
+ANGEBOT_STATUS_EIGENE = ("VERSENDET", "ANGENOMMEN")
+
+
+def eigene_angebote(actor_id):
+    """Die Angebote, die die Objektsicht sehen darf (Queryset).
+
+    Zwei Bedingungen, beide notwendig: die Liegenschaft ist meine **und** der Beleg
+    ist versendet/angenommen (`ANGEBOT_STATUS_EIGENE`). Ohne Akteur: leere Menge.
+
+    **Das ist die Zeilengrenze, nicht die Feldgrenze.** Welche Felder ein Angebot
+    preisgibt, entscheidet das preisfreie Schema in `api/beleg.py` — ein Aufrufer,
+    der von hier zieht und `QuoteDetailOut` serialisiert, liefert dem Monteur die
+    Marge.
+    """
+    if actor_id is None:
+        return Quote.objects.none()
+    return Quote.objects.filter(
+        property_id__in=eigene_property_ids(actor_id),
+        status__in=ANGEBOT_STATUS_EIGENE,
+    )
+
+
+def angebote_begrenzen(qs, scope, actor_id):
+    """Bei Scope 'ALLE' unverändert; sonst auf sichtbare Angebote meiner Objekte.
+
+    **Fail-closed als Default** (anders formuliert als `begrenzen` weiter oben, und
+    das mit Absicht): Nur der ausdrücklich benannte Scope 'ALLE' gibt die volle Menge
+    heraus; jeder andere Wert — auch ein künftiger dritter, den jemand in die Matrix
+    schreibt — landet in der Objektgrenze statt in „alles herausgeben". An dieser
+    Funktion hängt der Preis; ein Default, der im Zweifel öffnet, wäre hier die
+    teuerste Bequemlichkeit des Hauses.
+    """
+    if scope == "ALLE":
+        return qs
+    if actor_id is None:
+        return qs.none()
+    return qs.filter(
+        property_id__in=eigene_property_ids(actor_id),
+        status__in=ANGEBOT_STATUS_EIGENE,
+    )
+
+
+def ist_eigenes_angebot(actor_id, quote_id):
+    """Darf DIESES Angebot gelesen werden? (Detailgrenze — fremd/Entwurf → 404)"""
+    if actor_id is None or quote_id is None:
+        return False
+    return eigene_angebote(actor_id).filter(id=quote_id).exists()

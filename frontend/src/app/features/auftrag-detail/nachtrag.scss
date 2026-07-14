@@ -1,0 +1,150 @@
+:host {
+  display: block;
+  margin-top: var(--space-6, 2rem);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--line);
+}
+
+.nt__h {
+  margin: 0 0 var(--space-3);
+  font-size: var(--step--1);
+  font-family: var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.nt__hinweis,
+.nt__leer,
+.nt__fuss {
+  margin: 0 0 var(--space-4);
+  color: var(--ink-muted);
+  font-size: var(--step--1);
+  line-height: 1.55;
+}
+
+.nt__leer {
+  color: var(--ink);
+}
+
+.nt__wrap {
+  overflow-x: auto;
+  margin-bottom: var(--space-4);
+}
+
+.nt__tab {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--step--1);
+
+  th,
+  td {
+    padding: var(--space-2) var(--space-3);
+    text-align: left;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+
+  th[scope='col'] {
+    font-family: var(--font-mono);
+    font-size: var(--step--2);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+    white-space: nowrap;
+  }
+
+  .num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Der abzurechnende Betrag ist die Aussage der Tabelle — er trägt Gewicht. */
+.nt__menge,
+.nt__summe {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.nt__fein {
+  display: block;
+  font-size: var(--step--2);
+  font-weight: 400;
+  color: var(--ink-muted);
+}
+
+/* Eine Zeile ohne Preis ist eine offene Aufgabe — sie wird markiert, aber der
+   Grund steht als TEXT darunter (nie nur Farbe, WCAG 1.4.1). */
+.nt__zeile--offen > td {
+  background: var(--flaeche-warn, transparent);
+}
+
+.nt__grundzeile > .nt__grund {
+  padding-top: 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-muted);
+  font-size: var(--step--2);
+  line-height: 1.5;
+}
+
+.nt__erledigt {
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  list-style: none;
+
+  li {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) 0;
+    border-bottom: 1px solid var(--line);
+    font-size: var(--step--1);
+  }
+}
+
+.nt__erledigt-name {
+  font-weight: 600;
+}
+
+.nt__konflikte {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-4);
+
+  li {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    align-items: baseline;
+    padding: var(--space-1) 0;
+    font-size: var(--step--1);
+  }
+}
+
+.nt__konflikt-name {
+  font-weight: 600;
+}
+
+.nt__konflikt-einheiten {
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: var(--step--2);
+}
+
+.nt__erledigt-menge {
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.nt__lauf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-4);
+  margin-bottom: var(--space-3);
+
+  app-feld {
+    min-width: 16rem;
+  }
+}

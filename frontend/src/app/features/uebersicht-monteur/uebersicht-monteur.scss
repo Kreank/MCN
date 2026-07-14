@@ -1,0 +1,419 @@
+.tag {
+  max-width: var(--content-w);
+  margin: 0 auto;
+}
+
+// ============================== Seitenkopf ==================================
+.page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-6);
+}
+.page-head__kicker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+}
+.page-head__scale {
+  width: 2.5rem;
+  height: 0.5rem;
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--line-strong) 0,
+    var(--line-strong) 1px,
+    transparent 1px,
+    transparent 0.5rem
+  );
+  border-bottom: 1.5px solid var(--line-strong);
+}
+.page-head__titel {
+  font-size: var(--step-3);
+  margin: 0;
+}
+.page-head__hint {
+  margin: var(--space-2) 0 0;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+// ============================== Stempeluhr ==================================
+// Zustand IMMER als Text + Zeichen, nie nur über die Farbe (WCAG 1.4.1).
+.uhr {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 14rem;
+  padding: var(--space-3) var(--space-4);
+  border: 1.5px solid var(--line);
+  border-left: 4px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+  text-decoration: none;
+  color: var(--ink);
+
+  &:hover {
+    border-color: var(--line-strong);
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+.uhr--laeuft {
+  border-left-color: var(--positive-ink);
+}
+.uhr--pause {
+  border-left-color: var(--warn-ink);
+}
+.uhr--tot {
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+  box-shadow: none;
+}
+.uhr__kicker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.uhr__zeichen {
+  font-size: 0.75em;
+}
+.uhr__zeit {
+  font-size: var(--step-2);
+  font-weight: 700;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.uhr__detail {
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+.uhr__warnung {
+  margin-top: var(--space-1);
+  font-size: var(--step--1);
+  font-weight: 600;
+  color: var(--warn-ink);
+}
+
+// ========================= Laufender Einsatz (CTA) ==========================
+.laufend {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+  padding: var(--space-4) var(--space-5);
+  border: 1.5px solid color-mix(in srgb, var(--accent) 45%, var(--line));
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  text-decoration: none;
+  color: var(--ink);
+
+  &:hover {
+    border-color: var(--accent-ink);
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+.laufend__marke {
+  flex: none;
+  width: 2.2rem;
+  height: 2.2rem;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--accent-ink);
+  color: var(--surface);
+  font-size: 0.8rem;
+}
+.laufend__text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+.laufend__titel {
+  font-size: var(--step-0);
+}
+.laufend__sub {
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+.laufend__pfeil {
+  flex: none;
+  margin-left: auto;
+  color: var(--accent-ink);
+}
+
+// ================================ Blöcke ====================================
+.block {
+  margin-bottom: var(--space-5);
+  padding: var(--space-5);
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--accent);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+}
+.block__kopf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+.block__titel {
+  margin: 0;
+  font-size: var(--step-1);
+}
+.block__zahl {
+  margin-left: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+.block__link {
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  color: var(--accent-ink);
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+}
+.leer {
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+.spalten {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+  gap: var(--space-5);
+
+  .block {
+    margin-bottom: 0;
+  }
+}
+
+// ============================ Einsatzkarten =================================
+.einsaetze {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.einsatz {
+  display: grid;
+  grid-template-columns: 10rem 1fr auto;
+  gap: var(--space-4);
+  align-items: start;
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+}
+@media (max-width: 48rem) {
+  .einsatz {
+    grid-template-columns: 1fr;
+  }
+}
+.einsatz__zeit {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+}
+.einsatz__fenster {
+  font-family: var(--font-mono);
+  font-size: var(--step-0);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.einsatz__body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.einsatz__titel {
+  margin: 0;
+  font-size: var(--step-0);
+
+  a {
+    color: var(--ink);
+    text-decoration: none;
+
+    &:hover {
+      color: var(--accent-ink);
+      text-decoration: underline;
+    }
+    &:focus-visible {
+      outline: 2.5px solid var(--focus-ring);
+      outline-offset: 2px;
+      border-radius: 2px;
+    }
+  }
+}
+.einsatz__objekt,
+.einsatz__adresse,
+.einsatz__zutritt,
+.einsatz__kontakt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+.einsatz__marke {
+  flex: none;
+  width: 1.1rem;
+  color: var(--ink-muted);
+}
+.einsatz__objekt a {
+  color: var(--ink);
+  text-decoration: none;
+
+  &:hover {
+    color: var(--accent-ink);
+    text-decoration: underline;
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+}
+.einsatz__nr {
+  font-family: var(--font-mono);
+}
+.einsatz__kontakt-name {
+  color: var(--ink);
+  font-weight: 600;
+}
+.tel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0.2rem 0.6rem;
+  // Bedienelement (Waehl-Link) -> Rand muss 1.4.11 tragen (>= 3:1). Der fruehere
+  // Mix gegen --line erreichte nur 1,64:1; --accent-ink ist ohnehin die Textfarbe.
+  border: 1px solid color-mix(in srgb, var(--accent-ink) 55%, transparent);
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--accent-ink);
+  text-decoration: none;
+
+  &:hover {
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+.einsatz__aktion {
+  margin: 0;
+
+  // Der globale `.btn`-Rand (`--line-strong`) erreicht auf der abgesenkten Karte
+  // nur ~1,5:1 — WCAG 1.4.11 verlangt 3:1 für die Begrenzung eines
+  // Bedienelements. `--accent-ink` ist der abgedunkelte Akzent (im hellen Design
+  // rgb(168,74,23) → 4,9:1, im dunklen hell auf dunkel): derselbe Ton, den auch
+  // der Wähl-Link trägt. Die Reinform `#ef804e` bleibt außen vor.
+  .btn {
+    border-color: var(--accent-ink);
+    color: var(--accent-ink);
+
+    &:hover {
+      background: color-mix(in srgb, var(--accent) 12%, transparent);
+      border-color: var(--accent-ink);
+    }
+  }
+}
+
+// ============================== Listenzeilen ================================
+.liste {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.zeile {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--step--1);
+
+  &:last-child {
+    border-bottom: none;
+  }
+}
+.zeile__zeit {
+  flex: none;
+  font-family: var(--font-mono);
+  color: var(--accent-ink);
+  font-variant-numeric: tabular-nums;
+}
+.zeile__link {
+  color: var(--ink);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+
+  &:hover {
+    color: var(--accent-ink);
+    text-decoration: underline;
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+}
+.zeile__neben {
+  flex: none;
+  margin-left: auto;
+  font-family: var(--font-mono);
+  color: var(--ink-muted);
+}
+
+// Bewegungsarm: keine Übergänge, wenn der Nutzer sie abbestellt hat.
+@media (prefers-reduced-motion: reduce) {
+  .uhr,
+  .laufend,
+  .tel {
+    transition: none;
+  }
+}

@@ -196,6 +196,12 @@
 
       @if (tab() === 'soll-ist' && darfSollIst()) {
         <app-soll-ist [workOrderId]="daten()!.id" [propertyId]="daten()!.property.id" />
+        <!-- Die Abweichung ist sichtbar — hier wird sie auch abrechenbar. Der
+             Nachtrag führt Einzelpreise: dasselbe Tor wie der Reiter Abrechnung
+             (`invoicing/LESEN`), nicht das preisfreie Tor des Soll-Ist. -->
+        @if (darfAbrechnung()) {
+          <app-nachtrag [auftrag]="daten()!" />
+        }
       }
 
       @if (tab() === 'abrechnung' && darfAbrechnung()) {

@@ -24,6 +24,10 @@
             Diesem Auftrag ist <strong>kein Angebot zugeordnet</strong> — es gibt kein
             Soll. Alles, was in den Berichten erfasst wird, erscheint deshalb als
             <em>Zusatz</em>.
+            @if (!darfBelege()) {
+              Zuordnen kann das nur das Büro; das Belegregister ist für deine Rolle
+              nicht freigegeben.
+            }
           </p>
         } @else {
           <ul class="si__angebote">

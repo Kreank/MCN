@@ -899,36 +899,25 @@ def _abgleich_key(article_id, assembly_id, description, unit):
     return ("TEXT", (description or "").strip().lower(), einheit)
 
 
-def soll_ist(work_order_id):
-    """Vergleicht Angebots-Soll und Berichts-Ist über ALLE Berichte eines Auftrags.
+def abgleich(work_order, *, nur_unterzeichnet=False):
+    """Der Soll-Ist-Abgleich — **die eine Rechenstelle**, roh (mit den Ist-Zeilen).
 
-    Reine Rechenarbeit, keine KI. **Keine Geldbeträge** — der Bericht führt keine
-    Preise, also kann auch der Abgleich keine ausweisen.
+    `soll_ist` (Anzeige) und `abrechnung.nachtrag_*` (Geld) ziehen von hier. Liefen
+    sie auseinander, wiese der Bildschirm einen MEHRVERBRAUCH aus, den der
+    Nachtragslauf nicht fände — oder schlimmer: umgekehrt.
 
-    * **Soll** = Summe der Mengen der NORMAL-Positionen der **dem Auftrag
-      zugeordneten** Angebote (`_angebote_des_auftrags`) — bewusst NICHT aus
-      `planned_quantity` der Berichtspositionen: für eine angebotene, aber nie
-      eingebaute Leistung gibt es gar keine Berichtsposition, der Fall ENTFALLEN
-      fiele sonst komplett unter den Tisch.
-    * **Ist** = Summe der Mengen aller Berichtspositionen des Auftrags. Trägt eine
-      Berichtsposition eine **Herkunft** (`source_quote_line_id`), bildet die
-      **Quell-Angebotszeile** ihren Schlüssel — nicht die Kopie im Bericht. Beide
-      sind seit Trigger 0083 ohnehin wortgleich (Artikel, Leistung, Einheit,
-      Bezeichnung sind eingefroren); der Rückgriff auf die Quelle bleibt trotzdem
-      stehen: er ist die Definition, nicht bloß ihre Folge, und hält den Abgleich
-      auch dann heil, wenn eine künftige Änderung ein Feld der Kopie wieder freigibt.
-    * TEXT-/ZWISCHENSUMME-Zeilen bleiben auf beiden Seiten außen vor.
+    Jede Position trägt zusätzlich `lines`: die **Berichtspositionen**, aus denen
+    ihr Ist entstanden ist. Der Nachtrag braucht sie, weil die Abrechnungsbindung
+    (`invoicing.billing_link`) auf die Berichtsposition zeigt — eine Bindung an den
+    aggregierten Schlüssel gibt es nicht, und ohne Bindung wäre dieselbe Mehrmenge
+    ein zweites Mal fakturierbar.
 
-    `angebote` weist aus, **worauf sich das Soll stützt** (Nummer + Status). Ohne
-    diese Angabe müsste der Nutzer raten, warum eine Zahl so dasteht.
-
-    `enthaelt_entwuerfe` sagt, ob **unsignierte** Berichte eingeflossen sind. Dann
-    ist das Ergebnis vorläufig — das wird ausgewiesen, nicht verschwiegen.
+    `nur_unterzeichnet=True` rechnet das Ist **allein aus unterzeichneten
+    Berichten**. Das ist die Abrechnungssicht: Ein nicht abgenommener Nachweis ist
+    keine Abrechnungsgrundlage (dieselbe Grenze wie `abrechnung._berichtspositionen`).
+    Die Anzeige (`soll_ist`) zeigt dagegen auch den Entwurfsstand — sie sagt dazu,
+    dass er vorläufig ist (`enthaelt_entwuerfe`).
     """
-    work_order = WorkOrder.objects.filter(id=work_order_id).first()
-    if work_order is None:
-        raise SiteReportError("Auftrag nicht gefunden.")
-
     angebote = list(
         _angebote_des_auftrags(work_order).order_by("created_at", "id")
     )
@@ -963,8 +952,11 @@ def soll_ist(work_order_id):
         .order_by("site_report__report_date", "position_number")
     )
     for bl in bericht_lines:
-        if bl.site_report.status != "UNTERZEICHNET":
+        unterzeichnet = bl.site_report.status == "UNTERZEICHNET"
+        if not unterzeichnet:
             enthaelt_entwuerfe = True
+            if nur_unterzeichnet:
+                continue
         # **Trägt die Zeile eine Herkunft, bildet die QUELLZEILE den Schlüssel** —
         # nicht die (vom Monteur bearbeitbare) Kopie. Sonst fiele eine vorbelegte
         # Zeile, deren Text er präzisiert („Rohr" → „Rohr DN20, Steigstrang"), aus
@@ -982,9 +974,10 @@ def soll_ist(work_order_id):
         eintrag = ist.setdefault(
             key,
             {"bezeichnung": ident.description, "einheit": ident.unit,
-             "menge": Decimal("0.000")},
+             "menge": Decimal("0.000"), "lines": []},
         )
         eintrag["menge"] += bl.quantity or Decimal("0.000")
+        eintrag["lines"].append(bl)
 
     positionen = []
     for key in list(soll) + [k for k in ist if k not in soll]:
@@ -1014,6 +1007,7 @@ def soll_ist(work_order_id):
             "ist": ist_menge,
             "differenz": differenz,
             "art": art,
+            "lines": i["lines"] if i else [],
         })
 
     return {
@@ -1028,3 +1022,57 @@ def soll_ist(work_order_id):
         ],
         "enthaelt_entwuerfe": enthaelt_entwuerfe,
     }
+
+
+def abgleich_schluessel(article_id, assembly_id, description, unit):
+    """Öffentlicher Zugang zum Abgleich-Schlüssel (Tupel).
+
+    Die Abrechnung braucht ihn, um die **quellenunabhängige** Menge je Posten zu
+    bilden: Dieselbe Sache (Artikel/Leistung + Einheit) kann über die Angebotskopie
+    und über den Nachtrag fakturiert werden — beide müssen auf **denselben**
+    Schlüssel abbilden, sonst überlappen die Quellen unbemerkt. Deshalb genau diese
+    eine Funktion, nicht eine zweite Nachbildung.
+    """
+    return _abgleich_key(article_id, assembly_id, description, unit)
+
+
+def soll_ist(work_order_id):
+    """Vergleicht Angebots-Soll und Berichts-Ist über ALLE Berichte eines Auftrags.
+
+    Reine Rechenarbeit, keine KI. **Keine Geldbeträge** — der Bericht führt keine
+    Preise, also kann auch der Abgleich keine ausweisen.
+
+    * **Soll** = Summe der Mengen der NORMAL-Positionen der **dem Auftrag
+      zugeordneten** Angebote (`_angebote_des_auftrags`) — bewusst NICHT aus
+      `planned_quantity` der Berichtspositionen: für eine angebotene, aber nie
+      eingebaute Leistung gibt es gar keine Berichtsposition, der Fall ENTFALLEN
+      fiele sonst komplett unter den Tisch.
+    * **Ist** = Summe der Mengen aller Berichtspositionen des Auftrags. Trägt eine
+      Berichtsposition eine **Herkunft** (`source_quote_line_id`), bildet die
+      **Quell-Angebotszeile** ihren Schlüssel — nicht die Kopie im Bericht. Beide
+      sind seit Trigger 0083 ohnehin wortgleich (Artikel, Leistung, Einheit,
+      Bezeichnung sind eingefroren); der Rückgriff auf die Quelle bleibt trotzdem
+      stehen: er ist die Definition, nicht bloß ihre Folge, und hält den Abgleich
+      auch dann heil, wenn eine künftige Änderung ein Feld der Kopie wieder freigibt.
+    * TEXT-/ZWISCHENSUMME-Zeilen bleiben auf beiden Seiten außen vor.
+
+    `angebote` weist aus, **worauf sich das Soll stützt** (Nummer + Status). Ohne
+    diese Angabe müsste der Nutzer raten, warum eine Zahl so dasteht.
+
+    `enthaelt_entwuerfe` sagt, ob **unsignierte** Berichte eingeflossen sind. Dann
+    ist das Ergebnis vorläufig — das wird ausgewiesen, nicht verschwiegen.
+
+    Gerechnet wird in `abgleich` (eine Rechenstelle, auch für den Nachtrag); hier
+    fallen nur die rohen Berichtszeilen (`lines`) wieder heraus — sie sind die
+    **Bindungsgrundlage der Abrechnung**, keine Anzeigegröße.
+    """
+    work_order = WorkOrder.objects.filter(id=work_order_id).first()
+    if work_order is None:
+        raise SiteReportError("Auftrag nicht gefunden.")
+
+    ergebnis = abgleich(work_order)
+    ergebnis["positionen"] = [
+        {k: v for k, v in pos.items() if k != "lines"}
+        for pos in ergebnis["positionen"]
+    ]
+    return ergebnis

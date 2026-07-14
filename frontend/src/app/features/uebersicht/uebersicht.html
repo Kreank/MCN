@@ -1,3 +1,6 @@
+@if (monteurSicht()) {
+  <app-uebersicht-monteur />
+} @else {
 <section class="uebersicht" aria-labelledby="uebersicht-titel">
   <header class="page-head">
     <div>
@@ -105,37 +108,42 @@
       }
     </article>
 
-    <!-- ------------------------------ Angebote ------------------------- -->
-    <article class="kachel">
-      <header class="kachel__kopf">
-        <div>
-          <p class="kachel__kicker">Angebote (Entwurf)</p>
-          @if (quotes().kind === 'ready') {
-            <p class="kachel__zahl">{{ $any(quotes()).total }}</p>
-          }
-        </div>
-        <a class="kachel__link" routerLink="/dokumente">Alle →</a>
-      </header>
-      @switch (quotes().kind) {
-        @case ('loading') { <p class="kachel__leer">Wird geladen …</p> }
-        @case ('forbidden') { <p class="kachel__leer">Keine Berechtigung.</p> }
-        @case ('error') { <p class="kachel__leer">Konnte nicht geladen werden.</p> }
-        @case ('ready') {
-          @if ($any(quotes()).items.length === 0) {
-            <p class="kachel__leer">Keine Angebots-Entwürfe.</p>
-          } @else {
-            <ul class="kachel__liste">
-              @for (q of $any(quotes()).items; track q.id) {
-                <li class="zeile">
-                  <a class="zeile__link" [routerLink]="['/dokumente', q.id]">{{ q.title }}</a>
-                  <span class="zeile__neben">{{ euro(q.gross_total) }}</span>
-                </li>
-              }
-            </ul>
+    <!-- ------------------------------ Angebote -------------------------
+         Nur für Konten mit Beleg-Scope ALLE: `GET /invoicing/quotes` ist
+         fail-closed. Eine Kachel, die nur „Keine Berechtigung" sagen könnte,
+         wird gar nicht erst gebaut. -->
+    @if (angeboteSichtbar()) {
+      <article class="kachel">
+        <header class="kachel__kopf">
+          <div>
+            <p class="kachel__kicker">Angebote (Entwurf)</p>
+            @if (quotes().kind === 'ready') {
+              <p class="kachel__zahl">{{ $any(quotes()).total }}</p>
+            }
+          </div>
+          <a class="kachel__link" routerLink="/dokumente">Alle →</a>
+        </header>
+        @switch (quotes().kind) {
+          @case ('loading') { <p class="kachel__leer">Wird geladen …</p> }
+          @case ('forbidden') { <p class="kachel__leer">Keine Berechtigung.</p> }
+          @case ('error') { <p class="kachel__leer">Konnte nicht geladen werden.</p> }
+          @case ('ready') {
+            @if ($any(quotes()).items.length === 0) {
+              <p class="kachel__leer">Keine Angebots-Entwürfe.</p>
+            } @else {
+              <ul class="kachel__liste">
+                @for (q of $any(quotes()).items; track q.id) {
+                  <li class="zeile">
+                    <a class="zeile__link" [routerLink]="['/dokumente', q.id]">{{ q.title }}</a>
+                    <span class="zeile__neben">{{ euro(q.gross_total) }}</span>
+                  </li>
+                }
+              </ul>
+            }
           }
         }
-      }
-    </article>
+      </article>
+    }
 
     <!-- ---------------------------- KI-Vorschläge ---------------------- -->
     <article class="kachel kachel--ki">
@@ -154,3 +162,4 @@
     </article>
   </div>
 </section>
+}

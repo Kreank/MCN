@@ -156,6 +156,22 @@ export interface DossierAngebot {
   work_order_id: string | null;
 }
 
+/**
+ * Angebotszeile der **Objektsicht** (row_scope EIGENE, Migration 0102) — ohne Betrag.
+ *
+ * Erbt bewusst **nicht** von `DossierAngebot`: Trüge sie `net_total`/`gross_total` im
+ * Typ, zeigte sie irgendein Template irgendwann an. Der Server schickt die Felder
+ * nicht; der Typ kennt sie nicht.
+ */
+export interface DossierAngebotMengen {
+  id: string;
+  quote_number: string | null;
+  title: string;
+  status: string;
+  quote_date: string | null;
+  work_order_id: string | null;
+}
+
 // ---------------------------------------------------------------------------
 // Kontakt
 // ---------------------------------------------------------------------------
@@ -404,6 +420,13 @@ export interface ProjektDossier {
   angebote: DossierAngebot[] | null;
   rechnungen: DossierBeleg[] | null;
   anrechenbare_abschlaege: DossierAbschlag[] | null;
+  /**
+   * Objektsicht (row_scope EIGENE): dieselben Angebote **ohne Beträge**, und nur die
+   * versendeten/angenommenen an MEINEN Liegenschaften dieses Projekts. Schließt
+   * `belege_sichtbar` aus — beide Flags sind nie gleichzeitig true.
+   */
+  angebote_mengen_sichtbar: boolean;
+  angebote_mengen: DossierAngebotMengen[] | null;
   offene_posten_sichtbar: boolean;
   offene_posten: OffenePosten | null;
   /** Marge braucht `invoicing` UND `pricing` — Umsatz minus Einkauf. */
@@ -509,6 +532,9 @@ export interface AuftragDossier {
   belege_sichtbar: boolean;
   angebote: DossierAngebot[] | null;
   rechnungen: DossierBeleg[] | null;
+  /** Objektsicht: „Was ist beauftragt?" — ohne Betrag (Migration 0102). */
+  angebote_mengen_sichtbar: boolean;
+  angebote_mengen: DossierAngebotMengen[] | null;
   offene_posten_sichtbar: boolean;
   offene_posten: OffenePosten | null;
   dokumente_sichtbar: boolean;

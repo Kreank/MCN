@@ -1,0 +1,227 @@
+.kopf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.kopf__text {
+  flex: 1 1 24rem;
+  margin: 0;
+  max-width: 50ch;
+  color: var(--ink-muted);
+  font-size: 0.94rem;
+  line-height: 1.5;
+}
+
+.kopf__aktionen {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.btn--klein {
+  padding: 0.35rem 0.7rem;
+  font-size: 0.85rem;
+}
+
+.liste {
+  list-style: none;
+  margin: var(--space-4) 0 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-4);
+}
+
+.mandat {
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+}
+
+.mandat--beendet {
+  background: var(--surface-sunken);
+  box-shadow: none;
+}
+
+.mandat__kopf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.mandat__art {
+  flex: 1 1 auto;
+  min-width: 10rem;
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.mandat__zeitraum {
+  margin: var(--space-2) 0 0;
+  font-size: 0.84rem;
+  color: var(--ink-hint);
+}
+
+// Die drei Rollen NEBENEINANDER — man verwechselt sie sonst, und dann geht die
+// Rechnung an den Falschen. Jede trägt ihre Funktion als Text mit sich.
+.rollen {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.rolle {
+  display: grid;
+  align-content: start;
+  gap: 0.2rem;
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+}
+
+.rolle--kontakt {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+}
+
+.rolle__titel {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-hint);
+}
+
+.rolle__name {
+  font-weight: 600;
+  color: var(--ink);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.rolle__name:hover {
+  color: var(--accent-ink);
+  text-decoration: underline;
+}
+
+.rolle__was {
+  font-size: 0.78rem;
+  color: var(--ink-muted);
+  line-height: 1.4;
+}
+
+.rolle__tel {
+  margin-top: 0.2rem;
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--accent-ink);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.rolle__tel:hover {
+  text-decoration: underline;
+}
+
+.rolle__mail {
+  font-size: 0.82rem;
+  color: var(--ink-muted);
+  overflow-wrap: anywhere;
+}
+
+.rolle__ohne {
+  margin-top: 0.2rem;
+  font-size: 0.82rem;
+  font-style: italic;
+  color: var(--warn-ink);
+}
+
+.mandat__einheiten {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 0;
+  font-size: 0.88rem;
+  color: var(--ink-muted);
+}
+
+.mandat__fest {
+  font-size: 0.78rem;
+  font-style: italic;
+  color: var(--ink-hint);
+}
+
+.zustaendig {
+  list-style: none;
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.zustaendig__zeile {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  padding: 0.5rem var(--space-3);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+}
+
+.zustaendig__zeile--weg {
+  opacity: 0.7;
+}
+
+.zustaendig__art {
+  flex: 0 0 auto;
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-hint);
+}
+
+.zustaendig__name {
+  flex: 1 1 8rem;
+  font-weight: 600;
+  color: var(--ink);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.zustaendig__name:hover {
+  text-decoration: underline;
+}
+
+.zustaendig__tel {
+  font-family: var(--font-mono);
+  font-size: 0.86rem;
+  color: var(--accent-ink);
+  white-space: nowrap;
+}
+
+.zustaendig__prio {
+  font-size: 0.76rem;
+  color: var(--ink-hint);
+}
+
+.mandat__aktionen {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+}

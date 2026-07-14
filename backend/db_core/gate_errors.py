@@ -58,6 +58,30 @@ _CONSTRAINT_MESSAGES = {
         "Die Position wurde gleichzeitig von jemand anderem geändert. Bitte den "
         "Beleg neu laden und den Vorgang wiederholen."
     ),
+    # --- Belegung und Verwaltung (0005/0006, Schreibpfad seit 0103) -----------
+    # Alle vier sind EXCLUDE-Constraints über einen `daterange`. Sie beschreiben
+    # denselben Bedienfehler in vier Ausprägungen: „für diesen Zeitraum gibt es
+    # das schon". Das ist ein Fachfehler des Büros (422), kein Programmierfehler
+    # (500) — und die Meldung muss sagen, WAS kollidiert, nicht wie der Constraint
+    # heißt. Die Services prüfen jeweils vor; diese Zuordnung fängt die
+    # Rennbedingung (zwei Sachbearbeiter, dieselbe Wohnung, gleichzeitig).
+    "excl_occupancy": (
+        "Für diese Einheit besteht in diesem Zeitraum bereits eine Belegung. "
+        "Belegungszeiträume dürfen sich nicht überschneiden — die bisherige "
+        "Belegung zuerst beenden."
+    ),
+    "excl_occupancy_party_dup": (
+        "Diese Person ist in diesem Zeitraum bereits mit derselben Rolle an "
+        "dieser Belegung erfasst."
+    ),
+    "excl_mandate_entire": (
+        "Für diese Liegenschaft besteht in diesem Zeitraum bereits ein "
+        "Vollmandat desselben Typs. Das bisherige Mandat zuerst beenden."
+    ),
+    "excl_responsibility_dup": (
+        "Diese Zuständigkeit ist für diese Person in diesem Zeitraum bereits "
+        "erfasst."
+    ),
 }
 
 

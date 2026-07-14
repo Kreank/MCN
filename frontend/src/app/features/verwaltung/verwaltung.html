@@ -1,0 +1,228 @@
+<p class="sr-only" role="status">{{ ansage() }}</p>
+
+@if (zustand() === 'loading') {
+  <p class="lade-hinweis" role="status">Verwaltung wird geladen …</p>
+}
+
+@if (zustand() === 'error') {
+  <div class="note note--error" role="alert">
+    <h3 class="note__titel">Verwaltung konnte nicht geladen werden</h3>
+    <p class="note__text">{{ fehler() }}</p>
+    <div class="note__aktionen">
+      <button type="button" class="btn btn--primary" (click)="neuLaden()">
+        Erneut versuchen
+      </button>
+    </div>
+  </div>
+}
+
+@if (zustand() === 'ready') {
+  <div class="kopf">
+    <p class="kopf__text">
+      Wer verwaltet dieses Haus? Die Verwaltung ist <strong>kein Beteiligter</strong> der
+      Liegenschaft, sondern ein <strong>Mandat</strong>: Die WEG beauftragt und zahlt, der
+      Verwalter führt aus. Verwechselt man das, geht die Rechnung an den Falschen.
+    </p>
+    <div class="kopf__aktionen">
+      <button
+        type="button"
+        class="btn btn--klein"
+        [attr.aria-pressed]="historie()"
+        (click)="historieUmschalten()"
+      >
+        {{ historie() ? 'Nur geltende' : 'Historie anzeigen' }}
+      </button>
+      @if (darfAnlegen()) {
+        <button type="button" class="btn btn--primary" (click)="anlegen()">
+          <span aria-hidden="true">＋</span> Mandat
+        </button>
+      }
+    </div>
+  </div>
+
+  @if (aktionsFehler(); as af) {
+    <div class="melde melde--fehler" role="alert">
+      <span class="melde__mark" aria-hidden="true">!</span>
+      <span class="melde__text"><strong>Fehler:</strong> {{ af }}</span>
+    </div>
+  }
+
+  @if (mandate().length === 0) {
+    <div class="tab-platzhalter">
+      <h3 class="tab-platzhalter__titel">Kein Verwaltungsmandat erfasst</h3>
+      <p>
+        Ohne Mandat weiß niemand, wen der Monteur anruft, wenn vor Ort keiner aufmacht — und
+        das Büro weiß nicht, wer beauftragen darf.
+      </p>
+    </div>
+  } @else {
+    <ul class="liste">
+      @for (m of mandate(); track m.id) {
+        <li class="mandat" [class.mandat--beendet]="!m.is_current">
+          <div class="mandat__kopf">
+            <span class="mandat__art">{{ mandatArt(m.mandate_type) }}</span>
+            <span class="stamp stamp--type">{{ umfang(m.scope_type) }}</span>
+            @if (m.is_current) {
+              <span class="stamp stamp--positive">Gilt</span>
+            } @else {
+              <span class="stamp stamp--negativ">Beendet</span>
+            }
+          </div>
+
+          <p class="mandat__zeitraum">
+            {{ m.valid_from | date: 'dd.MM.yyyy' }} –
+            {{ m.valid_until ? (m.valid_until | date: 'dd.MM.yyyy') : 'offen' }}
+            @if (m.contract_reference) {
+              · Vertrag {{ m.contract_reference }}
+            }
+          </p>
+
+          <!-- Die drei Rollen nebeneinander: Wer verwaltet, wer beauftragt, wer nimmt ab. -->
+          <div class="rollen">
+            <div class="rolle">
+              <span class="rolle__titel">Verwaltung</span>
+              <a class="rolle__name" [routerLink]="['/kontakte', m.verwaltung.party_id]">
+                {{ m.verwaltung.display_name }}
+              </a>
+              <span class="rolle__was">führt aus, ist Ansprechpartner</span>
+              @if (m.verwaltung.telefon) {
+                <a class="rolle__tel" [href]="telHref(m.verwaltung.telefon)">
+                  <span aria-hidden="true">☎</span> {{ m.verwaltung.telefon }}
+                </a>
+              }
+              @if (m.verwaltung.email) {
+                <a class="rolle__mail" [href]="'mailto:' + m.verwaltung.email">
+                  {{ m.verwaltung.email }}
+                </a>
+              }
+            </div>
+
+            <div class="rolle">
+              <span class="rolle__titel">Auftraggeber</span>
+              <a class="rolle__name" [routerLink]="['/kontakte', m.auftraggeber.party_id]">
+                {{ m.auftraggeber.display_name }}
+              </a>
+              <span class="rolle__was">beauftragt und zahlt — hierhin geht die Rechnung</span>
+              @if (m.auftraggeber.telefon) {
+                <a class="rolle__tel" [href]="telHref(m.auftraggeber.telefon)">
+                  <span aria-hidden="true">☎</span> {{ m.auftraggeber.telefon }}
+                </a>
+              }
+            </div>
+
+            <div class="rolle rolle--kontakt">
+              <span class="rolle__titel">Standardkontakt</span>
+              <a class="rolle__name" [routerLink]="['/kontakte', m.standardkontakt.party_id]">
+                {{ m.standardkontakt.display_name }}
+              </a>
+              <span class="rolle__was">nimmt ab, wenn man dort anruft</span>
+              @if (m.standardkontakt.telefon) {
+                <a class="rolle__tel" [href]="telHref(m.standardkontakt.telefon)">
+                  <span aria-hidden="true">☎</span> {{ m.standardkontakt.telefon }}
+                </a>
+              } @else {
+                <span class="rolle__ohne">Keine Telefonnummer hinterlegt</span>
+              }
+              @if (m.standardkontakt.email) {
+                <a class="rolle__mail" [href]="'mailto:' + m.standardkontakt.email">
+                  {{ m.standardkontakt.email }}
+                </a>
+              }
+            </div>
+          </div>
+
+          @if (m.scope_type === 'SELECTED_UNITS') {
+            <p class="mandat__einheiten">
+              <strong>Einheiten:</strong>
+              @for (e of m.einheiten; track e.unit_id) {
+                <span class="stamp">{{ e.unit_number }}</span>
+              }
+              <span class="mandat__fest">Der Umfang ist nicht änderbar (Nachfolgemandat).</span>
+            </p>
+          }
+
+          @if (m.zustaendigkeiten.length > 0) {
+            <ul class="zustaendig">
+              @for (z of zustaendigSortiert(m); track z.id) {
+                <li class="zustaendig__zeile" [class.zustaendig__zeile--weg]="!z.is_current">
+                  <span class="zustaendig__art">{{ zustaendigArt(z.responsibility_type) }}</span>
+                  <a class="zustaendig__name" [routerLink]="['/kontakte', z.party_id]">
+                    {{ z.display_name }}
+                  </a>
+                  @if (z.telefon) {
+                    <a class="zustaendig__tel" [href]="telHref(z.telefon)">{{ z.telefon }}</a>
+                  }
+                  <span class="zustaendig__prio">Stufe {{ z.priority }}</span>
+                  @if (!z.is_current) {
+                    <span class="stamp stamp--negativ">Beendet</span>
+                  } @else if (darfAendern() && m.is_current) {
+                    <button
+                      type="button"
+                      class="btn btn--klein"
+                      [disabled]="aktionLaeuft()"
+                      (click)="zustaendigBeendenFragen(z)"
+                    >
+                      Beenden
+                    </button>
+                  }
+                </li>
+              }
+            </ul>
+          }
+
+          @if (darfAendern() && m.is_current) {
+            <div class="mandat__aktionen">
+              <button type="button" class="btn btn--klein" (click)="bearbeiten(m)">
+                Korrigieren
+              </button>
+              <button
+                type="button"
+                class="btn btn--klein"
+                (click)="zustaendigkeitHinzufuegen(m)"
+              >
+                Kontakt hinzufügen
+              </button>
+              <button
+                type="button"
+                class="btn btn--klein"
+                [disabled]="aktionLaeuft()"
+                (click)="beendenFragen(m)"
+              >
+                Mandat beenden
+              </button>
+            </div>
+          }
+        </li>
+      }
+    </ul>
+  }
+}
+
+<app-verwaltung-dialog
+  [propertyId]="propertyId()"
+  [gebaeude]="gebaeude()"
+  [modus]="dialog()"
+  (gespeichert)="gespeichert($event)"
+  (abbrechen)="dialogSchliessen()"
+/>
+
+<app-bestaetigung
+  [offen]="zuBeenden() !== null"
+  titel="Mandat beenden"
+  text="Das Verwaltungsmandat wird zum heutigen Tag beendet. Es wird NICHT gelöscht: Die Aufträge und Rechnungen von damals liefen über diesen Verwalter und zeigen weiter auf ihn. Ein beendetes Mandat lässt sich nicht wiederbeleben — ein neuer Verwalter bekommt ein Nachfolgemandat."
+  bestaetigenLabel="Mandat beenden"
+  [gefahr]="true"
+  [laedt]="aktionLaeuft()"
+  (bestaetigen)="beendenBestaetigen()"
+  (abbrechen)="beendenAbbrechen()"
+/>
+
+<app-bestaetigung
+  [offen]="zustaendigZuBeenden() !== null"
+  titel="Zuständigkeit beenden"
+  text="Der Kontakt wird zum heutigen Tag aus der Zuständigkeit genommen. Der Eintrag bleibt in der Historie lesbar."
+  bestaetigenLabel="Beenden"
+  [laedt]="aktionLaeuft()"
+  (bestaetigen)="zustaendigBeendenBestaetigen()"
+  (abbrechen)="zustaendigBeendenAbbrechen()"
+/>

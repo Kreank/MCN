@@ -75,11 +75,30 @@ export class App {
     // also gerade auch für den Monteur mit Scope EIGENE.
     { path: '/meine-zeiten', label: 'Meine Zeiten', mark: '67', recht: ['hr', 'AENDERN'] },
     { path: '/artikel', label: 'Artikel', mark: '70', recht: ['pricing', 'LESEN'] },
-    { path: '/buchhaltung', label: 'Buchhaltung', mark: '80', recht: ['invoicing', 'LESEN'] },
+    // `nurAlle` (seit Migration 0102): MONTEUR trägt jetzt invoicing/LESEN mit Scope
+    // EIGENE — er darf das ANGEBOT seines Objekts sehen (ohne Preise). Buchhaltung
+    // und Auswertungen werten den Scope NICHT aus (`require` → 403) und sind
+    // fachlich auch nichts für ihn: offene Posten, Mahnwesen, Umsatz, Marge. Ohne
+    // dieses Flag stünden ihm beide Punkte in der Navigation und führten auf „Kein
+    // Zugriff". `/dokumente` bleibt ohne Flag — dort bekommt er die preisfreie
+    // Angebotsliste (`features/angebot-mengen`).
+    {
+      path: '/buchhaltung',
+      label: 'Buchhaltung',
+      mark: '80',
+      recht: ['invoicing', 'LESEN'],
+      nurAlle: true,
+    },
     // Eingangsrechnungen (accounting.receipt): eigener Belegkreis EB-, eigenes
     // Rechte-Modul — deshalb neben, nicht unter der Buchhaltung.
     { path: '/belegerfassung', label: 'Belegerfassung', mark: '82', recht: ['accounting', 'LESEN'] },
-    { path: '/auswertungen', label: 'Auswertungen', mark: '90', recht: ['invoicing', 'LESEN'] },
+    {
+      path: '/auswertungen',
+      label: 'Auswertungen',
+      mark: '90',
+      recht: ['invoicing', 'LESEN'],
+      nurAlle: true,
+    },
     // Werkzeuge (Heizlast, Heizkörper, Volumenstrom, Einheiten): reine Rechner
     // ohne Serverzugriff — kein Modulrecht, für jede angemeldete Rolle sichtbar.
     { path: '/werkzeuge', label: 'Werkzeuge', mark: '92' },
@@ -106,10 +125,12 @@ export class App {
    */
   protected readonly darfSchnellerfassung = computed(
     () =>
-      this.auth.darf('identity', 'ANLEGEN') &&
-      this.auth.darf('property', 'ANLEGEN') &&
-      this.auth.darf('property', 'AENDERN') &&
-      this.auth.darf('workflow', 'ANLEGEN'),
+      // `darfAlle`: `quick-intake` ist an allen vier Toren fail-closed (`require`)
+      // — ein Konto mit row_scope EIGENE bekommt 403, obwohl es die Rechte trägt.
+      this.auth.darfAlle('identity', 'ANLEGEN') &&
+      this.auth.darfAlle('property', 'ANLEGEN') &&
+      this.auth.darfAlle('property', 'AENDERN') &&
+      this.auth.darfAlle('workflow', 'ANLEGEN'),
   );
 
   /** Nur Navigationspunkte, für die (mindestens) ein Recht vorliegt. */

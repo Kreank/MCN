@@ -176,9 +176,10 @@ def test_monteur_findet_sein_objekt_aber_niemals_einen_beleg(welt):
         weiterhin an der ZUWEISUNG, nicht am Objekt — sonst würde ein freier Termin
         öffentlich).
 
-    Und er findet **nie** ein ANGEBOT oder eine RECHNUNG — auch nicht über die exakte
-    Belegnummer. Das ist kein Filter, sondern die Abwesenheit des Rechts (`invoicing`
-    steht für MONTEUR auf false).
+    Seit **Migration 0102** findet er zusätzlich das **versendete Angebot** seines
+    Objekts — er muss wissen, was beauftragt ist. **Nicht** dagegen: den ENTWURF
+    (Bürokram, Inhalt noch änderbar) und **nie** eine RECHNUNG. Und in **keinem**
+    Untertitel steht ein Betrag.
     """
     c = Client()
     c.force_login(welt["monteur_user"])
@@ -186,7 +187,16 @@ def test_monteur_findet_sein_objekt_aber_niemals_einen_beleg(welt):
     daten = _suche(c, "Badensche")
     typen = _typen(daten)
     assert "LIEGENSCHAFT" in typen, daten["treffer"]
-    assert {"ANGEBOT", "RECHNUNG"} & typen == set(), daten["treffer"]
+    assert "RECHNUNG" not in typen, daten["treffer"]
+    # Das versendete Angebot: ja. Der Entwurf: nein.
+    assert _ids(daten, "ANGEBOT") == {str(welt["angebot"].id)}, daten["treffer"]
+    assert str(welt["entwurf"].id) not in _ids(daten, "ANGEBOT")
+    # Kein Betrag im Untertitel — sonst wäre die Suche das Preisleck an der
+    # preisfreien Beleg-API vorbei (24,00 €/m, 12 m → 288,00 €).
+    angebot = next(t for t in daten["treffer"] if t["typ"] == "ANGEBOT")
+    for betrag in ("24,00", "24.00", "288", "€"):
+        assert betrag not in angebot["untertitel"], angebot
+        assert betrag not in angebot["grund"], angebot
     assert _ids(daten, "LIEGENSCHAFT") == {str(welt["obj"].id)}
     # Die Straße steht im Untertitel — ohne sie fährt er nirgendwohin.
     liegenschaft = next(
@@ -209,10 +219,12 @@ def test_monteur_findet_sein_objekt_aber_niemals_einen_beleg(welt):
     assert daten["direkttreffer"] is not None
     assert daten["direkttreffer"]["id"] == str(welt["obj"].id)
 
-    # … die exakte Angebotsnummer aber öffnet ihm nichts. Kein Beleg, nie.
+    # … und die exakte Angebotsnummer öffnet ihm SEIN Angebot (0102) — der
+    # Direkttreffer zieht aus derselben begrenzten Grundmenge wie die Liste.
     daten = _suche(c, welt["angebot"].quote_number)
-    assert daten["direkttreffer"] is None
-    assert {"ANGEBOT", "RECHNUNG"} & _typen(daten) == set(), daten["treffer"]
+    assert daten["direkttreffer"] is not None
+    assert daten["direkttreffer"]["id"] == str(welt["angebot"].id)
+    assert "RECHNUNG" not in _typen(daten), daten["treffer"]
 
     # Und die Kennung SEINES Einsatzes findet ihn sehr wohl.
     daten = _suche(c, welt["eigen"].job_number)

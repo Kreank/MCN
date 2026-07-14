@@ -27,6 +27,44 @@
   <div class="tab-platzhalter"><p>{{ text }}</p></div>
 </ng-template>
 
+<!-- Angebote OHNE Preise (row_scope EIGENE, Migration 0102).
+
+     Der Monteur MUSS wissen, was beauftragt ist — 12 m Kupferrohr DN20. Er
+     bekommt deshalb den Angebots-Baustein, aber preisfrei: Der Server liefert in
+     `angebote_mengen` keine Beträge (eigene Liste, eigenes Flag). Und die Ansicht
+     SAGT ihm das — Spalten wortlos wegzulassen wäre eine Lüge durch Auslassung. -->
+<ng-template #mengenBlock let-angebote="angebote">
+  <p class="ds-sperre" role="note">
+    <span class="ds-sperre__mark" aria-hidden="true">€</span>
+    <span>
+      <strong>Preise sind für deine Rolle ausgeblendet.</strong>
+      Du siehst, <strong>was</strong> beauftragt ist und in welcher Menge — Beträge,
+      Rechnungen und offene Posten bleiben im Büro.
+    </span>
+  </p>
+  <h3 class="ds-unter">Angebote (Mengen)</h3>
+  @if (angebote.length === 0) {
+    <ng-container
+      [ngTemplateOutlet]="leer"
+      [ngTemplateOutletContext]="{ text: 'Kein versendetes Angebot.' }"
+    />
+  } @else {
+    <ul class="ds-liste">
+      @for (q of angebote; track q.id) {
+        <li class="ds-zeile">
+          <div class="ds-zeile__haupt">
+            <a class="ds-zeile__titel" [routerLink]="['/dokumente', q.id]">
+              <span class="ds-kennung">{{ q.quote_number ?? '—' }}</span> {{ q.title }}
+            </a>
+            <span class="stamp">{{ belegStatus(q.status) }}</span>
+          </div>
+          <p class="ds-zeile__meta">{{ datum(q.quote_date) }} · Positionen mit Menge und Einheit</p>
+        </li>
+      }
+    </ul>
+  }
+</ng-template>
+
 <!-- Offene Posten (Kontakt / Liegenschaft / Projekt / Auftrag) -->
 <ng-template #postenBlock let-op="op">
   @if (op.posten.length === 0) {
@@ -854,7 +892,13 @@
 
           <section class="ds-abschnitt" id="ds-belege" tabindex="-1" aria-labelledby="ds-bl-t">
             <h2 class="ds-abschnitt__titel" id="ds-bl-t">Angebote &amp; Rechnungen</h2>
-            @if (!p.belege_sichtbar) {
+            @if (p.angebote_mengen_sichtbar) {
+              <!-- row_scope EIGENE: Angebote ja (preisfrei), Rechnungen nie. -->
+              <ng-container
+                [ngTemplateOutlet]="mengenBlock"
+                [ngTemplateOutletContext]="{ angebote: p.angebote_mengen! }"
+              />
+            } @else if (!p.belege_sichtbar) {
               <ng-container [ngTemplateOutlet]="gesperrt" [ngTemplateOutletContext]="{ recht: 'invoicing/LESEN', was: 'Belege und Buchhaltung' }" />
             } @else {
               <ng-container
@@ -1244,7 +1288,13 @@
 
           <section class="ds-abschnitt" id="ds-belege" tabindex="-1" aria-labelledby="ds-bl-t">
             <h2 class="ds-abschnitt__titel" id="ds-bl-t">Angebote &amp; Rechnungen</h2>
-            @if (!a.belege_sichtbar) {
+            @if (a.angebote_mengen_sichtbar) {
+              <!-- row_scope EIGENE: „Was ist beauftragt?" — ohne Betrag. -->
+              <ng-container
+                [ngTemplateOutlet]="mengenBlock"
+                [ngTemplateOutletContext]="{ angebote: a.angebote_mengen! }"
+              />
+            } @else if (!a.belege_sichtbar) {
               <ng-container [ngTemplateOutlet]="gesperrt" [ngTemplateOutletContext]="{ recht: 'invoicing/LESEN', was: 'Belege und Buchhaltung' }" />
             } @else {
               <ng-container

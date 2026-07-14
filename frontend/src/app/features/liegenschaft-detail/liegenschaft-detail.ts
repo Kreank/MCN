@@ -20,6 +20,8 @@ import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { Dateien } from '../../shared/dateien/dateien';
 import { Anlagen } from '../anlagen/anlagen';
 import { Raumaufmass } from '../raumaufmass/raumaufmass';
+import { Belegung } from '../belegung/belegung';
+import { Verwaltung } from '../verwaltung/verwaltung';
 import { ZielFilter } from '../../core/datei.model';
 import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 import { Dialog } from '../../shared/dialog/dialog';
@@ -47,6 +49,8 @@ type Meldung = { art: 'erfolg' | 'fehler'; text: string };
     Feld,
     Anlagen,
     Raumaufmass,
+    Belegung,
+    Verwaltung,
   ],
   templateUrl: './liegenschaft-detail.html',
   styleUrl: './liegenschaft-detail.scss',
@@ -70,6 +74,11 @@ export class LiegenschaftDetail {
     { id: 'anlagen', label: 'Anlagen' },
     { id: 'raeume', label: 'Räume' },
     { id: 'beteiligte', label: 'Beteiligte' },
+    // Die Verwaltung steht NICHT bei den Beteiligten: Sie ist keine Rolle an der
+    // Liegenschaft, sondern ein Mandat (`property_party_role` kennt sie gar
+    // nicht). Ein eigener Reiter — sonst verwechselt man Auftraggeber und
+    // Verwalter, und die Rechnung geht an den Falschen.
+    { id: 'verwaltung', label: 'Verwaltung' },
     { id: 'eigentum', label: 'Eigentum' },
     { id: 'belegung', label: 'Belegung' },
     { id: 'dokumente', label: 'Dokumente' },
@@ -124,8 +133,18 @@ export class LiegenschaftDetail {
   });
 
   // --- Rechte (nur UI-Sichtbarkeit; der Server setzt sie durch) -----------
+  // Gebäude und Einheiten anlegen: `require_scoped` — der Monteur darf das an
+  // SEINEM Objekt (er misst nach, was wirklich dasteht). Deshalb `darf`.
   protected readonly darfAnlegen = computed(() => this.auth.darf('property', 'ANLEGEN'));
-  protected readonly darfAendern = computed(() => this.auth.darf('property', 'AENDERN'));
+  /**
+   * „Beteiligte(r) zuordnen": `darfAlle`, nicht `darf`.
+   *
+   * `POST /api/property/properties/{id}/parties` ist fail-closed (`require`) —
+   * wer Eigentümer, Betreiber oder Hausmeisterei an ein Objekt hängt, ändert die
+   * Stammdatenlage des Hauses, nicht seine eigene Zeile. Ein Konto mit row_scope
+   * EIGENE bekommt dort 403.
+   */
+  protected readonly darfAendern = computed(() => this.auth.darfAlle('property', 'AENDERN'));
 
   // --- Meldung + Dialoge ---------------------------------------------------
   protected readonly meldung = signal<Meldung | null>(null);

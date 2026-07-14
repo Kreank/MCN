@@ -4198,3 +4198,245 @@ class RoomVertex(models.Model):
 
     def __str__(self):
         return f"{self.idx}: ({self.x_mm}, {self.y_mm})"
+
+
+# ---------------------------------------------------------------------------
+# tenure — Belegung (wer wohnt/nutzt hier?), Migration 0005, Schutz 0009/0103
+# ---------------------------------------------------------------------------
+
+
+class Occupancy(models.Model):
+    """tenure.occupancy — die Belegung einer Einheit (A-17 bis A-20).
+
+    Trägt die **Nutzungsart**, nicht den Mieter: Der hängt als `OccupancyParty`
+    daran (A-03/A-19). Genau deshalb gibt es hier **keine** `party_id` — die
+    Begründung steht im Modulkopf von Migration 0103.
+
+    * **Überlappungsfrei je Einheit** (`excl_occupancy`, A-18): Eine Einheit hat
+      zu jedem Zeitpunkt höchstens **eine** primäre Belegung. Der Constraint ist
+      ein EXCLUDE über `daterange(valid_from, valid_until)` — der Service prüft
+      vor, die DB entscheidet.
+    * **COMMON_AREA und TECHNICAL_ROOM tragen keine Belegung** (Beschluss F-12,
+      Trigger `forbid_common_area_occupancy`). Ein tatsächlich vermieteter
+      Kellerraum ist als eigene Einheit vom Typ STORAGE zu führen.
+    * **Kein Löschen** (0009): Eine Belegung wird **beendet** (`valid_until`),
+      nicht gelöscht — sie ist die Historie, auf die Aufträge und Berichte zeigen.
+    * `contract_reference` ist eine **Vertragsreferenz**, kein Mietername und
+      erst recht kein Mietbetrag (A-17: keine Mietbeträge in diesem System).
+    """
+
+    id = models.UUIDField(primary_key=True)
+    unit = models.ForeignKey(
+        Unit, models.DO_NOTHING, db_column="unit_id", related_name="occupancies"
+    )
+    # RENTED|OWNER_OCCUPIED|VACANT|COMMERCIAL_USE|OTHER|UNKNOWN
+    occupancy_type = models.TextField()
+    contract_reference = models.TextField(null=True, blank=True)
+    valid_from = models.DateField()
+    valid_until = models.DateField(null=True, blank=True)
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'tenure"."occupancy'
+        ordering = ["-valid_from"]
+
+    def __str__(self):
+        return f"{self.occupancy_type} ab {self.valid_from}"
+
+
+class OccupancyParty(models.Model):
+    """tenure.occupancy_party — **der Mieter** an der Belegung (A-03, A-19).
+
+    Die Heimat des Mieternamens. Ein Beteiligter ist eine ganz normale
+    `identity.party` — mit Adressen und Kommunikationswegen, auffindbar und
+    verknüpfbar. Der Monteur ruft ihn an, bevor er losfährt.
+
+    * **Mehrere Beteiligte je Belegung sind der Normalfall**, nicht die Ausnahme
+      (Ehepaar: zweimal CONTRACTUAL_TENANT; Mitbewohner: OCCUPANT). Eine einzelne
+      Spalte an der Belegung könnte das nicht abbilden.
+    * **Leerstand** = eine Belegung ohne jeden Beteiligten (Typ `VACANT`).
+    * Der Beteiligtenzeitraum muss **innerhalb** des Belegungszeitraums liegen
+      (deferred Constraint-Trigger `check_occupancy_party_range`) — ein Mieter
+      kann nicht länger wohnen, als die Belegung gilt.
+    * MERGED-Parties sind verboten (0009), Löschen ebenfalls (0009): Ein
+      ausgezogener Mieter bekommt ein `valid_until`.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    occupancy = models.ForeignKey(
+        Occupancy, models.DO_NOTHING, db_column="occupancy_id", related_name="parties"
+    )
+    party = models.ForeignKey(
+        Party, models.DO_NOTHING, db_column="party_id", related_name="occupancy_roles"
+    )
+    # CONTRACTUAL_TENANT|CO_TENANT|OCCUPANT|OWNER_OCCUPANT|COMMERCIAL_USER
+    role = models.TextField()
+    valid_from = models.DateField()
+    valid_until = models.DateField(null=True, blank=True)
+    created_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'tenure"."occupancy_party'
+        ordering = ["valid_from"]
+
+    def __str__(self):
+        return f"{self.role} {self.party_id}"
+
+
+# ---------------------------------------------------------------------------
+# management — das Verwaltungsmandat, Migration 0006, Schutz 0009/0103
+# ---------------------------------------------------------------------------
+
+
+class ManagementMandate(models.Model):
+    """management.management_mandate — **die Verwaltung** (A-10 bis A-12).
+
+    **Die Verwaltung ist KEINE Beteiligtenrolle an der Liegenschaft.**
+    `property.property_party_role` kennt nur COMMUNITY_OF_OWNERS, PROPERTY_OWNER,
+    OPERATOR und CARETAKER; der Kommentar in `0004_property.sql` sagt es wörtlich:
+    „Die Verwaltung wird ausschließlich über ein Mandat verbunden." Der
+    Unterschied wird bei der Rechnung scharf — **wer beauftragt** (die WEG), **wer
+    verwaltet** (Stegos) und **wer den Beleg bekommt** sind drei Fragen.
+
+    Das Mandat verbindet `management_party` (Stegos) mit `principal_party`
+    (die WEG) an einer `property`:
+
+    * `mandate_type`: WEG_MANAGEMENT | RENTAL_MANAGEMENT |
+      SPECIAL_PROPERTY_MANAGEMENT | SPECIAL_MANDATE
+    * `scope_type`: ENTIRE_PROPERTY (**ohne** Mandatseinheiten) | SELECTED_UNITS
+      (**mit mindestens einer**). Beides erzwingt ein deferred Constraint-Trigger
+      (`assert_mandate_valid`) — nicht der Service.
+    * `default_contact_party_id` ist **Pflicht** (A-10, NOT NULL): Ein Mandat ohne
+      benannten Ansprechpartner ist eine Telefonnummer, die niemand hat.
+    * Vollmandate desselben Typs überlappen nie am selben Objekt
+      (`excl_mandate_entire`); Teilmandate kollidieren nie auf derselben Einheit.
+    * **Beenden statt löschen** (0009): `status='ENDED'` + `valid_until`
+      (CHECK: ein beendetes Mandat hat immer ein Enddatum).
+    """
+
+    id = models.UUIDField(primary_key=True)
+    management_party = models.ForeignKey(
+        Party,
+        models.DO_NOTHING,
+        db_column="management_party_id",
+        related_name="mandates_as_manager",
+    )
+    principal_party = models.ForeignKey(
+        Party,
+        models.DO_NOTHING,
+        db_column="principal_party_id",
+        related_name="mandates_as_principal",
+    )
+    property = models.ForeignKey(
+        Property, models.DO_NOTHING, db_column="property_id", related_name="mandates"
+    )
+    # WEG_MANAGEMENT|RENTAL_MANAGEMENT|SPECIAL_PROPERTY_MANAGEMENT|SPECIAL_MANDATE
+    mandate_type = models.TextField()
+    # ENTIRE_PROPERTY|SELECTED_UNITS
+    scope_type = models.TextField()
+    valid_from = models.DateField()
+    valid_until = models.DateField(null=True, blank=True)
+    status = models.TextField()  # ACTIVE | ENDED
+    contract_reference = models.TextField(null=True, blank=True)
+    default_contact_party = models.ForeignKey(
+        Party,
+        models.DO_NOTHING,
+        db_column="default_contact_party_id",
+        related_name="mandates_as_contact",
+    )
+    version = models.IntegerField(db_default=1)
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'management"."management_mandate'
+        ordering = ["-valid_from"]
+
+    def __str__(self):
+        return f"{self.mandate_type} ({self.status})"
+
+
+class ManagementMandateUnit(models.Model):
+    """management.management_mandate_unit — Teilmandat auf einzelne Einheiten (A-11).
+
+    **Unveränderlich** (0009, `trg_mandate_unit_immutable`: UPDATE *und* DELETE
+    verboten). Der Umfang eines laufenden Mandats wird nicht umgeschrieben; eine
+    Korrektur läuft über ein **Nachfolgemandat** (das alte beenden, ein neues mit
+    dem richtigen Umfang anlegen). Der Service bietet deshalb bewusst keinen Weg,
+    Einheiten nachträglich hinzuzufügen oder zu entfernen — er könnte ihn gar
+    nicht anbieten.
+
+    Zusammengesetzter Primärschlüssel (mandate_id, unit_id) und zwei
+    zusammengesetzte Fremdschlüssel, die erzwingen, dass Mandat und Einheit zur
+    **selben Liegenschaft** gehören; `property_id` ist deshalb redundant, aber
+    Pflicht und DB-seitig konsistenzgesichert.
+    """
+
+    pk = models.CompositePrimaryKey("mandate_id", "unit_id")
+    mandate = models.ForeignKey(
+        ManagementMandate,
+        models.DO_NOTHING,
+        db_column="mandate_id",
+        related_name="mandate_units",
+    )
+    property = models.ForeignKey(
+        Property,
+        models.DO_NOTHING,
+        db_column="property_id",
+        related_name="mandate_units",
+    )
+    unit = models.ForeignKey(
+        Unit, models.DO_NOTHING, db_column="unit_id", related_name="mandate_units"
+    )
+    created_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'management"."management_mandate_unit'
+
+    def __str__(self):
+        return f"{self.mandate_id} -> {self.unit_id}"
+
+
+class ManagementResponsibility(models.Model):
+    """management.management_responsibility — weitere Kontakte am Mandat (A-13).
+
+    Der **Standardkontakt** steht am Mandat selbst (Pflicht). Hier stehen die
+    **zusätzlichen** Zuständigkeiten: technischer Kontakt, kaufmännischer Kontakt,
+    Buchhaltung, **Notfallkontakt**, Freigabeberechtigter — mit `priority` als
+    Eskalationsreihenfolge (kleiner = früher).
+
+    Kein Löschen (0009); eine Zuständigkeit endet über `valid_until`.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    mandate = models.ForeignKey(
+        ManagementMandate,
+        models.DO_NOTHING,
+        db_column="mandate_id",
+        related_name="responsibilities",
+    )
+    # TECHNICAL_CONTACT|COMMERCIAL_CONTACT|ACCOUNTING_CONTACT|EMERGENCY_CONTACT|APPROVER
+    responsibility_type = models.TextField()
+    responsible_party = models.ForeignKey(
+        Party,
+        models.DO_NOTHING,
+        db_column="responsible_party_id",
+        related_name="mandate_responsibilities",
+    )
+    priority = models.IntegerField(db_default=100)
+    valid_from = models.DateField()
+    valid_until = models.DateField(null=True, blank=True)
+    created_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'management"."management_responsibility'
+        ordering = ["priority", "valid_from"]
+
+    def __str__(self):
+        return f"{self.responsibility_type} ({self.priority})"

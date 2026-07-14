@@ -56,8 +56,11 @@
   --paper: #f7f6f3;         // Arbeitsflaeche (kein hartes Weiss)
   --surface: #ffffff;       // Karten/Zeilen ueber Papier
   --surface-sunken: #efede8;// vertiefte Flaechen (Skeleton, Segmentleiste)
-  --line: #ddd8ce;          // Hairline-Borders auf Papier
-  --line-strong: #c7c1b4;   // betonte Trennlinien
+  --line: #ddd8ce;          // Hairline-Borders auf Papier (reine Deko)
+  // Rand von Bedienelementen (Knopf, Eingabefeld, Auswahl). Muss WCAG 2.2 AA
+  // 1.4.11 tragen: >= 3:1 gegen JEDE Flaeche, auf der ein Control sitzt — auch
+  // die vertiefte --surface-sunken. #c7c1b4 erreichte dort nur 1,53:1.
+  --line-strong: #8a8375;   // 3,2-3,8:1 auf surface/sunken; nie als Textfarbe genutzt
 
   // Kommandoflaechen (Navy)
   --command: #1c3244;       // Sidebar/Header
@@ -138,7 +141,7 @@
   --surface: #1c3244;
   --surface-sunken: #101c26;
   --line: #2c4459;
-  --line-strong: #3a566f;
+  --line-strong: #6f8ea9;   // 3,9-5,0:1 auf den dunklen Flaechen (1.4.11, s. Light-Theme)
 
   --command: #101c26;
   --command-2: #1c3244;

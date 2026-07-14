@@ -128,6 +128,98 @@ export interface QuoteLine {
 /** Quellart einer Abrechnungsbindung. */
 export type BillingSource = 'BERICHTSPOSITION' | 'ZEITBUCHUNG' | 'ANGEBOTSPOSITION';
 
+// ---------------------------------------------------------------------------
+// Die Mengensicht: das Angebot OHNE Geld (GET /invoicing/quotes/mengen, 0102)
+// ---------------------------------------------------------------------------
+//
+// **Kein Typ hier erbt von `Quote`/`QuoteLine`.** Das ist Absicht: Erbte die
+// Mengenzeile die Angebotszeile, trüge sie `unit_price`, `unit_cost` (Einkauf!) und
+// `markup_percent` (Aufschlag) im Typ — und irgendein Template zeigte sie
+// irgendwann an. Der Server schickt diese Felder für die Mengensicht nicht; der Typ
+// kennt sie deshalb auch nicht.
+
+/** Angebotsposition der Mengensicht: **was** und **wie viel** — kein Betrag. */
+export interface QuoteMengenLine {
+  position_number: number;
+  line_type: LineType;
+  /**
+   * ALTERNATIV/BEDARF heißt: **nicht beauftragt**. Deshalb steht die Angabe auch in
+   * der preisfreien Sicht — sie wegzulassen wäre gefährlicher, als sie zu zeigen.
+   */
+  line_kind: LineKind;
+  rubrik: number | null;
+  description: string;
+  quantity: string | null;
+  unit: string | null;
+  source_article_id: string | null;
+  source_assembly_id: string | null;
+}
+
+/** Angebotskopf der Mengensicht — ohne `net_total`/`tax_total`/`gross_total`. */
+export interface QuoteMengen {
+  id: string;
+  quote_number: string | null;
+  title: string;
+  status: QuoteStatus;
+  quote_date: string | null;
+  valid_until_date: string | null;
+  property: QuotePropertyRef;
+  work_order_id: string | null;
+  /**
+   * True = dem Abrufer werden Preise **vorenthalten** (row_scope EIGENE). Das UI
+   * sagt es ihm ins Gesicht, statt Spalten stillschweigend wegzulassen — dieselbe
+   * Ehrlichkeitsregel wie bei der gekürzten Trefferliste der Suche.
+   */
+  preise_ausgeblendet: boolean;
+}
+
+export interface QuoteMengenDetail extends QuoteMengen {
+  project: { id: string; project_number: string; name: string } | null;
+  work_order: { id: string; order_number: string; title: string } | null;
+  sent_at: string | null;
+  rubriken: Rubrik[];
+  lines: QuoteMengenLine[];
+}
+
+export interface QuoteMengenPage {
+  items: QuoteMengen[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+// ---------------------------------------------------------------------------
+// Beschriftungen (eine Quelle für alle Belegansichten)
+// ---------------------------------------------------------------------------
+
+export const QUOTE_STATUS_LABEL: Readonly<Record<QuoteStatus, string>> = {
+  ENTWURF: 'Entwurf',
+  INTERN_GEPRUEFT: 'Intern geprüft',
+  FREIGEGEBEN: 'Freigegeben',
+  VERSENDET: 'Versendet',
+  ANGENOMMEN: 'Angenommen',
+  ABGELEHNT: 'Abgelehnt',
+  ABGELAUFEN: 'Abgelaufen',
+  ERSETZT: 'Ersetzt',
+};
+
+export const LINE_TYPE_LABEL: Readonly<Record<LineType, string>> = {
+  MATERIAL: 'Material',
+  ARBEITSZEIT: 'Arbeitszeit',
+  PAUSCHALE: 'Pauschale',
+  FREMDLEISTUNG: 'Fremdleistung',
+  FAHRT: 'Fahrt',
+  ZUSCHLAG: 'Zuschlag',
+  TEXT: 'Text',
+  ZWISCHENSUMME: 'Zwischensumme',
+};
+
+export const LINE_KIND_LABEL: Readonly<Record<LineKind, string>> = {
+  NORMAL: '',
+  ALTERNATIV: 'Alternative — nicht beauftragt',
+  BEDARF: 'Bedarfsposition — nur auf Abruf',
+};
+
 /** Abschnitt (Rubrik) eines Belegs — gliedert die Positionen. */
 export interface Rubrik {
   position_number: number;
@@ -537,6 +629,34 @@ export interface RechnungAusAuftrag {
   show_labour_costs?: boolean;
 }
 
+/**
+ * Rechnung über die **Abweichungen** eines PAUSCHAL-Auftrags (Nachtrag).
+ *
+ * MEHRVERBRAUCH mit der **Differenzmenge**, ZUSATZ mit der vollen Menge — was
+ * pauschal vereinbart war, steht schon auf der Angebotsrechnung. `preise` ist der
+ * bestehende Klärungsweg (Schlüssel der Abweichung → Einzelpreis).
+ */
+export interface RechnungAusNachtrag {
+  work_order_id: string;
+  tax_code: string;
+  preise?: Record<string, string>;
+  invoice_date?: string | null;
+  due_date?: string | null;
+  payment_term_days?: number | null;
+  discount_percent?: string | null;
+  discount_days?: number | null;
+  show_labour_costs?: boolean;
+}
+
+/**
+ * Der Ausgang eines versendeten Angebots.
+ *
+ * **ERSETZT steht bewusst nicht hier**: Der Status verlangt ein Nachfolgeangebot
+ * (DB-Regel) und ist damit der Vorgang „Ersatzangebot anlegen", kein
+ * Statuswechsel.
+ */
+export type QuoteAusgang = 'ANGENOMMEN' | 'ABGELEHNT' | 'ABGELAUFEN';
+
 /** Ein **Vorschlag** für einen unbekannten Preis — nie vorausgefüllt. */
 export interface PreisVorschlag {
   art: 'LETZTER_PREIS' | 'LISTENPREIS' | 'LOHNGRUPPE';
@@ -553,7 +673,10 @@ export interface PreisVorschlag {
  * die plausibel aussieht, ist der teuerste Fehler dieses Systems.
  */
 export interface PreisKlaerung {
-  quelle_art: 'BERICHTSPOSITION' | 'ZEITGRUPPE';
+  /** ABWEICHUNG: der Nachtrag klärt je **Abweichung** des Soll-Ist (ihr
+   *  Schlüssel), nicht je Berichtszeile — die Mehrmenge entsteht aus der Summe
+   *  über alle Berichte. */
+  quelle_art: 'BERICHTSPOSITION' | 'ZEITGRUPPE' | 'ABWEICHUNG';
   quelle_id: string;
   bezeichnung: string;
   menge: string | null;

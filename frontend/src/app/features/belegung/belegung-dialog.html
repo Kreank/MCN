@@ -1,0 +1,84 @@
+<app-dialog [offen]="offen()" [titel]="titel()" (schliessen)="schliessen()">
+  <form
+    id="belegung-form"
+    class="dialog-form"
+    (submit)="$event.preventDefault(); absenden()"
+    novalidate
+  >
+    @if (formularMeldung(); as fm) {
+      <div class="melde melde--fehler" role="alert">
+        <span class="melde__mark" aria-hidden="true">!</span>
+        <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+      </div>
+    }
+
+    @if (!nurMieter()) {
+      <fieldset class="satz">
+        <legend class="satz__titel">Wie wird die Einheit genutzt?</legend>
+        <app-feld
+          [control]="form.controls.occupancy_type"
+          label="Nutzungsart"
+          typ="select"
+          [pflicht]="true"
+          [optionen]="nutzungOptionen"
+          hinweis="„Leerstand“ ist eine erfasste Aussage — sie ist etwas anderes als „nicht erfasst“."
+        />
+        <app-feld
+          [control]="form.controls.valid_from"
+          label="Gültig ab"
+          typ="datum"
+          [pflicht]="true"
+        />
+        <app-feld
+          [control]="form.controls.valid_until"
+          label="Gültig bis"
+          typ="datum"
+          [hinweis]="
+            bearbeiten()
+              ? 'Setzt das Ende der Belegung. Offene Mietverhältnisse enden dann zum selben Tag — der Eintrag bleibt lesbar, gelöscht wird nichts.'
+              : 'Leer lassen, solange kein Ende feststeht.'
+          "
+        />
+        <app-feld
+          [control]="form.controls.contract_reference"
+          label="Vertragsreferenz"
+          hinweis="Aktenzeichen des Mietvertrags — NICHT der Name des Mieters. Der Name gehört an den Kontakt, sonst kann ihn niemand anrufen."
+        />
+      </fieldset>
+    }
+
+    @if (!bearbeiten()) {
+      <fieldset class="satz">
+        <legend class="satz__titel">Wer wohnt dort?</legend>
+        <app-referenz-wahl
+          [control]="form.controls.party_id"
+          label="Mieter:in / Nutzer:in"
+          [pflicht]="nurMieter()"
+          [suche]="parteiSuche"
+          platzhalter="Kontakt suchen …"
+          leerText="Kein Kontakt gefunden. Neue Mieter werden unter „Kontakte“ angelegt — mit Telefonnummer."
+          [hinweis]="
+            nurMieter()
+              ? 'Mehrere Bewohner sind der Normalfall: Ehepaar, Mitbewohner.'
+              : 'Optional. Ohne Auswahl steht die Einheit als leerstehend/unbewohnt in der Liste.'
+          "
+        />
+        <app-feld
+          [control]="form.controls.role"
+          label="Rolle"
+          typ="select"
+          [optionen]="rollenOptionen"
+        />
+      </fieldset>
+    }
+  </form>
+
+  <div dialog-aktionen class="dialog__aktionen">
+    <button type="button" class="btn" [disabled]="laedt()" (click)="schliessen()">
+      Abbrechen
+    </button>
+    <button type="submit" form="belegung-form" class="btn btn--primary" [disabled]="laedt()">
+      {{ laedt() ? 'Wird gespeichert …' : 'Speichern' }}
+    </button>
+  </div>
+</app-dialog>

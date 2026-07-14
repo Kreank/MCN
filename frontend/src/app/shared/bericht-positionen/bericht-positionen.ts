@@ -2,6 +2,7 @@ import { Component, computed, effect, inject, input, signal } from '@angular/cor
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { Subject, debounceTime, distinctUntilChanged } from 'rxjs';
 import { ArtikelService } from '../../core/artikel.service';
+import { AuthService } from '../../core/auth.service';
 import { SiteReportService } from '../../core/site-report.service';
 import {
   SiteReportLine,
@@ -93,6 +94,18 @@ const neueUid = () => `p${++uidSeq}`;
 export class BerichtPositionen {
   private readonly svc = inject(SiteReportService);
   private readonly artikelSvc = inject(ArtikelService);
+  private readonly auth = inject(AuthService);
+
+  /**
+   * Darf die Artikel-/Leistungspalette überhaupt angeboten werden?
+   *
+   * `GET /api/pricing/articles` und `/assemblies` sind fail-closed (`require`):
+   * Wer `pricing/LESEN` gar nicht oder nur mit row_scope EIGENE trägt, bekommt
+   * 403 — der Monteur hat das Modul überhaupt nicht. Reiter und Suchfeld wären
+   * für ihn tote Knöpfe; er erfasst freie Textzeilen oder belegt aus dem Angebot
+   * vor (beides `require_scoped`).
+   */
+  protected readonly darfPalette = computed(() => this.auth.darfAlle('pricing', 'LESEN'));
 
   readonly berichtId = input.required<string>();
   readonly status = input.required<SiteReportStatus>();

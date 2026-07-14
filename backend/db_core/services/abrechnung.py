@@ -8,8 +8,16 @@ Deterministisch, ohne KI. Zwei Wege, je nach `work_order.billing_mode`
   Berichtspositionen sind **Nachweis**, kein Rechnungsposten — das Angebot enthält
   die Leistung bereits; sie zusätzlich zu fakturieren hieße, doppelt zu kassieren.
   Das Soll-Ist (0080) bleibt die **interne Nachkalkulation**.
+* **PAUSCHAL, zweiter Weg** → `rechnung_aus_nachtrag`: Was **über** das Angebot
+  hinaus geleistet wurde, ist mit der Pauschale **nicht** bezahlt. Der Nachtrag
+  fakturiert genau die Abweichungen — MEHRVERBRAUCH mit der **Differenzmenge**,
+  ZUSATZ mit der **vollen Menge** — und nichts sonst. Er ist zur Angebotskopie
+  disjunkt; beide zusammen ergeben den vollen Anspruch. (Herleitung und die Frage,
+  warum MINDERVERBRAUCH die Pauschale *nicht* mindert: siehe den Abschnitt
+  „Nachtrag" weiter unten.)
 * **REGIE** → `rechnung_aus_auftrag`: Die Rechnung entsteht aus dem **Ist**
-  (unterzeichnete Berichte + Zeitbuchungen).
+  (unterzeichnete Berichte + Zeitbuchungen). Einen Nachtrag gibt es hier nicht —
+  das Ist ist bereits vollständig fakturiert.
 
 ## Die drei Invarianten dieses Moduls
 
@@ -123,6 +131,10 @@ ANGEBOTSPOSITION = "ANGEBOTSPOSITION"
 # einzelner Stempelung wäre weder bedienbar noch fachlich sinnvoll.
 QUELLE_BERICHTSPOSITION = "BERICHTSPOSITION"
 QUELLE_ZEITGRUPPE = "ZEITGRUPPE"
+# Beim Nachtrag ist die Klärungseinheit die **Abweichungsposition** des Soll-Ist
+# (ihr Schlüssel, z. B. `ARTIKEL:<uuid>:stk`) — nicht die einzelne Berichtszeile:
+# Der Mehrverbrauch entsteht aus der Summe über alle Berichte des Auftrags.
+QUELLE_ABWEICHUNG = "ABWEICHUNG"
 
 # Gründe, aus denen der Server keinen Preis hat (maschinenlesbar fürs UI).
 GRUND_EK_FEHLT = "EK_FEHLT"
@@ -184,6 +196,38 @@ class PreisUnbekannt(AbrechnungError):
             f"{namen}. Sie werden NICHT mit 0,00 € abgerechnet und auch nicht "
             "weggelassen. Bitte den Einzelpreis nennen oder den Artikel/die "
             "Lohngruppe pflegen."
+        )
+
+
+class EinheitUneindeutig(AbrechnungError):
+    """Für denselben Artikel/dieselbe Leistung liegen Mengen in **verschiedenen
+    Einheiten** vor (z. B. „Stk" und „Stück") — der Geld-Wächter geht fail-closed
+    in die Klärung (→ 422 mit `einheit_uneindeutig`).
+
+    Der Wächter aggregiert die berechnete Menge über die Artikel-/Leistungs-
+    IDENTITÄT (nicht über die Einheit), damit „Stk" und „Stück" nicht als zwei
+    Posten durchrutschen und dieselben 19 Ventile zweimal fakturiert werden.
+    Divergieren die Einheiten aber wirklich, sind die Mengen **nicht summierbar**
+    (5 m + 2 Ringe sind nicht 7): Dann wird weder still summiert noch still
+    durchgelassen, sondern ein Mensch entscheidet — Einheiten vereinheitlichen oder
+    den echten Mehr-Einheiten-Artikel bewusst getrennt abrechnen.
+
+    `konflikte` ist **strukturiert** (Identität, Bezeichnung, die kollidierenden
+    Einheiten), damit das UI klar sagen kann, WO das Problem sitzt.
+    """
+
+    def __init__(self, konflikte):
+        self.konflikte = konflikte
+        namen = "; ".join(
+            f"{k['bezeichnung']} ({', '.join(k['einheiten'])})" for k in konflikte
+        )
+        super().__init__(
+            "Für folgende Posten liegen die Mengen in verschiedenen Einheiten vor: "
+            f"{namen}. Sie werden NICHT abgerechnet, solange unklar ist, ob es "
+            "derselbe Posten in unterschiedlicher Schreibweise ist (dann "
+            "vereinheitlichen) oder wirklich zwei Einheiten (dann getrennt und "
+            "bewusst). Eine stille Summe wäre falsch, ein stiller Durchlass eine "
+            "Doppelabrechnung."
         )
 
 
@@ -275,6 +319,161 @@ def _bindungen_am_auftrag(work_order_id, *, source_kinds):
             ).values_list("invoice__invoice_number", flat=True)
         }
     )
+
+
+def _IST_QUELLEN(order):
+    """Welche Quellarten stehen für „der Auftrag ist über das IST abgerechnet"?
+
+    Der Nachtrag (`rechnung_aus_nachtrag`) bindet **Berichtspositionen** — mit
+    derselben `source_kind` wie die Regieabrechnung, denn die Codeliste kennt nur
+    drei Werte (CHECK, Migration 0084). Trotzdem sind es zwei grundverschiedene
+    Aussagen:
+
+    * **REGIE**: die Berichtsposition ist mit ihrer **vollen Menge** fakturiert —
+      daneben noch die Angebotskopie zu stellen, hieße dieselbe Leistung zweimal
+      berechnen. Das muss gesperrt bleiben.
+    * **PAUSCHAL**: die Bindung stammt aus einem **Nachtrag** und fakturiert
+      ausschließlich die **Mehrmenge über dem Soll**. Sie ist zur Angebotskopie
+      per Konstruktion **disjunkt** — beide gehören zusammen (Pauschale + Nachtrag),
+      und zwar in **beliebiger Reihenfolge**. Bliebe die alte Sperre stehen, wäre
+      der Nachtrag ein Einbahnweg: Wer ihn zuerst abrechnet, bekäme die eigentliche
+      Pauschalrechnung nie mehr — mit einer Fehlermeldung, die etwas Falsches
+      behauptet.
+
+    Unterscheiden lässt sich beides am **Abrechnungsmodus des Auftrags** — und das
+    ist hier belastbar, nicht bloß plausibel: `set_billing_mode` **friert den Modus
+    ein, sobald eine aktive Bindung besteht**. Ein PAUSCHAL-Auftrag kann deshalb
+    keine Regie-Bindung tragen (sie entstünde nur unter REGIE, und der Weg zurück
+    ist gesperrt, solange sie aktiv ist). Erst ein **Storno** löst die Bindungen —
+    und löst damit zugleich die Sperre auf, ganz richtig.
+
+    **ZEITBUCHUNG zählt immer**: Zeiten fakturiert ausschließlich die Regie.
+    """
+    if order is not None and order.billing_mode == PAUSCHAL:
+        return (ZEITBUCHUNG,)
+    return (BERICHTSPOSITION, ZEITBUCHUNG)
+
+
+def _schluessel_string(article_id, assembly_id, description, unit):
+    """Der Abgleich-Schlüssel als String — deckungsgleich mit `soll_ist`/`abgleich`.
+
+    Muss zeichengenau mit `pos["schluessel"]` aus `site_report.abgleich`
+    übereinstimmen (`f"{typ}:{id}:{einheit}"`), sonst finden berechnete Menge und
+    Abweichung nicht zusammen.
+    """
+    key = report_service.abgleich_schluessel(
+        article_id, assembly_id, description, unit
+    )
+    return f"{key[0]}:{key[1]}:{key[2]}"
+
+
+def _einheit_norm(unit):
+    return (unit or "").strip().lower()
+
+
+def _identitaet(article_id, assembly_id, description):
+    """Die **Identität** eines Postens — OHNE die Einheit.
+
+    Der Geld-Wächter aggregiert über die Artikel-/Leistungs-IDENTITÄT, nicht über
+    den vollen Abgleich-Schlüssel (Review-Befund, dritter Weg): Die Einheit ist Teil
+    des Abgleich-Schlüssels (`ARTIKEL:<uuid>:<einheit>`). Weicht sie zwischen der
+    schon fakturierten Menge (etwa „Stk" aus einem Nachtrag) und der neu
+    abzurechnenden (etwa „Stück" aus einem Büro-Angebot) ab — **gleicher Artikel** —,
+    zerfällt der Posten sonst in zwei Schlüssel und die Mengengrenze sähe die schon
+    fakturierte Menge nicht (912 € für 19 Ventile). Die Identität hält beide
+    zusammen.
+
+    Freitext ohne Artikel-/Leistungs-UUID hat keine belastbare Identität außer der
+    normalisierten Bezeichnung — dann bleibt der Schlüssel bezeichnungsbasiert
+    (dieselbe Grenze wie im Abgleich). Zwei WIRKLICH verschiedene Bezeichnungen sind
+    verschiedene Posten; das System hat keine Grundlage, sie zu vereinen. Eine
+    reine Einheiten-Abweichung derselben Bezeichnung fängt der Divergenz-Check
+    trotzdem, weil die Identität die Einheit gerade NICHT enthält.
+    """
+    if article_id:
+        return f"ARTIKEL:{article_id}"
+    if assembly_id:
+        return f"LEISTUNG:{assembly_id}"
+    return f"TEXT:{(description or '').strip().lower()}"
+
+
+def _billed_je_identitaet(work_order_id):
+    """**Aktiv fakturierte Menge je Posten-IDENTITÄT, aufgeschlüsselt nach Einheit.**
+
+    Der Kern der Reparatur (Review-Befunde, drei Doppelabrechnungen). Die
+    Nachtragssicherheit darf NICHT am `source_kind` hängen (derselbe Posten ist über
+    ANGEBOTSPOSITION UND BERICHTSPOSITION fakturierbar) — und **nicht an der
+    Einheit**: „Stk" und „Stück" desselben Artikels sind derselbe Posten.
+
+    Rückgabe: zwei dicts `{identitaet: {einheit_norm: Decimal}}` — die über
+    `ANGEBOTSPOSITION` bzw. über `BERICHTSPOSITION` fakturierte Menge, je Identität
+    **und Einheit**, je **Rechnungsposition genau einmal** (mehrere Berichtszeilen
+    binden an EINE Nachtragsposition — die Positionsmenge zählt nicht je Bindung
+    mehrfach). Die Aufschlüsselung nach Einheit ist der Divergenz-Detektor: Führt
+    eine Identität mehr als eine Einheit, sind die Mengen NICHT summierbar (5 m + 2
+    Ringe sind nicht 7) — dann greift die Klärung (fail-closed), nicht eine stille
+    Summe.
+
+    `ZEITBUCHUNG` bleibt außen vor: Arbeitszeit ist kein mengenbasierter Posten.
+    Maßgeblich ist `invoice_line.quantity` (was auf der Rechnung steht), nicht die
+    Quellmenge.
+    """
+    links = (
+        BillingLink.objects.filter(
+            invoice__work_order_id=work_order_id,
+            released_at__isnull=True,
+            invoice_line__isnull=False,
+        )
+        .exclude(source_kind=ZEITBUCHUNG)
+        .select_related(
+            "invoice_line", "quote_line",
+            "site_report_line", "site_report_line__source_quote_line",
+        )
+    )
+    angebot = {}
+    bericht = {}
+    gesehen = set()
+    for link in links:
+        if link.invoice_line_id in gesehen:
+            continue
+        gesehen.add(link.invoice_line_id)
+        menge = link.invoice_line.quantity or Decimal("0.000")
+        if link.quote_line_id is not None:
+            ql = link.quote_line
+            ident = _identitaet(ql.source_article_id, ql.source_assembly_id,
+                                ql.description)
+            ziel = angebot
+            einheit = _einheit_norm(ql.unit)
+        elif link.site_report_line_id is not None:
+            srl = link.site_report_line
+            src = srl.source_quote_line or srl
+            ident = _identitaet(src.source_article_id, src.source_assembly_id,
+                                src.description)
+            ziel = bericht
+            einheit = _einheit_norm(src.unit)
+        else:  # pragma: no cover — CHECK schließt eine bindungslose Quelle aus
+            continue
+        je_einheit = ziel.setdefault(ident, {})
+        je_einheit[einheit] = je_einheit.get(einheit, Decimal("0.000")) + menge
+    return angebot, bericht
+
+
+def _billed_fuer(ident, einheit, angebot_billed, bericht_billed):
+    """(A, B, einheiten) für eine Identität unter EINER Einheit.
+
+    `A`/`B` sind die unter genau dieser Einheit gebundenen Mengen. `einheiten` ist
+    die Menge **aller** Einheiten, die für die Identität im Spiel sind (gebunden +
+    die geprüfte). Ist sie größer als eins, wurde derselbe Artikel in verschiedenen
+    Einheiten geführt — die Mengen sind nicht vergleichbar, und der Aufrufer muss in
+    die **Klärung** gehen (fail-closed), statt still zu summieren oder still
+    durchzulassen.
+    """
+    a_units = angebot_billed.get(ident, {})
+    b_units = bericht_billed.get(ident, {})
+    einheiten = set(a_units) | set(b_units) | {einheit}
+    A = a_units.get(einheit, Decimal("0.000"))
+    B = b_units.get(einheit, Decimal("0.000"))
+    return A, B, einheiten
 
 
 def bindungen(invoice_id):
@@ -831,7 +1030,10 @@ def offene_abrechnung(work_order_id):
             if order.billing_mode == REGIE
             else "Pauschalabrechnung: Die Rechnung ist die Angebotskopie. "
                  "Berichtspositionen und Zeiten sind Nachweis und interne "
-                 "Nachkalkulation — sie werden NICHT zusätzlich fakturiert."
+                 "Nachkalkulation — sie werden NICHT zusätzlich fakturiert. Was "
+                 "über das Angebot hinaus geleistet wurde, rechnet der Nachtrag ab "
+                 "(Reiter „Soll-Ist“) — dort nur die Mehrmenge, nie die ganze "
+                 "Position."
         ),
         "berichtspositionen": positionen,
         "zeitgruppen": gruppen,
@@ -959,6 +1161,82 @@ def _quote_zeilen_kopieren(quote):
     return lines, rubriken_out, quelle
 
 
+def _pauschal_mengengrenze_pruefen(order, lines):
+    """Die Angebotskopie darf keine schon per Nachtrag fakturierte Menge doppeln.
+
+    Der Gegenpart zur Nachtragsformel (Review-Befund, KRITISCH 2): Wird zuerst ein
+    Nachtrag über einen Posten abgerechnet (BERICHTSPOSITION, etwa als ZUSATZ, weil
+    noch kein Angebot zugeordnet war) und **danach** ein Angebot mit demselben Posten
+    zugeordnet und fakturiert, stünde die Menge zweimal auf zwei Rechnungen — je für
+    sich sauber gebunden, für die drei UNIQUE-Indizes unsichtbar (disjunkte Quellen).
+
+    Die Grenze ist **quantitativ und quellenunabhängig**: Nach dem Buchen dieser
+    Angebotszeile (`q`) darf die Gesamtmenge des Postens `max(A + q, Ist)` nicht
+    überschreiten. Umgestellt: die schon per Bericht fakturierte Menge `B` muss
+    `max(0, Ist − A − q)` einhalten. Ist sie größer, ist der Posten bereits über den
+    Nachtrag abgerechnet — der Weg ist, den Nachtrag zu **stornieren** (das löst die
+    Bindung), nicht ihn zu übergehen.
+
+    Nur bei PAUSCHAL: Bei REGIE ist die Angebotskopie ohnehin gesperrt, bei einem
+    Angebot ohne Auftrag gibt es kein Ist.
+    """
+    if order is None or order.billing_mode != PAUSCHAL:
+        return
+    abgleich = report_service.abgleich(order, nur_unterzeichnet=True)
+    ist_je = {p["schluessel"]: p["ist"] for p in abgleich["positionen"]}
+    angebot_billed, bericht_billed = _billed_je_identitaet(order.id)
+
+    # Menge dieses Angebots je (Identität, Einheit) — plus der volle Schlüssel für
+    # den Ist-Nachschlag (der Abgleich schlüsselt mit Einheit).
+    q_je = {}
+    for row in lines:
+        if row.get("quantity") is None:      # Text-/Zwischensummenzeile
+            continue
+        ident = _identitaet(
+            row.get("source_article_id"), row.get("source_assembly_id"),
+            row.get("description"),
+        )
+        einheit = _einheit_norm(row.get("unit"))
+        rec = q_je.setdefault(
+            (ident, einheit),
+            {"menge": Decimal("0.000"),
+             "bez": row.get("description") or ident,
+             "schluessel": _schluessel_string(
+                 row.get("source_article_id"), row.get("source_assembly_id"),
+                 row.get("description"), row.get("unit"))},
+        )
+        rec["menge"] += row["quantity"]
+
+    konflikte = []
+    for (ident, einheit), rec in q_je.items():
+        A, B, einheiten = _billed_fuer(ident, einheit, angebot_billed, bericht_billed)
+        if len(einheiten) > 1:
+            # Derselbe Artikel steht schon unter einer ANDEREN Einheit in Rechnung
+            # (z. B. Nachtrag „Stk", Angebot „Stück"). Ohne diesen Zweig sähe die
+            # Mengengrenze die gebundene Menge nicht (verschiedene Einheiten =
+            # verschiedene Schlüssel) und buchte 19 obendrauf — 912 € für 19
+            # Ventile. Fail-closed: Klärung.
+            konflikte.append({
+                "identitaet": ident,
+                "bezeichnung": rec["bez"],
+                "einheiten": sorted(einheiten),
+            })
+            continue
+        ist = ist_je.get(rec["schluessel"], Decimal("0.000"))
+        grenze = max(Decimal("0.000"), ist - A - rec["menge"])
+        if B > grenze:
+            raise AbrechnungError(
+                f"„{rec['bez']}“ ist bereits über einen Nachtrag abgerechnet "
+                f"({B} bereits fakturiert, geliefert sind {ist}). Die Angebotskopie "
+                "stellte dieselbe Menge ein zweites Mal in Rechnung — der Nachtrag "
+                "hat sie schon als Mehr-/Zusatzleistung erfasst. Wenn die Menge auf "
+                "die Angebotsrechnung gehört, ist der Nachtrag zu stornieren; das "
+                "gibt die Leistung wieder frei."
+            )
+    if konflikte:
+        raise EinheitUneindeutig(konflikte)
+
+
 def rechnung_aus_angebot(
     actor_app_user_id,
     *,
@@ -1035,6 +1313,12 @@ def rechnung_aus_angebot(
         # Prüfung davor, könnte ein Nebenläufer dazwischen dieselben Positionen
         # abrechnen — der UNIQUE-Index finge es ab, aber als 500.
         with business_transaction(actor_app_user_id):
+            # Die auftragsweite Serialisierung ZUERST: Nachtrag und Angebotskopie
+            # sperren sonst verschiedene Quellzeilen und liefen aneinander vorbei
+            # (Review-Befund, Nebenläufigkeit). Ab hier sieht dieser Lauf jede
+            # gleichzeitige Bindung des anderen Wegs — die Mengengrenze unten prüft
+            # gegen den frischen Stand.
+            _auftrag_sperren(quote.work_order_id)
             _quellen_sperren(quote_line_ids=list(quelle.values()))
             # Die **quellenübergreifende** Sperre (Review-Befund H-2): Der Auftrag
             # ist bereits über das Ist (Bericht/Zeiten) abgerechnet. Die
@@ -1044,7 +1328,7 @@ def rechnung_aus_angebot(
             # greifen, wenn der Modus nach der Regieabrechnung auf PAUSCHAL
             # zurückgestellt wurde.
             ist_rechnungen = _bindungen_am_auftrag(
-                quote.work_order_id, source_kinds=(BERICHTSPOSITION, ZEITBUCHUNG)
+                quote.work_order_id, source_kinds=_IST_QUELLEN(order)
             )
             if ist_rechnungen:
                 raise AbrechnungError(
@@ -1069,6 +1353,13 @@ def rechnung_aus_angebot(
                     ],
                     quote_line_id=belegt,
                 )
+            # **Die quellenunabhängige Mengengrenze (Review-Befund, KRITISCH 2).**
+            # Wurde ein Posten schon per Nachtrag (BERICHTSPOSITION) fakturiert,
+            # darf die Angebotskopie nicht dieselbe Menge ein zweites Mal buchen.
+            # Der `_bindungen_am_auftrag`-Check oben sieht das NICHT: Bei PAUSCHAL
+            # gibt `_IST_QUELLEN` nur ZEITBUCHUNG zurück (Berichtsbindungen sind der
+            # legitime Nachtrag). Die Grenze ist quantitativ, nicht boolesch.
+            _pauschal_mengengrenze_pruefen(order, lines)
             invoice = beleg_service.create_invoice(
                 actor_app_user_id,
                 property_id=quote.property_id,
@@ -1136,6 +1427,33 @@ def _schon_abgerechnet(was, namen, **quell_filter):
         f"{was} sind bereits abgerechnet (in {', '.join(nummern)}): "
         f"{'; '.join(namen)}. Dieselbe Leistung wird nicht zweimal berechnet — "
         "wenn die Rechnung falsch war, ist sie zu stornieren."
+    )
+
+
+def _auftrag_sperren(work_order_id):
+    """Sperrt die `work_order`-Zeile bis zum Transaktionsende (`SELECT … FOR UPDATE`).
+
+    **Die Serialisierung über die eine Klammer** (Review-Befund, Nebenläufigkeit).
+    Die Doppelabrechnungssperre des Nachtrags rechnet über `_billed_je_schluessel`
+    quellenübergreifend — aber die Quellzeilen liegen in **verschiedenen** Tabellen
+    (`quote_line` für die Angebotskopie, `site_report_line` für den Nachtrag). Zwei
+    gleichzeitige Läufe sperren deshalb verschiedene Zeilen und kämen beide durch:
+    eine Doppelabrechnung durch **Timing** statt durch Reihenfolge.
+
+    Der Auftrag ist die einzige Zeile, die **beide** Wege gemeinsam haben. Wer die
+    Mengengrenze prüft, sperrt ihn deshalb als **erste** Amtshandlung; der zweite
+    Lauf wartet, sieht die Bindung des ersten und wird korrekt abgewiesen (422).
+    Dasselbe Muster wie `sign_report` gegen die Berichtspositionen (`FOR SHARE`/
+    `FOR UPDATE`) — keine Logik dupliziert, keine Migration, kein zweiter
+    Wahrheitsort. Ein Angebot ohne Auftrag (`work_order_id is None`) trägt keine
+    auftragsweite Mengengrenze — dann ist nichts zu sperren.
+    """
+    if work_order_id is None:
+        return
+    list(
+        WorkOrder.objects.filter(id=work_order_id)
+        .select_for_update()
+        .values_list("id", flat=True)
     )
 
 
@@ -1363,6 +1681,11 @@ def rechnung_aus_auftrag(
 
     with as_business_error():
         with business_transaction(actor_app_user_id):
+            # Auftragsweite Serialisierung ZUERST (Review-Befund, Nebenläufigkeit):
+            # `_angebot_bereits_abgerechnet_pruefen` prüft quellenübergreifend; ohne
+            # die Auftragssperre könnte eine gleichzeitige Angebotsrechnung dazwischen
+            # committen, ohne dass die Zeilensperren es sähen (andere Tabelle).
+            _auftrag_sperren(order.id)
             quell_bl = [
                 q["site_report_line_id"]
                 for k, q in quellen.values()
@@ -1415,6 +1738,549 @@ def rechnung_aus_auftrag(
                         invoice_line_id=zeilen[pos].id,
                         source_kind=ZEITBUCHUNG,
                         time_entry_id=entry.id,
+                    )
+    invoice.refresh_from_db()
+    return invoice
+
+
+# ---------------------------------------------------------------------------
+# Nachtrag (PAUSCHAL): die Rechnung aus den ABWEICHUNGEN
+# ---------------------------------------------------------------------------
+#
+# Der Mehrverbrauch war bisher **sichtbar, aber nicht abrechenbar**: Der Soll-Ist
+# wies ihn sauber aus, `rechnung_aus_auftrag` ist bei PAUSCHAL gesperrt (zu Recht
+# — sie fakturierte die pauschal beauftragte Leistung ein zweites Mal), und das
+# Büro tippte die Nachtragsrechnung von Hand ab. Genau die Handarbeit, die dieses
+# System beseitigen soll.
+#
+# **Die fachliche Regel** (Herleitung aus dem Modulkopf, nicht neu erfunden):
+#
+# * **MEHRVERBRAUCH** → abrechenbar ist **nur die Differenzmenge**. Die Sollmenge
+#   ist mit der Pauschale bezahlt; hätte man 19 statt 1 fakturiert, stünden 18
+#   Stück doppelt auf der Rechnung.
+# * **ZUSATZ** → abrechenbar ist die **volle Menge**. Sie war nie Teil der
+#   Pauschale (es gibt kein Soll dafür). Rechnerisch derselbe Satz: `Ist − Soll`,
+#   mit Soll = 0.
+# * **MINDERVERBRAUCH / ENTFALLEN mindern die Pauschale NICHT.** Pauschal ist der
+#   **Preis für das Werk** vereinbart, nicht ein Mengengerüst zum Stückpreis; wer
+#   das Werk mit weniger Material schafft, hat es dennoch geschuldet und erbracht.
+#   Das ist exakt die Aussage, die schon im Modulkopf steht („Das Soll-Ist bleibt
+#   die **interne Nachkalkulation**") — hier wird sie nur zu Ende gedacht. Eine
+#   Minderung wäre eine **Preisänderung**, und die trifft ein Mensch, nicht ein
+#   Abrechnungslauf (Weg dafür: Rabatt oder Gutschrift).
+#
+# **Die Bindung ist Pflicht — auch hier.** Jede Nachtragsposition bindet die
+# Berichtspositionen, aus denen ihre Mehrmenge stammt (`billing_link`,
+# `source_kind = BERICHTSPOSITION`). Ohne sie ließe sich derselbe Mehrverbrauch
+# beliebig oft fakturieren; die Sperre säße dann im Service statt in der DB — und
+# was im Service sitzt, ist umgehbar. Der **Storno löst die Bindung** (Trigger)
+# und macht die Mehrmenge wieder abrechenbar: Sie wurde ja erbracht.
+#
+# **Warum die Menge NICHT einfach aus den Bindungen EINER Quelle folgt** (die zwei
+# Doppelabrechnungen aus dem Review): Eine Berichtsposition trägt die **Ist-Menge**
+# (19), fakturiert wird die **Differenz** (1). Es genügt aber NICHT, nur die über
+# `BERICHTSPOSITION` fakturierte Menge abzuziehen — dieselbe Sache kann auch über
+# die **Angebotskopie** (`ANGEBOTSPOSITION`) schon fakturiert sein. Und das Soll ist
+# **volatil**: Wird das Angebot nach der Angebotsrechnung abgelehnt, fällt sein Soll
+# auf 0, und der Nachtrag hielte plötzlich die ganzen 19 für offen — obwohl 18 davon
+# längst auf der Angebotsrechnung stehen. Deshalb rechnet der Nachtrag gegen die
+# **quellenunabhängige** Menge je Schlüssel (`_billed_je_schluessel`):
+#
+#   pauschal_floor = max(A, Soll)        # A = über ANGEBOTSPOSITION fakturiert
+#   offen          = max(0, Ist − pauschal_floor − B)   # B = über BERICHTSPOSITION
+#
+# `pauschal_floor` ist die Menge, die die Pauschale deckt — sei es bereits
+# fakturiert (A) oder erst zugeordnet und noch zu fakturieren (Soll). Der Nachtrag
+# rechnet nur, was **darüber** liegt, und zieht ab, was er selbst schon fakturiert
+# hat (B). Kommt ein weiterer Bericht dazu, wird nur der Zuwachs abgerechnet; die
+# **neuen** Zeilen tragen die Bindung, die alten sind längst gebunden. Die
+# Gegenrichtung — die Angebotsrechnung darf nicht in eine schon per Nachtrag
+# fakturierte Menge hineinbuchen — steht in `_pauschal_mengengrenze_pruefen`.
+
+def _nachtrag_kandidaten(order):
+    """Die abrechenbaren Abweichungen eines Auftrags (MEHRVERBRAUCH + ZUSATZ).
+
+    Rechnet auf **derselben Rechenstelle** wie der Bildschirm
+    (`site_report.abgleich`) — aber `nur_unterzeichnet=True`: Ein Entwurfsbericht
+    ist ein Nachweis, den niemand abgenommen hat, und keine Abrechnungsgrundlage
+    (dieselbe Grenze wie `_berichtspositionen`). Der Nutzer erfährt trotzdem, dass
+    es sie gibt (`_entwurfsberichte`) — die häufigste Ursache einer „zu kleinen"
+    Nachtragsrechnung.
+
+    Die abgerechnete Menge folgt der **quellenunabhängigen** Formel (Modulkopf):
+    `offen = max(0, Ist − max(A, Soll) − B)`. `A`/`B` sind die über
+    ANGEBOTSPOSITION bzw. BERICHTSPOSITION je Schlüssel bereits fakturierten Mengen.
+    """
+    ergebnis = report_service.abgleich(order, nur_unterzeichnet=True)
+    angebot_billed, bericht_billed = _billed_je_identitaet(order.id)
+    kandidaten = []
+    for pos in ergebnis["positionen"]:
+        if pos["art"] not in (report_service.MEHRVERBRAUCH, report_service.ZUSATZ):
+            continue
+        lines = pos["lines"]
+        # Die noch UNgebundenen Berichtszeilen tragen die neue Bindung; die
+        # gebundenen sind per UNIQUE-Index physisch belegt.
+        aktive = list(
+            BillingLink.objects.filter(
+                site_report_line_id__in=[l.id for l in lines],
+                released_at__isnull=True,
+            ).select_related("invoice")
+        )
+        gebunden = {l.site_report_line_id for l in aktive}
+
+        # **Identitätsbasiert, nicht schlüsselbasiert** (Review-Befund, dritter Weg):
+        # A/B werden über die Artikel-/Leistungs-Identität gesucht, damit „Stk" und
+        # „Stück" desselben Artikels nicht als zwei Posten durchrutschen. Führt die
+        # Identität aber MEHRERE Einheiten, sind die Mengen nicht vergleichbar → der
+        # Kandidat geht in die Klärung (fail-closed), nicht auf einen Beleg.
+        ident = _identitaet(
+            pos["source_article_id"], pos["source_assembly_id"], pos["bezeichnung"]
+        )
+        einheit = _einheit_norm(pos["einheit"])
+        A, B, einheiten = _billed_fuer(ident, einheit, angebot_billed, bericht_billed)
+        einheit_konflikt = len(einheiten) > 1
+
+        # Die Pauschale deckt, was fakturiert IST (A) oder zugeordnet ist und noch
+        # fakturiert WIRD (Soll) — je nachdem, was größer ist. Nur darüber rechnet
+        # der Nachtrag. Ohne das `max(A, …)` bräche die Doppelabrechnung auf, sobald
+        # das Soll nach der Angebotsrechnung fällt (Angebot abgelehnt). Bei
+        # Einheiten-Konflikt ist diese Zahl bedeutungslos (A/B liegen unter anderer
+        # Einheit) — der Kandidat wird ohnehin geklärt, nicht abgerechnet.
+        pauschal_floor = max(A, pos["soll"])
+        offen = (pos["ist"] - pauschal_floor - B).quantize(
+            _Q_MENGE, rounding=ROUND_HALF_UP
+        )
+        if offen < 0:
+            # Mehr gedeckt/berechnet als heute abrechenbar wäre. Nichts offen.
+            # Keine Gutschrift von selbst — die entscheidet ein Mensch.
+            offen = Decimal("0.000")
+        kandidaten.append({
+            "schluessel": pos["schluessel"],
+            "art": pos["art"],
+            "bezeichnung": pos["bezeichnung"],
+            "einheit": pos["einheit"],
+            "soll": pos["soll"],
+            "ist": pos["ist"],
+            "differenz": pos["differenz"],
+            # Was der Posten bereits gekostet hat — quellenübergreifend (A+B), damit
+            # der Nutzer die Angebotskopie mitsieht, nicht nur frühere Nachträge.
+            "bereits_berechnet": A + B,
+            "menge": offen,
+            "einheit_konflikt": einheit_konflikt,
+            "konflikt_einheiten": sorted(einheiten) if einheit_konflikt else [],
+            "source_article_id": pos["source_article_id"],
+            "source_assembly_id": pos["source_assembly_id"],
+            "bindbar": [l for l in lines if l.id not in gebunden],
+            "rechnungen": sorted(
+                {
+                    (link.invoice.invoice_number or "einem Rechnungsentwurf")
+                    for link in aktive
+                }
+            ),
+            # Die Positionsart der Rechnungszeile kommt aus dem Bericht (§ 35a:
+            # ARBEITSZEIT ist voll begünstigt, MATERIAL nicht — `_arbeitskosten_anteil`
+            # leitet daraus ab). Deterministisch die erste Zeile des Schlüssels;
+            # Artikel und Einheit sind über den Schlüssel ohnehin identisch.
+            "line_type": lines[0].line_type if lines else "MATERIAL",
+        })
+    return kandidaten, ergebnis
+
+
+def _nachtrag_klaerung(kandidat, regelwerk):
+    """(preis, ek, klaerung|None) einer Abweichungsposition.
+
+    **Dieselbe** Preisermittlung wie überall (`_artikel_preis` / `_leistung_preis`)
+    und **derselbe** Klärungsweg (422 mit `PreisUnbekannt`). Kein zweiter Pfad: Der
+    Nachtrag darf so wenig mit 0,00 € durchrutschen wie die Regierechnung — er ist
+    sogar der gefährlichere Fall, weil ihn niemand gegen ein Angebot prüft.
+    """
+    def _klaerung(grund, text, vorschlaege):
+        return {
+            "quelle_art": QUELLE_ABWEICHUNG,
+            "quelle_id": kandidat["schluessel"],
+            "bezeichnung": kandidat["bezeichnung"],
+            "menge": kandidat["menge"],
+            "einheit": kandidat["einheit"],
+            "grund": grund,
+            "grund_text": text,
+            "vorschlaege": vorschlaege,
+        }
+
+    if kandidat["source_article_id"]:
+        vk, ek, grund = _artikel_preis(
+            kandidat["source_article_id"], kandidat["menge"] or Decimal(1), regelwerk
+        )
+        if vk is not None:
+            return vk, ek, None
+        return None, ek, _klaerung(
+            grund, _GRUND_TEXTE[grund],
+            _vorschlaege_artikel(kandidat["source_article_id"]),
+        )
+
+    if kandidat["source_assembly_id"]:
+        assembly = Assembly.objects.filter(id=kandidat["source_assembly_id"]).first()
+        if assembly is None:
+            vk, grund = None, GRUND_LEISTUNG_UNVOLLSTAENDIG
+        else:
+            vk, grund = _leistung_preis(assembly, regelwerk)
+        if vk is not None:
+            return vk, None, None
+        letzter = _letzter_berechneter_preis(
+            assembly_id=kandidat["source_assembly_id"]
+        )
+        text = (
+            "Die Bestandteile der Leistung ergeben in Summe 0,00 € — das ist kein "
+            "Preis, sondern eine Lücke in der Stückliste. Die Leistung wird NICHT "
+            "gratis abgerechnet."
+            if grund == GRUND_VK_NULL
+            else _GRUND_TEXTE[GRUND_LEISTUNG_UNVOLLSTAENDIG]
+        )
+        return None, None, _klaerung(grund, text, [letzter] if letzter else [])
+
+    # Freitextposition ohne Artikel-/Leistungsbezug (der Monteur hat sie von Hand
+    # erfasst). Der Server kann daraus keinen Preis rechnen — aber der Mensch kann
+    # ihn nennen. Keine Sackgasse, keine 0 €.
+    return None, None, _klaerung(
+        GRUND_KEINE_HERKUNFT, _GRUND_TEXTE[GRUND_KEINE_HERKUNFT], []
+    )
+
+
+_NACHTRAG_ZUSATZ = {
+    report_service.MEHRVERBRAUCH: "Mehrmenge",
+    report_service.ZUSATZ: "Zusatzleistung",
+}
+
+
+def _nachtrag_bezeichnung(kandidat):
+    """Die Bezeichnung der Rechnungsposition — mit benanntem Grund.
+
+    Der Kunde soll auf dem Beleg **sehen**, warum die Position da ist: nicht „18
+    Thermostatventile" (die sind mit der Pauschale bezahlt), sondern „1
+    Thermostatventil (Mehrmenge gegenüber Angebot)". Eine Nachtragsrechnung, die
+    aussieht wie die Pauschalrechnung, ist die nächste Rückfrage.
+    """
+    return f"{kandidat['bezeichnung']} ({_NACHTRAG_ZUSATZ[kandidat['art']]} gegenüber Angebot)"
+
+
+def nachtrag_vorschau(work_order_id):
+    """Was lässt sich an diesem PAUSCHAL-Auftrag als **Nachtrag** abrechnen?
+
+    Die ehrliche Antwort — auch wenn sie „nichts" lautet: Ein Knopf, der nichts
+    tut und nicht sagt warum, ist schlimmer als kein Knopf.
+
+    * `positionen` — MEHRVERBRAUCH (nur die Differenz) und ZUSATZ (volle Menge),
+      jeweils **abzüglich dessen, was schon fakturiert ist**. Mit Preis und
+      Zeilenbetrag; ein **unbekannter Preis wird als unbekannt ausgewiesen**, nie
+      als 0,00 € (`preis_status`, wie in `offene_abrechnung`).
+    * `bereits_abgerechnet` — Abweichungen, die es gibt, deren Mehrmenge aber
+      bereits in einer Rechnung steht (mit Belegnummer). Sonst stünde der Nutzer
+      vor einer leeren Liste und hielte den Soll-Ist für kaputt.
+    * `nicht_unterzeichnete_berichte` — ihre Mengen fließen **nicht** ein.
+    """
+    order = WorkOrder.objects.filter(id=work_order_id).first()
+    if order is None:
+        raise AbrechnungError("Auftrag nicht gefunden.")
+
+    kandidaten, _abgleich = _nachtrag_kandidaten(order)
+    regelwerk = matrix_service.lade_regelwerk()
+
+    positionen = []
+    bereits_abgerechnet = []
+    einheit_konflikte = []
+    summe = Decimal("0.00")
+    preise_unbekannt = False
+    for k in kandidaten:
+        if k.get("einheit_konflikt"):
+            # Fail-closed sichtbar machen, BEVOR jemand fakturiert: derselbe Artikel
+            # steht schon unter einer anderen Einheit in Rechnung — nicht summierbar,
+            # nicht abrechenbar, bis ein Mensch die Einheiten vereinheitlicht.
+            einheit_konflikte.append({
+                "schluessel": k["schluessel"],
+                "bezeichnung": k["bezeichnung"],
+                "einheiten": k["konflikt_einheiten"],
+            })
+            continue
+        if k["menge"] <= 0:
+            bereits_abgerechnet.append({
+                "schluessel": k["schluessel"],
+                "art": k["art"],
+                "bezeichnung": k["bezeichnung"],
+                "einheit": k["einheit"],
+                "menge": k["differenz"],
+                "rechnungen": k["rechnungen"],
+            })
+            continue
+        preis, _ek, klaerung = _nachtrag_klaerung(k, regelwerk)
+        if preis is None:
+            preise_unbekannt = True
+        else:
+            summe += _round2(preis * k["menge"])
+        positionen.append({
+            "schluessel": k["schluessel"],
+            "art": k["art"],
+            "bezeichnung": k["bezeichnung"],
+            "einheit": k["einheit"],
+            "soll": k["soll"],
+            "ist": k["ist"],
+            "menge": k["menge"],
+            "bereits_berechnet": k["bereits_berechnet"],
+            "preis_status": PREIS_BEKANNT if preis is not None else PREIS_UNBEKANNT,
+            "einzelpreis": preis,
+            "betrag": _round2(preis * k["menge"]) if preis is not None else None,
+            "grund": klaerung["grund"] if klaerung else None,
+            "grund_text": klaerung["grund_text"] if klaerung else None,
+            "vorschlaege": klaerung["vorschlaege"] if klaerung else [],
+        })
+
+    return {
+        "work_order_id": order.id,
+        "billing_mode": order.billing_mode,
+        # Der Nachtrag ist der PAUSCHAL-Fall. Bei REGIE wird ohnehin das ganze Ist
+        # fakturiert (`rechnung_aus_auftrag`) — ein Nachtrag daneben wäre eine
+        # Doppelabrechnung.
+        "abrechenbar": order.billing_mode == PAUSCHAL,
+        "hinweis": (
+            "Nachtrag: Abgerechnet werden ausschließlich die Abweichungen — "
+            "Mehrverbrauch nur mit der Differenzmenge, Zusatzleistungen mit der "
+            "vollen Menge. Minderverbrauch und entfallene Positionen mindern die "
+            "Pauschale nicht: Pauschal ist der Preis für das Werk vereinbart, "
+            "nicht ein Mengengerüst."
+            if order.billing_mode == PAUSCHAL
+            else "Regieabrechnung: Das gesamte Ist wird fakturiert (Berichts-"
+                 "positionen und Zeiten). Einen Nachtrag gibt es hier nicht — er "
+                 "rechnete dieselbe Leistung ein zweites Mal ab."
+        ),
+        "positionen": positionen,
+        "bereits_abgerechnet": bereits_abgerechnet,
+        # Fail-closed: derselbe Artikel in verschiedenen Einheiten — nicht
+        # abrechenbar, bis ein Mensch entscheidet. Ehrlich ausgewiesen, nicht still.
+        "einheit_konflikte": einheit_konflikte,
+        "summe": summe,
+        # Ehrlich: Die Summe ist nur die der bepreisbaren Positionen.
+        "preise_unbekannt": preise_unbekannt,
+        "nicht_unterzeichnete_berichte": [
+            {"id": r.id, "report_date": r.report_date, "status": r.status,
+             "activity_text": r.activity_text}
+            for r in _entwurfsberichte(order.id)
+        ],
+    }
+
+
+def rechnung_aus_nachtrag(
+    actor_app_user_id,
+    *,
+    work_order_id,
+    tax_code,
+    preise=None,
+    invoice_date=None,
+    due_date=None,
+    payment_term_days=None,
+    discount_percent=None,
+    discount_days=None,
+    show_labour_costs=True,
+):
+    """Erzeugt eine Rechnung (ENTWURF) über die **Abweichungen** eines
+    PAUSCHAL-Auftrags.
+
+    Nur MEHRVERBRAUCH (Differenzmenge) und ZUSATZ (volle Menge), nur aus
+    **unterzeichneten** Berichten, nur was noch nicht fakturiert ist. Jede Position
+    bindet ihre Berichtszeilen (`billing_link`) — die Doppelabrechnung ist damit
+    **physisch** gesperrt, nicht bloß im Service geprüft.
+
+    `tax_code` ist **Pflicht und wird nicht geraten** (wie bei `rechnung_aus_auftrag`):
+    Welcher Steuersatz gilt, ist eine steuerliche Entscheidung des Belegs. Den
+    Steuersatz der Angebotsposition zu übernehmen wäre eine plausible Vermutung —
+    und eine Vermutung auf einem GoBD-festgeschriebenen Beleg ist genau das, was
+    dieses Modul nirgends tut.
+
+    `preise` ist der **bestehende** Klärungsweg (`PreisUnbekannt`): genannt werden
+    darf ein Preis nur, wo der Server keinen hat. Eine Nachtragsposition mit
+    0,00 € gibt es nicht.
+    """
+    order = WorkOrder.objects.filter(id=work_order_id).first()
+    if order is None:
+        raise AbrechnungError("Auftrag nicht gefunden.")
+    if order.billing_mode != PAUSCHAL:
+        raise AbrechnungError(
+            f"Der Auftrag ist auf {order.billing_mode} eingestellt: Dort wird das "
+            "gesamte Ist fakturiert (Berichtspositionen und Zeiten). Ein Nachtrag "
+            "daneben stellte dieselbe Mehrmenge ein zweites Mal in Rechnung. Der "
+            "Nachtrag ist der PAUSCHAL-Fall."
+        )
+    # Zeiten fakturiert ausschließlich die Regie. Aktive Zeitbindungen an einem
+    # PAUSCHAL-Auftrag kann es nach `set_billing_mode` nicht geben — geprüft wird
+    # es trotzdem: Die Sperre soll halten, auch wenn jemand den Modus künftig auf
+    # einem anderen Weg setzt. (Genau dieser Fehler — eine Sperre, die an einem nie
+    # gesetzten Zustand hing — kostete in Welle 5 einen zweiten Anlauf.)
+    regie = _bindungen_am_auftrag(order.id, source_kinds=(ZEITBUCHUNG,))
+    if regie:
+        raise AbrechnungError(
+            f"Dieser Auftrag ist bereits über Zeitbuchungen abgerechnet "
+            f"({', '.join(regie)}) — das ist eine Regieabrechnung über das gesamte "
+            "Ist. Ein Nachtrag daneben fakturierte die Mehrmenge ein zweites Mal."
+        )
+    if not TaxCode.objects.filter(code=tax_code).exists():
+        raise AbrechnungError(f"Unbekannter Steuercode '{tax_code}' (z. B. DE_19).")
+    genannte = _preise_normalisieren(preise)
+
+    # **Die Mengenentscheidung fällt UNTER der Auftragssperre** (Review-Befund,
+    # Nebenläufigkeit): `_billed_je_schluessel` rechnet quellenübergreifend, aber
+    # die Quellzeilen liegen in verschiedenen Tabellen. Nur wenn Prüfen UND
+    # Schreiben unter der `work_order`-Sperre stehen, serialisieren zwei
+    # gleichzeitige Läufe. Deshalb liegt die ganze Ermittlung — inkl. der
+    # Preisklärung — jetzt in der Transaktion; ein 422/PreisUnbekannt rollt sie
+    # ohne Schaden zurück (es wurde nichts geschrieben).
+    with as_business_error():
+        with business_transaction(actor_app_user_id):
+            _auftrag_sperren(order.id)
+
+            regie = _bindungen_am_auftrag(order.id, source_kinds=(ZEITBUCHUNG,))
+            if regie:
+                raise AbrechnungError(
+                    f"Dieser Auftrag ist bereits über Zeitbuchungen abgerechnet "
+                    f"({', '.join(regie)}) — das ist eine Regieabrechnung über das "
+                    "gesamte Ist. Ein Nachtrag daneben fakturierte die Mehrmenge ein "
+                    "zweites Mal."
+                )
+
+            kandidaten, _abgleich = _nachtrag_kandidaten(order)
+            offene = [k for k in kandidaten if k["menge"] > 0]
+            if not offene:
+                entwuerfe = _entwurfsberichte(order.id)
+                schon = [k for k in kandidaten if k["menge"] <= 0]
+                raise AbrechnungError(
+                    "Es gibt nichts nachzutragen: "
+                    + (
+                        "Alle Abweichungen sind bereits abgerechnet."
+                        if schon
+                        else "Der Soll-Ist-Abgleich weist keinen Mehrverbrauch und "
+                             "keine Zusatzleistung aus. (Minderverbrauch und "
+                             "entfallene Positionen mindern die Pauschale nicht.)"
+                    )
+                    + (
+                        f" Achtung: {len(entwuerfe)} Bericht(e) sind noch nicht "
+                        "unterzeichnet und fließen deshalb nicht ein."
+                        if entwuerfe
+                        else ""
+                    )
+                )
+
+            regelwerk = matrix_service.lade_regelwerk()
+            klaerungen = []
+            einheit_konflikte = []
+            lines = []
+            quellen = []            # (position_number, [SiteReportLine, …])
+            for k in offene:
+                if k["einheit_konflikt"]:
+                    # Fail-closed (Review-Befund, dritter Weg): derselbe Artikel
+                    # steht schon unter einer ANDEREN Einheit in Rechnung. Nicht
+                    # summierbar, nicht durchlassbar — ein Mensch entscheidet.
+                    einheit_konflikte.append({
+                        "identitaet": _identitaet(
+                            k["source_article_id"], k["source_assembly_id"],
+                            k["bezeichnung"]),
+                        "bezeichnung": k["bezeichnung"],
+                        "einheiten": k["konflikt_einheiten"],
+                    })
+                    continue
+                preis, ek, klaerung = _nachtrag_klaerung(k, regelwerk)
+                genannt = _genannter_preis(
+                    genannte, k["schluessel"],
+                    bezeichnung=k["bezeichnung"], server_preis=preis,
+                )
+                if genannt is not None:
+                    preis, klaerung = genannt, None
+                if klaerung is not None:
+                    klaerungen.append(klaerung)
+                    continue
+                if not k["bindbar"]:
+                    # Es gäbe etwas abzurechnen, aber keine freie Berichtszeile, an
+                    # die sich die Bindung hängen ließe. Ohne Bindung wäre die
+                    # Position **beliebig oft** fakturierbar — die Sperre hätte ein
+                    # Loch, das niemand sieht. Also: kein Beleg. (Erreichbar, wenn
+                    # das Soll nachträglich fällt — Angebot abgelehnt — und die
+                    # Differenz wächst, alle Zeilen aber schon gebunden sind.)
+                    raise AbrechnungError(
+                        f"„{k['bezeichnung']}“: Es wären {k['menge']} {k['einheit']} "
+                        "nachzutragen, aber alle zugehörigen Berichtspositionen sind "
+                        "bereits abgerechnet "
+                        f"({', '.join(k['rechnungen']) or 'in einer Rechnung'}) — "
+                        "eine Rechnungsposition ohne Abrechnungsbindung wird nicht "
+                        "erzeugt, sie ließe sich beliebig oft wiederholen. Wenn die "
+                        "bestehende Rechnung falsch ist, ist sie zu stornieren — das "
+                        "gibt die Leistungen wieder frei."
+                    )
+                pos = len(lines) + 1
+                lines.append({
+                    "line_type": k["line_type"],
+                    "description": _nachtrag_bezeichnung(k),
+                    "quantity": k["menge"],
+                    "unit": k["einheit"],
+                    "unit_price": preis,
+                    "unit_cost": ek,
+                    "tax_code": tax_code,
+                    "source_article_id": k["source_article_id"],
+                    "source_assembly_id": k["source_assembly_id"],
+                })
+                quellen.append((pos, k["bindbar"]))
+
+            # Der Einheiten-Konflikt hat Vorrang: Er ist fail-closed und lässt sich
+            # nicht durch einen genannten Preis auflösen (die Einheit muss erst
+            # vereinheitlicht werden). Zuerst prüfen, sonst meldete der genannte-
+            # Preis-Check unten spurios einen „Preis für unbekannte Quelle".
+            if einheit_konflikte:
+                raise EinheitUneindeutig(einheit_konflikte)
+
+            if genannte:
+                raise AbrechnungError(
+                    "Für folgende Abweichungen wurde ein Preis genannt, die in "
+                    f"diesem Nachtrag nicht vorkommen: {', '.join(sorted(genannte))}."
+                )
+            if klaerungen:
+                raise PreisUnbekannt(klaerungen)
+
+            quell_ids = [l.id for _p, ls in quellen for l in ls]
+            _quellen_sperren(site_report_line_ids=quell_ids)
+            # Zweitprüfung derselben Quellzeilen (UNIQUE-Index als letzte Instanz →
+            # sauberer 422 statt 500). Die auftragsweite Serialisierung liegt schon
+            # in `_auftrag_sperren` oben.
+            _q, belegte, _t = _aktive_bindungen(site_report_line_ids=quell_ids)
+            if belegte:
+                raise AbrechnungError(
+                    "Ein Teil der Abweichungen wurde soeben von einem anderen "
+                    "Vorgang abgerechnet. Bitte den Nachtrag erneut aufrufen — die "
+                    "abrechenbaren Mengen haben sich geändert."
+                )
+            invoice = beleg_service.create_invoice(
+                actor_app_user_id,
+                property_id=order.property_id,
+                invoice_type="RECHNUNG",
+                project_id=order.project_id,
+                work_order_id=order.id,
+                invoice_date=invoice_date,
+                due_date=due_date,
+                payment_term_days=payment_term_days,
+                discount_percent=discount_percent,
+                discount_days=discount_days,
+                show_labour_costs=show_labour_costs,
+                lines=lines,
+            )
+            zeilen = {
+                l.position_number: l
+                for l in InvoiceLine.objects.filter(invoice_id=invoice.id)
+            }
+            # n Berichtszeilen binden an EINE Rechnungsposition (die Mehrmenge ist
+            # die Summe über alle Berichte). Die Bindung bleibt trotzdem **je
+            # Berichtszeile** — sonst ließe sich eine einzelne Zeile später doch
+            # noch ein zweites Mal greifen.
+            for pos, report_lines in quellen:
+                for line in report_lines:
+                    BillingLink.objects.create(
+                        id=uuid.uuid4(),
+                        invoice_id=invoice.id,
+                        invoice_line_id=zeilen[pos].id,
+                        source_kind=BERICHTSPOSITION,
+                        site_report_line_id=line.id,
                     )
     invoice.refresh_from_db()
     return invoice

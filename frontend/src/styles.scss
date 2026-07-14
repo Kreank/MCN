@@ -667,7 +667,9 @@ button {
   width: 100%;
   min-height: 34px;
   padding: 0 var(--space-2);
-  border: 1.5px solid var(--line);
+  // Eingabefeld -> Rand traegt 1.4.11 (>= 3:1). --line (Hairline) reichte nur
+  // 1,42:1; --line-strong ist der Control-Rand.
+  border: 1.5px solid var(--line-strong);
   border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--ink);

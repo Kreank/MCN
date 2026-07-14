@@ -1170,10 +1170,15 @@ export class Plantafel {
   // =========================================================================
   // Rechte
   // =========================================================================
+  // `darfAlle`: Anlegen, Umplanen, Statuswechsel und Zuweisen laufen über
+  // fail-closed-Endpunkte (`planung.py` nutzt dort `require`) — ein Konto mit
+  // row_scope EIGENE bekommt 403. Heute sieht es die Plantafel ohnehin nicht
+  // (das Board selbst ist `require`); das Gate muss trotzdem stimmen, sonst
+  // stünden hier tote Knöpfe, sobald das Board je scoped würde.
   protected readonly darfPlanen = computed(
-    () => this.auth.darf('workflow', 'ANLEGEN') && this.auth.darf('workflow', 'AENDERN'),
+    () => this.auth.darfAlle('workflow', 'ANLEGEN') && this.auth.darfAlle('workflow', 'AENDERN'),
   );
-  protected readonly darfUmplanen = computed(() => this.auth.darf('workflow', 'AENDERN'));
+  protected readonly darfUmplanen = computed(() => this.auth.darfAlle('workflow', 'AENDERN'));
 
   // =========================================================================
   // Verschieben: Maus (HTML5-Drag&Drop) UND Tastatur/Touch — ein Automat

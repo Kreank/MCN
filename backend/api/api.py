@@ -23,6 +23,7 @@ from api.auth import router as auth_router
 from api.auswertungen import router as auswertungen_router
 from api.beleg import router as beleg_router
 from api.belegerfassung import router as belegerfassung_router
+from api.belegung import router as belegung_router
 from api.dateien import router as dateien_router
 from api.dossier import router as dossier_router
 from api.buchhaltung import router as buchhaltung_router
@@ -41,6 +42,7 @@ from api.raum import router as raum_router
 from api.security import router as security_router
 from api.site_report import router as site_report_router
 from api.suche import router as suche_router
+from api.verwaltung import router as verwaltung_router
 from api.zeiterfassung import hr_router as zeit_stammdaten_router
 from api.zeiterfassung import router as zeiterfassung_router
 
@@ -62,6 +64,13 @@ api.add_router("/property", property_router, tags=["property"])
 api.add_router("/property", raum_router, tags=["property"])
 # Technische Anlagen (0004): ebenfalls Objektstammdatum, ebenfalls Recht `property`.
 api.add_router("/property", anlage_router, tags=["property"])
+# Belegung (0005) und Verwaltung (0006) — eigene Präfixe, eigene Rechtemodule
+# (`tenure` / `management`). Sie hängen NICHT an `property`: Wer Räume und Anlagen
+# pflegen darf, darf damit noch lange keine Mietverhältnisse ändern und keine
+# Verwaltungsverträge schließen. Die Matrix trennt das seit 0026 — bis zu diesem
+# Slice benutzte nur niemand die Trennung.
+api.add_router("/tenure", belegung_router, tags=["tenure"])
+api.add_router("/management", verwaltung_router, tags=["management"])
 api.add_router("/workflow", projekt_router, tags=["workflow"])
 api.add_router("/workflow", aufgabe_router, tags=["workflow"])
 api.add_router("/workflow", auftrag_router, tags=["workflow"])

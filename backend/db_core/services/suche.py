@@ -107,18 +107,34 @@ einer Stelle (`db_core/services/objektsicht.py`):
 | VORGANG · AUFTRAG | an meinen Objekten |
 | KONTAKT | Parties, die an einem meiner Objekte hängen |
 | EINSATZ | **unverändert: eigene Zuweisung** — nicht das Objekt |
-| ANGEBOT · RECHNUNG · ARTIKEL · LEISTUNG · MITARBEITER | **keine Zeilen** (kein Recht) |
+| ANGEBOT | **versendete/angenommene** Angebote an meinen Objekten (Migration 0102) |
+| RECHNUNG · ARTIKEL · LEISTUNG · MITARBEITER | **keine Zeilen** |
 
 Der **EINSATZ** bleibt bewusst an der Zuweisung: Sonst würde ein freier Termin
 (Begehung, Beratung) für jeden auffindbar, der einmal am Objekt war. Über das
 Objekt-Dossier sieht der Monteur die Einsätze der Kollegen ohnehin — dort ist es
 eine Objekthistorie, hier wäre es eine Terminliste.
 
-ANGEBOT und RECHNUNG fallen weg, weil `invoicing` der Rolle MONTEUR schlicht fehlt
-(0026, unverändert) — **die Sperre ist die Abwesenheit des Rechts**, nicht eine
-Filterzeile. Und **die Adresse**: Sie hing an `sicht.property`; jetzt an
-`sicht.darf_property()`. Der Monteur darf die Straße seines Objekts natürlich sehen —
-genau das war der Auslöser dieses Slices.
+### ANGEBOT ja, RECHNUNG nein (Migration 0102)
+
+Seit 0102 trägt MONTEUR `invoicing/LESEN` mit Scope EIGENE. Die Kategorie **ANGEBOT**
+ist damit für ihn offen — begrenzt durch `objektsicht.eigene_angebote` (meine Objekte,
+Status VERSENDET/ANGENOMMEN). Die Kategorie **RECHNUNG** bleibt zu: Sie hängt an
+`sicht.invoicing` (Scope ALLE) und hat **bewusst keine** EIGENE-Variante.
+
+Zwei Dinge halten das dicht, und beide muss man kennen, bevor man hier etwas ändert:
+
+  * **Der Untertitel des Angebots trägt keinen Betrag** (`_titel_untertitel`:
+    Nummer · Adresse · Status) — und `grund` nennt nur Feldnamen. Ein Treffer, der
+    „14.814,72 €" in den Untertitel schriebe, machte die Suche zum Preisleck an der
+    preisfreien Beleg-API vorbei.
+  * **Der Direkttreffer-Pfad zieht aus `_basis_qs`**, also aus derselben begrenzten
+    Grundmenge: Die exakte Angebotsnummer eines fremden Objekts (oder eines Entwurfs)
+    findet **nichts**. Sonst wäre die Kennung der bequemste Nebeneingang.
+
+Und **die Adresse**: Sie hing an `sicht.property`; jetzt an `sicht.darf_property()`.
+Der Monteur darf die Straße seines Objekts natürlich sehen — genau das war der
+Auslöser des Objektsicht-Slices.
 
 ## Grenzen (ehrlich benannt)
 
@@ -320,9 +336,13 @@ class Sicht:
     ab — der Einsatz aber weiterhin über die **Zuweisung**, nicht über das Objekt
     (siehe Modul-Docstring).
 
-    `invoicing`, `pricing` und `hr` haben **keine** EIGENE-Variante: Belege, Preise
-    und Personaldaten sind in diesem Slice nicht die Welt des Monteurs, und die Matrix
-    gibt ihm dort auch kein Recht.
+    `invoicing_eigene` (Migration 0102) öffnet **ausschließlich die Kategorie
+    ANGEBOT** — objektbegrenzt und nur versendet/angenommen. Die Kategorie RECHNUNG
+    hängt weiter allein an `invoicing` (Scope ALLE): Sie ist die eine Ausnahme von
+    „der Monteur darf alles sehen".
+
+    `pricing` und `hr` haben **keine** EIGENE-Variante: Preise und Personaldaten sind
+    nicht die Welt des Monteurs.
     """
 
     identity: bool = False
@@ -332,6 +352,7 @@ class Sicht:
     property_eigene: bool = False
     workflow_eigene: bool = False
     invoicing: bool = False
+    invoicing_eigene: bool = False
     pricing: bool = False
     hr: bool = False
     actor_id: uuid.UUID | None = None
@@ -345,6 +366,16 @@ class Sicht:
     def darf_workflow(self):
         return self.workflow or self.workflow_eigene
 
+    def darf_angebote(self):
+        """ANGEBOT — mit Preisen (ALLE) oder objektbegrenzt (EIGENE).
+
+        **Absichtlich ohne Gegenstück `darf_rechnungen()`.** Die Rechnung fragt
+        `sicht.invoicing` direkt ab; eine Methode, die beide Ebenen zusammenzieht,
+        wäre genau die Zeile, die jemand versehentlich auch für die Rechnung
+        benutzt.
+        """
+        return self.invoicing or self.invoicing_eigene
+
     def hat_recht(self):
         """Darf der Suchende überhaupt irgendetwas sehen?
 
@@ -355,7 +386,7 @@ class Sicht:
         return any((
             self.identity, self.property, self.workflow,
             self.identity_eigene, self.property_eigene, self.workflow_eigene,
-            self.invoicing, self.pricing, self.hr,
+            self.invoicing, self.invoicing_eigene, self.pricing, self.hr,
         ))
 
 
@@ -752,9 +783,18 @@ def _basis_qs(typ, sicht):
                 ))
             )
         return qs
-    if typ == "ANGEBOT" and sicht.invoicing:
-        return Quote.objects.select_related("property__address")
+    if typ == "ANGEBOT" and sicht.darf_angebote():
+        qs = Quote.objects.select_related("property__address")
+        if not sicht.invoicing:
+            # Objektsicht: meine Objekte, nur versendet/angenommen — dieselbe
+            # Grenze wie `GET /invoicing/quotes/mengen`, aus derselben Quelle.
+            # Ohne Akteur keine Zeile (fail-closed).
+            if sicht.actor_id is None:
+                return None
+            qs = objektsicht.angebote_begrenzen(qs, "EIGENE", sicht.actor_id)
+        return qs
     if typ == "RECHNUNG" and sicht.invoicing:
+        # KEINE EIGENE-Variante — die Rechnung ist die eine Ausnahme (0102).
         return Invoice.objects.select_related("property__address")
     if typ == "ARTIKEL" and sicht.pricing:
         return Article.objects.all()

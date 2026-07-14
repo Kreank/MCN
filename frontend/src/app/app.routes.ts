@@ -1,6 +1,6 @@
 import { Routes } from '@angular/router';
 
-import { authGuard, darfGuard } from './core/auth.guard';
+import { authGuard, darfAlleGuard, darfGuard } from './core/auth.guard';
 
 export const routes: Routes = [
   {
@@ -63,13 +63,13 @@ export const routes: Routes = [
           import('./features/meine-zeiten/meine-zeiten').then((m) => m.MeineZeiten),
       },
       {
-        // Verwaltungssicht der Zeiterfassung. `darfGuard` kennt den row_scope
-        // nicht; ein Konto mit EIGENE käme durch den Guard und liefe in den
-        // 403 des Servers — die Komponente zeigt dann „Kein Zugriff". Die
-        // Navigation blendet den Punkt ohnehin aus (AuthService.darfAlle).
+        // Verwaltungssicht der Zeiterfassung. `darfAlleGuard`: Der Server verweigert
+        // row_scope EIGENE (403) — der Monteur stempelt unter „Meine Zeiten". Eine
+        // Route, die zwangsläufig auf „Kein Zugriff" führt, wird gar nicht erst
+        // geöffnet (die Navigation blendet den Punkt ohnehin aus).
         path: 'zeiterfassung',
         title: 'Zeiterfassung — MCN Leitstand',
-        canActivate: [darfGuard('hr', 'LESEN')],
+        canActivate: [darfAlleGuard('hr', 'LESEN')],
         loadComponent: () =>
           import('./features/zeiterfassung/zeiterfassung').then((m) => m.Zeiterfassung),
       },
@@ -81,11 +81,13 @@ export const routes: Routes = [
       },
       {
         // Schnelleinstieg „Meldung erfassen" — legt Person + Liegenschaft +
-        // Vorgang atomar an. Der Server gatet zusätzlich identity/property; der
-        // Route-Guard spiegelt das primäre Recht (Vorgangsanlage).
+        // Vorgang atomar an. `POST /workflow/quick-intake` ist fail-closed
+        // (`require` auf identity/property/workflow) — ein Konto mit row_scope
+        // EIGENE bekommt 403. Der Header-CTA blendet sich für den Monteur ohnehin
+        // aus; der Guard darf die Direkt-URL nicht offenlassen.
         path: 'schnellerfassung',
         title: 'Meldung erfassen — MCN Leitstand',
-        canActivate: [darfGuard('workflow', 'ANLEGEN')],
+        canActivate: [darfAlleGuard('workflow', 'ANLEGEN')],
         loadComponent: () =>
           import('./features/schnellerfassung/schnellerfassung').then((m) => m.Schnellerfassung),
       },
@@ -197,16 +199,22 @@ export const routes: Routes = [
         canActivate: [darfGuard('workflow', 'LESEN')],
         loadComponent: () => import('./features/einsaetze/einsaetze').then((m) => m.Einsaetze),
       },
+      // Die vier Dispositionssichten der Planung: `darfAlleGuard`.
+      // Plantafel, Kalender, „Wer fehlt?" und die Kategorien-/Ressourcenpflege
+      // stehen auf fail-closed-Endpunkten (`planung.py` nutzt dort `require`) —
+      // ein Konto mit row_scope EIGENE bekommt 403. Sie zeigen fremde Termine und
+      // fremde Abwesenheiten; die Einsatzliste (`planung`, `require_scoped`)
+      // bleibt für den Monteur offen und zeigt ihm seine eigenen Einsätze.
       {
         path: 'planung/plantafel',
         title: 'Plantafel — MCN Leitstand',
-        canActivate: [darfGuard('workflow', 'LESEN')],
+        canActivate: [darfAlleGuard('workflow', 'LESEN')],
         loadComponent: () => import('./features/plantafel/plantafel').then((m) => m.Plantafel),
       },
       {
         path: 'planung/kalender',
         title: 'Kalender — MCN Leitstand',
-        canActivate: [darfGuard('workflow', 'LESEN')],
+        canActivate: [darfAlleGuard('workflow', 'LESEN')],
         loadComponent: () =>
           import('./features/planung-kalender/planung-kalender').then((m) => m.PlanungKalender),
       },
@@ -215,7 +223,7 @@ export const routes: Routes = [
         // Bewusst am workflow-Recht: die Disposition darf das ohne `hr`.
         path: 'planung/abwesend',
         title: 'Wer fehlt? — MCN Leitstand',
-        canActivate: [darfGuard('workflow', 'LESEN')],
+        canActivate: [darfAlleGuard('workflow', 'LESEN')],
         loadComponent: () =>
           import('./features/planung-abwesend/planung-abwesend').then(
             (m) => m.PlanungAbwesend,
@@ -224,7 +232,7 @@ export const routes: Routes = [
       {
         path: 'planung/einstellungen',
         title: 'Kategorien & Ressourcen — MCN Leitstand',
-        canActivate: [darfGuard('workflow', 'LESEN')],
+        canActivate: [darfAlleGuard('workflow', 'LESEN')],
         loadComponent: () =>
           import('./features/planung-einstellungen/planung-einstellungen').then(
             (m) => m.PlanungEinstellungen,
@@ -272,7 +280,7 @@ export const routes: Routes = [
       {
         path: 'rechnungen/:id',
         title: 'Rechnung — MCN Leitstand',
-        canActivate: [darfGuard('invoicing', 'LESEN')],
+        canActivate: [darfAlleGuard('invoicing', 'LESEN')],
         loadComponent: () =>
           import('./features/rechnung-detail/rechnung-detail').then((m) => m.RechnungDetail),
       },
@@ -294,14 +302,14 @@ export const routes: Routes = [
         path: 'mitarbeiter',
         pathMatch: 'full',
         title: 'Mitarbeiter — MCN Leitstand',
-        canActivate: [darfGuard('hr', 'LESEN')],
+        canActivate: [darfAlleGuard('hr', 'LESEN')],
         loadComponent: () =>
           import('./features/mitarbeiter/mitarbeiter').then((m) => m.Mitarbeiter),
       },
       {
         path: 'mitarbeiter/:id',
         title: 'Mitarbeiter — MCN Leitstand',
-        canActivate: [darfGuard('hr', 'LESEN')],
+        canActivate: [darfAlleGuard('hr', 'LESEN')],
         loadComponent: () =>
           import('./features/mitarbeiter-detail/mitarbeiter-detail').then(
             (m) => m.MitarbeiterDetail,
@@ -357,14 +365,14 @@ export const routes: Routes = [
         path: 'buchhaltung',
         pathMatch: 'full',
         title: 'Buchhaltung — MCN Leitstand',
-        canActivate: [darfGuard('invoicing', 'LESEN')],
+        canActivate: [darfAlleGuard('invoicing', 'LESEN')],
         loadComponent: () =>
           import('./features/buchhaltung/buchhaltung').then((m) => m.Buchhaltung),
       },
       {
         path: 'buchhaltung/mahnwesen',
         title: 'Mahnwesen — MCN Leitstand',
-        canActivate: [darfGuard('invoicing', 'LESEN')],
+        canActivate: [darfAlleGuard('invoicing', 'LESEN')],
         loadComponent: () => import('./features/mahnwesen/mahnwesen').then((m) => m.Mahnwesen),
       },
       {
@@ -372,13 +380,13 @@ export const routes: Routes = [
         // Parameter das statische Segment 'mahnlauf'.
         path: 'buchhaltung/mahnlauf',
         title: 'Mahnlauf — MCN Leitstand',
-        canActivate: [darfGuard('invoicing', 'LESEN')],
+        canActivate: [darfAlleGuard('invoicing', 'LESEN')],
         loadComponent: () => import('./features/mahnlauf/mahnlauf').then((m) => m.Mahnlauf),
       },
       {
         path: 'buchhaltung/:id',
         title: 'Rechnung — MCN Leitstand',
-        canActivate: [darfGuard('invoicing', 'LESEN')],
+        canActivate: [darfAlleGuard('invoicing', 'LESEN')],
         loadComponent: () =>
           import('./features/buchhaltung-detail/buchhaltung-detail').then(
             (m) => m.BuchhaltungDetail,
@@ -416,14 +424,14 @@ export const routes: Routes = [
         path: 'auswertungen',
         pathMatch: 'full',
         title: 'Auswertungen — MCN Leitstand',
-        canActivate: [darfGuard('invoicing', 'LESEN')],
+        canActivate: [darfAlleGuard('invoicing', 'LESEN')],
         loadComponent: () =>
           import('./features/auswertungen/auswertungen').then((m) => m.Auswertungen),
       },
       {
         path: 'auswertungen/umsatz-projektuebersicht',
         title: 'Umsatz- und Projektübersicht — MCN Leitstand',
-        canActivate: [darfGuard('invoicing', 'LESEN')],
+        canActivate: [darfAlleGuard('invoicing', 'LESEN')],
         loadComponent: () =>
           import('./features/auswertungen-umsatz/auswertungen-umsatz').then(
             (m) => m.AuswertungenUmsatz,
@@ -432,7 +440,7 @@ export const routes: Routes = [
       {
         path: 'auswertungen/kunden',
         title: 'Kunden — MCN Leitstand',
-        canActivate: [darfGuard('invoicing', 'LESEN')],
+        canActivate: [darfAlleGuard('invoicing', 'LESEN')],
         loadComponent: () =>
           import('./features/auswertungen-kunden/auswertungen-kunden').then(
             (m) => m.AuswertungenKunden,
@@ -441,7 +449,7 @@ export const routes: Routes = [
       {
         path: 'auswertungen/projekte',
         title: 'Projekte-Auswertung — MCN Leitstand',
-        canActivate: [darfGuard('invoicing', 'LESEN')],
+        canActivate: [darfAlleGuard('invoicing', 'LESEN')],
         loadComponent: () =>
           import('./features/auswertungen-projekte/auswertungen-projekte').then(
             (m) => m.AuswertungenProjekte,
@@ -450,7 +458,7 @@ export const routes: Routes = [
       {
         path: 'auswertungen/artikel',
         title: 'Artikel-Auswertung — MCN Leitstand',
-        canActivate: [darfGuard('invoicing', 'LESEN')],
+        canActivate: [darfAlleGuard('invoicing', 'LESEN')],
         loadComponent: () =>
           import('./features/auswertungen-artikel/auswertungen-artikel').then(
             (m) => m.AuswertungenArtikel,
@@ -461,7 +469,11 @@ export const routes: Routes = [
         // nicht rein. Die Landing blendet die Kachel serverseitig entsprechend aus.
         path: 'auswertungen/mitarbeitende',
         title: 'Mitarbeitenden-Auswertung — MCN Leitstand',
-        canActivate: [darfGuard('hr', 'LESEN')],
+        // `darfAlleGuard`: Die Auswertung ist eine Sicht über ALLE Mitarbeitenden;
+        // der Endpunkt verweigert row_scope EIGENE mit 403 (MONTEUR trägt hr/LESEN
+        // seit 0068 für die eigene Zeiterfassung). Eine Route, die zwangsläufig auf
+        // „Kein Zugriff" führt, wird gar nicht erst geöffnet.
+        canActivate: [darfAlleGuard('hr', 'LESEN')],
         loadComponent: () =>
           import('./features/auswertungen-mitarbeitende/auswertungen-mitarbeitende').then(
             (m) => m.AuswertungenMitarbeitende,
@@ -520,7 +532,7 @@ export const routes: Routes = [
       {
         path: 'einstellungen/mahnstufen',
         title: 'Mahnstufen — MCN Leitstand',
-        canActivate: [darfGuard('invoicing', 'LESEN')],
+        canActivate: [darfAlleGuard('invoicing', 'LESEN')],
         loadComponent: () => import('./features/mahnstufen/mahnstufen').then((m) => m.Mahnstufen),
       },
       {

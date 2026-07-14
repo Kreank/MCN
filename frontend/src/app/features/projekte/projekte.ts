@@ -54,7 +54,14 @@ export class Projekte {
 
   protected readonly skeletons = Array.from({ length: 6 });
 
-  protected readonly darfAnlegen = computed(() => this.auth.darf('workflow', 'ANLEGEN'));
+  /**
+   * `darfAlle`, nicht `darf`: `POST /api/workflow/projects` ist fail-closed
+   * (`permissions.require`). Ein Konto mit row_scope EIGENE — der Monteur trägt
+   * `workflow/ANLEGEN` mit EIGENE, weil er Aufgaben und Baustellenberichte
+   * anlegen darf — bekommt dort 403. Ein Knopf, der nur 403 kann, wird nicht
+   * angeboten.
+   */
+  protected readonly darfAnlegen = computed(() => this.auth.darfAlle('workflow', 'ANLEGEN'));
 
   // --- Anlage-Dialog ------------------------------------------------------
   protected readonly meldung = signal<Meldung | null>(null);

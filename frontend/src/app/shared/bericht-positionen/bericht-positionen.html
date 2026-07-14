@@ -35,8 +35,13 @@
           <div class="tab-platzhalter">
             <p>
               @if (bearbeitbar()) {
-                Noch keine Positionen. Übernehmen Sie Artikel oder Leistungen aus der
-                Palette — oder belegen Sie aus einem Angebot des Auftrags vor.
+                @if (darfPalette()) {
+                  Noch keine Positionen. Übernehmen Sie Artikel oder Leistungen aus der
+                  Palette — oder belegen Sie aus einem Angebot des Auftrags vor.
+                } @else {
+                  Noch keine Positionen. Erfassen Sie sie als freie Textzeilen — oder belegen
+                  Sie aus einem Angebot des Auftrags vor.
+                }
               } @else {
                 Dieser Bericht führt keine Positionen.
               }
@@ -253,49 +258,67 @@
             </button>
           }
 
-          <div class="segment bp__seg" role="tablist" aria-label="Palettenquelle">
-            <button
-              type="button"
-              class="segment__btn"
-              role="tab"
-              [class.is-active]="paletteModus() === 'artikel'"
-              [attr.aria-selected]="paletteModus() === 'artikel'"
-              (click)="setPaletteModus('artikel')"
-            >
-              Artikel
-            </button>
-            <button
-              type="button"
-              class="segment__btn"
-              role="tab"
-              [class.is-active]="paletteModus() === 'leistungen'"
-              [attr.aria-selected]="paletteModus() === 'leistungen'"
-              (click)="setPaletteModus('leistungen')"
-            >
-              Leistungen
-            </button>
-          </div>
+          <!-- Artikel-/Leistungspalette: nur mit Lesezugriff auf den Artikelstamm
+               (`GET /api/pricing/articles` ist fail-closed). Ohne das Recht sind
+               Reiter und Suchfeld tote Knöpfe — sie verschwinden. Die freie
+               Textzeile und das Vorbelegen aus dem Angebot bleiben: beide laufen
+               über `require_scoped` und sind genau der Weg des Monteurs. -->
+          @if (darfPalette()) {
+            <div class="segment bp__seg" role="tablist" aria-label="Palettenquelle">
+              <button
+                type="button"
+                class="segment__btn"
+                role="tab"
+                [class.is-active]="paletteModus() === 'artikel'"
+                [attr.aria-selected]="paletteModus() === 'artikel'"
+                (click)="setPaletteModus('artikel')"
+              >
+                Artikel
+              </button>
+              <button
+                type="button"
+                class="segment__btn"
+                role="tab"
+                [class.is-active]="paletteModus() === 'leistungen'"
+                [attr.aria-selected]="paletteModus() === 'leistungen'"
+                (click)="setPaletteModus('leistungen')"
+              >
+                Leistungen
+              </button>
+            </div>
 
-          <label class="bp__feld">
-            <span class="feld-gruppe__label">Suche</span>
-            <input
-              class="posinp"
-              type="search"
-              [placeholder]="paletteModus() === 'artikel' ? 'Artikel suchen …' : 'Leistung suchen …'"
-              (input)="onPaletteSuche($any($event.target).value)"
-            />
-          </label>
+            <label class="bp__feld">
+              <span class="feld-gruppe__label">Suche</span>
+              <input
+                class="posinp"
+                type="search"
+                [placeholder]="
+                  paletteModus() === 'artikel' ? 'Artikel suchen …' : 'Leistung suchen …'
+                "
+                (input)="onPaletteSuche($any($event.target).value)"
+              />
+            </label>
+          }
 
           <button type="button" class="btn bp__voll" (click)="freieTextzeile()">
             + Freie Textzeile
           </button>
 
+          @if (!darfPalette()) {
+            <p class="bp__hinweis">
+              Der Artikelstamm ist für deine Rolle nicht freigegeben. Erfasse die Position als
+              freie Textzeile — das Büro ordnet sie später einem Artikel zu.
+            </p>
+          }
+
           <div class="bp__treffer" aria-live="polite">
-            @if (paletteLaedt()) {
+            @if (!darfPalette()) {
+              <!-- Nichts zu suchen, nichts zu zeigen: die Palette ist ausgeblendet. -->
+            } @else if (paletteLaedt()) {
               <p class="bp__hinweis">Wird gesucht …</p>
             } @else if (paletteFehler()) {
               <p class="bp__hinweis bp__hinweis--fehler">
-                Palette nicht verfügbar (fehlendes Recht „Artikel lesen" oder Serverfehler).
+                Palette nicht verfügbar (Serverfehler).
               </p>
             } @else if (paletteTreffer().length === 0) {
               <p class="bp__hinweis">Keine Treffer. Suchbegriff eingeben.</p>

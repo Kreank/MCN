@@ -1,0 +1,241 @@
+<section class="nt" aria-labelledby="nt-h">
+  <h3 class="nt__h" id="nt-h">Nachtrag abrechnen</h3>
+
+  @switch (zustand().kind) {
+    @case ('loading') {
+      <p class="lade-hinweis" role="status">Abrechenbare Abweichungen werden ermittelt …</p>
+    }
+
+    @case ('forbidden') {
+      <p class="nt__leer">
+        Der Nachtrag führt Einzelpreise — dafür fehlt dir das Recht
+        <em>Abrechnung lesen</em>.
+      </p>
+    }
+
+    @case ('error') {
+      <div class="note note--error" role="alert">
+        <p class="note__text">Die abrechenbaren Abweichungen konnten nicht geladen werden.</p>
+        <div class="note__aktionen">
+          <button type="button" class="btn" (click)="neuLaden()">Erneut versuchen</button>
+        </div>
+      </div>
+    }
+
+    @case ('ready') {
+      @if (vorschau(); as v) {
+        <p class="nt__hinweis">{{ v.hinweis }}</p>
+
+        @if (v.einheit_konflikte.length > 0) {
+          <!-- Fail-closed und SICHTBAR, bevor jemand fakturiert: derselbe Artikel in
+               verschiedenen Einheiten ist nicht summierbar und nicht abrechenbar. -->
+          <div class="note note--warnung" role="alert">
+            <p class="note__text">
+              <strong>Einheiten uneindeutig.</strong> Für die folgenden Posten liegen die
+              Mengen in <strong>verschiedenen Einheiten</strong> vor — derselbe Artikel wurde
+              einmal so und einmal anders geschrieben (oder es sind wirklich zwei Einheiten).
+              Sie werden <strong>nicht</strong> abgerechnet, bis das geklärt ist: Einheiten im
+              Bericht bzw. Angebot vereinheitlichen — oder den echten Mehr-Einheiten-Fall
+              bewusst getrennt abrechnen.
+            </p>
+            <ul class="nt__konflikte">
+              @for (k of v.einheit_konflikte; track k.schluessel) {
+                <li>
+                  <span class="nt__konflikt-name">{{ k.bezeichnung }}</span>
+                  <span class="nt__konflikt-einheiten">{{ k.einheiten.join(' · ') }}</span>
+                </li>
+              }
+            </ul>
+          </div>
+        }
+
+        @if (!v.abrechenbar) {
+          <!-- REGIE: das ganze Ist wird ohnehin fakturiert. Kein Knopf, der nichts
+               tut — sondern die Erklärung, warum es hier keinen gibt. -->
+          <p class="nt__leer">
+            Dieser Auftrag rechnet nach <strong>Regie</strong> ab. Der Nachtrag ist der
+            Pauschal-Fall: Er wäre hier eine Doppelabrechnung. Die Rechnung entsteht im
+            Reiter <strong>Abrechnung</strong>.
+          </p>
+        } @else if (v.positionen.length === 0 && v.einheit_konflikte.length === 0) {
+          <!-- Ehrlich, nicht leer: WARUM gibt es nichts abzurechnen? -->
+          @if (allesAbgerechnet()) {
+            <p class="nt__leer">
+              Alle Abweichungen dieses Auftrags sind <strong>bereits abgerechnet</strong>:
+            </p>
+            <ul class="nt__erledigt">
+              @for (b of v.bereits_abgerechnet; track b.schluessel) {
+                <li>
+                  <span class="nt__erledigt-name">{{ b.bezeichnung }}</span>
+                  <span class="nt__erledigt-menge">{{ menge(b.menge, b.einheit) }}</span>
+                  <span class="stamp">in {{ b.rechnungen.join(', ') }}</span>
+                </li>
+              }
+            </ul>
+            <p class="nt__fuss">
+              Dieselbe Leistung wird nicht zweimal berechnet — die Sperre liegt in der
+              Datenbank. Wenn eine dieser Rechnungen falsch war, ist sie zu
+              <strong>stornieren</strong>; das gibt die Leistung wieder frei.
+            </p>
+          } @else {
+            <p class="nt__leer">
+              Es gibt <strong>nichts nachzutragen</strong>: Der Soll-Ist-Abgleich weist keinen
+              Mehrverbrauch und keine Zusatzleistung aus.
+            </p>
+            <p class="nt__fuss">
+              <strong>Minderverbrauch</strong> und <strong>entfallene</strong> Positionen mindern
+              die Pauschale <strong>nicht</strong> — pauschal ist der Preis für das Werk
+              vereinbart, nicht ein Mengengerüst. Eine Minderung wäre eine Preisänderung; dafür
+              gibt es Rabatt und Gutschrift.
+            </p>
+          }
+        } @else if (v.positionen.length > 0) {
+          <div class="nt__wrap">
+            <table class="nt__tab">
+              <caption class="sr-only">
+                Abrechenbare Abweichungen: Mehrverbrauch nur mit der Differenzmenge,
+                Zusatzleistungen mit der vollen Menge.
+              </caption>
+              <thead>
+                <tr>
+                  <th scope="col">Bezeichnung</th>
+                  <th scope="col">Art</th>
+                  <th scope="col" class="num">Soll</th>
+                  <th scope="col" class="num">Ist</th>
+                  <th scope="col" class="num">Abzurechnen</th>
+                  <th scope="col" class="num">Einzelpreis</th>
+                  <th scope="col" class="num">Betrag</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (p of v.positionen; track p.schluessel) {
+                  <tr [class.nt__zeile--offen]="unbekannt(p)">
+                    <td>{{ p.bezeichnung }}</td>
+                    <td>
+                      <!-- Art als TEXT und Symbol — nie nur über Farbe (WCAG 1.4.1). -->
+                      <span class="stamp">
+                        <span aria-hidden="true">{{ artSymbol(p.art) }}</span>
+                        {{ artLabel(p.art) }}
+                      </span>
+                    </td>
+                    <td class="num">{{ menge(p.soll) }}</td>
+                    <td class="num">{{ menge(p.ist) }}</td>
+                    <td class="num nt__menge">
+                      {{ menge(p.menge, p.einheit) }}
+                      @if (p.bereits_berechnet !== '0.000') {
+                        <span class="nt__fein">
+                          bereits berechnet: {{ menge(p.bereits_berechnet) }}
+                        </span>
+                      }
+                    </td>
+                    <td class="num">
+                      @if (unbekannt(p)) {
+                        <span class="stamp stamp--warn">
+                          <span aria-hidden="true">▲</span> Preis unbekannt
+                        </span>
+                      } @else {
+                        {{ euro(p.einzelpreis) }}
+                      }
+                    </td>
+                    <td class="num">{{ euro(p.betrag) }}</td>
+                  </tr>
+                  @if (unbekannt(p)) {
+                    <tr class="nt__grundzeile">
+                      <td colspan="7" class="nt__grund">{{ p.grund_text }}</td>
+                    </tr>
+                  }
+                }
+              </tbody>
+              <tfoot>
+                <tr>
+                  <th scope="row" colspan="6" class="num">
+                    Summe (netto){{ v.preise_unbekannt ? ' der bepreisbaren Positionen' : '' }}
+                  </th>
+                  <td class="num nt__summe">{{ euro(v.summe) }}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+          @if (v.preise_unbekannt) {
+            <div class="note note--warnung" role="status">
+              <p class="note__text">
+                Für mindestens eine Position kennt der Server <strong>keinen</strong> Preis. Sie
+                wird <strong>nicht</strong> mit 0,00 € abgerechnet und auch nicht weggelassen —
+                beim Abrechnen fragt das System den Einzelpreis ab. Die Summe oben ist deshalb
+                unvollständig.
+              </p>
+            </div>
+          }
+
+          @if (v.nicht_unterzeichnete_berichte.length > 0) {
+            <div class="note note--warnung" role="status">
+              <p class="note__text">
+                <strong>{{ v.nicht_unterzeichnete_berichte.length }}</strong> Baustellenbericht(e)
+                sind <strong>nicht unterzeichnet</strong>. Ihre Mengen fließen
+                <strong>nicht</strong> in den Nachtrag ein — ein nicht abgenommener Nachweis ist
+                keine Abrechnungsgrundlage. Das ist der häufigste Grund für eine zu kleine
+                Nachtragsrechnung.
+              </p>
+            </div>
+          }
+
+          @if (fehler()) {
+            <div class="note note--error" role="alert">
+              <p class="note__text">{{ fehler() }}</p>
+            </div>
+          }
+
+          @if (darfAbrechnen()) {
+            <form
+              class="nt__lauf"
+              [formGroup]="form"
+              (submit)="$event.preventDefault(); abrechnen()"
+              novalidate
+            >
+              <app-feld
+                [control]="form.controls.tax_code"
+                label="Steuersatz"
+                typ="select"
+                [pflicht]="true"
+                platzhalter="Bitte wählen"
+                hinweis="Pflicht und ohne Vorbelegung: Welcher Steuersatz gilt, ist eine steuerliche Entscheidung des Belegs — kein Ratespiel des Servers."
+                [optionen]="taxCodeOptionen"
+              />
+              <button
+                type="submit"
+                class="btn btn--primary"
+                [disabled]="aktionLaedt()"
+                [attr.aria-busy]="aktionLaedt()"
+              >
+                {{ aktionLaedt() ? 'Nachtrag wird erzeugt …' : 'Nachtrag abrechnen' }}
+              </button>
+            </form>
+            <p class="nt__fuss">
+              Es entsteht eine Rechnung im <strong>Entwurf</strong> — sie enthält
+              <strong>nur</strong> die Mehrmenge bzw. die Zusatzleistung. Die pauschal
+              vereinbarte Leistung steht auf der Rechnung aus dem Angebot; sie wird hier nicht
+              erneut berechnet. Jede Position wird an ihre Berichtszeilen gebunden: Dieselbe
+              Mehrmenge lässt sich kein zweites Mal abrechnen.
+            </p>
+          } @else {
+            <p class="nt__leer">
+              Zum Abrechnen fehlt dir das Recht <em>Abrechnung anlegen</em>. Der Nachtrag ist
+              eine kaufmännische Entscheidung des Büros.
+            </p>
+          }
+        }
+      }
+    }
+  }
+</section>
+
+<!-- Die Preisklärung: ein 422 ist hier kein Fehlerbalken, sondern eine Aufgabe. -->
+<app-preis-klaerung
+  [offen]="klaerungOffen()"
+  [positionen]="klaerungPositionen()"
+  [laedt]="aktionLaedt()"
+  [fehler]="klaerungFehler()"
+  (absenden)="klaerungAbsenden($event)"
+  (abbrechen)="klaerungAbbrechen()"
+/>

@@ -57,13 +57,16 @@ Liegenschaften, an denen er je einen Einsatz hatte (`services/objektsicht.py`).
 
 Zwei Dinge halten das dicht:
 
-  * **Die Geld-Bausteine fallen von selbst weg.** Offene Posten, Zahlungsverhalten,
-    Marge, Angebote, Rechnungen, Abrechnungsstand hängen an `invoicing`/`pricing` —
-    Module, auf denen die Rolle MONTEUR **kein einziges Recht** hat (0026,
-    unverändert). `sicht.invoicing` ist damit False, der Baustein `None`, das Flag
-    `False`. Es gibt hier nichts zu unterdrücken und nichts zu vergessen: Die
-    Sperre ist die **Abwesenheit des Rechts**, nicht eine Filterzeile, die jemand
-    übersehen könnte.
+  * **Die Geld-Bausteine hängen an `sicht.invoicing` (Scope ALLE).** Offene Posten,
+    Zahlungsverhalten, Marge, Rechnungen und der Abrechnungsstand (er führt
+    Einzelpreise) bleiben damit für die Objektsicht `None` + Flag `False`.
+    Seit **Migration 0102** trägt MONTEUR zwar `invoicing/LESEN`, aber mit row_scope
+    EIGENE — und `sicht.invoicing` bedeutet ausdrücklich **ALLE**. Der einzige
+    Baustein mit einer EIGENE-Variante ist das **Angebot**, und zwar in einer
+    **eigenen, preisfreien Liste** (`angebote_mengen`): eigenes Feld, eigenes Flag,
+    eigene Zeilenform ohne `net_total`/`gross_total`. Die preisführende Liste
+    (`angebote`) bleibt unangetastet — sie ist nicht „dieselbe Liste mit Nullen",
+    sondern eine andere Liste. Wer beide zusammenlegt, gibt Beträge frei.
   * **Wo eine Entität über MEHRERE Objekte läuft** (das Projekt, der Kontakt), wird
     innerhalb des Dossiers **noch einmal** gefiltert: Ein Projekt ist schon „meins",
     wenn EINE seiner Liegenschaften meine ist — seine übrigen Objekte, deren
@@ -158,11 +161,16 @@ class Sicht:
       **meinen Objekten** (`services/objektsicht.py`). `actor_id` ist dann Pflicht —
       ohne Akteur gibt es keine „eigenen" Zeilen, also gar keine (fail-closed).
 
-    `invoicing` und `pricing` haben **bewusst keine EIGENE-Variante**: Geld ist die
-    **einzige** Ausnahme von „er darf alles sehen". Die Rechtematrix gibt der Rolle
-    MONTEUR dort kein Recht — es gibt also gar nichts zu filtern, und eine
-    Flag-Variante anzubieten, die niemand setzt, wäre eine Einladung, sie später
-    versehentlich zu setzen.
+    `invoicing` heißt in dieser Klasse **immer „Scope ALLE"** — jeder Geld-Baustein
+    (offene Posten, Zahlungsverhalten, Marge, Rechnungen, Abrechnungsstand) fragt
+    genau dieses Flag ab und bleibt damit für die Objektsicht zu. Die EIGENE-Variante
+    `invoicing_eigene` (Migration 0102) schaltet **einen einzigen** Baustein frei: die
+    **preisfreie** Angebotsliste `angebote_mengen`. Sie ist absichtlich kein Schalter
+    an den bestehenden Listen, sondern ein eigenes Feld — ein Flag, das an zwei
+    Bausteinen hinge, wäre genau der Weg, auf dem Beträge herausrutschen.
+
+    `pricing` hat **keine** EIGENE-Variante: Der Artikelstamm führt EK und
+    Aufschlagsmatrix.
 
     `maintenance` **hat** eine EIGENE-Variante (Migration 0100): Ein Wartungsvertrag
     ist keine Rechnung. Das Schema führt keine einzige Geldspalte, und die Auskunft
@@ -183,6 +191,8 @@ class Sicht:
     workflow_eigene: bool = False
     content_eigene: bool = False
     maintenance_eigene: bool = False
+    # Öffnet AUSSCHLIESSLICH `angebote_mengen` (preisfrei, objektbegrenzt).
+    invoicing_eigene: bool = False
     actor_id: object = None
 
     # Achtung: Das Feld heißt `property` (das Modul heißt so). Im Klassenkörper ist
@@ -361,6 +371,37 @@ def _zahlungsverhalten(invoice_qs, heute):
         "groesste_verzoegerung_tage": max(verzuege) if verzuege else None,
         "bewertete_rechnungen": len(verzuege),
     }
+
+
+# ===========================================================================
+# Angebote OHNE Preise — der eine Baustein der Objektsicht am Geld (0102)
+# ===========================================================================
+
+def _angebote_mengen(quote_qs, actor_id):
+    """Die **preisfreie** Angebotsliste der Objektsicht: was ist beauftragt?
+
+    Zwei Grenzen, beide aus der einen Heimat der Regel (`services/objektsicht.py`):
+    die Zeilen (**meine** Objekte, Status VERSENDET/ANGENOMMEN) und — hier — die
+    **Felder**: Diese Zeilenform führt **kein** `net_total` und **kein**
+    `gross_total`. Sie ist nicht `_angebot_zeile()` mit Nullen, sie ist eine andere
+    Zeile; deshalb kann hier auch kein Betrag „vergessen" werden.
+
+    Die Positionen (Menge, Einheit) hängen nicht daran — die holt das UI über
+    `GET /invoicing/quotes/{id}/mengen`. Ein Dossier listet Belege, es entfaltet sie
+    nicht.
+    """
+    qs = objektsicht.angebote_begrenzen(quote_qs, "EIGENE", actor_id)
+    return [
+        {
+            "id": q.id,
+            "quote_number": q.quote_number,
+            "title": q.title,
+            "status": q.status,
+            "quote_date": q.quote_date,
+            "work_order_id": q.work_order_id,
+        }
+        for q in qs.order_by("-created_at", "id")
+    ]
 
 
 # ===========================================================================
@@ -848,8 +889,10 @@ def liegenschaft_dossier(property_id, sicht: Sicht):
         "wartung_sichtbar": sicht.darf_maintenance(),
         "faelligkeiten": faelligkeiten,
         "wartungsvertraege": wartungsvertraege,
-        # Geld: KEINE EIGENE-Variante. Die Rolle MONTEUR hat auf `invoicing` kein
-        # Recht → False → Baustein null. Die Sperre ist die Abwesenheit des Rechts.
+        # Geld: `sicht.invoicing` heißt row_scope **ALLE**. Der Monteur trägt seit
+        # 0102 zwar `invoicing/LESEN`, aber mit EIGENE — daraus wird `invoicing_eigene`,
+        # und das schaltet ausschließlich die preisfreie Angebotsliste frei (Projekt-
+        # und Auftrags-Dossier). Offene Posten bleiben hier `None`.
         "offene_posten_sichtbar": sicht.invoicing,
         "offene_posten": offene_posten,
         "dokumente_sichtbar": sicht.darf_content(),
@@ -1033,6 +1076,17 @@ def projekt_dossier(project_id, sicht: Sicht):
         )
         abschlaege = _abschlagslage(project_id)
 
+    # --- Angebote OHNE Preise (invoicing/LESEN mit row_scope EIGENE, 0102) ---
+    # Das Projekt kann über MEHRERE Objekte laufen; `angebote_begrenzen` schneidet
+    # die Angebote fremder Liegenschaften desselben Projekts weg — genau wie oben
+    # die Vorgänge und Aufträge. Ohne diesen Schnitt wäre die Projektakte der
+    # Nebeneingang zum fremden Angebot.
+    angebote_mengen = None
+    if sicht.invoicing_eigene:
+        angebote_mengen = _angebote_mengen(
+            Quote.objects.filter(project_id=project_id), sicht.actor_id
+        )
+
     # --- Marge (invoicing + pricing) ---------------------------------------
     # Dieselbe Rechenstelle wie das Auswertungs-Dashboard, nur auf DIESES Projekt
     # vorgefiltert. Kein EK → Deckungsbeitrag/Marge None + ek_vollstaendig=False;
@@ -1072,6 +1126,10 @@ def projekt_dossier(project_id, sicht: Sicht):
         "angebote": angebote,
         "rechnungen": rechnungen,
         "anrechenbare_abschlaege": abschlaege,
+        # Preisfreie Angebotsliste (Objektsicht). Eigenes Flag, eigene Liste — nie
+        # dieselbe wie `angebote`.
+        "angebote_mengen_sichtbar": sicht.invoicing_eigene,
+        "angebote_mengen": angebote_mengen,
         "offene_posten_sichtbar": sicht.invoicing,
         "offene_posten": offene_posten,
         "marge_sichtbar": sicht.darf_marge(),
@@ -1254,6 +1312,18 @@ def auftrag_dossier(work_order_id, sicht: Sicht):
             Invoice.objects.filter(work_order_id=order.id), heute
         )
 
+    # --- Angebote OHNE Preise (invoicing/LESEN mit row_scope EIGENE, 0102) ---
+    # **Der Kern dieses Slices**: Der Monteur öffnet seinen Auftrag und sieht, was
+    # beauftragt ist — 12 m Kupferrohr DN20, sechs Thermostatventile. Der Auftrag ist
+    # bereits als „meiner" geprüft (`guard_auftrag`); `angebote_begrenzen` hält
+    # trotzdem beide Grenzen (Objekt + Status), damit diese Liste dieselbe Regel
+    # spricht wie die Suche und die Beleg-API. Zwei Filter, eine Formulierung.
+    angebote_mengen = None
+    if sicht.invoicing_eigene:
+        angebote_mengen = _angebote_mengen(
+            Quote.objects.filter(work_order_id=order.id), sicht.actor_id
+        )
+
     # Auftragsdokumente: für die Objektsicht lesbar (die Datei-API lässt
     # `work_order_id` an meinen Objekten zu) — deckungsgleich mit `_ziel_guard`.
     dokumente = _dokumente(work_order_id=order.id) if sicht.darf_content() else None
@@ -1293,6 +1363,9 @@ def auftrag_dossier(work_order_id, sicht: Sicht):
         "belege_sichtbar": sicht.invoicing,
         "angebote": angebote,
         "rechnungen": rechnungen,
+        # Preisfreie Angebotsliste (Objektsicht). Eigenes Flag, eigene Liste.
+        "angebote_mengen_sichtbar": sicht.invoicing_eigene,
+        "angebote_mengen": angebote_mengen,
         "offene_posten_sichtbar": sicht.invoicing,
         "offene_posten": offene_posten,
         "dokumente_sichtbar": sicht.darf_content(),

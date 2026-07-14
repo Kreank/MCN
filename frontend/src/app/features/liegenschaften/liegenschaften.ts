@@ -71,7 +71,15 @@ export class Liegenschaften {
   protected readonly skeletons = Array.from({ length: 6 });
 
   // --- Rechte (nur UI-Sichtbarkeit; der Server setzt sie durch) -----------
-  protected readonly darfAnlegen = computed(() => this.auth.darf('property', 'ANLEGEN'));
+  /**
+   * `darfAlle`, nicht `darf`: `POST /api/property/properties` ist fail-closed
+   * (`permissions.require`) — eine neue Liegenschaft ist per Definition keine
+   * „eigene" Zeile, ein Konto mit row_scope EIGENE bekommt dort 403. Der MONTEUR
+   * trägt `property/ANLEGEN` mit Scope EIGENE (er darf Gebäude, Einheiten und
+   * Räume an SEINEM Objekt anlegen — die Endpunkte dort sind `require_scoped`).
+   * Mit `darf` stünde ihm hier ein Knopf, der nur 403 kann.
+   */
+  protected readonly darfAnlegen = computed(() => this.auth.darfAlle('property', 'ANLEGEN'));
 
   // --- Meldung + Anlage-Dialog --------------------------------------------
   protected readonly meldung = signal<Meldung | null>(null);

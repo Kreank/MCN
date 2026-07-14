@@ -11,15 +11,19 @@ import {
   InvoicePartyCreate,
   InvoiceQuery,
   Kalkulation,
+  QuoteAusgang,
   QuoteCreate,
   QuoteDetail,
   QuoteEmailResult,
   QuoteLineInput,
+  QuoteMengenDetail,
+  QuoteMengenPage,
   QuotePage,
   QuoteQuery,
   QuoteUpdate,
   RechnungAusAngebot,
   RechnungAusAuftrag,
+  RechnungAusNachtrag,
 } from './beleg.model';
 
 /** Typisierter Zugriff auf die Beleg-API (dev-Proxy: /api -> :8000). */
@@ -42,6 +46,29 @@ export class BelegService {
 
   get(id: string): Observable<QuoteDetail> {
     return this.http.get<QuoteDetail>(`${this.base}/${id}`);
+  }
+
+  /**
+   * Angebote **ohne Preise** (Migration 0102) — Mengen und Einheiten.
+   *
+   * Für row_scope EIGENE (Monteur) der **einzige** Angebotspfad: `list`/`get` oben
+   * antworten ihm mit 403. Er sieht hier nur die versendeten/angenommenen Angebote
+   * an seinen Objekten; alles andere ist 404.
+   */
+  listQuotesMengen(query: QuoteQuery): Observable<QuoteMengenPage> {
+    let params = new HttpParams()
+      .set('page', query.page)
+      .set('page_size', query.page_size);
+    const q = query.q?.trim();
+    if (q) params = params.set('q', q);
+    if (query.status) params = params.set('status', query.status);
+    if (query.property_id) params = params.set('property_id', query.property_id);
+    if (query.project_id) params = params.set('project_id', query.project_id);
+    return this.http.get<QuoteMengenPage>(`${this.base}/mengen`, { params });
+  }
+
+  getQuoteMengen(id: string): Observable<QuoteMengenDetail> {
+    return this.http.get<QuoteMengenDetail>(`${this.base}/${id}/mengen`);
   }
 
   /**
@@ -207,6 +234,28 @@ export class BelegService {
    */
   rechnungAusAuftrag(payload: RechnungAusAuftrag): Observable<InvoiceDetail> {
     return this.http.post<InvoiceDetail>('/api/invoicing/invoices/aus-auftrag', payload);
+  }
+
+  /**
+   * Rechnung (ENTWURF) über die **Abweichungen** eines PAUSCHAL-Auftrags.
+   *
+   * Nur die Mehrmenge (MEHRVERBRAUCH) bzw. die volle Menge einer Zusatzleistung
+   * (ZUSATZ) — die pauschal vereinbarte Leistung steht schon auf der
+   * Angebotsrechnung. Fehlt ein Preis: **422 mit `preis_unbekannt`** (derselbe
+   * Klärungsweg wie beim Regielauf), niemals eine Position über 0,00 €.
+   */
+  rechnungAusNachtrag(payload: RechnungAusNachtrag): Observable<InvoiceDetail> {
+    return this.http.post<InvoiceDetail>('/api/invoicing/invoices/aus-nachtrag', payload);
+  }
+
+  /**
+   * Der Ausgang eines versendeten Angebots (angenommen | abgelehnt | abgelaufen).
+   *
+   * Ändert **nur** den Status: Snapshot und Inhalts-Hash des versendeten Angebots
+   * bleiben unangetastet (B-30).
+   */
+  setQuoteStatus(id: string, to_status: QuoteAusgang): Observable<QuoteDetail> {
+    return this.http.post<QuoteDetail>(`${this.base}/${id}/status`, { to_status });
   }
 
   /**

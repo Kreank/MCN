@@ -17,6 +17,9 @@ export const BEREICH_RECHT: Record<string, readonly [string, string]> = {
   wartung: ['maintenance', 'LESEN'],
   aufgaben: ['workflow', 'LESEN'],
   mitarbeiter: ['hr', 'LESEN'],
+  // Verwaltungssicht der Zeiterfassung (nicht die Stempeluhr „Meine Zeiten", die
+  // jeder mit hr/AENDERN bedient). Steht zusätzlich in `BEREICH_NUR_ALLE`.
+  zeiterfassung: ['hr', 'LESEN'],
   dokumente: ['invoicing', 'LESEN'],
   rechnungen: ['invoicing', 'LESEN'],
   buchhaltung: ['invoicing', 'LESEN'],
@@ -33,8 +36,38 @@ export const BEREICH_RECHT: Record<string, readonly [string, string]> = {
   einstellungen: ['company', 'LESEN'],
 };
 
+/**
+ * Bereiche, die **row_scope ALLE** verlangen (Route-Guard `darfAlleGuard`).
+ *
+ * Ihre Ansichten werten den Zeilen-Scope nicht aus; der Server antwortet Konten mit
+ * EIGENE deshalb mit 403 (`permissions.require`, fail-closed). Wer hier landet, sieht
+ * „Kein Zugriff" — und genau das soll weder die Navigation noch der Login-Rücksprung
+ * anbieten.
+ *
+ * `hr`: MONTEUR trägt hr/LESEN (EIGENE) für die eigene Zeiterfassung (0068).
+ * `invoicing`: MONTEUR trägt invoicing/LESEN (EIGENE) für das Angebot ohne Preise
+ * (0102) — Buchhaltung, Mahnwesen, Umsatzauswertung und die Rechnungsmappe bleiben
+ * ihm trotzdem verschlossen. **`dokumente` steht bewusst NICHT hier**: Dort bekommt er
+ * die preisfreie Angebotsliste.
+ */
+export const BEREICH_NUR_ALLE: ReadonlySet<string> = new Set([
+  'buchhaltung',
+  'auswertungen',
+  'rechnungen',
+  'mitarbeiter',
+  'zeiterfassung',
+]);
+
+function segmentVon(url: string): string {
+  return url.split(/[?#]/)[0].split('/').filter(Boolean)[0] ?? '';
+}
+
 /** Recht für einen (internen) Pfad, oder null, wenn der Bereich frei ist. */
 export function rechtFuerPfad(url: string): readonly [string, string] | null {
-  const segment = url.split(/[?#]/)[0].split('/').filter(Boolean)[0] ?? '';
-  return BEREICH_RECHT[segment] ?? null;
+  return BEREICH_RECHT[segmentVon(url)] ?? null;
+}
+
+/** Verlangt dieser Pfad row_scope ALLE? (siehe `BEREICH_NUR_ALLE`) */
+export function nurAlleFuerPfad(url: string): boolean {
+  return BEREICH_NUR_ALLE.has(segmentVon(url));
 }

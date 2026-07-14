@@ -6,7 +6,15 @@ import { Mappe, MappeTab } from '../../shared/mappe/mappe';
 import { BelegService } from '../../core/beleg.service';
 import { MailService } from '../../core/mail.service';
 import { AuthService } from '../../core/auth.service';
-import { LineType, QuoteDetail, QuoteStatus } from '../../core/beleg.model';
+import {
+  LINE_TYPE_LABEL,
+  LineType,
+  QUOTE_STATUS_LABEL,
+  QuoteAusgang,
+  QuoteDetail,
+  QuoteStatus,
+} from '../../core/beleg.model';
+import { AngebotMengen } from '../angebot-mengen/angebot-mengen';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { Bestaetigung } from '../../shared/bestaetigung/bestaetigung';
 import { Dateien } from '../../shared/dateien/dateien';
@@ -38,9 +46,49 @@ const VERSENDET_STATUS: readonly QuoteStatus[] = [
   'ERSETZT',
 ];
 
+/** Der Ausgang eines versendeten Angebots — Texte des Bestätigungsdialogs.
+ *
+ *  Jeder Ausgang sagt, **was er bewirkt**: „Angenommen" ist die Grundlage des
+ *  Auftrags; „Abgelehnt" nimmt das Angebot aus dem Soll der Baustelle (der
+ *  Soll-Ist-Abgleich rechnet sich neu). Das ist keine Etikettenfrage.
+ */
+const AUSGANG_TITEL: Record<QuoteAusgang, string> = {
+  ANGENOMMEN: 'Angebot als angenommen festhalten?',
+  ABGELEHNT: 'Angebot als abgelehnt festhalten?',
+  ABGELAUFEN: 'Angebot als abgelaufen festhalten?',
+};
+const AUSGANG_TEXT: Record<QuoteAusgang, string> = {
+  ANGENOMMEN:
+    'Der Kunde hat zugesagt: Das Angebot gilt als vereinbart und bleibt das Soll der Baustelle. Am Beleg selbst ändert sich nichts — Snapshot und Prüf-Hash des versendeten Angebots bleiben unangetastet.',
+  ABGELEHNT:
+    'Das Angebot wurde nicht beauftragt. Es bildet danach KEIN Soll mehr: Der Soll-Ist-Abgleich der zugehörigen Baustelle rechnet sich neu. Am Beleg selbst ändert sich nichts.',
+  ABGELAUFEN:
+    'Die Bindefrist ist verstrichen, ohne dass der Kunde entschieden hat. Das Angebot bleibt das Soll der Baustelle (angeboten wurde es ja so). Am Beleg selbst ändert sich nichts.',
+};
+const AUSGANG_LABEL: Record<QuoteAusgang, string> = {
+  ANGENOMMEN: 'Als angenommen festhalten',
+  ABGELEHNT: 'Als abgelehnt festhalten',
+  ABGELAUFEN: 'Als abgelaufen festhalten',
+};
+const AUSGANG_ERFOLG: Record<QuoteAusgang, string> = {
+  ANGENOMMEN: 'Angebot als angenommen festgehalten.',
+  ABGELEHNT: 'Angebot als abgelehnt festgehalten — es bildet kein Soll mehr.',
+  ABGELAUFEN: 'Angebot als abgelaufen festgehalten.',
+};
+
 @Component({
   selector: 'app-beleg-detail',
-  imports: [Mappe, RouterLink, KeinZugriff, Bestaetigung, Dateien, ReactiveFormsModule, Dialog, Feld],
+  imports: [
+    Mappe,
+    RouterLink,
+    KeinZugriff,
+    Bestaetigung,
+    Dateien,
+    ReactiveFormsModule,
+    Dialog,
+    Feld,
+    AngebotMengen,
+  ],
   templateUrl: './beleg-detail.html',
   styleUrl: './beleg-detail.scss',
 })
@@ -50,6 +98,24 @@ export class BelegDetail {
   private readonly mailSvc = inject(MailService);
   private readonly auth = inject(AuthService);
   private readonly fb = inject(FormBuilder);
+
+  /**
+   * row_scope EIGENE auf `invoicing` (Monteur, Migration 0102) → **die Mengensicht**.
+   *
+   * Diese Mappe zeigt Einzelpreise, Summen und den Versand-Workflow; der Server
+   * antwortet dem Monteur auf `GET /invoicing/quotes/{id}` deshalb mit **403**. Statt
+   * ihn auf „Kein Zugriff" laufen zu lassen (er DARF das Angebot ja sehen — nur ohne
+   * Preise), übernimmt hier die preisfreie Ansicht. Dieselbe Route, dieselben Links
+   * aus Suche und Dossier — eine andere Komponente.
+   *
+   * **Der Preis wird nicht ausgeblendet, er wird nicht geladen**: Die Mengensicht
+   * ruft einen eigenen Endpunkt auf, der keinen Betrag ausliefert. Ein Template, das
+   * nur eine Spalte weglässt, hätte den Betrag trotzdem im Netzwerk-Tab.
+   */
+  protected readonly nurMengen = computed(
+    () =>
+      this.auth.darf('invoicing', 'LESEN') && !this.auth.darfAlle('invoicing', 'LESEN'),
+  );
 
   protected readonly tab = signal('positionen');
   protected readonly state = signal<ViewState>({ kind: 'loading' });
@@ -120,6 +186,11 @@ export class BelegDetail {
   }));
 
   constructor() {
+    // Mengensicht: NICHTS von hier laden. Der preisführende Endpunkt würde 403
+    // antworten, und der Fehlerzustand dieser Mappe würde die Kindkomponente
+    // überdecken, die gerade sauber lädt.
+    if (this.nurMengen()) return;
+
     this.route.paramMap.pipe(takeUntilDestroyed()).subscribe((pm) => {
       const id = pm.get('id');
       this.tab.set('positionen');
@@ -188,6 +259,69 @@ export class BelegDetail {
         this.meldung.set({ art: 'fehler', text: this.fehlerText(err) });
       },
     });
+  }
+
+  // --- Der Ausgang des Angebots: angenommen | abgelehnt | abgelaufen -------
+  //
+  // Der Statusautomat kennt diese Übergänge seit Migration 0016 — **gesetzt hat
+  // sie nie ein Produktpfad**. Ein Angebot blieb für immer „versendet", auch wenn
+  // der Kunde längst zugesagt hatte.
+  //
+  // **ERSETZT gibt es hier bewusst nicht**: Der Status verlangt ein
+  // Nachfolgeangebot (DB-Regel) und ist damit der Vorgang „Ersatzangebot anlegen",
+  // kein Statuswechsel. Ein Knopf, der zuverlässig an einem CHECK scheitert, wäre
+  // ein Versprechen, das das System nicht hält.
+
+  /** Der Ausgang wird am **versendeten** Angebot festgehalten (Server: QUOTE_AUSGANG). */
+  protected readonly kannAusgangSetzen = computed(
+    () => this.daten()?.status === 'VERSENDET' && this.auth.darf('invoicing', 'AENDERN'),
+  );
+  protected readonly ausgangOffen = signal<QuoteAusgang | null>(null);
+  protected readonly ausgangLaedt = signal(false);
+
+  ausgangFragen(ziel: QuoteAusgang): void {
+    this.meldung.set(null);
+    this.ausgangOffen.set(ziel);
+  }
+
+  ausgangAbbrechen(): void {
+    if (!this.ausgangLaedt()) this.ausgangOffen.set(null);
+  }
+
+  ausgangBestaetigen(): void {
+    const d = this.daten();
+    const ziel = this.ausgangOffen();
+    if (!d || !ziel || this.ausgangLaedt()) return;
+    this.ausgangLaedt.set(true);
+    this.svc.setQuoteStatus(d.id, ziel).subscribe({
+      next: (aktualisiert) => {
+        this.ausgangLaedt.set(false);
+        this.ausgangOffen.set(null);
+        this.state.set({ kind: 'ready', data: aktualisiert });
+        this.meldung.set({ art: 'erfolg', text: AUSGANG_ERFOLG[ziel] });
+      },
+      error: (err) => {
+        this.ausgangLaedt.set(false);
+        this.ausgangOffen.set(null);
+        this.meldung.set({ art: 'fehler', text: this.fehlerText(err) });
+      },
+    });
+  }
+
+  /** Titel/Text des Bestätigungsdialogs — je Ausgang eine eigene Aussage. */
+  ausgangTitel(): string {
+    const z = this.ausgangOffen();
+    return z ? AUSGANG_TITEL[z] : '';
+  }
+
+  ausgangText(): string {
+    const z = this.ausgangOffen();
+    return z ? AUSGANG_TEXT[z] : '';
+  }
+
+  ausgangLabel(): string {
+    const z = this.ausgangOffen();
+    return z ? AUSGANG_LABEL[z] : '';
   }
 
   meldungSchliessen(): void {
@@ -265,17 +399,8 @@ export class BelegDetail {
   }
 
   statusLabel(s: QuoteStatus): string {
-    const map: Record<QuoteStatus, string> = {
-      ENTWURF: 'Entwurf',
-      INTERN_GEPRUEFT: 'Intern geprüft',
-      FREIGEGEBEN: 'Freigegeben',
-      VERSENDET: 'Versendet',
-      ANGENOMMEN: 'Angenommen',
-      ABGELEHNT: 'Abgelehnt',
-      ABGELAUFEN: 'Abgelaufen',
-      ERSETZT: 'Ersetzt',
-    };
-    return map[s] ?? s;
+    // Eine Quelle für alle Belegansichten (auch die preisfreie Mengensicht).
+    return QUOTE_STATUS_LABEL[s] ?? s;
   }
   statusClass(s: QuoteStatus): string {
     if (s === 'ANGENOMMEN') return 'stamp--positive';
@@ -284,17 +409,7 @@ export class BelegDetail {
   }
 
   lineTypeLabel(t: LineType): string {
-    const map: Record<LineType, string> = {
-      MATERIAL: 'Material',
-      ARBEITSZEIT: 'Arbeitszeit',
-      PAUSCHALE: 'Pauschale',
-      FREMDLEISTUNG: 'Fremdleistung',
-      FAHRT: 'Fahrt',
-      ZUSCHLAG: 'Zuschlag',
-      TEXT: 'Text',
-      ZWISCHENSUMME: 'Zwischensumme',
-    };
-    return map[t] ?? t;
+    return LINE_TYPE_LABEL[t] ?? t;
   }
 
   isText(t: LineType): boolean {

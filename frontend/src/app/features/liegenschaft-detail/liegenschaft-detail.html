@@ -183,11 +183,11 @@
           <p>Eigentumsperioden und -anteile je Einheit (Schema <code>tenure</code>) werden hier angezeigt, sobald die Lesepfade angebunden sind (Roadmap 03).</p>
         </div>
       }
+      @if (tab() === 'verwaltung') {
+        <app-verwaltung [propertyId]="daten()!.id" [gebaeude]="daten()!.buildings" />
+      }
       @if (tab() === 'belegung') {
-        <div class="tab-platzhalter">
-          <h2 class="tab-platzhalter__titel">Belegung</h2>
-          <p>Mieter/Nutzer je Einheit (Schema <code>tenure</code>) folgen mit der Belegungs-Anbindung.</p>
-        </div>
+        <app-belegung [propertyId]="daten()!.id" />
       }
       @if (tab() === 'dokumente') {
         <div class="tab-platzhalter">

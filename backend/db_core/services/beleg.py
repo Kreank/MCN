@@ -2434,6 +2434,130 @@ def send_quote(actor_app_user_id, *, quote_id):
     return quote
 
 
+# --- Der Ausgang des Angebots: angenommen, abgelehnt, abgelaufen ------------
+#
+# Wörtliche Spiegelung von `workflow.status_transition` für entity='quote'
+# (Migration 0016), **ohne die Kanten nach ERSETZT** — und das ist kein Versehen:
+# Der DB-CHECK verlangt für ERSETZT einen `replaced_by_quote_id` (0018), also ein
+# **existierendes Nachfolgeangebot**. „Ersetzen" ist damit kein Statuswechsel,
+# sondern der Vorgang „Ersatzangebot anlegen und verknüpfen" — ein eigener Slice.
+# Ihn hier als nackten Statuswechsel anzubieten hieße, dem Nutzer einen Knopf zu
+# geben, der zuverlässig an einem CHECK scheitert.
+#
+# Die Kante FREIGEGEBEN → VERSENDET gehört `send_quote` (sie vergibt die Nummer und
+# friert den Beleg ein) und steht deshalb nicht in dieser Tabelle: Zwei Wege in
+# denselben Status wären zwei Wahrheiten.
+QUOTE_AUSGANG = {
+    "VERSENDET": {
+        "ANGENOMMEN": False,   # {Zielstatus: begründungspflichtig}
+        "ABGELEHNT": False,
+        "ABGELAUFEN": False,
+    },
+}
+
+
+def set_quote_status(actor_app_user_id, *, quote_id, to_status, reason=None):
+    """Der Ausgang eines versendeten Angebots: ANGENOMMEN | ABGELEHNT | ABGELAUFEN.
+
+    Die Übergänge lagen seit Migration 0016 in der Statustabelle — **gesetzt hat
+    sie nie jemand**. Ein Angebot blieb für immer „versendet", auch wenn der Kunde
+    längst zugesagt hatte. Damit war der Auftrag, der daraus entsteht, ohne Beleg
+    dafür, *dass* er vereinbart wurde.
+
+    **Der Inhalt bleibt unangetastet (B-30).** Geändert wird ausschließlich der
+    Status; `billing_snapshot` und `content_hash` des versendeten Angebots bleiben
+    Zeichen für Zeichen dieselben — der Trigger `freeze_sent_quote` lässt genau das
+    zu und nichts sonst. Deshalb wird hier bewusst **nur die Statusspalte**
+    geschrieben (`update(status=…)`), nicht das Model gespeichert: Ein
+    `quote.save()` schriebe alle Felder erneut und liefe Gefahr, den eingefrorenen
+    Inhalt anzufassen.
+
+    Das Angebot bleibt in **jedem** dieser Status ein Soll des Auftrags — außer
+    ABGELEHNT: Ein abgelehntes Angebot wurde nie vereinbart und bildet kein Soll
+    (`site_report.SOLL_AUSGESCHLOSSENE_STATUS`). Der Soll-Ist-Abgleich rechnet sich
+    dadurch neu; das ist gewollt und die eigentliche Wirkung von „abgelehnt".
+    """
+    quote = Quote.objects.filter(id=quote_id).first()
+    if quote is None:
+        raise ValueError("Angebot nicht gefunden.")
+
+    allowed = QUOTE_AUSGANG.get(quote.status, {})
+    if to_status not in allowed:
+        if to_status == "ERSETZT":
+            raise ValueError(
+                "Ein Angebot wird nicht per Statuswechsel ersetzt: Der Status "
+                "ERSETZT verlangt ein Nachfolgeangebot (DB-Regel B-30/P3-08). "
+                "Dafür ist ein Ersatzangebot anzulegen und zu verknüpfen — das ist "
+                "ein eigener Vorgang, kein Statuswechsel."
+            )
+        raise ValueError(
+            f"Übergang {quote.status} → {to_status} ist nicht erlaubt. "
+            "Der Ausgang eines Angebots wird am versendeten Angebot festgehalten "
+            "(angenommen, abgelehnt oder abgelaufen)."
+        )
+    if allowed[to_status] and not (reason and reason.strip()):
+        raise ValueError(
+            f"Übergang {quote.status} → {to_status} erfordert eine Begründung."
+        )
+
+    from db_core.models import BillingLink, WorkOrder
+
+    with as_business_error():
+        with business_transaction(
+            actor_app_user_id, status_reason=reason.strip() if reason else None
+        ):
+            # **Serialisierung über die Klammer** (Review-Befund, Nebenläufigkeit).
+            # ABGELEHNT/ABGELAUFEN nehmen das Angebot aus dem Soll — der Guard unten
+            # liest die Abrechnungsbindungen, die eine GLEICHZEITIGE Angebotsrechnung
+            # gerade erst schreibt. Ohne die Auftragssperre entginge ihm diese
+            # Bindung, und Angebot wäre danach abgelehnt UND fakturiert. Dieselbe
+            # `work_order`-Zeile sperren die Abrechnungswege zuerst; wer sie hält,
+            # sieht den anderen. Ein Angebot ohne Auftrag trägt keine auftragsweite
+            # Mengengrenze — dann ist nichts zu serialisieren.
+            if quote.work_order_id is not None:
+                list(
+                    WorkOrder.objects.filter(id=quote.work_order_id)
+                    .select_for_update()
+                    .values_list("id", flat=True)
+                )
+
+            # **Ein bereits fakturiertes Angebot kann nicht abgelehnt/abgelaufen
+            # werden** (Review-Befund, KRITISCH 1 — an der Wurzel). Fiele das Soll
+            # nach der Angebotsrechnung auf 0, hielte der Nachtrag plötzlich die ganze
+            # Ist-Menge für offen. Die Nachtragsformel (`max(A, Soll)`) fängt das
+            # inzwischen ab; hier wird der Widerspruch schon an der Quelle benannt.
+            # ANGENOMMEN ist erlaubt — ein fakturiertes Angebot ist angenommen.
+            if to_status in ("ABGELEHNT", "ABGELAUFEN"):
+                fakturiert = BillingLink.objects.filter(
+                    quote_line__quote_id=quote_id,
+                    source_kind="ANGEBOTSPOSITION",
+                    released_at__isnull=True,
+                ).exists()
+                if fakturiert:
+                    raise ValueError(
+                        "Aus diesem Angebot wurde bereits eine Rechnung erzeugt — es "
+                        f"lässt sich nicht mehr auf {to_status} setzen. Ein "
+                        "abgerechnetes Angebot aus dem Soll zu nehmen, öffnete die "
+                        "Doppelabrechnung des Nachtrags. Wenn die Rechnung falsch "
+                        "war, ist sie zuerst zu stornieren (das löst die "
+                        "Abrechnungsbindung)."
+                    )
+
+            updated = Quote.objects.filter(
+                id=quote_id, status=quote.status
+            ).update(status=to_status)
+            if not updated:
+                # Zwischenzeitlich hat jemand anderes entschieden (Wettlauf).
+                # Kein stiller Erfolg — der Nutzer sähe sonst „angenommen", während
+                # in Wahrheit „abgelehnt" gespeichert ist.
+                raise ValueError(
+                    "Der Angebotsstatus hat sich zwischenzeitlich geändert. Bitte "
+                    "die Ansicht neu laden."
+                )
+    quote.refresh_from_db()
+    return quote
+
+
 # --- Storno / Rechnungskorrektur (Folgebelege) -----------------------------
 # GoBD: eine veröffentlichte Rechnung ist unveränderlich; „Löschen"/„Korrigieren"
 # gibt es nicht — nur ein Folgebeleg (STORNO = voller Ausgleich, GUTSCHRIFT =

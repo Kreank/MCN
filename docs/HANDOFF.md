@@ -1839,11 +1839,35 @@ treibt: **auslagern, nicht das Budget lockern.**
 > auch die **Mieter-Lücke** (`tenure.occupancy` trägt keinen Beteiligten) und die
 > Entscheidung **ein Artikelstamm, mehrere Anbindungen — kein „Gerätewissen"-Silo**.
 
-**Stand 2026-07-14: Es gibt KEIN Deployment-Setup** (kein Dockerfile, kein
-compose, keine CI, kein Backup). Das System läuft ausschließlich auf der
-Entwicklungsmaschine. Für eine **Demo** ist das in Ordnung — für **Echtbetrieb
-nicht**, und zwar nicht aus Bequemlichkeitsgründen, sondern weil unten drei Dinge
-stehen, die Daten unwiederbringlich vernichten.
+**ERLEDIGT (2026-07-14): Der Demo-Stack ist gebaut und lokal end-to-end
+verifiziert** — `deploy/` (compose, zwei Dockerfiles, Entrypoints,
+`.env.example`) und **`docs/deployment.md`** (Schritt-für-Schritt für den Server).
+**Backup weiterhin bewusst NICHT gebaut** (siehe unten). Was unten beschrieben
+steht, ist damit umgesetzt; die Absätze bleiben als Begründung stehen.
+
+Nachgewiesen (frische Volumes, Stack von null): migrate + Seed laufen, Frontend
+über nginx, `/api/openapi.json`, **Login mit Demo-Passwort**, Beleg-PDF **und**
+ZUGFeRD-PDF/A werden gerendert und in MinIO archiviert (DejaVu eingebettet),
+`/admin/` gesperrt (403 ohne IP, 401 ohne Basic-Auth), Postgres/MinIO ohne
+Host-Port, Mailversand tot. TLS wurde mit einem **selbstsignierten** Zertifikat
+geprüft (Let's Encrypt braucht eine öffentliche Domain) — der HTTPS-Pfad,
+Secure-Cookies und die Umschaltung HTTP→HTTPS sind damit belegt, die
+ACME-Ausstellung selbst nicht.
+
+**Drei Dinge, die man beim Anfassen wissen muss:**
+- **Der Seed-Aufruf im Entrypoint bekommt `MCN_DEBUG=1` mit — nur er.**
+  `seed_demo` **bricht ohne DEBUG ab** und vergibt Passwörter nur bei DEBUG.
+  gunicorn startet unverändert mit `MCN_DEBUG=0`. Die Passwortvergabe hängt
+  aber **nicht** an diesem Kniff, sondern am eigenen Command
+  **`demo_passwoerter_setzen`** (verlangt `MCN_DEMO_INSTANZ=1`) — damit sie auch
+  trägt, wenn `MCN_SEED_COMMAND` auf `seed_szenario` umgestellt wird. **Genau das
+  ist der Tausch, der ansteht: nur der Name in der `.env`.**
+- **Der Mailversand ist doppelt totgelegt:** `MCN_EMAIL_BACKEND=console` (der
+  gesamte Versand läuft über `django.core.mail.get_connection()` — es gibt keinen
+  zweiten Weg nach außen) **und** kein `MCN_MAIL_KEY` (ohne ihn lässt sich nicht
+  einmal ein SMTP-Konto speichern). Nicht „reparieren".
+- **`/admin/` ist auf der Demo der einzige Weg, Benutzer anzulegen** — der offene
+  Slice „Benutzer einladen" im Leitstand bleibt offen.
 
 ### Was für die Demo-Instanz gilt (bewusst schlank)
 

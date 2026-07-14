@@ -94,8 +94,20 @@ export class Raumaufmass {
 
   private ladeReq = 0;
 
+  // Räume anlegen/bearbeiten (inkl. Aufbau und Grundriss): `require_scoped` —
+  // genau die Arbeit, die der Monteur am Objekt macht. Deshalb `darf`.
   protected readonly darfAnlegen = computed(() => this.auth.darf('property', 'ANLEGEN'));
   protected readonly darfAendern = computed(() => this.auth.darf('property', 'AENDERN'));
+  /**
+   * Auslegungsdaten des OBJEKTS (Norm-Außentemperatur u. a.): `darfAlle`.
+   *
+   * `PATCH /api/property/properties/{id}/auslegung` ist fail-closed (`require`)
+   * — anders als die Raum-Endpunkte daneben. Ein Konto mit row_scope EIGENE
+   * bekommt dort 403; der Speichern-Knopf und die beiden Sprungknöpfe
+   * („Auslegungsdaten ergänzen") dürfen ihm deshalb nicht angeboten werden. Die
+   * Werte selbst bleiben lesbar — er braucht sie für die Heizlast.
+   */
+  protected readonly darfAuslegung = computed(() => this.auth.darfAlle('property', 'AENDERN'));
 
   protected readonly bearbeiteterRaum = computed(() => {
     const id = this.offenerRaum();

@@ -199,7 +199,11 @@ export class Dossier {
   private id = '';
 
   /** Rechte für die weiterführenden Links (der Server tort ohnehin). */
-  protected readonly darfBelege = computed(() => this.auth.darf('invoicing', 'LESEN'));
+  // `darfAlle`: Die Beleg-Links des Dossiers führen auf `/rechnungen/:id` — eine
+  // Route hinter `darfAlleGuard('invoicing','LESEN')`, weil die Rechnungsmappe
+  // fail-closed ist. Der Monteur trägt `invoicing/LESEN` nur mit EIGENE (Angebot
+  // ohne Preise); ein Link, der ihn auf „Kein Zugriff" führt, ist ein toter Knopf.
+  protected readonly darfBelege = computed(() => this.auth.darfAlle('invoicing', 'LESEN'));
   protected readonly darfWorkflow = computed(() => this.auth.darf('workflow', 'LESEN'));
   protected readonly darfProperty = computed(() => this.auth.darf('property', 'LESEN'));
   protected readonly darfIdentity = computed(() => this.auth.darf('identity', 'LESEN'));

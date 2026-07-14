@@ -149,6 +149,74 @@ export interface OffeneAbrechnung {
   nicht_unterzeichnete_berichte: UnsignierterBericht[];
 }
 
+// --- Nachtrag: die Rechnung aus den Abweichungen ---------------------------
+
+/**
+ * Eine abrechenbare Abweichung — **nicht die ganze Position**.
+ *
+ * Bei MEHRVERBRAUCH ist `menge` die **Differenz** (Ist − Soll): Die Sollmenge ist
+ * mit der Pauschale bezahlt. Bei ZUSATZ ist sie die volle Menge (es gibt kein
+ * Soll). `einzelpreis`/`betrag` sind **null = unbekannt, nie 0**.
+ */
+export interface NachtragPosition {
+  schluessel: string;
+  art: 'MEHRVERBRAUCH' | 'ZUSATZ';
+  bezeichnung: string;
+  einheit: string | null;
+  soll: string;
+  ist: string;
+  /** Das, was JETZT abgerechnet wird. */
+  menge: string;
+  bereits_berechnet: string;
+  preis_status: PreisStatus;
+  einzelpreis: string | null;
+  betrag: string | null;
+  grund: string | null;
+  grund_text: string | null;
+  vorschlaege: PreisVorschlag[];
+}
+
+/** Eine Abweichung, deren Mehrmenge bereits in einer Rechnung steht. */
+export interface NachtragAbgerechnet {
+  schluessel: string;
+  art: 'MEHRVERBRAUCH' | 'ZUSATZ';
+  bezeichnung: string;
+  einheit: string | null;
+  menge: string;
+  rechnungen: string[];
+}
+
+/**
+ * Ein Posten, dessen Mengen in VERSCHIEDENEN Einheiten vorliegen (z. B.
+ * „Stk"/„Stück" desselben Artikels).
+ *
+ * Fail-closed: nicht summierbar, nicht abrechenbar, bis ein Mensch die Einheiten
+ * vereinheitlicht oder den echten Mehr-Einheiten-Fall bewusst trennt. Sonst
+ * stünde derselbe Posten unter zwei Einheiten doppelt auf zwei Rechnungen.
+ */
+export interface EinheitKonflikt {
+  schluessel: string;
+  bezeichnung: string;
+  einheiten: string[];
+}
+
+export interface NachtragVorschau {
+  work_order_id: string;
+  billing_mode: BillingMode;
+  /** false bei REGIE: dort wird ohnehin das gesamte Ist fakturiert. */
+  abrechenbar: boolean;
+  hinweis: string;
+  positionen: NachtragPosition[];
+  bereits_abgerechnet: NachtragAbgerechnet[];
+  /** Fail-closed: derselbe Artikel in verschiedenen Einheiten — nicht abrechenbar. */
+  einheit_konflikte: EinheitKonflikt[];
+  /** Summe **der bepreisbaren** Positionen — `preise_unbekannt` sagt, ob sie
+   *  unvollständig ist. Eine Summe, die vollständig tut, wäre eine Lüge. */
+  summe: string;
+  preise_unbekannt: boolean;
+  nicht_unterzeichnete_berichte: UnsignierterBericht[];
+}
+
 // --- Schreib-Payloads ------------------------------------------------------
 // POST /api/workflow/work_orders
 export interface WorkOrderCreate {

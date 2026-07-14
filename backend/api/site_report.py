@@ -638,7 +638,10 @@ def soll_ist_abgleich(request, work_order_id: UUID):
     Reine Rechenarbeit, **keine Geldbeträge** — deshalb für die Objektsicht lesbar:
     Scope 'EIGENE' → begrenzt auf meine Objekte (fremder Auftrag: 404). Der Soll-Ist
     sagt dem Monteur, was am Auftrag geplant war und was tatsächlich verbaut wurde;
-    Preise stehen nicht darin (und `invoicing` hat er ohnehin nicht).
+    **Preise stehen nicht darin** — er zieht Mengen aus dem Angebot, keine Beträge.
+    Seit Migration 0102 ist das keine Nebenbemerkung mehr, sondern die Regel des
+    Hauses: Der Monteur liest das Angebot (`GET /invoicing/quotes/{id}/mengen`), aber
+    nie einen Betrag. Wer hier eine Geldspalte ergänzt, öffnet sie ihm.
     """
     actor, scope = require_scoped(request, "workflow", "LESEN")
     if not WorkOrder.objects.filter(id=work_order_id).exists():

@@ -357,6 +357,26 @@ def list_contact_points(party_id, *, include_ended=False):
     return list(qs.order_by("-is_primary", "contact_type", "-valid_from", "id"))
 
 
+def contact_points_bulk(party_ids, *, include_ended=False):
+    """Kommunikationswege **vieler** Kontakte in EINER Query.
+
+    `{party_id: [ContactPoint, …]}`, je Party in derselben Reihenfolge wie
+    `list_contact_points` (primäre zuerst). Für Listen, die je Zeile einen
+    Kontakt zeigen — sechs Mieter an sechs Einheiten wären sonst sechs Queries,
+    und die Liegenschaftsmappe der WEG wächst mit der Zahl der Wohnungen.
+    """
+    ids = {p for p in (party_ids or []) if p is not None}
+    if not ids:
+        return {}
+    qs = ContactPoint.objects.filter(party_id__in=ids)
+    if not include_ended:
+        qs = qs.filter(valid_until__isnull=True)
+    treffer = {}
+    for cp in qs.order_by("-is_primary", "contact_type", "-valid_from", "id"):
+        treffer.setdefault(cp.party_id, []).append(cp)
+    return treffer
+
+
 def add_contact_point(
     actor_app_user_id,
     party_id,

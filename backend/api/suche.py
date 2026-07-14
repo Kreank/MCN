@@ -27,17 +27,22 @@ genau dann, wenn gar nichts lesbar ist** (Konto ohne jede Rolle): Wer nirgends
 lesen darf, bekommt keine leere 200 („nichts gefunden"), sondern die Wahrheit
 („du darfst nicht suchen").
 
-**row_scope EIGENE = die Objektsicht** (Migration 0099). Für `identity`, `property`
-und `workflow` wird der Scope **weich** gelesen (`require_scoped` im try) und als
-`*_eigene`-Flagge weitergereicht; der Service begrenzt die Grundmenge jeder Kategorie
-auf **meine Objekte** (`db_core/services/objektsicht.py`). `invoicing`, `pricing` und
-`hr` bleiben beim harten `check` (fail-closed → EIGENE ergibt None): Belege, Preise
-und Personaldaten haben in diesem Slice keine Objektsicht — und die Rolle MONTEUR hat
-dort ohnehin kein Recht.
+**row_scope EIGENE = die Objektsicht** (Migration 0099, erweitert um 0102). Für
+`identity`, `property`, `workflow` und `invoicing` wird der Scope **weich** gelesen
+(`require_scoped` im try) und als `*_eigene`-Flagge weitergereicht; der Service
+begrenzt die Grundmenge jeder Kategorie auf **meine Objekte**
+(`db_core/services/objektsicht.py`). `pricing` und `hr` bleiben beim harten `check`
+(fail-closed → EIGENE ergibt None).
 
-Der Monteur findet damit sein Objekt, dessen Vorgänge, Aufträge, Einsätze und
-Kontakte — und **kein** Angebot, **keine** Rechnung, **kein** fremdes Objekt (auch
-nicht über dessen exakte Objektnummer: der Direkttreffer-Pfad zieht aus derselben
+**`invoicing_eigene` öffnet ausschließlich ANGEBOT**, nicht RECHNUNG: Der Service
+fragt für die Rechnung `sicht.invoicing` (Scope ALLE) ab. Das ist die eine Ausnahme
+von „der Monteur darf alles sehen" — und sie steht bewusst dort, wo die Zeilen
+geholt werden (`suche._basis_qs`), nicht hier.
+
+Der Monteur findet damit sein Objekt, dessen Vorgänge, Aufträge, Einsätze, Kontakte
+und die **versendeten Angebote** dazu (ohne Betrag im Untertitel) — und **keine**
+Rechnung, **kein** fremdes Objekt und **kein** fremdes Angebot (auch nicht über
+dessen exakte Belegnummer: der Direkttreffer-Pfad zieht aus derselben
 rechtegefilterten Grundmenge).
 """
 from uuid import UUID
@@ -80,9 +85,10 @@ class SucheOut(Schema):
 
 
 # Module mit Objektsicht: Hier wird der row_scope WEICH gelesen (ALLE oder EIGENE).
-# `invoicing`/`pricing`/`hr` stehen bewusst nicht darin — sie kennen in diesem Slice
-# keine Objektsicht und bleiben beim harten, fail-closed `check`.
-_OBJEKTSICHT_MODULE = ("identity", "property", "workflow")
+# `pricing`/`hr` stehen bewusst nicht darin — sie kennen keine Objektsicht und bleiben
+# beim harten, fail-closed `check`. `invoicing` steht seit Migration 0102 darin, öffnet
+# damit aber NUR die Kategorie ANGEBOT (die Rechnung fragt `sicht.invoicing` ab).
+_OBJEKTSICHT_MODULE = ("identity", "property", "workflow", "invoicing")
 
 
 def _sicht(request):
@@ -116,12 +122,14 @@ def _sicht(request):
         identity=scopes["identity"] == "ALLE",
         property=scopes["property"] == "ALLE",
         workflow=scopes["workflow"] == "ALLE",
+        invoicing=scopes["invoicing"] == "ALLE",
         identity_eigene=scopes["identity"] == "EIGENE",
         property_eigene=scopes["property"] == "EIGENE",
         workflow_eigene=scopes["workflow"] == "EIGENE",
-        # Geld, Preise, Personal: KEINE Objektsicht in diesem Slice — hartes `check`
-        # (row_scope EIGENE → None → Kategorie entfällt).
-        invoicing=check(request, "invoicing", "LESEN") is not None,
+        # Öffnet NUR die Kategorie ANGEBOT (objektbegrenzt, versendet/angenommen).
+        # Die Kategorie RECHNUNG fragt `sicht.invoicing` ab und bleibt damit zu.
+        invoicing_eigene=scopes["invoicing"] == "EIGENE",
+        # Preise und Personal: KEINE Objektsicht — hartes `check` (EIGENE → None).
         pricing=check(request, "pricing", "LESEN") is not None,
         hr=check(request, "hr", "LESEN") is not None,
         actor_id=actor,

@@ -1,0 +1,196 @@
+<p class="sr-only" role="status">{{ ansage() }}</p>
+
+@if (zustand() === 'loading') {
+  <p class="lade-hinweis" role="status">Belegung wird geladen …</p>
+}
+
+@if (zustand() === 'error') {
+  <div class="note note--error" role="alert">
+    <h3 class="note__titel">Belegung konnte nicht geladen werden</h3>
+    <p class="note__text">{{ fehler() }}</p>
+    <div class="note__aktionen">
+      <button type="button" class="btn btn--primary" (click)="neuLaden()">
+        Erneut versuchen
+      </button>
+    </div>
+  </div>
+}
+
+@if (zustand() === 'ready') {
+  <div class="kopf">
+    <p class="kopf__text">
+      Wer wohnt hier — und <strong>wie erreiche ich ihn</strong>? Ohne Namen und Nummer steht
+      der Monteur vor einer verschlossenen Tür. Der Mieter ist ein normaler Kontakt: anrufbar,
+      verknüpfbar, auffindbar.
+    </p>
+    <div class="kopf__aktionen">
+      <button
+        type="button"
+        class="btn btn--klein"
+        [attr.aria-pressed]="historie()"
+        (click)="historieUmschalten()"
+      >
+        {{ historie() ? 'Nur aktuelle' : 'Historie anzeigen' }}
+      </button>
+    </div>
+  </div>
+
+  @if (ohneErfassung() > 0) {
+    <div class="melde">
+      <span class="melde__mark" aria-hidden="true">i</span>
+      <span class="melde__text">
+        <strong>{{ ohneErfassung() }}</strong> von {{ belegbareEinheiten() }} Einheiten haben
+        <strong>keine erfasste Belegung</strong>. Das heißt <em>nicht</em> „leerstehend“ — es
+        heißt, dass es niemand eingetragen hat.
+      </span>
+    </div>
+  }
+
+  @if (aktionsFehler(); as af) {
+    <div class="melde melde--fehler" role="alert">
+      <span class="melde__mark" aria-hidden="true">!</span>
+      <span class="melde__text"><strong>Fehler:</strong> {{ af }}</span>
+    </div>
+  }
+
+  @if (einheiten().length === 0) {
+    <div class="tab-platzhalter">
+      <h3 class="tab-platzhalter__titel">Noch keine Einheiten</h3>
+      <p>
+        Die Belegung hängt an den Einheiten. Legen Sie zuerst unter „Struktur“ Gebäude und
+        Einheiten an — dann steht hier, wer wo wohnt.
+      </p>
+    </div>
+  } @else {
+    <ul class="liste">
+      @for (e of einheiten(); track e.unit_id + '-' + (e.belegung?.id ?? 'leer')) {
+        <li class="karte" [class.karte--vergangen]="e.belegung && !e.belegung.is_current">
+          <div class="karte__kopf">
+            <span class="karte__einheit">{{ e.unit_number }}</span>
+            <span class="stamp stamp--type">{{ einheitArt(e.unit_type) }}</span>
+
+            @if (!e.belegbar) {
+              <span class="stamp">Trägt keine Belegung</span>
+            } @else if (e.belegung; as b) {
+              <span [class]="nutzungClass(b)">{{ nutzung(b.occupancy_type) }}</span>
+              @if (!b.is_current) {
+                <span class="stamp stamp--negativ">Beendet</span>
+              }
+            } @else {
+              <span class="stamp stamp--warn">Nicht erfasst</span>
+            }
+          </div>
+
+          @if (!e.belegbar) {
+            <p class="karte__hinweis">
+              Gemeinschaftsflächen und Technikräume tragen keine Belegung (Beschluss F-12). Ein
+              tatsächlich vermieteter Raum wird als eigene Einheit geführt, z. B. als Lager.
+            </p>
+          } @else if (e.belegung; as b) {
+            <p class="karte__zeitraum">
+              {{ b.valid_from | date: 'dd.MM.yyyy' }} –
+              {{ b.valid_until ? (b.valid_until | date: 'dd.MM.yyyy') : 'offen' }}
+              @if (b.contract_reference) {
+                · Vertrag {{ b.contract_reference }}
+              }
+            </p>
+
+            @if (b.mieter.length === 0) {
+              <p class="karte__leer">
+                @if (istLeerstand(b)) {
+                  <strong>Leerstand.</strong> Niemand gemeldet — das ist hier eine Aussage, keine
+                  Lücke.
+                } @else {
+                  <strong>Kein Bewohner hinterlegt.</strong> Der Monteur hat niemanden, den er
+                  anrufen kann.
+                }
+              </p>
+            } @else {
+              <ul class="mieter">
+                @for (m of mieterSortiert(b); track m.id) {
+                  <li class="mieter__zeile" [class.mieter__zeile--weg]="!m.is_current">
+                    <div class="mieter__wer">
+                      <a class="mieter__name" [routerLink]="['/kontakte', m.party_id]">
+                        {{ m.display_name }}
+                      </a>
+                      <span class="mieter__rolle">{{ rolle(m.role) }}</span>
+                      @if (!m.is_current) {
+                        <span class="stamp stamp--negativ">
+                          Ausgezogen {{ m.valid_until | date: 'dd.MM.yyyy' }}
+                        </span>
+                      }
+                    </div>
+
+                    <div class="mieter__kontakt">
+                      @if (m.telefon) {
+                        <a class="mieter__tel" [href]="telHref(m.telefon)">
+                          <span aria-hidden="true">☎</span> {{ m.telefon }}
+                        </a>
+                      } @else {
+                        <span class="mieter__ohne">Keine Telefonnummer hinterlegt</span>
+                      }
+                      @if (m.email) {
+                        <a class="mieter__mail" [href]="'mailto:' + m.email">{{ m.email }}</a>
+                      }
+                    </div>
+
+                    @if (darfAendern() && m.is_current) {
+                      <button
+                        type="button"
+                        class="btn btn--klein"
+                        [disabled]="aktionLaeuft()"
+                        (click)="auszugFragen(m, e.unit_number)"
+                      >
+                        Ausgezogen
+                      </button>
+                    }
+                  </li>
+                }
+              </ul>
+            }
+
+            @if (darfAendern() && b.is_current) {
+              <div class="karte__aktionen">
+                <button type="button" class="btn btn--klein" (click)="bearbeiten(e, b)">
+                  Belegung ändern
+                </button>
+                <button type="button" class="btn btn--klein" (click)="mieterHinzufuegen(e, b)">
+                  Bewohner:in hinzufügen
+                </button>
+              </div>
+            }
+          } @else if (darfAnlegen()) {
+            <div class="karte__aktionen">
+              <button type="button" class="btn btn--primary btn--klein" (click)="belegen(e)">
+                Belegung erfassen
+              </button>
+            </div>
+          }
+        </li>
+      }
+    </ul>
+  }
+}
+
+<app-belegung-dialog
+  [propertyId]="propertyId()"
+  [modus]="dialog()"
+  (gespeichert)="gespeichert($event)"
+  (abbrechen)="dialogSchliessen()"
+/>
+
+<app-bestaetigung
+  [offen]="auszuziehen() !== null"
+  titel="Auszug eintragen"
+  [text]="
+    (auszuziehen()?.mieter?.display_name ?? '') +
+    ' wird als ausgezogen eingetragen (Wohnung ' +
+    (auszuziehen()?.wohnung ?? '') +
+    '). Der Eintrag wird NICHT gelöscht: Er bleibt in der Historie lesbar, weil Aufträge und Baustellenberichte von damals auf diese Wohnung zeigen. Rückgängig machen lässt sich das nicht — ein Irrtum wird durch einen neuen Eintrag korrigiert.'
+  "
+  bestaetigenLabel="Auszug eintragen"
+  [gefahr]="true"
+  [laedt]="aktionLaeuft()"
+  (bestaetigen)="auszugBestaetigen()"
+  (abbrechen)="auszugAbbrechen()"
+/>

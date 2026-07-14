@@ -1,0 +1,67 @@
+<p class="sr-only" role="status">{{ ansage() }}</p>
+
+<header class="kopf">
+  <h1 class="kopf__titel">Angebote an meinen Objekten</h1>
+  <p class="kopf__text">
+    <strong>Was ist beauftragt?</strong> Versendete und angenommene Angebote der
+    Objekte, auf denen du einen Einsatz hattest — mit Mengen.
+    <strong>Preise sind für deine Rolle ausgeblendet.</strong>
+  </p>
+</header>
+
+@switch (state().kind) {
+  @case ('loading') {
+    <p class="lade-hinweis" role="status">Angebote werden geladen …</p>
+  }
+
+  @case ('forbidden') {
+    <app-kein-zugriff [detail]="$any(state()).detail" />
+  }
+
+  @case ('error') {
+    <div class="note note--error" role="alert">
+      <h2 class="note__titel">Angebote konnten nicht geladen werden</h2>
+      <p class="note__text">Das Belegregister war nicht erreichbar.</p>
+      <div class="note__aktionen">
+        <button type="button" class="btn btn--primary" (click)="laden()">Erneut versuchen</button>
+      </div>
+    </div>
+  }
+
+  @case ('ready') {
+    @if (items().length === 0) {
+      <div class="tab-platzhalter">
+        <p class="tab-platzhalter__titel">Kein Angebot</p>
+        <p>
+          An deinen Objekten liegt kein versendetes Angebot. Entwürfe siehst du nicht —
+          was noch nicht beim Kunden ist, ist nicht beauftragt.
+        </p>
+      </div>
+    } @else {
+      <ul class="liste">
+        @for (q of items(); track q.id) {
+          <li class="liste__zeile">
+            <a class="karte" [routerLink]="['/dokumente', q.id]">
+              <span class="karte__nr">{{ q.quote_number || '—' }}</span>
+              <span class="karte__titel">{{ q.title }}</span>
+              <span class="karte__objekt">
+                {{ q.property.name }} · {{ q.property.city }}
+              </span>
+              <span class="karte__datum">{{ q.quote_date || '—' }}</span>
+              <span class="stamp {{ statusClass(q.status) }}">{{ statusLabel(q.status) }}</span>
+            </a>
+          </li>
+        }
+      </ul>
+
+      @if (gekuerzt()) {
+        <p class="note" role="status">
+          <span class="note__text">
+            Es gibt mehr Angebote, als hier stehen. Angezeigt werden die neuesten
+            {{ items().length }}.
+          </span>
+        </p>
+      }
+    }
+  }
+}

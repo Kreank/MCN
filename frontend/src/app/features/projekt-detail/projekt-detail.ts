@@ -80,8 +80,16 @@ export class ProjektDetail {
   private readonly auth = inject(AuthService);
   private readonly fb = inject(FormBuilder);
 
-  protected readonly darfAnlegen = computed(() => this.auth.darf('workflow', 'ANLEGEN'));
-  protected readonly darfAendern = computed(() => this.auth.darf('workflow', 'AENDERN'));
+  /**
+   * `darfAlle`, nicht `darf`: Die vier Aktionen dieser Mappe (Vorgang, Auftrag,
+   * Logeintrag, Checkliste) laufen ausnahmslos über fail-closed-Endpunkte
+   * (`permissions.require` in `projekt.py` / `auftrag.py`). Ein Konto mit
+   * row_scope EIGENE bekommt dort 403 — der Monteur trägt `workflow/ANLEGEN`
+   * und `workflow/AENDERN` nur für seine eigenen Zeilen (Aufgaben, Berichte,
+   * Zeit-/Materialbuchung). Er liest die Projektmappe, er bespielt sie nicht.
+   */
+  protected readonly darfAnlegen = computed(() => this.auth.darfAlle('workflow', 'ANLEGEN'));
+  protected readonly darfAendern = computed(() => this.auth.darfAlle('workflow', 'AENDERN'));
 
   protected readonly tab = signal('uebersicht');
   protected readonly state = signal<ViewState>({ kind: 'loading' });

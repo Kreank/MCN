@@ -18,6 +18,13 @@ type Zustand =
   | { kind: 'ready'; daten: SollIst }
   | { kind: 'error' };
 
+/**
+ * Anzeigezeile eines zugeordneten Angebots — **ohne Beträge**. Deckungsgleich mit
+ * `SollIstAngebot`; ein `Quote` lässt sich verlustfrei darauf abbilden. So spielt
+ * es für das Template keine Rolle, aus welcher der beiden Quellen die Zeile kommt.
+ */
+type AngebotZeile = { id: string; quote_number: string | null; title: string; status: string };
+
 /** Diese Status bilden KEIN Soll (Server: SOLL_AUSGESCHLOSSENE_STATUS). */
 const KEIN_SOLL: QuoteStatus[] = ['ENTWURF', 'INTERN_GEPRUEFT', 'ABGELEHNT', 'ERSETZT'];
 
@@ -86,10 +93,35 @@ export class SollIstAbgleich {
   /** Zuordnung ändern verlangt das Recht am BELEG, nicht am Bericht. */
   protected readonly darfZuordnen = computed(() => this.auth.darf('invoicing', 'AENDERN'));
 
-  /** Diesem Auftrag zugeordnete Angebote. */
-  protected readonly zugeordnet = computed(() =>
-    this.angeboteDerLiegenschaft().filter((q) => q.work_order_id === this.workOrderId()),
-  );
+  /**
+   * Darf das **Belegregister** gelesen werden (`GET /invoicing/quotes`)?
+   *
+   * Das ist ein anderes Tor als der Abgleich selbst: Der Soll-Ist ist
+   * `require_scoped` (der Monteur liest ihn an seinem Auftrag, er führt keine
+   * Beträge), die Angebotsliste dagegen `require` — fail-closed. Ohne dieses
+   * Recht wird sie **gar nicht erst geholt**; die Grundlage des Solls kommt dann
+   * aus der Antwort des Abgleichs selbst (`daten.angebote`, ebenfalls preisfrei).
+   */
+  protected readonly darfBelege = computed(() => this.auth.darfAlle('invoicing', 'LESEN'));
+
+  /**
+   * Diesem Auftrag zugeordnete Angebote — aus der Angebotsliste, wenn sie
+   * lesbar ist, sonst aus der Antwort des Abgleichs. Beides ohne Beträge.
+   *
+   * Der Unterschied ist fachlich klein, aber ehrlich: `daten.angebote` führt nur
+   * die Angebote, die **ins Soll zählen** (der Server filtert Entwürfe heraus).
+   * Wer die Liste lesen darf, sieht zusätzlich die zugeordneten Entwürfe — samt
+   * dem Hinweis, dass sie nicht zählen.
+   */
+  protected readonly zugeordnet = computed<AngebotZeile[]>(() => {
+    if (this.darfBelege()) {
+      return this.angeboteDerLiegenschaft()
+        .filter((q) => q.work_order_id === this.workOrderId())
+        .map((q) => ({ id: q.id, quote_number: q.quote_number, title: q.title, status: q.status }));
+    }
+    const z = this.zustand();
+    return z.kind === 'ready' ? z.daten.angebote : [];
+  });
 
   /**
    * Zuordenbar: jedes Angebot der Liegenschaft, das noch keinem Auftrag zugeordnet
@@ -105,7 +137,9 @@ export class SollIstAbgleich {
       const id = this.workOrderId();
       const prop = this.propertyId();
       if (id) this.laden(id);
-      if (prop) this.angeboteLaden(prop);
+      // Die Angebotsliste ist fail-closed: ohne Beleg-Scope ALLE gibt es dort nur
+      // ein 403. Einen Request, der nur scheitern kann, stellen wir nicht.
+      if (prop && this.darfBelege()) this.angeboteLaden(prop);
     });
   }
 
@@ -133,7 +167,7 @@ export class SollIstAbgleich {
 
   neuLaden(): void {
     this.laden(this.workOrderId());
-    this.angeboteLaden(this.propertyId());
+    if (this.darfBelege()) this.angeboteLaden(this.propertyId());
   }
 
   zuordnen(): void {
@@ -157,7 +191,9 @@ export class SollIstAbgleich {
     });
   }
 
-  loesen(quote: Quote): void {
+  // `AngebotZeile` statt `Quote`: nur die id wird gebraucht, und der Knopf steht
+  // ohnehin nur Konten offen, die das Belegregister lesen (dort ist es ein Quote).
+  loesen(quote: AngebotZeile): void {
     if (this.speichert()) return;
     this.speichert.set(true);
     this.fehler.set(null);
@@ -179,15 +215,15 @@ export class SollIstAbgleich {
   }
 
   /** Zählt dieses zugeordnete Angebot ins Soll? Entwürfe zählen nicht. */
-  zaehltInsSoll(q: Quote): boolean {
-    return !KEIN_SOLL.includes(q.status);
+  zaehltInsSoll(q: AngebotZeile): boolean {
+    return !KEIN_SOLL.includes(q.status as QuoteStatus);
   }
 
   statusLabel(s: string): string {
     return STATUS_LABELS[s] ?? s;
   }
 
-  bezeichner(q: Quote): string {
+  bezeichner(q: AngebotZeile): string {
     return q.quote_number ? `${q.quote_number} · ${q.title}` : q.title;
   }
 

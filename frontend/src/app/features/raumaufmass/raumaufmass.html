@@ -112,9 +112,11 @@
                 die Heizlast <em>aller</em> Räume unbekannt (sie wird nicht geschätzt und nicht als
                 0 gezeigt). Sie ist eine Eigenschaft des Standorts, nicht des einzelnen Raumes.
               </span>
-              <button type="button" class="btn ra__luecke-btn" (click)="zuAuslegung()">
-                Auslegungsdaten ergänzen
-              </button>
+              @if (darfAuslegung()) {
+                <button type="button" class="btn ra__luecke-btn" (click)="zuAuslegung()">
+                  Auslegungsdaten ergänzen
+                </button>
+              }
             </div>
           }
 
@@ -244,7 +246,7 @@
           <app-auslegung-panel
             [propertyId]="propertyId()"
             [auslegung]="au"
-            [darfAendern]="darfAendern()"
+            [darfAendern]="darfAuslegung()"
             (gespeichert)="auslegungGespeichert()"
           />
         } @else {
@@ -327,7 +329,7 @@
                   {{ a.unbekannt_raeume.join(', ') }}. Die Summe zählt sie nicht mit — sie werden
                   <strong>nicht als 0 geschätzt</strong>.
                 </span>
-                @if (aussentemperaturFehlt()) {
+                @if (aussentemperaturFehlt() && darfAuslegung()) {
                   <button type="button" class="btn am__btn" (click)="zuAuslegung()">
                     Auslegungsdaten ergänzen
                   </button>

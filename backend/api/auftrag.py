@@ -551,6 +551,100 @@ def offene_abrechnung(request, work_order_id: UUID):
         raise HttpError(404, str(exc))
 
 
+# --- Nachtrag: was lässt sich aus den Abweichungen abrechnen? ---------------
+
+class NachtragPositionOut(Schema):
+    """Eine abrechenbare Abweichung — **nicht** die ganze Position.
+
+    Bei MEHRVERBRAUCH ist `menge` die **Differenz** (Ist − Soll), nicht das Ist:
+    Die Sollmenge ist mit der Pauschale bezahlt. Bei ZUSATZ ist sie die volle
+    Menge (es gibt kein Soll). `einzelpreis`/`betrag` sind **null = unbekannt,
+    nie 0** — dann trägt die Position `grund`/`grund_text` und Vorschläge.
+    """
+    schluessel: str              # die Klärungs-ID (z. B. ARTIKEL:<uuid>:stk)
+    art: str                     # MEHRVERBRAUCH | ZUSATZ
+    bezeichnung: str
+    einheit: str | None = None
+    soll: Decimal
+    ist: Decimal
+    menge: Decimal               # das, was JETZT abgerechnet wird
+    bereits_berechnet: Decimal
+    preis_status: str            # BEKANNT | UNBEKANNT
+    einzelpreis: Decimal | None = None
+    betrag: Decimal | None = None
+    grund: str | None = None
+    grund_text: str | None = None
+    vorschlaege: list[PreisVorschlagOut] = []
+
+
+class NachtragAbgerechnetOut(Schema):
+    """Eine Abweichung, deren Mehrmenge bereits in einer Rechnung steht.
+
+    Wird ausgewiesen, nicht verschwiegen: Sonst stünde der Nutzer vor einer leeren
+    Liste, obwohl der Soll-Ist einen Mehrverbrauch zeigt — und hielte das eine für
+    kaputt oder das andere für falsch.
+    """
+    schluessel: str
+    art: str
+    bezeichnung: str
+    einheit: str | None = None
+    menge: Decimal
+    rechnungen: list[str] = []
+
+
+class EinheitKonfliktOut(Schema):
+    """Ein Posten, dessen Mengen in VERSCHIEDENEN Einheiten vorliegen.
+
+    Fail-closed: derselbe Artikel steht schon unter einer anderen Einheit in
+    Rechnung (z. B. „Stk"/„Stück"). Nicht summierbar, nicht abrechenbar, bis ein
+    Mensch die Einheiten vereinheitlicht oder den echten Mehr-Einheiten-Fall bewusst
+    trennt. Schon in der Vorschau sichtbar, nicht erst beim Abrechnen.
+    """
+    schluessel: str
+    bezeichnung: str
+    einheiten: list[str]
+
+
+class NachtragVorschauOut(Schema):
+    work_order_id: UUID
+    billing_mode: str
+    # False bei REGIE: Dort wird ohnehin das gesamte Ist fakturiert.
+    abrechenbar: bool
+    hinweis: str
+    positionen: list[NachtragPositionOut]
+    bereits_abgerechnet: list[NachtragAbgerechnetOut]
+    # Fail-closed: derselbe Artikel in verschiedenen Einheiten — nicht abrechenbar.
+    einheit_konflikte: list[EinheitKonfliktOut] = []
+    # Summe **der bepreisbaren** Positionen. `preise_unbekannt` sagt, ob sie
+    # unvollständig ist — eine Summe, die so tut, als sei sie vollständig, wäre
+    # eine Lüge mit Nachkommastellen.
+    summe: Decimal
+    preise_unbekannt: bool
+    nicht_unterzeichnete_berichte: list[UnsignierterBerichtOut]
+
+
+@router.get("/work_orders/{work_order_id}/nachtrag", response=NachtragVorschauOut)
+def nachtrag_vorschau(request, work_order_id: UUID):
+    """Was lässt sich an diesem PAUSCHAL-Auftrag als **Nachtrag** abrechnen?
+
+    Der Mehrverbrauch war bisher sichtbar, aber nicht abrechenbar — das Büro tippte
+    die Nachtragsrechnung von Hand ab. Diese Vorschau ist die Grundlage des Knopfes
+    „Nachtrag abrechnen": Menge × Preis, Summe — und **ehrlich**, wenn nichts
+    abrechenbar ist (keine Abweichung, oder alles schon fakturiert).
+
+    **Zwei Rechte, wie bei `offene-abrechnung`: Geld hängt an `invoicing`.** Die
+    Antwort führt Einzelpreise; mit `workflow/LESEN` allein läse die Disposition
+    die Preise der ganzen Baustelle mit. Scope EIGENE → **403** (`require` ist
+    fail-closed): Der Monteur sieht den Soll-Ist, aber nie einen Betrag.
+    """
+    require(request, "workflow", "LESEN")
+    require(request, "invoicing", "LESEN")
+    try:
+        return abrechnung_service.nachtrag_vorschau(work_order_id)
+    except ValueError as exc:
+        raise HttpError(404, str(exc))
+
+
 @router.post(
     "/work_orders/{work_order_id}/status",
     response=WorkOrderDetailOut,

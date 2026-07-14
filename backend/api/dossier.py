@@ -40,16 +40,20 @@ dritten Weg:
 | Liegenschaft, Gebäude/Einheiten/Anlagen, Beteiligte | `property` | ja (nur meine Objekte) |
 | Vorgänge, Aufträge, Einsätze, Zeiten, Berichte, Soll-Ist | `workflow` | ja (nur an meinen Objekten) |
 | Aufgaben | `workflow` | **nein** — `workflow.task` hängt an keinem Objekt |
-| offene Posten, Zahlungsverhalten, Angebote/Rechnungen, Abrechnungsstand | `invoicing` | **nein** |
+| offene Posten, Zahlungsverhalten, Rechnungen, Abrechnungsstand, preisführende Angebotsliste | `invoicing` (Scope **ALLE**) | **nein** |
+| **Angebote ohne Preise** (`angebote_mengen`) | `invoicing` (Scope **EIGENE**) | **ja** (Migration 0102) |
 | Marge / Deckungsbeitrag (Umsatz **und** EK) | `invoicing` **+** `pricing` | **nein** |
 | Wartung, Prüffristen, Gewährleistung | `maintenance` | **ja** (Migration 0100 — kein Geld im Schema) |
 | Dokumente am Objekt/Auftrag | `content` | ja |
 | Dokumente am Projekt/Kontakt, Kommunikation | `content` | **nein** (nicht objektgebunden) |
 
-**Die Geld-Bausteine fallen für die Objektsicht von SELBST weg** — nicht durch eine
-Filterzeile, die jemand vergessen könnte, sondern weil die Rolle MONTEUR auf
-`invoicing`/`pricing` **kein einziges Recht** hat (Migration 0026, unverändert).
-„Angebot ohne Preise, nur Mengen" ist ein eigener, späterer Slice.
+**Geld bleibt für die Objektsicht zu — und zwar an EINEM Flag.** Jeder Geld-Baustein
+fragt `sicht.invoicing`, und das ist per Definition **row_scope ALLE**. Seit Migration
+0102 trägt MONTEUR zwar `invoicing/LESEN`, aber mit Scope EIGENE: Daraus wird
+ausschließlich `sicht.invoicing_eigene`, und das schaltet **einen einzigen** Baustein
+frei — die **preisfreie** Angebotsliste `angebote_mengen` (eigenes Feld, eigenes Flag,
+Zeilen ohne `net_total`/`gross_total`). Die Positionen mit Menge und Einheit holt das
+UI von `GET /invoicing/quotes/{id}/mengen`.
 
 **Fremde/unbekannte Entität → 404, nicht 403** — sonst verriete die Antwort deren
 Existenz (Hausregel).
@@ -106,6 +110,8 @@ def _sicht(request, *, kern_modul):
     content_alle, content_eigene = _modul(request, "content")
     maintenance_alle, maintenance_eigene = _modul(request, "maintenance")
 
+    invoicing_alle, invoicing_eigene = _modul(request, "invoicing")
+
     sicht = dossier_service.Sicht(
         identity=identity_alle,
         property=property_alle,
@@ -117,9 +123,13 @@ def _sicht(request, *, kern_modul):
         workflow_eigene=workflow_eigene,
         content_eigene=content_eigene,
         maintenance_eigene=maintenance_eigene,
-        # GELD: die EINZIGE Ausnahme von „er darf alles sehen" — keine
-        # EIGENE-Variante, hartes `check` (row_scope EIGENE → None).
-        invoicing=check(request, "invoicing", "LESEN") is not None,
+        # GELD: `invoicing` heißt hier row_scope **ALLE** — daran hängt jeder
+        # Geld-Baustein (offene Posten, Zahlungsverhalten, Marge, Rechnungen,
+        # Abrechnungsstand). `_modul` liefert das ALLE-Flag und das EIGENE-Flag
+        # getrennt; letzteres schaltet NUR die preisfreie Angebotsliste frei.
+        invoicing=invoicing_alle,
+        invoicing_eigene=invoicing_eigene,
+        # Preise (EK/Aufschlagsmatrix): keine EIGENE-Variante, hartes `check`.
         pricing=check(request, "pricing", "LESEN") is not None,
         actor_id=actor_id(request),
     )
@@ -258,6 +268,22 @@ class AngebotZeileOut(Schema):
     quote_date: date | None = None
     net_total: Decimal | None = None
     gross_total: Decimal | None = None
+    work_order_id: UUID | None = None
+
+
+class AngebotMengenZeileOut(Schema):
+    """Angebotszeile der **Objektsicht** — ohne jeden Betrag (Migration 0102).
+
+    Bewusst **keine** Ableitung von `AngebotZeileOut`: Diese Zeile führt kein
+    `net_total` und kein `gross_total`, und sie soll auch keins erben können. Was
+    das Angebot enthält (Menge, Einheit), liefert `GET /invoicing/quotes/{id}/mengen`.
+    """
+
+    id: UUID
+    quote_number: str | None = None
+    title: str
+    status: str
+    quote_date: date | None = None
     work_order_id: UUID | None = None
 
 
@@ -577,6 +603,10 @@ class ProjektDossierOut(Schema):
     angebote: list[AngebotZeileOut] | None = None
     rechnungen: list[BelegZeileOut] | None = None
     anrechenbare_abschlaege: list[AbschlagOut] | None = None
+    # Objektsicht (row_scope EIGENE): dieselben Angebote OHNE Beträge — und nur die
+    # versendeten/angenommenen an MEINEN Liegenschaften dieses Projekts.
+    angebote_mengen_sichtbar: bool
+    angebote_mengen: list[AngebotMengenZeileOut] | None = None
     offene_posten_sichtbar: bool
     offene_posten: OffenePostenOut | None = None
     marge_sichtbar: bool
@@ -597,9 +627,10 @@ def projekt_dossier(request, project_id: UUID):
     `null`, nie 0 %).
 
     Objektsicht ('EIGENE'): Projekte, die **mindestens eine** meiner Liegenschaften
-    tragen — und darin **nur** meine Objekte samt deren Vorgängen und Aufträgen (der
-    Service filtert nach; siehe `dossier_service.projekt_dossier`). Sonst wäre die
-    Projektakte der Nebeneingang zum fremden Objekt.
+    tragen — und darin **nur** meine Objekte samt deren Vorgängen, Aufträgen und
+    (Migration 0102) den **preisfreien** Angeboten `angebote_mengen` (der Service
+    filtert nach; siehe `dossier_service.projekt_dossier`). Sonst wäre die Projektakte
+    der Nebeneingang zum fremden Objekt — und zum fremden Preis.
     """
     actor, scope, sicht = _sicht(request, kern_modul="workflow")
     guard_projekt(scope, actor, project_id)
@@ -707,6 +738,11 @@ class AuftragDossierOut(Schema):
     belege_sichtbar: bool
     angebote: list[AngebotZeileOut] | None = None
     rechnungen: list[BelegZeileOut] | None = None
+    # Objektsicht (row_scope EIGENE): das Angebot dieses Auftrags OHNE Beträge —
+    # „was ist beauftragt?". Die Mengen selbst stehen in
+    # `GET /invoicing/quotes/{id}/mengen`.
+    angebote_mengen_sichtbar: bool
+    angebote_mengen: list[AngebotMengenZeileOut] | None = None
     offene_posten_sichtbar: bool
     offene_posten: OffenePostenOut | None = None
     dokumente_sichtbar: bool
@@ -725,7 +761,8 @@ def auftrag_dossier(request, work_order_id: UUID):
 
     Objektsicht ('EIGENE'): Aufträge an meinen Objekten — **auch die der Kollegen**
     (Zeiten, Material, Berichte, Soll-Ist: alles ohne Geldbetrag). Fremdes Objekt →
-    404. Preise bleiben weg, weil `invoicing` fehlt.
+    404. Dazu (Migration 0102) `angebote_mengen`: **welches Angebot ist beauftragt** —
+    ohne Betrag. Rechnungen, offene Posten und der Abrechnungsstand bleiben `null`.
     """
     actor, scope, sicht = _sicht(request, kern_modul="workflow")
     if not WorkOrder.objects.filter(id=work_order_id).exists():

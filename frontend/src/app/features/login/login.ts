@@ -1,7 +1,7 @@
 import { Component, ElementRef, inject, signal, viewChild } from '@angular/core';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { AuthService } from '../../core/auth.service';
-import { rechtFuerPfad } from '../../core/bereiche';
+import { nurAlleFuerPfad, rechtFuerPfad } from '../../core/bereiche';
 
 /**
  * Anmeldeseite — schlankes, eigenes Layout ohne Bereichsnavigation.
@@ -74,7 +74,16 @@ export class Login {
     const ret = this.route.snapshot.queryParamMap.get('returnUrl');
     if (ret && ret.startsWith('/') && !ret.startsWith('//') && !ret.startsWith('/login')) {
       const recht = rechtFuerPfad(ret);
-      if (!recht || this.auth.darf(recht[0], recht[1])) {
+      // Manche Bereiche verlangen row_scope ALLE (Buchhaltung, Auswertungen,
+      // Rechnungsmappe, Personal): Ein Konto mit EIGENE bekäme dort 403. Der
+      // Rücksprung muss dieselbe Regel rechnen wie der Route-Guard — sonst landet
+      // der Monteur direkt nach dem Login auf „Kein Zugriff".
+      const erlaubt = !recht
+        ? true
+        : nurAlleFuerPfad(ret)
+          ? this.auth.darfAlle(recht[0], recht[1])
+          : this.auth.darf(recht[0], recht[1]);
+      if (erlaubt) {
         return ret;
       }
     }

@@ -1,0 +1,221 @@
+<section class="tag" aria-labelledby="tag-titel">
+  <header class="page-head">
+    <div>
+      <p class="page-head__kicker">
+        <span class="page-head__scale" aria-hidden="true"></span>
+        Mein Tag
+      </p>
+      <h1 id="tag-titel" class="page-head__titel">Moin, {{ vorname() }}</h1>
+      <p class="page-head__hint">{{ heuteText }}</p>
+    </div>
+
+    <!-- ============================ Stempeluhr ============================ -->
+    @switch (stempel().kind) {
+      @case ('ready') {
+        @if ($any(stempel()).daten; as s) {
+          <a
+            class="uhr"
+            [class.uhr--laeuft]="s.zustand === 'LAEUFT'"
+            [class.uhr--pause]="s.zustand === 'PAUSE'"
+            routerLink="/meine-zeiten"
+          >
+            <span class="uhr__kicker">
+              <span class="uhr__zeichen" aria-hidden="true">
+                @switch (s.zustand) {
+                  @case ('LAEUFT') { ▶ }
+                  @case ('PAUSE') { ❚❚ }
+                  @default { ■ }
+                }
+              </span>
+              @switch (s.zustand) {
+                @case ('LAEUFT') { Läuft }
+                @case ('PAUSE') { Pause }
+                @default { Gestoppt }
+              }
+            </span>
+            <span class="uhr__zeit">{{ dauerText(s.tag_arbeit_sekunden) }}</span>
+            <span class="uhr__detail">
+              Arbeitszeit {{ bezugstag(s) }} · Stempeluhr öffnen →
+            </span>
+            @if (s.ueberfaellig) {
+              <span class="uhr__warnung">! Buchung läuft seit einem früheren Tag</span>
+            }
+          </a>
+        }
+      }
+      @case ('error') {
+        <p class="uhr uhr--tot">Stempeluhr nicht erreichbar. <a routerLink="/meine-zeiten">Meine Zeiten öffnen →</a></p>
+      }
+      @default {
+        <p class="uhr uhr--tot">Stempeluhr wird geladen …</p>
+      }
+    }
+  </header>
+
+  <!-- ===================== Baustellenbericht (laufend) ==================== -->
+  @if (laufend(); as k) {
+    <a class="laufend" [routerLink]="['/planung', k.job.id]">
+      <span class="laufend__marke" aria-hidden="true">▶</span>
+      <span class="laufend__text">
+        <strong class="laufend__titel">Laufender Einsatz: {{ k.job.title }}</strong>
+        <span class="laufend__sub">
+          {{ statusLabel(k.job.status) }} · {{ k.job.property?.name ?? 'ohne Objekt' }} —
+          Baustellenbericht schreiben, Zeiten und Material buchen
+        </span>
+      </span>
+      <span class="laufend__pfeil" aria-hidden="true">→</span>
+    </a>
+  }
+
+  <!-- ========================= Einsätze heute ============================= -->
+  <section class="block" aria-labelledby="heute-titel">
+    <header class="block__kopf">
+      <h2 id="heute-titel" class="block__titel">Meine Einsätze heute</h2>
+      <a class="block__link" routerLink="/planung">Alle Einsätze →</a>
+    </header>
+
+    @switch (heute().kind) {
+      @case ('loading') {
+        <p class="leer" role="status">Einsätze werden geladen …</p>
+      }
+      @case ('error') {
+        <div class="note note--error" role="alert">
+          <p>Die Einsätze ließen sich nicht laden.</p>
+          <button type="button" class="btn" (click)="laden()">Erneut versuchen</button>
+        </div>
+      }
+      @case ('ready') {
+        @if ($any(heute()).daten.length === 0) {
+          <p class="leer">Für heute ist dir kein Einsatz zugewiesen.</p>
+        } @else {
+          <ul class="einsaetze">
+            @for (k of $any(heute()).daten; track k.job.id) {
+              <li class="einsatz">
+                <p class="einsatz__zeit">
+                  <span class="einsatz__fenster">{{ fenster(k.job) }}</span>
+                  <span class="stamp {{ statusClass(k.job.status) }}">{{
+                    statusLabel(k.job.status)
+                  }}</span>
+                </p>
+
+                <div class="einsatz__body">
+                  <h3 class="einsatz__titel">
+                    <a [routerLink]="['/planung', k.job.id]">{{ k.job.title }}</a>
+                  </h3>
+
+                  @if (k.job.property; as p) {
+                    <p class="einsatz__objekt">
+                      <span class="einsatz__marke" aria-hidden="true">◧</span>
+                      <a [routerLink]="['/liegenschaften', p.id]">{{ p.name }}</a>
+                      <span class="einsatz__nr">{{ p.property_number }}</span>
+                    </p>
+                  }
+
+                  @if (k.adresse) {
+                    <p class="einsatz__adresse">
+                      <span class="einsatz__marke" aria-hidden="true">⌖</span>
+                      <span>{{ k.adresse }}</span>
+                    </p>
+                  }
+
+                  @if (k.zutritt) {
+                    <p class="einsatz__zutritt">
+                      <span class="einsatz__marke" aria-hidden="true">🔑</span>
+                      <span><strong>Zutritt:</strong> {{ k.zutritt }}</span>
+                    </p>
+                  }
+
+                  @if (k.kontaktName || k.rufnummern.length) {
+                    <p class="einsatz__kontakt">
+                      <span class="einsatz__marke" aria-hidden="true">☏</span>
+                      <span class="einsatz__kontakt-name">{{
+                        k.kontaktName ?? 'Ansprechpartner vor Ort'
+                      }}</span>
+                      @for (r of k.rufnummern; track r.wert) {
+                        <a class="tel" [href]="'tel:' + r.tel">
+                          {{ r.wert }}
+                          <span class="sr-only">— {{ r.label }} anrufen</span>
+                        </a>
+                      }
+                    </p>
+                  }
+                </div>
+
+                <p class="einsatz__aktion">
+                  <!-- Bewusst `.btn`, nicht `.btn--primary`: im dunklen Design ist
+                       `--command` mit `--surface-sunken` identisch — ein
+                       Primärknopf auf dieser Karte hätte keinen sichtbaren Rand
+                       (WCAG 1.4.11 verlangt 3:1 für Bedienelemente). Der Rand von
+                       `.btn` trägt in beiden Designs. Der Akzent gehört dem einen
+                       CTA oben (laufender Einsatz). -->
+                  <a class="btn" [routerLink]="['/planung', k.job.id]"> Einsatz öffnen </a>
+                </p>
+              </li>
+            }
+          </ul>
+        }
+      }
+    }
+  </section>
+
+  <div class="spalten">
+    <!-- ======================= Nächste Termine ============================ -->
+    <section class="block" aria-labelledby="naechste-titel">
+      <header class="block__kopf">
+        <h2 id="naechste-titel" class="block__titel">Meine nächsten Termine</h2>
+      </header>
+      @switch (naechste().kind) {
+        @case ('loading') { <p class="leer" role="status">Wird geladen …</p> }
+        @case ('error') { <p class="leer">Konnte nicht geladen werden.</p> }
+        @case ('ready') {
+          @if ($any(naechste()).daten.length === 0) {
+            <p class="leer">In den nächsten drei Wochen steht nichts an.</p>
+          } @else {
+            <ul class="liste">
+              @for (j of $any(naechste()).daten; track j.id) {
+                <li class="zeile">
+                  <span class="zeile__zeit">{{ tagUndZeit(j.scheduled_start) }}</span>
+                  <a class="zeile__link" [routerLink]="['/planung', j.id]">{{ j.title }}</a>
+                  <span class="zeile__neben">{{ j.property?.name ?? '—' }}</span>
+                </li>
+              }
+            </ul>
+          }
+        }
+      }
+    </section>
+
+    <!-- ======================== Meine Aufgaben ============================ -->
+    <section class="block" aria-labelledby="aufgaben-titel">
+      <header class="block__kopf">
+        <h2 id="aufgaben-titel" class="block__titel">
+          Meine offenen Aufgaben
+          @if (aufgaben().kind === 'ready') {
+            <span class="block__zahl">{{ $any(aufgaben()).daten.total }}</span>
+          }
+        </h2>
+        <a class="block__link" routerLink="/aufgaben">Alle →</a>
+      </header>
+      @switch (aufgaben().kind) {
+        @case ('loading') { <p class="leer" role="status">Wird geladen …</p> }
+        @case ('error') { <p class="leer">Konnte nicht geladen werden.</p> }
+        @case ('ready') {
+          @if ($any(aufgaben()).daten.items.length === 0) {
+            <p class="leer">Keine offenen Aufgaben.</p>
+          } @else {
+            <ul class="liste">
+              @for (t of $any(aufgaben()).daten.items; track t.id) {
+                <li class="zeile">
+                  <span class="zeile__link">{{ t.title }}</span>
+                  @if (t.due_date) {
+                    <span class="zeile__neben">fällig {{ datumDe(t.due_date) }}</span>
+                  }
+                </li>
+              }
+            </ul>
+          }
+        }
+      }
+    </section>
+  </div>
+</section>

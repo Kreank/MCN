@@ -1,0 +1,143 @@
+@switch (state().kind) {
+  @case ('loading') {
+    <p class="lade-hinweis" role="status">Angebot wird geladen …</p>
+  }
+
+  @case ('forbidden') {
+    <app-kein-zugriff [detail]="$any(state()).detail" />
+  }
+
+  @case ('error') {
+    <div class="note note--error" role="alert">
+      <h2 class="note__titel">Angebot konnte nicht geladen werden</h2>
+      <p class="note__text">
+        Es gehört zu keinem Ihrer Objekte, ist noch ein Entwurf — oder das Belegregister
+        war nicht erreichbar.
+      </p>
+      <div class="note__aktionen">
+        <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
+      </div>
+    </div>
+  }
+
+  @case ('ready') {
+    <app-mappe
+      kicker="Angebot {{ daten()!.quote_number || '(ohne Nummer)' }}"
+      [titel]="daten()!.title"
+      [tabs]="tabs"
+      [(aktiv)]="tab"
+    >
+      <span mappe-kopf class="stamp {{ statusClass(daten()!.status) }}">
+        {{ statusLabel(daten()!.status) }}
+      </span>
+
+      @if (daten()!.preise_ausgeblendet) {
+        <!-- EHRLICH sagen, was fehlt: „keine Preisspalte" ist etwas anderes als
+             „dieses Angebot hat keine Preise". Kein reines Farbsignal (WCAG 1.4.1). -->
+        <p class="ohne-preis" role="note">
+          <span class="ohne-preis__mark" aria-hidden="true">€</span>
+          <span>
+            <strong>Preise sind für deine Rolle ausgeblendet.</strong>
+            Du siehst, <em>was</em> beauftragt ist und <em>wie viel</em> — Beträge, Summen
+            und Kalkulation bleiben im Büro.
+          </span>
+        </p>
+      }
+
+      <!-- ------------------------------ Positionen ------------------------- -->
+      @if (tab() === 'positionen') {
+        @if (daten()!.lines.length === 0) {
+          <div class="tab-platzhalter">
+            <p>Dieses Angebot enthält keine Positionen.</p>
+          </div>
+        } @else {
+          <div class="pos-wrap">
+            <table class="pos">
+              <caption class="sr-only">
+                Positionen des Angebots {{ daten()!.quote_number || daten()!.title }} —
+                Bezeichnung und Menge, ohne Preise.
+              </caption>
+              <thead>
+                <tr>
+                  <th class="pos__nr" scope="col">Pos.</th>
+                  <th scope="col">Bezeichnung</th>
+                  <th class="pos__num" scope="col">Menge</th>
+                </tr>
+              </thead>
+              @for (a of abschnitte(); track a.nr) {
+                <tbody>
+                  @if (a.titel) {
+                    <tr class="pos__abschnitt">
+                      <th class="pos__nr" scope="rowgroup">{{ a.nr }}</th>
+                      <td colspan="2">{{ a.titel }}</td>
+                    </tr>
+                  }
+                  @for (l of a.zeilen; track l.position_number) {
+                    <tr [class.pos--text]="isText(l.line_type)">
+                      <td class="pos__nr">{{ l.position_number }}</td>
+                      <td>
+                        <span class="pos__desc">{{ l.description }}</span>
+                        <span class="pos__type">{{ lineTypeLabel(l.line_type) }}</span>
+                        @if (lineKindLabel(l.line_kind); as hinweis) {
+                          <span class="pos__kind">{{ hinweis }}</span>
+                        }
+                      </td>
+                      <td class="pos__num">{{ menge(l.quantity, l.unit) }}</td>
+                    </tr>
+                  }
+                </tbody>
+              }
+            </table>
+          </div>
+        }
+      }
+
+      <!-- ------------------------------ Übersicht -------------------------- -->
+      @if (tab() === 'uebersicht') {
+        <dl class="feld-raster">
+          <div class="feld">
+            <dt class="feld__label">Status</dt>
+            <dd class="feld__wert">{{ statusLabel(daten()!.status) }}</dd>
+          </div>
+          <div class="feld">
+            <dt class="feld__label">Belegnummer</dt>
+            <dd class="feld__wert" [class.feld__wert--leer]="!daten()!.quote_number">
+              {{ daten()!.quote_number || '—' }}
+            </dd>
+          </div>
+          <div class="feld">
+            <dt class="feld__label">Angebotsdatum</dt>
+            <dd class="feld__wert" [class.feld__wert--leer]="!daten()!.quote_date">
+              {{ daten()!.quote_date || '—' }}
+            </dd>
+          </div>
+          <div class="feld">
+            <dt class="feld__label">Gültig bis</dt>
+            <dd class="feld__wert" [class.feld__wert--leer]="!daten()!.valid_until_date">
+              {{ daten()!.valid_until_date || '—' }}
+            </dd>
+          </div>
+          <div class="feld">
+            <dt class="feld__label">Positionen</dt>
+            <dd class="feld__wert">{{ daten()!.lines.length }}</dd>
+          </div>
+        </dl>
+
+        <div class="bezug">
+          <a class="bezug__item" [routerLink]="['/liegenschaften', daten()!.property.id]">
+            <span class="bezug__label">Liegenschaft</span>
+            <span class="bezug__wert">
+              {{ daten()!.property.name }} · {{ daten()!.property.city }}
+            </span>
+          </a>
+          @if (daten()!.work_order; as w) {
+            <a class="bezug__item" [routerLink]="['/auftraege', w.id]">
+              <span class="bezug__label">Auftrag</span>
+              <span class="bezug__wert">{{ w.order_number }} · {{ w.title }}</span>
+            </a>
+          }
+        </div>
+      }
+    </app-mappe>
+  }
+}

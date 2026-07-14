@@ -4,6 +4,7 @@ import { Observable } from 'rxjs';
 import {
   EvidenceInput,
   Kundenhistorie,
+  NachtragVorschau,
   OffeneAbrechnung,
   ResponsibilityInput,
   WorkOrderCreate,
@@ -84,6 +85,17 @@ export class AuftragService {
    */
   offeneAbrechnung(id: string): Observable<OffeneAbrechnung> {
     return this.http.get<OffeneAbrechnung>(`${this.base}/${id}/offene-abrechnung`);
+  }
+
+  /**
+   * Was lässt sich als **Nachtrag** abrechnen (MEHRVERBRAUCH + ZUSATZ)?
+   *
+   * Führt Einzelpreise — deshalb `invoicing/LESEN` (Server), nicht bloß
+   * `workflow/LESEN`. Scope EIGENE → 403 (fail-closed): Der Monteur sieht den
+   * Soll-Ist, aber nie einen Betrag.
+   */
+  nachtrag(id: string): Observable<NachtragVorschau> {
+    return this.http.get<NachtragVorschau>(`${this.base}/${id}/nachtrag`);
   }
 
   /**

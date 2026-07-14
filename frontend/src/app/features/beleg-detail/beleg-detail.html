@@ -1,3 +1,9 @@
+<!-- row_scope EIGENE (Monteur): Diese Mappe zeigt Preise, Summen und den
+     Versand-Workflow — der Server verweigert sie ihm mit 403. Er sieht dasselbe
+     Angebot preisfrei, über einen eigenen Endpunkt. Siehe `nurMengen`. -->
+@if (nurMengen()) {
+  <app-angebot-mengen />
+} @else {
 @switch (state().kind) {
   @case ('loading') {
     <p class="lade-hinweis" role="status">Beleg wird geladen …</p>
@@ -58,6 +64,32 @@
       @if (darfVersenden() && kannVersenden()) {
         <button mappe-kopf type="button" class="btn btn--primary" (click)="versendenFragen()">
           Angebot versenden
+        </button>
+      }
+
+      <!-- Der Ausgang des versendeten Angebots. Die DB kennt diese Übergänge seit
+           Migration 0016 — gesetzt hat sie bisher niemand. ERSETZT fehlt hier
+           bewusst: Es verlangt ein Nachfolgeangebot und ist kein Statuswechsel.
+           Je Knopf ein eigenes @if: Der Kopf-Slot der Mappe projiziert nur einen
+           einzelnen Knoten je Block (NG8011). -->
+      @if (kannAusgangSetzen()) {
+        <button
+          mappe-kopf
+          type="button"
+          class="btn btn--primary"
+          (click)="ausgangFragen('ANGENOMMEN')"
+        >
+          Angebot angenommen
+        </button>
+      }
+      @if (kannAusgangSetzen()) {
+        <button mappe-kopf type="button" class="btn" (click)="ausgangFragen('ABGELEHNT')">
+          Abgelehnt
+        </button>
+      }
+      @if (kannAusgangSetzen()) {
+        <button mappe-kopf type="button" class="btn" (click)="ausgangFragen('ABGELAUFEN')">
+          Abgelaufen
         </button>
       }
 
@@ -168,6 +200,18 @@
       (abbrechen)="versendenAbbrechen()"
     />
 
+    <!-- Der Ausgang des Angebots: eine kaufmännische Feststellung, deshalb mit
+         Bestätigung — und mit einem Text, der sagt, WAS sie bewirkt. -->
+    <app-bestaetigung
+      [offen]="ausgangOffen() !== null"
+      [titel]="ausgangTitel()"
+      [text]="ausgangText()"
+      [bestaetigenLabel]="ausgangLabel()"
+      [laedt]="ausgangLaedt()"
+      (bestaetigen)="ausgangBestaetigen()"
+      (abbrechen)="ausgangAbbrechen()"
+    />
+
     <!-- ---------------------------- Per E-Mail senden --------------------- -->
     <app-dialog [offen]="versandOffen()" titel="Angebot per E-Mail senden" (schliessen)="versandSchliessen()">
       <form id="angebot-versand-form" class="dialog-form" (submit)="$event.preventDefault(); versandAbsenden()" novalidate>
@@ -194,4 +238,5 @@
       </div>
     </app-dialog>
   }
+}
 }

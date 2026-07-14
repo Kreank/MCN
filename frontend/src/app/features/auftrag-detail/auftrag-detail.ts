@@ -23,6 +23,7 @@ import { Dateien } from '../../shared/dateien/dateien';
 import { Berichte } from '../../shared/berichte/berichte';
 import { SollIstAbgleich } from '../../shared/soll-ist/soll-ist';
 import { Abrechnung } from './abrechnung';
+import { Nachtrag } from './nachtrag';
 import { ZielFilter } from '../../core/datei.model';
 import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 import { Dialog } from '../../shared/dialog/dialog';
@@ -72,6 +73,7 @@ const STATUS_KANDIDATEN: WorkOrderStatus[] = [
     Berichte,
     SollIstAbgleich,
     Abrechnung,
+    Nachtrag,
   ],
   templateUrl: './auftrag-detail.html',
   styleUrl: './auftrag-detail.scss',
@@ -84,7 +86,13 @@ export class AuftragDetail {
   private readonly auth = inject(AuthService);
   private readonly fb = inject(FormBuilder);
 
-  protected readonly darfAendern = computed(() => this.auth.darf('workflow', 'AENDERN'));
+  /**
+   * `darfAlle`: Statuswechsel, Verantwortung, Nachweis und „+ Beteiligter" laufen
+   * über fail-closed-Endpunkte (`require` in `auftrag.py`) — ein Konto mit
+   * row_scope EIGENE bekommt dort 403. Der Monteur trägt `workflow/AENDERN` mit
+   * EIGENE für Zeit-/Materialbuchung und Berichte, nicht für den Auftragsautomaten.
+   */
+  protected readonly darfAendern = computed(() => this.auth.darfAlle('workflow', 'AENDERN'));
   protected readonly darfFreigeben = computed(() => this.auth.darf('workflow', 'FREIGEBEN'));
 
   protected readonly tab = signal('uebersicht');
@@ -92,11 +100,15 @@ export class AuftragDetail {
   private reqId = 0;
 
   /**
-   * Der Soll-Ist-Abgleich ist eine Dispositionssicht über die ganze Baustelle —
-   * der Endpunkt antwortet Rollen mit row_scope EIGENE mit 403 (fail-closed).
-   * Also gar nicht erst anbieten (Muster `nurAlle` in `app.ts`).
+   * Soll-Ist: `darf`, NICHT `darfAlle`.
+   *
+   * `GET /work_orders/{id}/soll-ist` ist ausdrücklich `require_scoped`
+   * (`site_report.py`): Der Abgleich führt **Mengen, keine Beträge** und ist für
+   * die Objektsicht gedacht — er sagt dem Monteur, was am Auftrag geplant war und
+   * was tatsächlich verbaut wurde. Hier stand vorher `darfAlle` und hat ihm eine
+   * Ansicht vorenthalten, die der Server ihm gibt.
    */
-  protected readonly darfSollIst = computed(() => this.auth.darfAlle('workflow', 'LESEN'));
+  protected readonly darfSollIst = computed(() => this.auth.darf('workflow', 'LESEN'));
 
   /**
    * `offene-abrechnung` ist dieselbe Auftragssicht über die ganze Baustelle wie

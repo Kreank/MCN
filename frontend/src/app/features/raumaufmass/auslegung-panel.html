@@ -15,9 +15,14 @@
       <span class="stamp stamp--warn au__luecke-mark">Fehlt</span>
       <span class="au__luecke-text">
         <strong>Die Auslegungs-Außentemperatur fehlt.</strong> Deshalb steht bei jedem Raum
-        „Heizlast unbekannt" — es wird nichts geschätzt und nichts auf 0 gesetzt. Tragen Sie die
-        Norm-Außentemperatur Ihres Standorts ein (Beispielform: -12 — mit dem Minus der Tastatur),
-        dann rechnet der Server die Hüllflächen-Heizlast.
+        „Heizlast unbekannt" — es wird nichts geschätzt und nichts auf 0 gesetzt.
+        @if (darfAendern()) {
+          Tragen Sie die Norm-Außentemperatur Ihres Standorts ein (Beispielform: -12 — mit dem
+          Minus der Tastatur), dann rechnet der Server die Hüllflächen-Heizlast.
+        } @else {
+          <!-- Niemanden auffordern, etwas einzutragen, was er nicht speichern darf. -->
+          Der Wert gehört zu den Objektstammdaten; die Objektverwaltung trägt ihn nach.
+        }
       </span>
     </div>
   }
@@ -60,16 +65,24 @@
     </div>
 
     <div class="au__aktionen">
-      <button
-        type="submit"
-        class="btn btn--primary"
-        [disabled]="speichert() || !darfAendern()"
-        [attr.aria-busy]="speichert()"
-      >
-        {{ speichert() ? 'Wird gespeichert …' : 'Auslegungsdaten speichern' }}
-      </button>
+      <!-- Kein ausgegrauter Knopf: wer nicht speichern darf, bekommt keinen
+           Speichern-Knopf. Die Daten selbst bleiben lesbar, und der Grund steht
+           als Text da — fehlender Inhalt wird benannt, tote Knöpfe verschwinden. -->
+      @if (darfAendern()) {
+        <button
+          type="submit"
+          class="btn btn--primary"
+          [disabled]="speichert()"
+          [attr.aria-busy]="speichert()"
+        >
+          {{ speichert() ? 'Wird gespeichert …' : 'Auslegungsdaten speichern' }}
+        </button>
+      }
       @if (!darfAendern()) {
-        <p class="au__hinweis">Zum Ändern fehlt das Recht am Objektregister.</p>
+        <p class="au__hinweis">
+          Die Auslegungsdaten des Objekts ändert die Objektverwaltung — zum Ändern fehlt das
+          Recht am Objektregister.
+        </p>
       } @else {
         <p class="au__hinweis">
           Ein leeres Feld setzt den Wert zurück. Nach dem Speichern werden die Kennzahlen aller

@@ -1,0 +1,176 @@
+.kopf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.kopf__text {
+  flex: 1 1 24rem;
+  margin: 0;
+  max-width: 48ch;
+  color: var(--ink-muted);
+  font-size: 0.94rem;
+  line-height: 1.5;
+}
+
+.kopf__aktionen {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.btn--klein {
+  padding: 0.35rem 0.7rem;
+  font-size: 0.85rem;
+}
+
+.liste {
+  list-style: none;
+  margin: var(--space-4) 0 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-3);
+}
+
+.karte {
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+}
+
+// Beendete Belegungen bleiben lesbar, treten aber zurück. Zusätzlich trägt jede
+// den Textstempel „Beendet" — Farbe allein trägt nie eine Aussage (WCAG 1.4.1).
+.karte--vergangen {
+  background: var(--surface-sunken);
+  box-shadow: none;
+}
+
+.karte__kopf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.karte__einheit {
+  flex: 1 1 auto;
+  min-width: 8rem;
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.karte__zeitraum {
+  margin: var(--space-2) 0 0;
+  font-size: 0.84rem;
+  color: var(--ink-hint);
+}
+
+.karte__hinweis,
+.karte__leer {
+  margin: var(--space-3) 0 0;
+  font-size: 0.9rem;
+  color: var(--ink-muted);
+  line-height: 1.5;
+}
+
+.karte__aktionen {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+}
+
+.mieter {
+  list-style: none;
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.mieter__zeile {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+}
+
+.mieter__zeile--weg {
+  opacity: 0.75;
+}
+
+.mieter__wer {
+  flex: 1 1 14rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.mieter__name {
+  font-weight: 600;
+  color: var(--ink);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.mieter__name:hover {
+  color: var(--accent-ink);
+  text-decoration: underline;
+}
+
+.mieter__rolle {
+  font-size: 0.78rem;
+  color: var(--ink-hint);
+}
+
+// Die Telefonnummer ist der Grund für diesen Reiter — sie steht als Wähl-Link
+// direkt an der Wohnung, nicht zwei Klicks entfernt.
+.mieter__kontakt {
+  flex: 1 1 14rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-3);
+  min-width: 0;
+}
+
+.mieter__tel {
+  font-family: var(--font-mono);
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--accent-ink);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.mieter__tel:hover {
+  text-decoration: underline;
+}
+
+.mieter__mail {
+  font-size: 0.85rem;
+  color: var(--ink-muted);
+  overflow-wrap: anywhere;
+}
+
+// „Keine Nummer" ist ein Befund, keine leere Zelle: Der Monteur kommt so nicht rein.
+.mieter__ohne {
+  font-size: 0.85rem;
+  font-style: italic;
+  color: var(--warn-ink);
+}

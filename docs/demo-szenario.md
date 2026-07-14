@@ -57,26 +57,39 @@ Ringelnatzstraße 22 · Tel. 017662147248 · sascha-richter@homtail.de
 
 **Peter Borm:** Liegenschaft Typ EFH, Party Person, Rolle `PROPERTY_OWNER`.
 
-### ⚠ LÜCKE: Mieter können heute NICHT namentlich an der Einheit hängen
+### ✅ ERLEDIGT: Mieter und Verwaltung sind eintragbar (Slice „Belegung & Verwaltung")
 
-`tenure.occupancy` trägt nur die **Nutzungsart** (`RENTED`, `OWNER_OCCUPIED`,
-`VACANT`, `COMMERCIAL_USE`, `OTHER`, `UNKNOWN`) und eine `contract_reference`
-als Freitext — **keinen Beteiligten**. Picolino, Robco, Musili & Co. sind damit
-nicht hinterlegbar.
+Die hier notierte Lücke war **richtig gefunden, aber falsch diagnostiziert** —
+und ist geschlossen. Zur Richtigstellung, damit niemand an der falschen Stelle
+baut:
 
-Das trifft den Kernfall: Der Monteur fährt zur Badenschen Straße, muss in die
-Wohnung EG rechts — und braucht Name und Telefonnummer von Robco, um einen
-Termin zu machen und hineinzukommen. **Ohne das ist die Demo genau dort stumm,
-wo der Chef hinschaut.**
+- **`tenure.occupancy` trägt sehr wohl Beteiligte** — nur nicht als Spalte,
+  sondern über `tenure.occupancy_party` (Migration 0005, Beschlüsse A-03/A-19).
+  Diese Tabelle gibt es seit dem ersten Tag: mit Rollen (`CONTRACTUAL_TENANT`,
+  `CO_TENANT`, `OCCUPANT`, `OWNER_OCCUPANT`, `COMMERCIAL_USER`), eigenem
+  Gültigkeitszeitraum, EXCLUDE gegen Doppelerfassung und einem deferred
+  Containment-Trigger. Sie war nur von **null Backend-Zeilen** benutzt.
+- **Deshalb wurde KEINE `occupancy.party_id` gebaut.** Eine solche Spalte wäre
+  eine **zweite Heimat für denselben Fakt** — und könnte weder ein Ehepaar (zwei
+  Vertragsmieter) noch einen Mitbewohner ohne Vertrag noch einen Mieterwechsel
+  innerhalb des Belegungszeitraums abbilden.
+- **Leerstand** ist eine Belegung vom Typ `VACANT` **ohne** Beteiligte —
+  dieselbe Aussage wie „`party_id IS NULL`", nur ohne zweite Wahrheit. Das UI
+  unterscheidet zusätzlich **„nicht erfasst"** (niemand hat es eingetragen) von
+  **„leerstehend"** (eine erfasste Aussage).
+- Der Mietername steht **nicht** in `contract_reference` (das bleibt eine
+  Vertragsreferenz). Der Mieter ist eine normale `identity.party` mit Telefon
+  und E-Mail; seine **Nummer steht als Wähl-Link an der Wohnung**.
 
-**Den Mieternamen NICHT in `contract_reference` schmuggeln.** Das rächt sich in
-der ersten Minute der Vorführung („und wie ruft der Monteur den an?").
+**Gebaut** (Migration 0103/0104): Models für `tenure.*`/`management.*`, Services
+`belegung.py`/`verwaltung.py`, API unter `/api/tenure` und `/api/management`
+(eigene Rechtemodule — wer Räume pflegt, ändert damit keine Mietverhältnisse),
+Reiter **„Belegung"** und **„Verwaltung"** in der Liegenschaftsmappe.
 
-**Lösung (eigener Slice, DB-Änderung):** Die Belegung bekommt einen Beteiligten
-(nullable — „leerstehend" muss weiter gehen). Der Mieter ist damit ein normaler
-Kontakt mit Telefon und E-Mail: auffindbar, verknüpfbar, in der
-Liegenschaftsmappe sichtbar. **Wartet auf den Commit der Dossier-Arbeit**, sonst
-kollidiert der Migrationsgraph (zwei Blätter).
+**Der MONTEUR darf Mieter und Verwaltung SEINES Objekts lesen** (`tenure/LESEN`
++ `management/LESEN`, `row_scope='EIGENE'`, begrenzt über
+`db_core/services/objektsicht.py`) — inklusive Telefonnummer, und **nur** an
+seinen Objekten. Ändern darf er nichts.
 
 ---
 
@@ -218,9 +231,12 @@ heißt: hier ändern. Auf der Demo-Instanz ist der Mailversand ohnehin totgelegt
 
 ## 6. Reihenfolge
 
-1. Dossier-Arbeit des Parallel-Agenten wird eingecheckt.
-2. **Mieter-Slice** (DB): Belegung bekommt einen Beteiligten.
-3. **`seed_szenario`** aus diesem Dokument.
+1. Dossier-Arbeit des Parallel-Agenten wird eingecheckt. ✅
+2. ~~**Mieter-Slice** (DB): Belegung bekommt einen Beteiligten.~~ ✅ **erledigt**
+   (Migration 0103/0104 — Details oben; die Belegung hatte den Beteiligten
+   bereits, ihm fehlte nur jeder Weg dorthin).
+3. **`seed_szenario`** aus diesem Dokument. ← **jetzt dran**; die sechs Mieter
+   und das Stegos-Mandat sind ab sofort abbildbar.
 4. **Docker/Deployment** (siehe `HANDOFF.md` Abschnitt 10) — inkl. der Falle,
    dass `seed_demo` Passwörter **nur bei DEBUG** setzt (ohne DEBUG bekommen alle
    Seed-Logins ein `unusable_password` — der Chef stünde vor einem Login, durch

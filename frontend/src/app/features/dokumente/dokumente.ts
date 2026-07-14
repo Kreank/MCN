@@ -27,6 +27,7 @@ import {
   QuotePage,
   QuoteStatus,
 } from '../../core/beleg.model';
+import { AngebotMengenListe } from '../angebot-mengen/angebot-mengen-liste';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 import { Dialog } from '../../shared/dialog/dialog';
@@ -61,6 +62,7 @@ const TEXT_LINE_TYPES: LineType[] = ['TEXT', 'ZWISCHENSUMME'];
     Dialog,
     Feld,
     ReferenzWahl,
+    AngebotMengenListe,
   ],
   templateUrl: './dokumente.html',
   styleUrl: './dokumente.scss',
@@ -188,7 +190,24 @@ export class Dokumente {
     return `${t} Belege gefunden, Seite ${s.data.page} von ${this.totalPages()}.`;
   });
 
+  /**
+   * row_scope EIGENE auf `invoicing` (Monteur, Migration 0102) → **die Mengenliste**.
+   *
+   * Dieses Belegregister führt Beträge (Netto/Brutto je Zeile), listet Rechnungen und
+   * legt Belege an — alle drei Endpunkte antworten dem Monteur mit 403. Er darf
+   * Angebote aber sehen: preisfrei, an seinen Objekten. Statt eines
+   * „Kein-Zugriff"-Bildschirms (oder eines wortlos versteckten Navigationspunkts)
+   * übernimmt hier `AngebotMengenListe`.
+   */
+  protected readonly nurMengen = computed(
+    () =>
+      this.auth.darf('invoicing', 'LESEN') && !this.auth.darfAlle('invoicing', 'LESEN'),
+  );
+
   constructor() {
+    // Mengensicht: keine der preisführenden Abfragen dieser Ansicht ausführen.
+    if (this.nurMengen()) return;
+
     this.searchInput$
       .pipe(debounceTime(300), distinctUntilChanged(), takeUntilDestroyed())
       .subscribe((v) => {

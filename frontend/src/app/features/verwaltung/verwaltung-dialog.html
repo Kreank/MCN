@@ -1,0 +1,177 @@
+<app-dialog [offen]="offen()" [titel]="titel()" (schliessen)="schliessen()">
+  <form
+    id="verwaltung-form"
+    class="dialog-form"
+    (submit)="$event.preventDefault(); absenden()"
+    novalidate
+  >
+    @if (formularMeldung(); as fm) {
+      <div class="melde melde--fehler" role="alert">
+        <span class="melde__mark" aria-hidden="true">!</span>
+        <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+      </div>
+    }
+
+    @if (zustaendigkeit()) {
+      <fieldset class="satz">
+        <legend class="satz__titel">Weiterer Kontakt am Mandat</legend>
+        <app-feld
+          [control]="form.controls.responsibility_type"
+          label="Zuständigkeit"
+          typ="select"
+          [optionen]="zustaendigOptionen"
+        />
+        <app-referenz-wahl
+          [control]="form.controls.responsible_party_id"
+          label="Kontakt"
+          [pflicht]="true"
+          [suche]="parteiSuche"
+          platzhalter="Kontakt suchen …"
+          leerText="Kein Kontakt gefunden."
+        />
+        <app-feld
+          [control]="form.controls.priority"
+          label="Eskalationsstufe"
+          typ="zahl"
+          hinweis="Kleiner = früher anrufen. Der Notfallkontakt steht meist auf 1."
+        />
+        <app-feld [control]="form.controls.valid_from" label="Gültig ab" typ="datum" />
+      </fieldset>
+    } @else {
+      <fieldset class="satz">
+        <legend class="satz__titel">Wer verwaltet, wer beauftragt?</legend>
+
+        @if (neu()) {
+          <app-referenz-wahl
+            [control]="form.controls.management_party_id"
+            label="Verwaltung"
+            [pflicht]="true"
+            [suche]="parteiSuche"
+            platzhalter="Verwalter suchen …"
+            leerText="Kein Kontakt gefunden."
+            hinweis="Die Hausverwaltung — sie ist der Ansprechpartner, aber NICHT der Auftraggeber."
+          />
+          <app-referenz-wahl
+            [control]="form.controls.principal_party_id"
+            label="Auftraggeber"
+            [pflicht]="true"
+            [suche]="parteiSuche"
+            platzhalter="Auftraggeber suchen …"
+            leerText="Kein Kontakt gefunden."
+            hinweis="Wer beauftragt und zahlt — bei einer WEG die Eigentümergemeinschaft selbst. An sie geht später die Rechnung."
+          />
+        } @else {
+          <!-- Unveränderlich: Ein anderer Verwalter ist ein anderes Mandat. Als
+               Text statt als Feld — ein Eingabefeld, das nichts speichert, lügt. -->
+          <dl class="fest">
+            <div class="fest__paar">
+              <dt>Verwaltung</dt>
+              <dd>{{ festVerwaltung() }}</dd>
+            </div>
+            <div class="fest__paar">
+              <dt>Auftraggeber</dt>
+              <dd>{{ festAuftraggeber() }}</dd>
+            </div>
+          </dl>
+        }
+        <app-referenz-wahl
+          [control]="form.controls.default_contact_party_id"
+          label="Standardkontakt"
+          [pflicht]="true"
+          [suche]="parteiSuche"
+          platzhalter="Person suchen …"
+          leerText="Kein Kontakt gefunden."
+          hinweis="Pflicht: Wer nimmt ab, wenn man dort anruft? Ein Mandat ohne Ansprechpartner ist eine Nummer, die niemand hat."
+        />
+      </fieldset>
+
+      @if (neu()) {
+        <fieldset class="satz">
+          <legend class="satz__titel">Art und Umfang</legend>
+          <app-feld
+            [control]="form.controls.mandate_type"
+            label="Mandatsart"
+            typ="select"
+            [optionen]="mandatOptionen"
+          />
+          <app-feld
+            [control]="form.controls.scope_type"
+            label="Umfang"
+            typ="select"
+            [optionen]="scopeOptionen"
+            hinweis="Der Umfang ist später NICHT änderbar — ein anderer Umfang ist ein Nachfolgemandat (das alte wird beendet)."
+          />
+
+          @if (teilmandat()) {
+            <fieldset class="einheiten">
+              <legend class="einheiten__titel">
+                Welche Einheiten? <span class="einheiten__pflicht">mindestens eine</span>
+              </legend>
+              @if (einheiten().length === 0) {
+                <p class="einheiten__leer">
+                  Diese Liegenschaft hat noch keine Einheiten. Legen Sie sie unter „Struktur“
+                  an — oder wählen Sie „Gesamte Liegenschaft“.
+                </p>
+              } @else {
+                <ul class="einheiten__liste">
+                  @for (e of einheiten(); track e.id) {
+                    <li>
+                      <label class="einheiten__wahl">
+                        <input
+                          type="checkbox"
+                          [checked]="istGewaehlt(e.id)"
+                          (change)="einheitUmschalten(e.id)"
+                        />
+                        <span>{{ e.label }}</span>
+                      </label>
+                    </li>
+                  }
+                </ul>
+              }
+            </fieldset>
+          }
+
+          <app-feld
+            [control]="form.controls.valid_from"
+            label="Gültig ab"
+            typ="datum"
+            [pflicht]="true"
+          />
+          <app-feld
+            [control]="form.controls.contract_reference"
+            label="Vertragsreferenz"
+            hinweis="Aktenzeichen des Verwaltervertrags."
+          />
+        </fieldset>
+      } @else {
+        <fieldset class="satz">
+          <legend class="satz__titel">Korrigierbar</legend>
+          <p class="satz__hinweis">
+            Verwalter, Auftraggeber, Mandatsart und Umfang ändern sich <strong>nicht</strong> —
+            das wäre ein anderes Mandat. Beenden Sie das laufende und legen Sie ein
+            Nachfolgemandat an. Korrigierbar sind Standardkontakt und Vertragsreferenz.
+          </p>
+          <app-feld
+            [control]="form.controls.contract_reference"
+            label="Vertragsreferenz"
+          />
+        </fieldset>
+      }
+    }
+  </form>
+
+  <div dialog-aktionen class="dialog__aktionen">
+    <button type="button" class="btn" [disabled]="laedt()" (click)="schliessen()">
+      Abbrechen
+    </button>
+    <button
+      type="submit"
+      form="verwaltung-form"
+      class="btn btn--primary"
+      [disabled]="laedt()"
+      [attr.aria-busy]="laedt()"
+    >
+      {{ laedt() ? 'Wird gespeichert …' : 'Speichern' }}
+    </button>
+  </div>
+</app-dialog>

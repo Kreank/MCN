@@ -1,3 +1,9 @@
+<!-- row_scope EIGENE (Monteur, 0102): Dieses Register führt Beträge und legt Belege
+     an — beides verweigert ihm der Server. Er bekommt die preisfreie Angebotsliste
+     seiner Objekte. Siehe `nurMengen`. -->
+@if (nurMengen()) {
+  <app-angebot-mengen-liste />
+} @else {
 <section class="dokumente" aria-labelledby="dokumente-titel">
   <header class="page-head">
     <div class="page-head__text">
@@ -348,3 +354,4 @@
     </div>
   </app-dialog>
 </section>
+}

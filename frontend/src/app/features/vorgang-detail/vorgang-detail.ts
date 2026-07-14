@@ -65,9 +65,16 @@ export class VorgangDetail {
   protected readonly gewaehlt = signal<ServiceCaseTransition | null>(null);
   protected readonly statusLaedt = signal(false);
 
-  /** Nur Übergänge, für die der Benutzer das nötige Recht hat. */
+  /**
+   * Nur Übergänge, für die der Benutzer das nötige Recht hat — mit row_scope ALLE.
+   *
+   * `POST /api/workflow/service_cases/{id}/status` ist fail-closed
+   * (`require(request, "workflow", action)`): ein Konto mit EIGENE bekommt 403,
+   * auch für die Übergänge, deren Recht es nominell trägt. Der Statusautomat des
+   * Vorgangs ist Disposition, nicht Monteursarbeit.
+   */
   protected readonly erlaubteUebergaenge = computed(() =>
-    this.uebergaenge().filter((t) => this.auth.darf('workflow', t.recht)),
+    this.uebergaenge().filter((t) => this.auth.darfAlle('workflow', t.recht)),
   );
 
   /** Ein gewählter Übergang ist folgenreich (Amber), wenn begründungspflichtig
@@ -206,8 +213,9 @@ export class VorgangDetail {
   protected readonly kannHochstufen = computed(
     () =>
       !this.daten()?.project &&
-      this.auth.darf('workflow', 'ANLEGEN') &&
-      this.auth.darf('workflow', 'AENDERN'),
+      // `darfAlle`: `promote-to-project` ist fail-closed (`require`) — EIGENE → 403.
+      this.auth.darfAlle('workflow', 'ANLEGEN') &&
+      this.auth.darfAlle('workflow', 'AENDERN'),
   );
 
   /** Absenden erst mit nicht-leerem Namen und außerhalb eines laufenden Requests. */
