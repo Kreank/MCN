@@ -57,6 +57,30 @@
   font-weight: 600;
 }
 
+// Verweis aufs Raumaufmaß (das trägt jetzt den Namen „Aufmaß").
+.wz__verweis {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-4) 0 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px dashed var(--line-strong);
+  border-left: 4px solid var(--accent-ink);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  color: var(--ink-muted);
+  font-size: var(--step--1);
+}
+.wz__verweis strong {
+  color: var(--ink);
+}
+.wz__verweis em {
+  font-style: normal;
+  font-family: var(--font-mono);
+  color: var(--accent-ink);
+}
+
 // ================================ Tabs ======================================
 .wz__tabs {
   display: flex;

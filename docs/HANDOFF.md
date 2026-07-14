@@ -90,6 +90,60 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 
 ## 0. Nächste Session — Stand & offene Entscheidungen (ZUERST LESEN)
 
+### 🔴 OFFEN aus der Raumaufmaß-Session (2026-07-13/14) — hier anfangen
+
+**(1) GoBD-BUG im Bestandscode — nicht von diesem Slice, aber ECHT und dringend.**
+
+    db_core/tests/test_erechnung_service.py
+      ::test_kunden_umzug_nach_veroeffentlichung_aendert_das_xml_nicht     FAILED
+
+Der Test fällt **auch gegen sauberes HEAD** (in einem eigenen Worktree
+nachgewiesen, ohne die Arbeit dieser Session und ohne die des Parallel-Agenten).
+Er ist **zeitabhängig**: tagsüber grün, nach Mitternacht rot — genau die Falle,
+vor der der Docstring von `beleg.party_address` selbst warnt (`localdate()` vs.
+`utcnow().date()`).
+
+Bedeutung: Eine **veröffentlichte** Rechnung zieht ihre Empfängeranschrift rund
+um die Datumsgrenze offenbar **nicht mehr aus dem eingefrorenen Snapshot**. Ein
+festgeschriebener Beleg, dessen Inhalt sich ändert, wenn der Kunde umzieht — das
+ist der Kern dessen, was GoBD verbietet. Reproduzieren:
+`uv run pytest db_core/tests/test_erechnung_service.py::test_kunden_umzug_nach_veroeffentlichung_aendert_das_xml_nicht`
+(nachts, bzw. mit entsprechend gesetzter Zeit). **Bewusst nicht angefasst**
+(fremder Bereich, Parallel-Agent arbeitete dort). Das ist der erste Punkt.
+
+**(2) Nichts aus der Raumaufmaß-Session ist committet.** Der Arbeitsbaum enthält
+den Slice (Migrationen 0086/0087/0089–0094, `services/raum.py`,
+`services/bauteilkatalog.py`, `api/raum.py`, `features/raumaufmass/**`,
+`features/bauteilkatalog/**`, Tests, dieser HANDOFF) **gemischt mit der
+Abrechnungsbindung des Parallel-Agenten** (0084/0085/0088, `api/auftrag.py`,
+`api/beleg.py`, `services/abrechnung.py`). `models.py` und `api/api.py` sind von
+**beiden** angefasst → beim Einchecken **selektiv stagen** (Hunk-Staging), sonst
+reißt man Fremdarbeit mit. Stand der Verifikation: **2895 Backend-Tests grün**
+(der eine Fehlschlag ist Punkt 1), **207 Frontend-Tests grün**, Build ohne
+Budget-Warnung, `makemigrations --check` sauber.
+
+**(3) Der Monteur kann keine Räume erfassen** — bewusst so. Das Rechtemodul
+`property` kennt **kein `EIGENE`**: Wer Räume anlegen darf, dürfte jede
+Liegenschaft ändern. Deshalb hat die MONTEUR-Rolle **keine** `property`-Schreib-
+rechte bekommen (fail-closed). Wenn Begehungen vom Monteur gemacht werden sollen,
+braucht `property` einen echten **Zeilen-Scope** — eigener Slice, User-Entscheidung
+steht aus.
+
+**(4) Leitungslängen sind eine SCHÄTZUNG**, klar deklariert: `2 × Σ riser_distance_m`
+(Vor-/Rücklauf), ohne Formstücke und Steigstrang. **Bewusst kein erfundener
+Zuschlagsfaktor.** Für eine echte Rohrnetzberechnung braucht es eine
+Leitungsführung — der **Grundriss (0091) ist jetzt die Grundlage dafür**. Das ist
+der natürliche nächste Ausbauschritt (und der Weg zur 3D-Planung).
+
+**(5) Dev-DB-Rest:** In `mitra_crm_test` stehen Testräume aus den E2E-Läufen
+(`ZZ-TEST-RUN2`, `ZZ-UI-E1`, `E2E-B-Raum`, `E2E-C-Grundriss`, `Wohnzimmer`,
+Liegenschaft/Raum `ZZ-REVIEW-WEGWERF`). Dazu wurden an **OBJ-00001** die
+Auslegungsdaten (−12 °C / 100 W/m²) und zwei Katalog-U-Werte gesetzt. Reine
+Scratch-Daten — sie ändern die Heizlast aller Räume dieser Liegenschaft. Räume
+tragen No-Delete: nur auf INAKTIV setzen.
+
+---
+
 **Das System ist bedienbar.** Auth, Rechtematrix und der komplette Schreibpfad
 stehen: Aus dem UI laufen „+ Neu", Statusaktionen, Freigaben, Zahlungen und
 Stornos durch Rechteprüfung, Service-Schicht, Statusautomaten und DB-Trigger.
@@ -702,6 +756,166 @@ kein Aufweichen des Triggers.
 **Dev-Notiz:** Der Demo-Login `admin@` ist testweise auch Mitarbeiter (MA-00004,
 30 Urlaubstage) — damit „Mein Profil → Personalakte" live etwas zeigt. Reine
 Scratch-Daten; bei Bedarf auf INAKTIV setzen.
+
+### Welle 5 (2026-07-13): Raumaufmaß — der Raum wird ein Fachobjekt
+
+19. ✔ **Raumaufmaß** (Migrationen **0086** + **0089**, State-only 0087).
+    Ausgelöst durch `docs/issue.md`: Der bisherige „Aufmaß"-Rechner (Welle 3, Punkt 15)
+    war ein reiner Browser-Taschenrechner — Teilmaße → Verschnitt → Gebinde, Ergebnis
+    als Menge in eine Belegposition, danach **weg**. Der Betrieb muss die Räume eines
+    Objekts aber **einmal** aufnehmen und **dauerhaft** behalten (Heizlast,
+    Leitungslängen, später 3D). Der Raum ist deshalb **Objektstammdatum**, kein
+    Werkzeug-Zwischenwert: `property.room` hängt an der **Liegenschaft**, nicht am
+    Vorgang.
+    - **Drei Tabellen:** `property.room` (Fläche/Höhe/Umfang, `volume_m3` als
+      **GENERATED**-Spalte), `property.room_surface` (Hüllflächen: Außenwand, Dach-
+      schräge, Boden … mit U-Wert und **`adjacent`** = AUSSENLUFT|ERDREICH|UNBEHEIZT|
+      BEHEIZT) und `property.room_opening` (Fenster/Türen, `area_m2` GENERATED).
+      Eine Öffnung sitzt **in ihrer Wand** (zusammengesetzter FK) — bei zwei Außenwänden
+      wäre sonst undefiniert, aus welcher das Fenster ausgeschnitten wird.
+    - **Die Fläche ist die Wahrheit, `length_m × width_m` nur die Herleitung.** Kein
+      CHECK erzwingt das Rechteck: Der L-förmige Raum, der Erker, die Dachschräge sind
+      genau die Fälle, für die man ein Aufmaß braucht.
+    - **INVARIANTE: Die Nettowandfläche wird nie negativ** —
+      `property.enforce_room_opening_fits` prüft **(a) je Wand** (Σ Öffnungen ≤ Brutto)
+      **und (b) je Raum** (Σ ALLER Öffnungen ≤ Σ aller Bauteilflächen). (b) fängt die
+      Öffnungen ohne Wandzuordnung, die (a) nicht sieht (Review-Fund: 25 m² Fenster
+      gegen 10 m² Wand → `wall_area_net_m2 = −15,000`, das wäre als **Menge in ein
+      Angebot** gelaufen). Serialisierungspunkt ist die **Raumzeile** (`FOR UPDATE`) —
+      über eine Wandsperre wären zwei Schreibvorgänge an *verschiedenen* Wänden desselben
+      Raumes nicht gegen (b) serialisiert. Hat der Raum **noch keine** Hüllfläche, greift
+      (b) nicht: Die Wandfläche ist dann **unbekannt**, nicht 0 — Fenster dürfen vor den
+      Wänden erfasst werden.
+    - **INVARIANTE: Der Anker ist unveränderlich** (`property.forbid_room_reassign`,
+      0089). Eine Wand wandert nicht in einen anderen Raum, ein Fenster auch nicht —
+      sonst umginge ein `UPDATE room_id` beide Grenzen (Review-Fund, reproduziert).
+      Dieselbe Haltung wie beim Auftragsbezug des Einsatzes (0062).
+    - **PL/pgSQL-Falle, die zweimal zuschlug** (beim nächsten Trigger dieser Art
+      beachten): (1) `FOR UPDATE` ist mit **Aggregatfunktionen** nicht erlaubt.
+      (2) Eine `NEW.<feld>`-Referenz in einer SQL-Anweisung wird **beim Planen**
+      aufgelöst — auch in einem CASE-Zweig, der nie zutrifft. Feuert derselbe Trigger aus
+      zwei Tabellen, sprengt das die Funktion. Felder **vorher in lokale Variablen
+      heben**.
+    - **Heizlast: zwei Verfahren, und „unbestimmt ist NICHT null".** Kennwertverfahren
+      (Fläche × Kennwert) und **raumweises Hüllflächenverfahren**
+      (Σ U·A·f·ΔT + 0,34·n·V·ΔT). Fehlt ein U-Wert, ein `temp_factor`, die
+      Luftwechselrate, die Innen- oder die Außentemperatur, ist das Ergebnis
+      **`null` mit BENANNTEM Grund** („Der U-Wert der Fläche 'Nordwand' fehlt.") —
+      **niemals 0**. Ein fehlender U-Wert als 0 hieße: „diese Wand verliert keine
+      Wärme". Eine `BEHEIZT`-Fläche trägt dagegen **definitionsgemäß 0 W** bei und
+      braucht weder U-Wert noch Faktor — das ist kein Unbekanntes. Ebenso: eine
+      Liegenschaft **ohne aufgenommene Räume** hat eine **unbekannte** Heizlast, keine
+      von 0 kW; Umfang und Leitungslängen-Schätzung sind **unbekannt**, wenn niemand sie
+      gemessen hat (eine Leitungslänge „0,0 m" liefe als Menge in ein Angebot).
+    - **Auslegungsdaten gehören ans OBJEKT** (0089: `property.design_outdoor_temp_c`,
+      `property.heat_load_w_per_m2`). Sie waren zuerst Query-Parameter — und wurden damit
+      **nirgends** abgefragt: Der Rechner meldete für jeden noch so sorgfältig
+      aufgenommenen Raum „unbekannt", das Feature war **inert** (Review-Fund). Die
+      Auslegungs-Außentemperatur ist keine Frage an den Aufruf, sondern folgt aus dem
+      **Standort**. Rangfolge Kennwert: **Raum → Objekt → `null`**.
+    - **KEINE DIN-Tabellen im Produkt** (Normrecht, siehe Welle 2/Punkt 11): keine
+      Klimadaten, keine U-Wert-Tabellen, keine f-Faktoren, keine Standard-Luftwechsel-
+      raten. Alles Eingaben des Betriebs. Beide Verfahren sind ausdrücklich
+      **überschlägig — KEIN Nachweis nach DIN EN 12831**.
+    - **Rechte:** kein neues Modul — die Endpunkte hängen am bestehenden `property`
+      (LESEN/ANLEGEN/AENDERN). **Achtung:** `property` kennt **kein `EIGENE`**; wer Räume
+      erfassen darf, darf jede Liegenschaft ändern. Die MONTEUR-Rolle bekommt deshalb
+      **bewusst keine** `property`-Schreibrechte; wer Begehungen macht, braucht eine
+      eigene Rolle über die Rechtematrix-Pflege. Ein echter Zeilen-Scope für `property`
+      wäre ein eigener Slice.
+    - **UI:** Reiter **„Räume"** am Liegenschafts-Detail (`features/raumaufmass`) —
+      mobil bedienbar (Baustelle, große Zahlenfelder), Raumliste je Geschoss,
+      Raum-Editor mit Aufbau, Kennzahlen-Panel, Panel „Auslegungsdaten des Objekts".
+      Der Server rechnet, das UI zeigt nur an (live vorgerechnet wird ausschließlich die
+      triviale Geometrie).
+    - **Der alte Rechner heißt jetzt „Mengenermittlung"** (Werkzeuge-Tab
+      `mengenermittlung`). Er bleibt fachlich — Verschnitt/Gebinde ist beim
+      Angebotschreiben nützlich —, aber der Name „Aufmaß" gehört jetzt dem Raumwerkzeug.
+      Dateinamen und Symbole (`aufmass-rechner.ts`, `aufmass()`) sind bewusst **nicht**
+      umbenannt.
+
+### Welle 6 (2026-07-13/14): Bauteilkatalog und zeichenbarer Grundriss
+
+20. ✔ **Bauteilkatalog** (Migration **0090**). Statt an jeder Wand einen U-Wert zu tippen,
+    wählt man ein Bauteil: „Fenster, Doppelkastenfenster", „Außenwand, Ziegel ungedämmt".
+    `property.component_template` (kind FLAECHE|OEFFNUNG), Pflege unter
+    **Einstellungen → Bauteilkatalog**, Auswahl im Raum-Editor.
+    - **INVARIANTE: Die Vorlage ist eine KOPIERQUELLE, kein Verweis.** Der U-Wert wird
+      beim Erfassen in `room_surface`/`room_opening` **kopiert**; `template_id` ist nur
+      ein Herkunftsvermerk, und der Heizlast-Rechner liest den Katalog **nie**. Sonst
+      änderte eine spätere Katalogkorrektur rückwirkend die Heizlast eines Objekts, das
+      der Betrieb dem Kunden längst vorgerechnet hat — dieselbe Regel wie bei der
+      Belegposition. **Im Browser gegengeprüft:** Katalogwert 2,7 → 1,1 geändert, Raum
+      liefert unverändert U 2,7 und dieselbe Transmission.
+    - **INVARIANTE: Der Katalog wird OHNE U-Werte ausgeliefert** (29 Seed-Zeilen, nur
+      Namen). Normrecht (keine DIN-Tabellen im Produkt) **und** Verantwortung: Der Betrieb
+      unterschreibt die Auslegung, er soll keine Zahlen unterschreiben, die eine Software
+      geraten hat. Eine Vorlage ohne Wert ist **kein Fehler**, sondern der
+      Auslieferungszustand — die Heizlast ist dann **unbekannt, nicht 0**.
+21. ✔ **Grundriss** (Migration **0091**, `property.room_vertex`). Der Raum bekommt einen
+    **Umriss**; Fläche, Umfang und die Wandflächen **fallen aus der Zeichnung heraus**,
+    statt getippt zu werden. Polygon + `room_height_m` ist ein extrudierbarer Körper —
+    die Vorstufe zur 3D-Planung.
+    - Koordinaten sind **ganzzahlige Millimeter** im System des **Geschosses** (nicht des
+      Raumes): Gleitkomma erzeugte Kanten, die „fast" aufeinander liegen; und weil alle
+      Räume einer Etage im selben Raster liegen, entsteht die **Etagenübersicht ohne
+      weitere Daten**.
+    - **INVARIANTE: Wer zeichnet, misst nicht doppelt.** Mit Umriss rechnet der Server
+      `floor_area_m2` (Gauß'sche Trapezformel, **Betrag** — der Umlaufsinn darf keine
+      negative Fläche erzeugen) und `perimeter_m` und **verwirft den Client-Wert**
+      (Vorbild: `planned_quantity`). Ohne Umriss bleibt die Handeingabe.
+    - `room_surface.edge_index` = Kante, auf der die Wand steht; partieller UNIQUE gegen
+      **zwei Wände auf derselben Kante** (die zählten dieselbe Fläche doppelt in die
+      Heizlast). `room_opening.position_m` = Lage in der Kante; **fehlt sie, ist die Lage
+      unbekannt — NICHT 0**: Die Öffnung zählt in Fläche und Heizlast, sie wird nur nicht
+      gezeichnet und steht in der Liste „ohne Lage in der Wand".
+    - **UI:** SVG-Zeichner mit **eintippbaren Kantenlängen** (ein Handwerker misst 4,37 m
+      mit dem Laser — er tippt sie, er zieht sie nicht). Die **Kantenliste ist das
+      vollwertige Äquivalent zur Zeichnung**: Der Raum ist **vollständig ohne Maus**
+      erfassbar (WCAG). Der **Nordpfeil wird aus den Wandausrichtungen abgeleitet** —
+      widersprechen sie sich, erscheint **kein** Pfeil (ein erfundener wäre schlimmer).
+22. ✔ **`area_is_derived`** (Migration **0093**) — der wichtigste Fund dieser Welle.
+    Eine Wandfläche auf einer Kante ist **gerechnet** (Kantenlänge × Raumhöhe). Ohne
+    Kennzeichen wusste danach niemand mehr, dass sie gerechnet war:
+
+        Raumhöhe 2,50 → 2,80 m korrigiert ⇒ Wandflächen blieben stehen
+                                          ⇒ die Heizlast rechnete still mit 2,50 m weiter.
+
+    Ein pauschales Nachrechnen verbot sich, weil die **Übersteuerung ein legitimer
+    Fachfall** ist (Giebel, Erker, Dachschräge). Beides zugleich geht nur, wenn die Zeile
+    **selbst weiß**, woher ihr Wert stammt: `area_is_derived = true` ⇒ der Server rechnet
+    sie bei **jeder** Änderung von Umriss oder Raumhöhe neu; `false` ⇒ Handeingabe, wird
+    **nie** überschrieben. Dieselbe Unterscheidung wie beim § 35a-Anteil (0076):
+    „abgeleitet" vs. „abweichend angegeben".
+    **Der Client darf `gross_area_m2` für eine abgeleitete Kantenwand NICHT mitschicken**
+    — täte er es, deutete der Server das als Handeingabe und die Fläche erstarrte. Er
+    lässt das Feld beim Laden deshalb **leer**, statt es mit dem Serverwert vorzubelegen.
+23. ✔ **Kante nur an der Wand** (Migration **0094**, Review-Fund). Über die API ließ sich
+    einer **DECKE** ein `edge_index` geben: Ihre Fläche wurde dann als Kantenlänge ×
+    Raumhöhe abgeleitet (12,5 m² statt 20 m²) — und **wuchs fortan mit der Raumhöhe**.
+    Der Angular-Client hielt die Regel von sich aus ein; **das ist genau kein Argument**:
+    Nach der Vision geht die KI durch **dieselben Tore wie ein Mensch**, und ihr Weg ist
+    der Service. Deshalb steht die Regel jetzt als CHECK auf der Zeile:
+    `edge_index IS NULL OR surface_type IN ('AUSSENWAND','INNENWAND')` — ein Polygon ist
+    die **Draufsicht**, seine Kanten sind die senkrechten Bauteile.
+24. **Serialisierung (Review-Fund):** `set_grundriss`, `set_aufbau` und `update_room`
+    nehmen jetzt **ausdrücklich** `SELECT … FOR UPDATE` auf die Raumzeile — und lesen
+    Umriss und Raumhöhe **erst unter der Sperre**. Vorher entstand die Sperre nur als
+    Nebenwirkung von `enforce_room_opening_fits`, der bei einem `set_aufbau` **ohne
+    Öffnungen** gar nicht feuert. Folge wäre eine Wand auf einer Kante, die es nicht mehr
+    gibt — die `_rechne_abgeleitete_flaechen` danach **still überspringt**.
+
+**Zwei Fallen, die diese Welle gekostet hat (für den nächsten, der so etwas baut):**
+- **Ein grüner Unit-Test kann an einem toten Werkzeug vorbeilaufen.** Das Zeichnen mit
+  der Maus war nach dem ersten Punkt **komplett tot** (die Ansicht passte sich auf einen
+  einzelnen Punkt ein → Zoom 560 Einheiten/mm → jeder Klick snappte zurück auf Punkt 1).
+  Alle Einzelteile waren getestet und grün; der Fehler lebte in der **Kette**. Gefunden
+  hat ihn nur der **echte Browser-Durchlauf**. Teste Interaktionsketten, nicht nur
+  Funktionen.
+- **Vorschau und Server müssen dieselbe Zahl rechnen.** Der Zeichner summierte rohe
+  Gleitkomma-Kantenlängen und rundete am Schluss, der Server rundete **je Kante**. Der
+  Umfang sprang beim Speichern (5,657 → 5,656 m). Regel wie bei der Heizlast: **Die
+  ausgewiesene Summe ist die Summe der ausgewiesenen Teile.**
 
 ### Bewusst offene Invarianten (nicht versehentlich „reparieren")
 

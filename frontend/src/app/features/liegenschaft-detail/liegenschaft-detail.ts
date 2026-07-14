@@ -18,6 +18,7 @@ import {
 } from '../../core/property.model';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { Dateien } from '../../shared/dateien/dateien';
+import { Raumaufmass } from '../raumaufmass/raumaufmass';
 import { ZielFilter } from '../../core/datei.model';
 import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 import { Dialog } from '../../shared/dialog/dialog';
@@ -29,16 +30,22 @@ import {
 } from '../../shared/formular/formular.util';
 
 type ViewState =
-  | { kind: 'loading' }
-  | { kind: 'ready'; data: PropertyDetail }
-  | VerbotenState
-  | { kind: 'error' };
+  { kind: 'loading' } | { kind: 'ready'; data: PropertyDetail } | VerbotenState | { kind: 'error' };
 
 type Meldung = { art: 'erfolg' | 'fehler'; text: string };
 
 @Component({
   selector: 'app-liegenschaft-detail',
-  imports: [Mappe, RouterLink, ReactiveFormsModule, KeinZugriff, Dateien, Dialog, Feld],
+  imports: [
+    Mappe,
+    RouterLink,
+    ReactiveFormsModule,
+    KeinZugriff,
+    Dateien,
+    Dialog,
+    Feld,
+    Raumaufmass,
+  ],
   templateUrl: './liegenschaft-detail.html',
   styleUrl: './liegenschaft-detail.scss',
 })
@@ -56,6 +63,7 @@ export class LiegenschaftDetail {
   protected readonly tabs: MappeTab[] = [
     { id: 'uebersicht', label: 'Übersicht' },
     { id: 'struktur', label: 'Struktur' },
+    { id: 'raeume', label: 'Räume' },
     { id: 'beteiligte', label: 'Beteiligte' },
     { id: 'eigentum', label: 'Eigentum' },
     { id: 'belegung', label: 'Belegung' },

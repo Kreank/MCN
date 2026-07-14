@@ -31,6 +31,11 @@ import { AuthService } from '../../core/auth.service';
       @if (darfLohngruppen()) {
         <a routerLink="/einstellungen/lohngruppen" routerLinkActive="is-active">Lohngruppen</a>
       }
+      @if (darfBauteilkatalog()) {
+        <a routerLink="/einstellungen/bauteilkatalog" routerLinkActive="is-active"
+          >Bauteilkatalog</a
+        >
+      }
       @if (darfZeiterfassung()) {
         <a routerLink="/einstellungen/zeiterfassung" routerLinkActive="is-active"
           >Zeiterfassung</a
@@ -81,6 +86,8 @@ export class EinstellungenNav {
   private readonly auth = inject(AuthService);
   protected readonly darfRechteSehen = computed(() => this.auth.darf('security', 'LESEN'));
   protected readonly darfLohngruppen = computed(() => this.auth.darf('pricing', 'LESEN'));
+  /** Bauteilkatalog hängt am Objektregister (property), nicht an der Firma. */
+  protected readonly darfBauteilkatalog = computed(() => this.auth.darf('property', 'LESEN'));
   /** `darfAlle`: Kategorien-/Pausenpflege ist mit `require` gesichert (403 bei EIGENE). */
   protected readonly darfZeiterfassung = computed(() => this.auth.darfAlle('hr', 'LESEN'));
 }

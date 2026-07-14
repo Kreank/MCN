@@ -1,0 +1,374 @@
+<p class="sr-only" role="status" aria-live="polite">{{ ansage() }}</p>
+
+@if (offenerRaum()) {
+  <app-raum-editor
+    [propertyId]="propertyId()"
+    [raum]="bearbeiteterRaum()"
+    [darfAendern]="bearbeiteterRaum() ? darfAendern() : darfAnlegen()"
+    (gespeichert)="gespeichert($event)"
+    (abbrechen)="zurueckZurListe()"
+  />
+} @else {
+  @switch (zustand()) {
+    @case ('loading') {
+      <p class="lade-hinweis" role="status">Räume werden geladen …</p>
+    }
+
+    @case ('error') {
+      <div class="note note--error" role="alert">
+        <h2 class="note__titel">Räume konnten nicht geladen werden</h2>
+        <p class="note__text">{{ fehler() }}</p>
+        <div class="note__aktionen">
+          <button type="button" class="btn btn--primary" (click)="neuLaden()">
+            Erneut versuchen
+          </button>
+        </div>
+      </div>
+    }
+
+    @case ('ready') {
+      <section class="ra">
+        <header class="ra__kopf">
+          <div>
+            <h2 class="ra__titel" id="raum-liste-titel" tabindex="-1">Raumaufmaß</h2>
+            <p class="ra__lead">
+              Räume aufnehmen — Grundlage für Heizlast, Leitungslängen und die spätere Planung. Ein
+              Raum nach dem anderen; jeder Schritt ist für sich speicherbar.
+            </p>
+          </div>
+          @if (darfAnlegen()) {
+            <button type="button" class="btn btn--primary ra__neu" (click)="raumAnlegen()">
+              <span aria-hidden="true">＋</span> Raum
+            </button>
+          }
+        </header>
+
+        @if (nachladeFehler(); as f) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ f }}</span>
+          </div>
+        }
+
+        <!-- Zwei Blicke auf dieselben Räume. Die Zeichnung ist kein zweiter
+             Datenbestand: alle Räume eines Geschosses liegen ohnehin im selben
+             Koordinatensystem, man muss sie nur zusammen zeichnen. -->
+        <div class="ra__ansicht" role="group" aria-label="Ansicht">
+          <button
+            type="button"
+            class="ra__ansicht-btn"
+            [class.ra__ansicht-btn--an]="ansicht() === 'liste'"
+            [attr.aria-pressed]="ansicht() === 'liste'"
+            (click)="ansicht.set('liste')"
+          >
+            <span aria-hidden="true">☰</span> Liste
+          </button>
+          <button
+            type="button"
+            class="ra__ansicht-btn"
+            [class.ra__ansicht-btn--an]="ansicht() === 'grundriss'"
+            [attr.aria-pressed]="ansicht() === 'grundriss'"
+            (click)="ansicht.set('grundriss')"
+          >
+            <span aria-hidden="true">▱</span> Grundriss
+            <span class="ra__ansicht-zahl">{{ gezeichnetAnzahl() }} gezeichnet</span>
+          </button>
+        </div>
+
+        <!-- Stillgelegte Räume sind KEIN Client-Filter: der Server liefert sie nur
+             auf Nachfrage und hält sie aus den Summen heraus. Der Schalter steht
+             deshalb auch dann da, wenn gerade KEIN aktiver Raum sichtbar ist —
+             sonst käme man an die stillgelegten nicht mehr heran. -->
+        <label class="ra__schalter">
+          <input
+            type="checkbox"
+            class="ra__schalter-box"
+            [checked]="mitInaktiven()"
+            (change)="mitInaktiven.set($any($event.target).checked)"
+          />
+          <span class="ra__schalter-text">
+            Stillgelegte Räume anzeigen
+            <span class="ra__schalter-hinweis">
+              Sie zählen in keiner Summe mit — auch nicht, wenn sie hier stehen.
+            </span>
+          </span>
+        </label>
+
+        @if (raeume().length === 0) {
+          <div class="tab-platzhalter">
+            <p>Für diese Liegenschaft ist noch kein Raum erfasst.</p>
+            @if (darfAnlegen()) {
+              <p>Mit <strong>„＋ Raum"</strong> den ersten Raum aufnehmen.</p>
+            }
+          </div>
+        } @else {
+          <!-- Warum steht bei den Räumen „unbekannt"? Weil dem OBJEKT eine Angabe
+               fehlt. Der Weg dorthin gehört hierher, nicht ins Ratespiel. -->
+          @if (aussentemperaturFehlt()) {
+            <div class="ra__luecke" role="status">
+              <span class="stamp stamp--warn">Heizlast unbekannt</span>
+              <span class="ra__luecke-text">
+                <strong>Die Auslegungs-Außentemperatur des Objekts fehlt</strong> — deshalb bleibt
+                die Heizlast <em>aller</em> Räume unbekannt (sie wird nicht geschätzt und nicht als
+                0 gezeigt). Sie ist eine Eigenschaft des Standorts, nicht des einzelnen Raumes.
+              </span>
+              <button type="button" class="btn ra__luecke-btn" (click)="zuAuslegung()">
+                Auslegungsdaten ergänzen
+              </button>
+            </div>
+          }
+
+          @if (ansicht() === 'grundriss') {
+            @if (gezeichnetAnzahl() === 0) {
+              <div class="tab-platzhalter">
+                <p>Noch kein Raum hat einen Umriss.</p>
+                <p>
+                  Einen Raum öffnen und unter <strong>„Grundriss"</strong> zeichnen — Fläche und
+                  Umfang fallen dann aus der Zeichnung heraus, statt getippt zu werden.
+                </p>
+              </div>
+            }
+            @for (g of geschosse(); track g.key) {
+              <app-geschoss-plan
+                [label]="g.label"
+                [raeume]="g.raeume"
+                (raumOeffnen)="raumOeffnen($event)"
+              />
+            }
+          } @else {
+            @for (g of geschosse(); track g.key) {
+              <section class="ra__geschoss" [attr.aria-label]="'Geschoss ' + g.label">
+                <header class="ra__geschoss-kopf">
+                  <h3 class="ra__geschoss-name">{{ g.label }}</h3>
+                  <p class="ra__geschoss-summe">
+                    {{ g.aktivAnzahl }} {{ g.aktivAnzahl === 1 ? 'Raum' : 'Räume' }} ·
+                    {{ summe(g.flaeche) }} m² · {{ summe(g.volumen) }} m³
+                    @if (g.inaktivAnzahl) {
+                      <span class="ra__geschoss-still">
+                        · {{ g.inaktivAnzahl }} stillgelegt (nicht gezählt)
+                      </span>
+                    }
+                  </p>
+                </header>
+
+                <ul class="ra__liste">
+                  @for (r of g.raeume; track r.id) {
+                    <li class="ra__zeile">
+                      <button
+                        type="button"
+                        class="rk"
+                        [class.rk--inaktiv]="stillgelegt(r)"
+                        (click)="raumOeffnen(r.id)"
+                      >
+                        <span class="rk__name">
+                          {{ r.name }}
+                          @if (stillgelegt(r)) {
+                            <!-- Text UND Zeichen — nie nur Farbe. -->
+                            <span class="stamp stamp--warn rk__still">
+                              <span aria-hidden="true">⊘</span> stillgelegt
+                            </span>
+                          }
+                        </span>
+                        <span class="stamp stamp--type rk__nutzung">{{ nutzung(r) }}</span>
+                        <span class="rk__zahl">
+                          <span class="rk__zahl-label">Fläche</span>
+                          {{ wert(r.floor_area_m2, 'm²', 2, '—') }}
+                        </span>
+                        <span class="rk__zahl">
+                          <span class="rk__zahl-label">Volumen</span>
+                          {{ wert(r.volume_m3, 'm³', 2, '—') }}
+                        </span>
+                        <span class="rk__zahl">
+                          <span class="rk__zahl-label">Heizlast</span>
+                          @if (stillgelegt(r)) {
+                            <span class="rk__unbekannt">zählt nicht mit</span>
+                          } @else if (r.kennzahlen.heizlast_huellflaeche_w != null) {
+                            {{ kw(r.kennzahlen.heizlast_huellflaeche_w) }}
+                          } @else {
+                            <span class="rk__unbekannt">
+                              <span aria-hidden="true">?</span> unbekannt
+                            </span>
+                          }
+                        </span>
+                        <span class="rk__pfeil" aria-hidden="true">›</span>
+                      </button>
+
+                      @if (darfAendern()) {
+                        @if (stillgelegt(r)) {
+                          <button
+                            type="button"
+                            class="btn ra__akt"
+                            [disabled]="statusLaeuft()"
+                            (click)="reaktivieren(r)"
+                          >
+                            Wieder aktivieren
+                          </button>
+                        } @else {
+                          <button
+                            type="button"
+                            class="btn ra__akt"
+                            [disabled]="statusLaeuft()"
+                            (click)="stilllegenFragen(r)"
+                            [attr.aria-label]="'Raum ' + r.name + ' stilllegen'"
+                          >
+                            Stilllegen
+                          </button>
+                        }
+                      }
+                    </li>
+                  }
+                </ul>
+              </section>
+            }
+          }
+
+          <p class="ra__gesamt">
+            <span class="ra__gesamt-label">Summe aller aktiven Räume</span>
+            <strong>{{ aktiveRaeume().length }} Räume</strong>
+            <strong>{{ summe(gesamtFlaeche()) }} m²</strong>
+            <strong>{{ summe(gesamtVolumen()) }} m³</strong>
+          </p>
+          @if (inaktivAnzahl()) {
+            <p class="ra__still-hinweis">
+              <span class="stamp stamp--warn">stillgelegt</span>
+              {{ inaktivAnzahl() }}
+              {{ inaktivAnzahl() === 1 ? 'Raum ist' : 'Räume sind' }} stillgelegt und in keiner
+              Summe enthalten — auch nicht in der Aufmaß-Summe des Servers. Gelöscht wird nie: ein
+              Aufmaß ist der Nachweis über den Bestand.
+            </p>
+          }
+        }
+
+        <!-- ------------------------- Auslegungsdaten des Objekts ------------ -->
+        @if (auslegung(); as au) {
+          <app-auslegung-panel
+            [propertyId]="propertyId()"
+            [auslegung]="au"
+            [darfAendern]="darfAendern()"
+            (gespeichert)="auslegungGespeichert()"
+          />
+        } @else {
+          <div class="note note--warnung" role="status">
+            <h3 class="note__titel">Auslegungsdaten nicht geladen</h3>
+            <p class="note__text">
+              Auslegungs-Außentemperatur, Gebäudekennwert und die Aufmaß-Summe konnten nicht geladen
+              werden. Ohne sie lässt sich nicht sagen, warum eine Heizlast unbekannt ist.
+            </p>
+            <div class="note__aktionen">
+              <button type="button" class="btn btn--primary" (click)="neuLaden()">
+                Erneut versuchen
+              </button>
+            </div>
+          </div>
+        }
+
+        <!-- ------------------------- Aufmaß der Liegenschaft ---------------- -->
+        @if (aufmass(); as a) {
+          <section class="am" aria-labelledby="ra-aufmass-titel">
+            <h3 class="am__titel" id="ra-aufmass-titel">Aufmaß der Liegenschaft</h3>
+
+            <dl class="am__raster">
+              <div class="am__wert">
+                <dt>Räume</dt>
+                <dd>{{ a.raeume_anzahl }}</dd>
+              </div>
+              <div class="am__wert">
+                <dt>Fläche</dt>
+                <dd>{{ wert(a.flaeche_m2, 'm²', 2, '—') }}</dd>
+              </div>
+              <div class="am__wert">
+                <dt>Volumen</dt>
+                <dd>{{ wert(a.volumen_m3, 'm³', 2, '—') }}</dd>
+              </div>
+              <div class="am__wert">
+                <dt>Umfang</dt>
+                <dd>{{ wert(a.umfang_m, 'm', 2) }}</dd>
+              </div>
+              <div class="am__wert">
+                <dt>Heizlast (Kennwert)</dt>
+                <dd>
+                  @if (a.heizlast_kennwert_w != null) {
+                    {{ kw(a.heizlast_kennwert_w) }}
+                  } @else {
+                    <span class="am__unbekannt">
+                      <span class="stamp stamp--warn">?</span> unbekannt
+                    </span>
+                  }
+                </dd>
+              </div>
+              <div class="am__wert">
+                <dt>Heizlast (Hüllfläche)</dt>
+                <dd>
+                  @if (a.heizlast_huellflaeche_w != null) {
+                    {{ kw(a.heizlast_huellflaeche_w) }}
+                  } @else {
+                    <span class="am__unbekannt">
+                      <span class="stamp stamp--warn">?</span> unbekannt
+                    </span>
+                  }
+                </dd>
+              </div>
+              <div class="am__wert">
+                <dt>Leitungslänge (Schätzung)</dt>
+                <dd>{{ wert(a.leitungslaenge_schaetzung_m, 'm', 1) }}</dd>
+              </div>
+              <div class="am__wert">
+                <dt>ohne Steigleitungsabstand</dt>
+                <dd>{{ a.raeume_ohne_steigleitung }} Räume</dd>
+              </div>
+            </dl>
+
+            @if (a.unbekannt_raeume.length) {
+              <p class="am__offen">
+                <span class="stamp stamp--warn">Heizlast unbekannt</span>
+                <span>
+                  Für {{ a.unbekannt_raeume.length }}
+                  {{ a.unbekannt_raeume.length === 1 ? 'Raum' : 'Räume' }} fehlen Angaben:
+                  {{ a.unbekannt_raeume.join(', ') }}. Die Summe zählt sie nicht mit — sie werden
+                  <strong>nicht als 0 geschätzt</strong>.
+                </span>
+                @if (aussentemperaturFehlt()) {
+                  <button type="button" class="btn am__btn" (click)="zuAuslegung()">
+                    Auslegungsdaten ergänzen
+                  </button>
+                }
+              </p>
+            }
+
+            @if (a.hinweise.length) {
+              <ul class="am__hinweise">
+                @for (h of a.hinweise; track $index) {
+                  <li><span aria-hidden="true">•</span> {{ h }}</li>
+                }
+              </ul>
+            }
+
+            <p class="am__haftung">
+              <span class="am__haftung-mark" aria-hidden="true">!</span>
+              <span><strong>Überschlägig — kein Nachweis.</strong> {{ haftung }}</span>
+            </p>
+          </section>
+        }
+      </section>
+
+      @if (stillzulegen(); as r) {
+        <app-bestaetigung
+          [offen]="true"
+          titel="Raum stilllegen?"
+          [text]="
+            'Der Raum „' +
+            r.name +
+            '“ wird stillgelegt: er bleibt als Nachweis über den Bestand erhalten, zählt aber in ' +
+            'keiner Summe mehr mit (Fläche, Volumen, Heizlast). Gelöscht wird er nicht. ' +
+            'Rückgängig machen lässt sich das jederzeit über „Wieder aktivieren“.'
+          "
+          bestaetigenLabel="Stilllegen"
+          [gefahr]="true"
+          [laedt]="statusLaeuft()"
+          (bestaetigen)="stilllegenBestaetigen()"
+          (abbrechen)="stilllegenAbbrechen()"
+        />
+      }
+    }
+  }
+}

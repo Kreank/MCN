@@ -532,6 +532,16 @@ export const routes: Routes = [
           import('./features/lohngruppen/lohngruppen').then((m) => m.Lohngruppen),
       },
       {
+        // Bauteilkatalog (Vorlagen fürs Raumaufmaß). Er hängt am Objektregister,
+        // nicht an der Firma: Lesen mit property/LESEN, Anlegen/Ändern gatet der
+        // Server (property/ANLEGEN bzw. AENDERN) — die Seite schaltet read-only.
+        path: 'einstellungen/bauteilkatalog',
+        title: 'Bauteilkatalog — MCN Leitstand',
+        canActivate: [darfGuard('property', 'LESEN')],
+        loadComponent: () =>
+          import('./features/bauteilkatalog/bauteilkatalog').then((m) => m.Bauteilkatalog),
+      },
+      {
         path: 'einstellungen/akquisekanaele',
         title: 'Akquisekanäle — MCN Leitstand',
         canActivate: [darfGuard('company', 'LESEN')],

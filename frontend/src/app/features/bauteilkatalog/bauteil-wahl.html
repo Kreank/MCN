@@ -1,0 +1,89 @@
+<label class="bw__feld">
+  <span class="bw__label">Bauteil aus dem Katalog</span>
+  <!-- Die Auswahl gehoert an die <option> (`[selected]`), nicht als `[value]` an
+       das <select>: das liefe vor den Optionen und fiele still auf "" zurueck. -->
+  <select
+    class="bw__select"
+    [id]="feldId()"
+    [name]="feldId()"
+    (change)="waehlen($any($event.target).value)"
+  >
+    <option value="" [selected]="!templateId()">ohne Vorlage (U-Wert von Hand)</option>
+    @if (stillgelegteVorlage()) {
+      <option [value]="templateId()" selected>Vorlage stillgelegt (Wert bleibt erfasst)</option>
+    }
+    @for (v of vorlagen(); track v.id) {
+      <option [value]="v.id" [selected]="v.id === templateId()">
+        {{ v.name }}{{ ohne(v) ? ' — ohne U-Wert' : '' }}
+      </option>
+    }
+  </select>
+</label>
+
+@switch (herkunft().art) {
+  @case ('aus-vorlage') {
+    <p class="bw__note">
+      <span class="stamp stamp--positive">aus Vorlage</span>
+      <span class="bw__text">
+        U-Wert <strong>{{ katalogWert() }} W/m²K</strong> aus dem Katalog übernommen — als
+        <strong>Kopie</strong>. Eine spätere Änderung im Katalog ändert dieses Aufmaß nicht.
+      </span>
+    </p>
+  }
+  @case ('abweichend') {
+    <p class="bw__note">
+      <span class="stamp stamp--warn">abweichend</span>
+      <span class="bw__text">
+        Der U-Wert wurde <strong>abweichend angegeben</strong> (ein gemessener Wert schlägt die
+        Vorlage). Der Katalog liefert {{ katalogWert() }} W/m²K.
+      </span>
+      <button type="button" class="bw__mini" (click)="uebernehmen()">
+        Vorlagenwert übernehmen
+      </button>
+    </p>
+  }
+  @case ('fehlt') {
+    <p class="bw__note">
+      <span class="stamp stamp--warn">U-Wert leer</span>
+      <span class="bw__text">
+        Hier steht kein U-Wert — <strong>die Heizlast bleibt unbekannt</strong>. Die Vorlage liefert
+        {{ katalogWert() }} W/m²K.
+      </span>
+      <button type="button" class="bw__mini" (click)="uebernehmen()">
+        Vorlagenwert übernehmen
+      </button>
+    </p>
+  }
+  @case ('vorlage-ohne-wert') {
+    <!-- Auslieferungszustand des Katalogs, KEIN Fehler — aber sichtbar, sonst
+         wundert sich der Nutzer, warum die Heizlast unbekannt bleibt. -->
+    <p class="bw__note">
+      <span class="stamp stamp--warn">U-Wert fehlt</span>
+      <span class="bw__text">
+        U-Wert im Katalog nicht hinterlegt — <strong>Heizlast bleibt unbekannt</strong>. Entweder
+        hier von Hand eintragen oder einmalig im Katalog hinterlegen.
+      </span>
+      <a class="bw__link" [routerLink]="katalogPfad">Zum Bauteilkatalog</a>
+    </p>
+  }
+  @case ('eigener-wert') {
+    <p class="bw__note">
+      <span class="stamp stamp--type">eigener Wert</span>
+      <span class="bw__text">
+        Die Vorlage hat keinen U-Wert im Katalog; der Wert hier ist von Hand eingetragen.
+      </span>
+      <a class="bw__link" [routerLink]="katalogPfad">Im Katalog hinterlegen</a>
+    </p>
+  }
+  @default {
+    @if (stillgelegteVorlage()) {
+      <p class="bw__note">
+        <span class="stamp stamp--warn">Vorlage stillgelegt</span>
+        <span class="bw__text">
+          Die damals gewählte Vorlage ist nicht mehr aktiv. Der erfasste U-Wert bleibt gültig — er
+          ist eine Kopie, kein Verweis.
+        </span>
+      </p>
+    }
+  }
+}

@@ -1,0 +1,76 @@
+// Auswahlfeld „Bauteil" im Raum-Editor. Gleiche Anmutung wie die Inline-Felder
+// dort (.ef): Baustelle, Handschuhe, >= 44px Klickflaeche. Farben nur aus Tokens.
+
+:host {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.bw__feld {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+.bw__label {
+  font-size: var(--step--1);
+  font-weight: 600;
+  color: var(--ink-muted);
+}
+.bw__select {
+  min-height: 48px;
+  padding: 0 var(--space-3);
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: var(--step-0);
+
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 1px;
+  }
+}
+
+// Herkunft des U-Werts: Wortmarke + Klartext + Weg. Nie nur Farbe.
+.bw__note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--step--1);
+  line-height: 1.5;
+  color: var(--ink-muted);
+}
+.bw__text {
+  flex: 1 1 16rem;
+}
+.bw__mini,
+.bw__link {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: var(--step--1);
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--ink);
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}

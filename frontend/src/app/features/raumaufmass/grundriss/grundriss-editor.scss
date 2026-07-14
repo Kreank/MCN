@@ -1,0 +1,487 @@
+// Grundriss-Editor — Bauzeichnung, kein Malprogramm.
+// Farben ausschliesslich aus den Design-Tokens (styles/_tokens.scss), damit Light
+// UND Dark tragen. Kein Zustand haengt allein an der Farbe: jede Kante traegt ihre
+// Nummer und ihr Kuerzel als Text, jeder Fehler steht im Klartext daneben.
+
+:host {
+  display: block;
+}
+
+.ge {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+// ---------------------------------------------------------------- Leiste ---
+.ge__leiste {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+}
+.ge__gruppe {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+// Ein Knopf-Grundtyp fuer Werkzeug, Raster-Auswahl und Eingabefelder.
+.ge__werkzeug,
+.ge__raster-wahl,
+.kz__eingabe,
+.mini,
+.ge__plus {
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+}
+.ge__werkzeug,
+.mini,
+.ge__plus {
+  font-weight: 600;
+  cursor: pointer;
+
+  &:hover:not(:disabled),
+  &:focus-visible {
+    border-color: var(--ink);
+  }
+  &:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+}
+.ge__werkzeug,
+.ge__raster-wahl {
+  min-height: 44px;
+  padding: 0 var(--space-3);
+}
+// Aktiv: Flaeche + Zeichen im Text (aria-pressed traegt es zusaetzlich).
+.ge__werkzeug--an {
+  border-color: var(--accent-ink);
+  background: var(--accent-ink);
+  color: var(--surface);
+}
+.mini {
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  font-size: var(--step--1);
+}
+.ge__plus {
+  align-self: flex-start;
+  min-height: 48px;
+  padding: 0 var(--space-4);
+  border-style: dashed;
+  border-color: var(--accent-ink);
+  background: transparent;
+  color: var(--accent-ink);
+}
+
+.ge__raster {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.ge__raster-label,
+.ge__massstab-label,
+.ge__offen-titel {
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-hint);
+}
+.ge__massstab {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+// ---------------------------------------------------------------- Buehne ---
+.ge__buehne {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+.ge__blatt,
+.ge__liste {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.ge__liste {
+  max-height: 42rem;
+  overflow-y: auto;
+  padding-right: var(--space-2);
+}
+
+.ge__svg {
+  display: block;
+  width: 100%;
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  touch-action: none; // sonst scrollt das Blatt, statt zu zeichnen
+
+  &:focus-visible {
+    outline: 3px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+.ge__svg--zeichnet {
+  cursor: crosshair;
+}
+
+.ge__gitter {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+.ge__flaeche {
+  fill: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.ge__flaeche--fehler {
+  fill: color-mix(in srgb, var(--warn) 20%, transparent);
+}
+
+// Ohne Wand: duenn und gestrichelt. Mit Wand: dick. Form, nicht nur Farbe.
+.ge__kante-linie {
+  stroke: var(--ink-muted);
+  stroke-width: 2;
+  stroke-dasharray: 7 5;
+  stroke-linecap: round;
+}
+.ge__kante-linie--wand {
+  stroke: var(--ink);
+  stroke-width: 5;
+  stroke-dasharray: none;
+}
+.ge__kante--fehler .ge__kante-linie {
+  stroke: var(--warn-ink);
+  stroke-width: 6;
+  stroke-dasharray: 3 4;
+}
+
+// Beschriftungen auf der Zeichnung: Kontur gegen den Untergrund (lesbar in
+// Light UND Dark, ohne dass die Schrift die Farbe wechseln muesste).
+.ge__kante-text,
+.ge__oeffnung-text,
+.ge__nord-text {
+  font-family: var(--font-mono);
+  paint-order: stroke;
+  stroke: var(--surface);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+.ge__kante-text {
+  fill: var(--ink-muted);
+  font-size: 14px;
+}
+.ge__kante--fehler .ge__kante-text {
+  fill: var(--warn-ink);
+  font-weight: 700;
+}
+.ge__oeffnung-text {
+  fill: var(--ink);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.ge__oeffnung-band {
+  stroke: var(--accent-ink);
+  stroke-width: 8;
+}
+.ge__oeffnung--tuer .ge__oeffnung-band,
+.ge__tuer-bogen {
+  stroke: var(--warn-ink);
+}
+.ge__tuer-bogen {
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+}
+
+// Die sichtbare Marke — klein und praezise.
+.ge__punkt-marke {
+  fill: var(--surface);
+  stroke: var(--ink);
+  stroke-width: 2.5;
+  pointer-events: none;
+}
+.ge__punkt--fehler .ge__punkt-marke {
+  fill: var(--warn);
+  stroke: var(--warn-ink);
+  stroke-width: 4;
+}
+.ge__punkt-marke--aktiv {
+  fill: var(--accent);
+}
+// Der Griff — unsichtbar, aber gross genug fuer Finger, Handschuh und WCAG 2.5.8.
+.ge__punkt-griff {
+  fill: transparent;
+  pointer-events: all;
+  cursor: grab;
+
+  &:focus-visible {
+    outline: 3px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+.ge__punkt-nr {
+  fill: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  pointer-events: none;
+}
+
+.ge__nord-dot {
+  fill: var(--ink);
+}
+.ge__nord-linie {
+  stroke: var(--ink);
+  stroke-width: 2.5;
+}
+.ge__nord-text {
+  fill: var(--ink);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.ge__hilfe,
+.ge__vorschau-hinweis,
+.ge__liste-lead,
+.ge__offen-lead,
+.kz__klein,
+.kz__notiz {
+  margin: 0;
+  font-size: var(--step--1);
+  line-height: 1.5;
+  color: var(--ink-hint);
+}
+
+.ge__vorschau {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+  gap: var(--space-3);
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+
+  dt {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-hint);
+  }
+  dd {
+    margin: 0;
+    font-size: var(--step-1);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink);
+  }
+}
+
+// ------------------------------------------------------------ Kantenliste ---
+.ge__liste-titel {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--step-1);
+  color: var(--ink);
+}
+
+.kz {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.kz--fehler {
+  border-left-color: var(--warn-ink);
+  background: var(--warn-tint);
+}
+.kz__kopf,
+.kz__zeile,
+.kz__akt,
+.kz__wand-kopf,
+.kz__wand-zahl,
+.kz__oeffnung-kopf,
+.kz__ohne,
+.kz__notiz,
+.ge__hinweis,
+.ge__befund {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+}
+.kz__zeile {
+  align-items: flex-end;
+  gap: var(--space-3);
+}
+.kz__nr {
+  margin: 0;
+  font-size: var(--step-0);
+  font-weight: 700;
+  color: var(--ink);
+}
+.kz__feld {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 8rem;
+}
+.kz__label {
+  font-size: var(--step--1);
+  font-weight: 600;
+  color: var(--ink-muted);
+}
+.kz__eingabe {
+  min-height: 48px;
+  padding: 0 var(--space-3);
+
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 1px;
+  }
+  &:disabled {
+    background: var(--surface-sunken);
+    color: var(--ink-muted);
+  }
+}
+.kz__eingabe--zahl,
+.kz__abgeleitet {
+  font-size: var(--step-1);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.kz__eingabe--zahl {
+  text-align: right;
+}
+// Die schliessende Kante ist ABGELEITET — sie sieht deshalb aus wie ein Wert,
+// nicht wie ein Feld (gestrichelter Rahmen), und ist es auch.
+.kz__abgeleitet {
+  display: flex;
+  align-items: center;
+  min-height: 48px;
+  padding: 0 var(--space-3);
+  border: 1.5px dashed var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  color: var(--ink);
+}
+.kz__wand,
+.kz__oeffnung {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+}
+.kz__wand-kopf,
+.kz__wand-zahl,
+.kz__oeffnung-kopf {
+  color: var(--ink);
+}
+.kz__notiz--fehler {
+  color: var(--warn-ink);
+  font-weight: 600;
+}
+.kz__ohne {
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+.kz__klein {
+  font-weight: 400;
+}
+
+// Ungeloeste Enden: Oeffnungen ohne Lage und Fehlerbefunde. Beide sind Warnungen
+// mit TEXT — die gelbe Flaeche ist nur der zweite Kanal.
+.ge__offen,
+.ge__befunde {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-3);
+  border: 1.5px solid var(--warn);
+  border-left-width: 5px;
+  border-radius: var(--radius);
+  background: var(--warn-tint);
+  list-style: none;
+}
+.ge__befunde {
+  border-color: var(--warn-ink);
+}
+.ge__befund {
+  align-items: baseline;
+  color: var(--ink);
+  line-height: 1.5;
+}
+.ge__offen-liste {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+
+  li {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    color: var(--ink);
+  }
+}
+
+.ge__aktionen {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+.ge__hinweis {
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+.ge__hinweis--stark {
+  flex: 1 1 20rem;
+  padding: var(--space-3);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+}
+
+@media (max-width: 62rem) {
+  .ge__buehne {
+    grid-template-columns: 1fr;
+  }
+  .ge__liste {
+    max-height: none;
+  }
+}

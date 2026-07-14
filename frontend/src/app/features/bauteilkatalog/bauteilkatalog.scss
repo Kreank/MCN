@@ -1,0 +1,220 @@
+// Bauteilkatalog — Stammdatenpflege. Anmutung wie die uebrigen Katalogseiten
+// (Akquisekanaele, Gewerke). Farben ausschliesslich aus den Design-Tokens.
+
+.bk {
+  max-width: var(--content-w);
+  margin: 0 auto;
+}
+
+.page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-3);
+}
+.page-head__kicker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+}
+.page-head__scale {
+  width: 2.5rem;
+  height: 0.5rem;
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--line-strong) 0,
+    var(--line-strong) 1px,
+    transparent 1px,
+    transparent 0.5rem
+  );
+  border-bottom: 1.5px solid var(--line-strong);
+}
+.page-head__titel {
+  font-size: var(--step-3);
+}
+.page-hint {
+  margin: 0 0 var(--space-4);
+  max-width: 46rem;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+// Die zwei Saetze, ohne die der Katalog missverstanden wird.
+.bk__regeln {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent-ink);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+}
+.bk__regel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3);
+  margin: 0;
+  font-size: var(--step--1);
+  line-height: 1.55;
+  color: var(--ink-muted);
+
+  span:last-child {
+    flex: 1 1 24rem;
+  }
+}
+
+.bk__luecke {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-5);
+  padding: var(--space-4);
+  border: 1.5px solid var(--warn);
+  border-left-width: 5px;
+  border-radius: var(--radius);
+  background: var(--warn-tint);
+  color: var(--warn-ink);
+}
+.bk__luecke-text {
+  flex: 1 1 22rem;
+  font-size: var(--step--1);
+  line-height: 1.55;
+}
+
+.bk__neu {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  margin-bottom: var(--space-6);
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.bk__neu-titel {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--step-1);
+  color: var(--ink);
+}
+.bk__neu-felder {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: var(--space-4);
+  width: 100%;
+}
+
+.bk__gruppe {
+  margin-bottom: var(--space-6);
+}
+.bk__gruppe-kopf {
+  margin-bottom: var(--space-3);
+  padding-bottom: var(--space-2);
+  border-bottom: 2px solid var(--line-strong);
+}
+.bk__gruppe-titel {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+}
+.bk__gruppe-lead {
+  margin: var(--space-2) 0 0;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+.tabelle-rahmen {
+  overflow-x: auto;
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+.bk__tabelle {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 48rem;
+
+  th,
+  td {
+    text-align: left;
+    padding: var(--space-3) var(--space-4);
+    vertical-align: top;
+    border-bottom: 1px solid var(--line);
+  }
+  thead th {
+    font-size: var(--step--1);
+    color: var(--ink-muted);
+  }
+  tbody tr:last-child th,
+  tbody tr:last-child td {
+    border-bottom: none;
+  }
+}
+.bk__notiz {
+  display: block;
+  margin-top: 0.15rem;
+  font-weight: 400;
+  font-size: var(--step--1);
+  color: var(--ink-hint);
+}
+.bk__u-wert {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+// „noch nicht hinterlegt" ist ein WORT (+ Zeichen), nie nur eine Farbe.
+.bk__ohne-wert {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-weight: 600;
+  font-size: var(--step--1);
+  color: var(--warn-ink);
+}
+.bk__u-edit {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 12rem;
+}
+
+.bk__status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: 600;
+  font-size: var(--step--1);
+}
+.bk__status--aktiv {
+  color: var(--positive-ink);
+}
+.bk__status--inaktiv {
+  color: var(--ink-muted);
+}
+// Stillgelegt: gedaempft — aber die Wortmarke oben traegt die Aussage.
+.bk__zeile--inaktiv th,
+.bk__zeile--inaktiv td {
+  background: var(--surface-sunken);
+}
+.bk__aktionen {
+  white-space: nowrap;
+}
+.bk__zeilen-aktionen {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}

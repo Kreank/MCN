@@ -1,0 +1,883 @@
+<section class="re">
+  <p class="sr-only" role="status" aria-live="polite">{{ ansage() }}</p>
+
+  <header class="re__kopf">
+    <button type="button" class="btn" (click)="abbrechen.emit()">
+      <span aria-hidden="true">←</span> Raumliste
+    </button>
+    <h2 class="re__titel">{{ raum() ? raum()!.name : 'Neuer Raum' }}</h2>
+  </header>
+
+  <!-- ============================ 1. Der Raum ============================ -->
+  <form class="re__block" [formGroup]="form" (submit)="$event.preventDefault(); raumSpeichern()">
+    <div class="re__block-kopf">
+      <p class="re__schritt">Schritt 1</p>
+      <h3 class="re__block-titel">Der Raum</h3>
+    </div>
+
+    @if (raumFehler(); as f) {
+      <div class="melde melde--fehler" role="alert">
+        <span class="melde__mark" aria-hidden="true">!</span>
+        <span class="melde__text"><strong>Fehler:</strong> {{ f }}</span>
+      </div>
+    }
+
+    <div class="re__felder">
+      <app-feld
+        [control]="form.controls.name"
+        label="Name"
+        [pflicht]="true"
+        hinweis="z. B. Wohnzimmer"
+      />
+      <app-feld
+        [control]="form.controls.storey"
+        label="Geschoss"
+        hinweis="z. B. EG, OG, DG — gruppiert die Raumliste"
+      />
+      <app-feld
+        [control]="form.controls.room_type"
+        label="Nutzung"
+        typ="select"
+        platzhalter="ohne Angabe"
+        [optionen]="nutzungOptionen"
+      />
+    </div>
+
+    <div class="re__masse">
+      <app-feld [control]="form.controls.length_m" label="Länge (m)" typ="zahl" />
+      <span class="re__mal" aria-hidden="true">×</span>
+      <app-feld [control]="form.controls.width_m" label="Breite (m)" typ="zahl" />
+    </div>
+
+    <!-- WER ZEICHNET, MISST NICHT DOPPELT. Hat der Raum einen Umriss, rechnet der
+         SERVER Fläche und Umfang aus dem Polygon — dann gibt es hier nichts zu
+         tippen, sondern nur das Ergebnis zu lesen. Ein zweiter Satz Zahlen, der
+         auseinanderlaufen kann, wäre genau der Fehler, den 0091 abschafft. -->
+    @if (gezeichnet()) {
+      <div class="re__abgeleitet">
+        <p class="re__abgeleitet-kopf">
+          <span class="stamp stamp--positive">aus der Zeichnung berechnet</span>
+          Fläche und Umfang kommen aus dem Umriss (Gauß'sche Trapezformel bzw. Summe der
+          Kantenlängen) — <strong>gerechnet hat sie der Server</strong>. Sie sind deshalb hier nicht
+          tippbar.
+        </p>
+        <dl class="re__abgeleitet-raster">
+          <div>
+            <dt>Fläche</dt>
+            <dd>{{ wert(raum()!.kennzahlen.floor_area_m2, 'm²') }}</dd>
+          </div>
+          <div>
+            <dt>Umfang</dt>
+            <dd>{{ wert(raum()!.kennzahlen.perimeter_m, 'm') }}</dd>
+          </div>
+        </dl>
+        <div class="re__aktionen">
+          <button
+            type="button"
+            class="btn"
+            [disabled]="!darfAendern() || umrissLaeuft()"
+            (click)="umrissEntfernenFragen()"
+          >
+            Umriss entfernen
+          </button>
+          <p class="re__hinweis">
+            Danach sind Fläche und Umfang wieder von Hand einzutragen, und die Wände verlieren ihre
+            Kante.
+          </p>
+        </div>
+      </div>
+
+      <div class="re__felder">
+        <app-feld
+          [control]="form.controls.room_height_m"
+          label="Höhe (m)"
+          typ="zahl"
+          [pflicht]="true"
+          [hinweis]="
+            volumen()
+              ? 'Volumen: ' +
+                live(volumen()) +
+                ' m³ — und Grundlage der Wandflächen (Kante × Höhe).'
+              : 'lichte Raumhöhe — Grundlage der Wandflächen (Kantenlänge × Höhe).'
+          "
+        />
+      </div>
+    } @else {
+      <div class="re__flaeche">
+        <app-feld
+          [control]="form.controls.floor_area_m2"
+          label="Fläche (m²)"
+          typ="zahl"
+          [pflicht]="true"
+          [hinweis]="
+            flaecheManuell()
+              ? 'Von Hand eingetragen — sie gilt. Länge × Breite ist nur die Herleitung.'
+              : 'Wird aus Länge × Breite vorgerechnet und ist überschreibbar (L-förmige Räume).'
+          "
+        />
+        @if (flaecheAbweichung(); as vorschlag) {
+          <p class="re__abweichung">
+            <span class="stamp stamp--warn">Abweichung</span>
+            Länge × Breite ergäbe <strong>{{ live(vorschlag) }} m²</strong>.
+            <button type="button" class="mini" (click)="flaecheAusMassenUebernehmen()">
+              Wert übernehmen
+            </button>
+          </p>
+        }
+        @if (raum()) {
+          <p class="re__abweichung">
+            <span class="stamp stamp--type">nicht gezeichnet</span>
+            Für diesen Raum gibt es keinen Umriss — Fläche und Umfang sind Handeingabe.
+            <button type="button" class="mini" (click)="grundrissOffen.set(true)">
+              Raum zeichnen
+            </button>
+          </p>
+        }
+      </div>
+
+      <div class="re__felder">
+        <app-feld
+          [control]="form.controls.room_height_m"
+          label="Höhe (m)"
+          typ="zahl"
+          [pflicht]="true"
+          [hinweis]="volumen() ? 'Volumen: ' + live(volumen()) + ' m³' : 'lichte Raumhöhe'"
+        />
+        <app-feld
+          [control]="form.controls.perimeter_m"
+          label="Umfang (m)"
+          typ="zahl"
+          hinweis="Für Sockelleisten und Leitungslängen."
+        />
+      </div>
+    }
+
+    <button
+      type="button"
+      class="re__mehr"
+      [attr.aria-expanded]="erweitertOffen()"
+      aria-controls="re-erweitert"
+      (click)="erweitertOffen.set(!erweitertOffen())"
+    >
+      <span aria-hidden="true">{{ erweitertOffen() ? '▾' : '▸' }}</span>
+      Heizlast-Angaben (optional)
+    </button>
+
+    @if (erweitertOffen()) {
+      <div class="re__felder" id="re-erweitert">
+        <!-- Es gibt KEINE Server-Vorgabe: das Produkt liefert bewusst keine
+             DIN-Tabellen mit. Leer heißt hier nicht „Standardwert", sondern
+             „Heizlast bleibt unbekannt". Die Hinweise sagen genau das. -->
+        <app-feld
+          [control]="form.controls.indoor_temp_c"
+          label="Innentemperatur (°C)"
+          typ="zahl"
+          hinweis="Erforderlich für die Heizlast. Leer = sie bleibt unbekannt (es gibt keinen
+                   Standardwert), z. B. 20."
+        />
+        <app-feld
+          [control]="form.controls.air_change_rate"
+          label="Luftwechselrate (1/h)"
+          typ="zahl"
+          hinweis="Erforderlich für den Lüftungsanteil. Leer = die Heizlast bleibt unbekannt
+                   (es gibt keinen Standardwert), z. B. 0,5."
+        />
+        <app-feld
+          [control]="form.controls.heat_load_w_per_m2"
+          label="Kennwert (W/m²)"
+          typ="zahl"
+          hinweis="Nur fürs Flächenverfahren. Leer = es gilt der Gebäudekennwert aus den
+                   Auslegungsdaten des Objekts; fehlt auch der, bleibt es unbekannt."
+        />
+        <app-feld
+          [control]="form.controls.riser_distance_m"
+          label="Abstand zur Steigleitung (m)"
+          typ="zahl"
+          hinweis="Grundlage der Leitungslängen-Schätzung."
+        />
+        <app-feld [control]="form.controls.note" label="Notiz" typ="textarea" />
+      </div>
+    }
+
+    <div class="re__aktionen">
+      <button
+        type="submit"
+        class="btn btn--primary"
+        [disabled]="speichertRaum() || !darfAendern()"
+        [attr.aria-busy]="speichertRaum()"
+      >
+        {{ speichertRaum() ? 'Wird gespeichert …' : raum() ? 'Raum speichern' : 'Raum anlegen' }}
+      </button>
+      @if (!darfAendern()) {
+        <p class="re__hinweis">Zum Speichern fehlt das Recht am Objektregister.</p>
+      }
+    </div>
+  </form>
+
+  <!-- ============================ 2. Der Grundriss ======================== -->
+  <section class="re__block re__block--plan" aria-labelledby="re-plan-titel">
+    <div class="re__block-kopf">
+      <p class="re__schritt">Schritt 2</p>
+      <h3 class="re__block-titel" id="re-plan-titel">Grundriss — den Raum zeichnen</h3>
+      @if (raum()) {
+        <button
+          type="button"
+          class="re__mehr re__mehr--rechts"
+          [attr.aria-expanded]="grundrissOffen()"
+          aria-controls="re-plan"
+          (click)="grundrissOffen.set(!grundrissOffen())"
+        >
+          <span aria-hidden="true">{{ grundrissOffen() ? '▾' : '▸' }}</span>
+          {{ grundrissOffen() ? 'zuklappen' : gezeichnet() ? 'Umriss ansehen' : 'Raum zeichnen' }}
+        </button>
+      }
+    </div>
+
+    @if (!raum()) {
+      <p class="re__hinweis re__hinweis--stark">
+        Erst den Raum anlegen — danach lässt sich sein Umriss zeichnen.
+      </p>
+    } @else {
+      <p class="re__hinweis">
+        @if (gezeichnet()) {
+          <span class="stamp stamp--positive">gezeichnet</span>
+          Der Raum hat einen Umriss. Fläche und Umfang rechnet der Server daraus.
+        } @else {
+          <span class="stamp stamp--type">optional</span>
+          Ein Raum ohne Umriss bleibt gültig (Zahlen von Hand). Wer zeichnet, spart sich die
+          Doppeleingabe: Fläche, Umfang und die Wandflächen fallen aus dem Polygon heraus.
+        }
+      </p>
+
+      @if (grundrissOffen()) {
+        <div id="re-plan">
+          <app-grundriss-editor
+            [raum]="raum()!"
+            [huellen]="huellen()"
+            [oeffnungen]="oeffnungen()"
+            [raumHoehe]="hoeheFeld()"
+            [darfAendern]="darfAendern()"
+            [aufbauGeaendert]="aufbauGeaendert()"
+            (huelleSetzen)="huelleSetzen($event.uid, $event.patch)"
+            (huelleAnKante)="huelleAnKante($event)"
+            (oeffnungSetzen)="oeffnungSetzen($event.uid, $event.patch)"
+            (oeffnungAnWand)="oeffnungHinzufuegen($event)"
+            (aufbauSpeichern)="aufbauSpeichern()"
+            (entfernenAngefordert)="umrissEntfernenFragen()"
+            (gespeichert)="grundrissGespeichert($event)"
+          />
+        </div>
+      }
+    }
+  </section>
+
+  <!-- ============================ 3. Der Aufbau ========================== -->
+  <section class="re__block" aria-labelledby="re-aufbau-titel">
+    <div class="re__block-kopf">
+      <p class="re__schritt">Schritt 3</p>
+      <h3 class="re__block-titel" id="re-aufbau-titel">Aufbau — Hüllflächen &amp; Öffnungen</h3>
+    </div>
+
+    @if (!raum()) {
+      <p class="re__hinweis re__hinweis--stark">
+        Erst den Raum anlegen — danach lassen sich Wände, Decke, Boden und Fenster erfassen.
+      </p>
+    } @else {
+      @if (aufbauFehler(); as f) {
+        <div class="melde melde--fehler" role="alert">
+          <span class="melde__mark" aria-hidden="true">!</span>
+          <span class="melde__text"><strong>Fehler:</strong> {{ f }}</span>
+        </div>
+      }
+
+      @if (katalogFehler(); as f) {
+        <p class="re__hinweis" role="status">
+          <span class="stamp stamp--warn">Katalog nicht geladen</span>
+          {{ f }}
+        </p>
+      }
+
+      <!-- ---------------------------- Hüllflächen ------------------------- -->
+      @for (h of huellen(); track h.uid; let i = $index) {
+        <article class="hf">
+          <header class="hf__kopf">
+            <h4 class="hf__name">{{ wandName(h, i) }}</h4>
+            @if (h.edge_index !== null) {
+              <span class="stamp stamp--type">
+                Kante {{ h.edge_index + 1 }} · Fläche aus der Zeichnung ableitbar
+              </span>
+            }
+            <button
+              type="button"
+              class="mini"
+              [id]="'hf-weg-' + h.uid"
+              (click)="huelleEntfernen(h.uid)"
+              [attr.aria-label]="'Hüllfläche ' + wandName(h, i) + ' entfernen'"
+            >
+              Entfernen
+            </button>
+          </header>
+
+          <!-- ACHTUNG, alte Falle: `[value]` am <select> greift, BEVOR die <option>s
+               aus dem @for existieren — der Browser fällt still auf "" zurück und
+               das Feld log den Bediener an. Die Auswahl gehört deshalb an die
+               Option (`[selected]`), nicht an das Select. -->
+          <!-- Vorwahl aus dem Bauteilkatalog: setzt die Bauteilart und KOPIERT den
+               U-Wert ins Feld darunter (überschreibbar — ein gemessener Wert
+               schlägt die Vorlage). `template_id` merkt nur die Herkunft. -->
+          <div class="hf__zeile">
+            <app-bauteil-wahl
+              class="ef--breit"
+              [vorlagen]="flaechenVorlagen()"
+              [templateId]="h.template_id"
+              [uWert]="h.u_value"
+              [feldId]="'hf-vorlage-' + h.uid"
+              (gewaehlt)="huelleVorlage(h.uid, $event)"
+              (wertUebernehmen)="huelleVorlagenWert(h.uid, $event)"
+            />
+
+            <label class="ef">
+              <span class="ef__label">Bauteilart</span>
+              <select
+                class="ef__eingabe"
+                [id]="'hf-art-' + h.uid"
+                [name]="'hf-art-' + h.uid"
+                (change)="huelleSetzen(h.uid, { surface_type: $any($event.target).value })"
+              >
+                @for (a of bauteilArten; track a.wert) {
+                  <option [value]="a.wert" [selected]="a.wert === h.surface_type">
+                    {{ a.label }}
+                  </option>
+                }
+              </select>
+            </label>
+
+            <label class="ef">
+              <span class="ef__label">grenzt an</span>
+              <select
+                class="ef__eingabe"
+                [id]="'hf-nachbar-' + h.uid"
+                [name]="'hf-nachbar-' + h.uid"
+                (change)="huelleSetzen(h.uid, { adjacent: $any($event.target).value })"
+              >
+                @for (a of nachbarn; track a.wert) {
+                  <option [value]="a.wert" [selected]="a.wert === h.adjacent">{{ a.label }}</option>
+                }
+              </select>
+            </label>
+
+            <label class="ef">
+              <span class="ef__label">Richtung</span>
+              <select
+                class="ef__eingabe"
+                [id]="'hf-richtung-' + h.uid"
+                [name]="'hf-richtung-' + h.uid"
+                (change)="huelleSetzen(h.uid, { orientation: $any($event.target).value })"
+              >
+                <option value="" [selected]="!h.orientation">—</option>
+                @for (o of himmelsrichtungen; track o.wert) {
+                  <option [value]="o.wert" [selected]="o.wert === h.orientation">
+                    {{ o.label }}
+                  </option>
+                }
+              </select>
+            </label>
+
+            <label class="ef ef--breit">
+              <span class="ef__label">Bezeichnung</span>
+              <input
+                class="ef__eingabe"
+                type="text"
+                [id]="'hf-label-' + h.uid"
+                [name]="'hf-label-' + h.uid"
+                [value]="h.label"
+                (input)="huelleSetzen(h.uid, { label: $any($event.target).value })"
+                placeholder="z. B. Außenwand Nord"
+              />
+            </label>
+          </div>
+
+          <div class="hf__zeile">
+            <!-- BERECHNET vs. ABWEICHEND (Migration 0093).
+                 Sitzt die Wand auf einer Kante und hat niemand eine Fläche
+                 eingetragen, RECHNET SIE DER SERVER (Kantenlänge × Raumhöhe) — und
+                 rechnet sie neu, sobald sich Umriss oder Raumhöhe ändern. Deshalb
+                 steht hier dann kein Eingabefeld: Ein Wert im Feld würde mitgesendet
+                 und machte die Wand zur Handeingabe; eine spätere Höhenkorrektur
+                 ginge lautlos an ihr vorbei und die Heizlast wäre still falsch. -->
+            @if (istAbgeleitet(h)) {
+              <div class="ef">
+                <span class="ef__label">
+                  Fläche brutto (m²)
+                  <span class="stamp stamp--positive">berechnet</span>
+                </span>
+                <output class="ef__abgeleitet">{{ liveEinheit(abgeleitet(h), 'm²') }}</output>
+                @if (abgeleitet(h) !== null) {
+                  <span class="ef__hinweis">
+                    Aus der Zeichnung: Kante {{ h.edge_index! + 1 }} × Raumhöhe. Ändert sich der
+                    Umriss oder die Raumhöhe, rechnet der Server sie neu.
+                  </span>
+                } @else {
+                  <span class="ef__hinweis">
+                    Der Server rechnet sie aus der Kante. Ohne Raumhöhe lässt sie sich hier nicht
+                    vorrechnen — <strong>unbekannt, nicht 0</strong>.
+                  </span>
+                }
+                <button type="button" class="mini ef__akt" (click)="flaecheUebersteuern(h)">
+                  Fläche abweichend eintragen
+                </button>
+              </div>
+            } @else {
+              <label class="ef">
+                <span class="ef__label">
+                  Fläche brutto (m²)
+                  @if (h.edge_index !== null) {
+                    <span class="stamp stamp--warn">abweichend angegeben</span>
+                  }
+                </span>
+                <input
+                  class="ef__eingabe ef__eingabe--zahl"
+                  type="text"
+                  inputmode="decimal"
+                  [id]="'hf-brutto-' + h.uid"
+                  [name]="'hf-brutto-' + h.uid"
+                  [value]="h.brutto"
+                  [attr.aria-invalid]="fehleingabe(h.brutto)"
+                  (input)="huelleSetzen(h.uid, { brutto: $any($event.target).value })"
+                />
+                @if (fehleingabe(h.brutto)) {
+                  <span class="ef__fehler" role="alert">
+                    <span aria-hidden="true">!</span> Nicht eindeutig — bitte ohne Tausenderpunkt
+                    eingeben (z. B. 1500 oder 1,5).
+                  </span>
+                } @else if (h.edge_index !== null) {
+                  <span class="ef__hinweis">
+                    Von Hand eingetragen — sie wird <strong>nicht</strong> nachgerechnet (Giebel,
+                    Erker).
+                    @if (abgeleitet(h) !== null) {
+                      Aus der Kante berechnet wären {{ liveEinheit(abgeleitet(h), 'm²') }}.
+                    }
+                    <button type="button" class="mini ef__akt" (click)="flaecheAbleiten(h)">
+                      zurück auf berechnet
+                    </button>
+                  </span>
+                }
+              </label>
+            }
+
+            <label class="ef">
+              <span class="ef__label">
+                U-Wert (W/m²K)
+                @if (brauchtUWert(h)) {
+                  <span class="ef__pflicht">für die Heizlast nötig</span>
+                }
+              </span>
+              <input
+                class="ef__eingabe ef__eingabe--zahl"
+                type="text"
+                inputmode="decimal"
+                [id]="'hf-u-' + h.uid"
+                [name]="'hf-u-' + h.uid"
+                [value]="h.u_value"
+                [attr.aria-invalid]="fehleingabe(h.u_value)"
+                (input)="huelleSetzen(h.uid, { u_value: $any($event.target).value })"
+              />
+              @if (fehleingabe(h.u_value)) {
+                <span class="ef__fehler" role="alert">
+                  <span aria-hidden="true">!</span> Nicht lesbar — z. B. 0,24.
+                </span>
+              }
+            </label>
+
+            <label class="ef">
+              <span class="ef__label">Temperaturfaktor</span>
+              <input
+                class="ef__eingabe ef__eingabe--zahl"
+                type="text"
+                inputmode="decimal"
+                [id]="'hf-tf-' + h.uid"
+                [name]="'hf-tf-' + h.uid"
+                [value]="h.temp_factor"
+                [attr.aria-invalid]="fehleingabe(h.temp_factor)"
+                (input)="huelleSetzen(h.uid, { temp_factor: $any($event.target).value })"
+              />
+              @if (fehleingabe(h.temp_factor)) {
+                <span class="ef__fehler" role="alert">
+                  <span aria-hidden="true">!</span> Nicht lesbar — z. B. 0,6.
+                </span>
+              }
+            </label>
+          </div>
+
+          <!-- Netto = brutto − Öffnungen. Ist eine Öffnung erst halb vermessen,
+               steht hier „—" mit Grund: eine 0 würde die Wand zu groß zeigen. -->
+          <p class="hf__netto">
+            <span class="hf__netto-label">Netto</span>
+            <strong>{{ fl(netto(h)) }}</strong>
+            <span class="hf__netto-rechenweg">
+              brutto {{ h.brutto || '—' }} m² − Öffnungen {{ fl(oeffnungAnteil(h)) }}
+            </span>
+            @if (grund(netto(h)); as g) {
+              <span class="hf__unklar">
+                <span class="stamp stamp--warn">unvollständig</span> {{ g }}
+              </span>
+            }
+            <button type="button" class="mini" (click)="oeffnungHinzufuegen(h.uid)">
+              ＋ Fenster / Tür hier
+            </button>
+          </p>
+        </article>
+      }
+
+      <button type="button" class="re__plus" id="hf-plus" (click)="huelleHinzufuegen()">
+        ＋ Hüllfläche (Wand, Decke, Boden)
+      </button>
+
+      <!-- ---------------------------- Öffnungen --------------------------- -->
+      <h4 class="re__unter-titel">Fenster &amp; Türen</h4>
+      @if (oeffnungen().length === 0) {
+        <p class="re__hinweis">Noch keine Öffnungen erfasst.</p>
+      }
+      @for (o of oeffnungen(); track o.uid; let i = $index) {
+        <article class="of">
+          <header class="of__kopf">
+            <h5 class="of__name">{{ o.label || oeffnungLabel(o.opening_type) + ' ' + (i + 1) }}</h5>
+            <span class="of__flaeche">
+              @if (flaecheDerOeffnung(o); as f) {
+                {{ live(f) }} m²
+              } @else {
+                <span class="of__unklar">Maße unvollständig</span>
+              }
+            </span>
+            <button
+              type="button"
+              class="mini"
+              [id]="'of-weg-' + o.uid"
+              (click)="oeffnungEntfernen(o.uid)"
+              [attr.aria-label]="'Öffnung ' + (i + 1) + ' entfernen'"
+            >
+              Entfernen
+            </button>
+          </header>
+
+          <div class="of__zeile">
+            <app-bauteil-wahl
+              class="ef--breit"
+              [vorlagen]="oeffnungsVorlagen()"
+              [templateId]="o.template_id"
+              [uWert]="o.u_value"
+              [feldId]="'of-vorlage-' + o.uid"
+              (gewaehlt)="oeffnungVorlage(o.uid, $event)"
+              (wertUebernehmen)="oeffnungVorlagenWert(o.uid, $event)"
+            />
+
+            <label class="ef">
+              <span class="ef__label">Art</span>
+              <select
+                class="ef__eingabe"
+                [id]="'of-art-' + o.uid"
+                [name]="'of-art-' + o.uid"
+                (change)="oeffnungSetzen(o.uid, { opening_type: $any($event.target).value })"
+              >
+                @for (a of oeffnungsArten; track a.wert) {
+                  <option [value]="a.wert" [selected]="a.wert === o.opening_type">
+                    {{ a.label }}
+                  </option>
+                }
+              </select>
+            </label>
+
+            <!-- Die Wandzuordnung entscheidet, ob dieses Fenster in die Transmission
+                 zählt. Sie MUSS die Wahrheit zeigen: `[selected]` an der Option —
+                 ein `[value]` am <select> liefe vor den Optionen und fiele still auf
+                 „keiner Fläche zugeordnet" zurück (der Bediener „korrigiert" dann
+                 eine Zuordnung kaputt, die in Wirklichkeit stimmt). -->
+            <label class="ef ef--breit">
+              <span class="ef__label">In welcher Fläche?</span>
+              <select
+                class="ef__eingabe"
+                [id]="'of-wand-' + o.uid"
+                [name]="'of-wand-' + o.uid"
+                (change)="oeffnungSetzen(o.uid, { surfaceRef: $any($event.target).value || null })"
+              >
+                <option value="" [selected]="o.surfaceRef === null">
+                  keiner Fläche zugeordnet
+                </option>
+                @for (w of wandWahl(); track w.ref) {
+                  <option [value]="w.ref" [selected]="w.ref === o.surfaceRef">{{ w.label }}</option>
+                }
+              </select>
+            </label>
+
+            <label class="ef">
+              <span class="ef__label">Bezeichnung</span>
+              <input
+                class="ef__eingabe"
+                type="text"
+                [id]="'of-label-' + o.uid"
+                [name]="'of-label-' + o.uid"
+                [value]="o.label"
+                (input)="oeffnungSetzen(o.uid, { label: $any($event.target).value })"
+              />
+            </label>
+          </div>
+
+          <div class="of__zeile">
+            <label class="ef">
+              <span class="ef__label">Anzahl</span>
+              <input
+                class="ef__eingabe ef__eingabe--zahl"
+                type="text"
+                inputmode="numeric"
+                [id]="'of-anzahl-' + o.uid"
+                [name]="'of-anzahl-' + o.uid"
+                [value]="o.anzahl"
+                [attr.aria-invalid]="anzahlUngueltig(o.anzahl)"
+                (input)="oeffnungSetzen(o.uid, { anzahl: $any($event.target).value })"
+              />
+              @if (anzahlUngueltig(o.anzahl)) {
+                <span class="ef__fehler" role="alert">
+                  <span aria-hidden="true">!</span> Bitte eine ganze Zahl größer als 0.
+                </span>
+              }
+            </label>
+            <label class="ef">
+              <span class="ef__label">Breite (m)</span>
+              <input
+                class="ef__eingabe ef__eingabe--zahl"
+                type="text"
+                inputmode="decimal"
+                [id]="'of-breite-' + o.uid"
+                [name]="'of-breite-' + o.uid"
+                [value]="o.breite"
+                [attr.aria-invalid]="fehleingabe(o.breite)"
+                (input)="oeffnungSetzen(o.uid, { breite: $any($event.target).value })"
+              />
+              @if (fehleingabe(o.breite)) {
+                <span class="ef__fehler" role="alert">
+                  <span aria-hidden="true">!</span> Nicht eindeutig — ohne Tausenderpunkt eingeben.
+                </span>
+              }
+            </label>
+            <label class="ef">
+              <span class="ef__label">Höhe (m)</span>
+              <input
+                class="ef__eingabe ef__eingabe--zahl"
+                type="text"
+                inputmode="decimal"
+                [id]="'of-hoehe-' + o.uid"
+                [name]="'of-hoehe-' + o.uid"
+                [value]="o.hoehe"
+                [attr.aria-invalid]="fehleingabe(o.hoehe)"
+                (input)="oeffnungSetzen(o.uid, { hoehe: $any($event.target).value })"
+              />
+              @if (fehleingabe(o.hoehe)) {
+                <span class="ef__fehler" role="alert">
+                  <span aria-hidden="true">!</span> Nicht eindeutig — ohne Tausenderpunkt eingeben.
+                </span>
+              }
+            </label>
+            <label class="ef">
+              <span class="ef__label">U-Wert (W/m²K)</span>
+              <input
+                class="ef__eingabe ef__eingabe--zahl"
+                type="text"
+                inputmode="decimal"
+                [id]="'of-u-' + o.uid"
+                [name]="'of-u-' + o.uid"
+                [value]="o.u_value"
+                [attr.aria-invalid]="fehleingabe(o.u_value)"
+                (input)="oeffnungSetzen(o.uid, { u_value: $any($event.target).value })"
+              />
+              @if (fehleingabe(o.u_value)) {
+                <span class="ef__fehler" role="alert">
+                  <span aria-hidden="true">!</span> Nicht lesbar — z. B. 1,3.
+                </span>
+              }
+            </label>
+
+            <!-- Die Lage IN der Wand (Abstand vom Anfangspunkt der Kante). LEER heißt
+                 UNBEKANNT — die Öffnung zählt trotzdem in Fläche und Heizlast, sie
+                 wird nur nicht gezeichnet. Sie wird NIE stillschweigend auf 0 gesetzt. -->
+            <label class="ef">
+              <span class="ef__label">Lage in der Wand (m)</span>
+              <input
+                class="ef__eingabe ef__eingabe--zahl"
+                type="text"
+                inputmode="decimal"
+                placeholder="unbekannt"
+                [id]="'of-pos-' + o.uid"
+                [name]="'of-pos-' + o.uid"
+                [value]="o.position"
+                [attr.aria-invalid]="fehleingabe(o.position)"
+                (input)="oeffnungSetzen(o.uid, { position: $any($event.target).value })"
+              />
+              @if (fehleingabe(o.position)) {
+                <span class="ef__fehler" role="alert">
+                  <span aria-hidden="true">!</span> Nicht eindeutig — ohne Tausenderpunkt eingeben.
+                </span>
+              } @else if (!o.position) {
+                <span class="ef__hinweis">
+                  Leer = Lage nicht ausgemessen. Zählt mit, wird aber nicht gezeichnet — und
+                  <strong>nicht</strong> bei 0 m angenommen.
+                </span>
+              }
+            </label>
+          </div>
+        </article>
+      }
+
+      <button type="button" class="re__plus" id="of-plus" (click)="oeffnungHinzufuegen()">
+        ＋ Fenster / Tür
+      </button>
+
+      <div class="re__aktionen">
+        <button
+          type="button"
+          class="btn btn--primary"
+          [disabled]="speichertAufbau() || !darfAendern()"
+          [attr.aria-busy]="speichertAufbau()"
+          (click)="aufbauSpeichern()"
+        >
+          {{ speichertAufbau() ? 'Wird gespeichert …' : 'Aufbau speichern' }}
+        </button>
+        @if (aufbauGeaendert()) {
+          <p class="re__hinweis">
+            <span class="stamp stamp--warn">Ungespeichert</span>
+            Die Kennzahlen unten zeigen den gespeicherten Stand.
+          </p>
+        }
+      </div>
+    }
+  </section>
+
+  <!-- ============================ 3. Kennzahlen ========================== -->
+  <section class="kz" aria-labelledby="re-kz-titel">
+    <h3 class="kz__titel" id="re-kz-titel">Kennzahlen</h3>
+
+    <dl class="kz__raster">
+      <!-- Beim ungespeicherten Raum zeigen Fläche UND Volumen die Live-Eingabe.
+           Eine Fläche „—" neben einem Volumen „50,00 m³" wäre in sich unwahr. -->
+      <div class="kz__wert">
+        <dt>Fläche</dt>
+        <dd>
+          {{
+            raum() ? wert(raum()!.kennzahlen.floor_area_m2, 'm²') : liveEinheit(flaecheLive(), 'm²')
+          }}
+        </dd>
+      </div>
+      <div class="kz__wert">
+        <dt>Volumen</dt>
+        <dd>
+          {{ raum() ? wert(raum()!.kennzahlen.volume_m3, 'm³') : liveEinheit(volumen(), 'm³') }}
+        </dd>
+      </div>
+      <div class="kz__wert">
+        <dt>Wandfläche brutto</dt>
+        <dd>{{ raum() ? wert(raum()!.kennzahlen.wall_area_gross_m2, 'm²') : '—' }}</dd>
+      </div>
+      <div class="kz__wert">
+        <dt>Öffnungen</dt>
+        <dd>{{ raum() ? wert(raum()!.kennzahlen.opening_area_m2, 'm²') : '—' }}</dd>
+      </div>
+      <div class="kz__wert">
+        <dt>Wandfläche netto</dt>
+        <dd>{{ raum() ? wert(raum()!.kennzahlen.wall_area_net_m2, 'm²') : '—' }}</dd>
+      </div>
+      <div class="kz__wert">
+        <dt>Umfang</dt>
+        <dd>{{ raum() ? wert(raum()!.kennzahlen.perimeter_m, 'm') : '—' }}</dd>
+      </div>
+    </dl>
+
+    @if (aufbauGeaendert()) {
+      <p class="kz__live">
+        <span class="stamp stamp--warn">Vorschau</span>
+        Live aus der Eingabe: Wand brutto <strong>{{ fl(wandBrutto()) }}</strong
+        >, Öffnungen <strong>{{ fl(oeffnungFlaecheSumme()) }}</strong
+        >, netto <strong>{{ fl(wandNetto()) }}</strong
+        >. Zum Festschreiben den Aufbau speichern.
+        @if (vorschauGrund(); as g) {
+          <span class="kz__klein">{{ g }} Deshalb steht dort „—" und keine Zahl.</span>
+        }
+      </p>
+    }
+
+    <h4 class="kz__unter">Heizlast (überschlägig)</h4>
+    <dl class="kz__raster">
+      <div class="kz__wert">
+        <dt>Flächenverfahren</dt>
+        <dd>
+          @if (raum() && raum()!.kennzahlen.heizlast_kennwert_w != null) {
+            {{ kw(raum()!.kennzahlen.heizlast_kennwert_w) }}
+            <span class="kz__klein">{{
+              wert(raum()!.kennzahlen.heizlast_kennwert_w, 'W', 0)
+            }}</span>
+          } @else {
+            <span class="kz__unbekannt"> <span class="stamp stamp--warn">?</span> unbekannt </span>
+            <span class="kz__klein">
+              Es fehlt der Kennwert (W/m²) — am Raum oder als Gebäudekennwert in den Auslegungsdaten
+              des Objekts.
+            </span>
+          }
+        </dd>
+      </div>
+
+      <div class="kz__wert">
+        <dt>Hüllflächenverfahren</dt>
+        <dd>
+          @if (raum() && raum()!.kennzahlen.heizlast_huellflaeche_w != null) {
+            {{ kw(raum()!.kennzahlen.heizlast_huellflaeche_w) }}
+            <span class="kz__klein">
+              Transmission {{ wert(raum()!.kennzahlen.transmission_w, 'W', 0) }} · Lüftung
+              {{ wert(raum()!.kennzahlen.lueftung_w, 'W', 0) }}
+            </span>
+          } @else {
+            <span class="kz__unbekannt"> <span class="stamp stamp--warn">?</span> unbekannt </span>
+            <span class="kz__klein">
+              {{
+                raum()?.kennzahlen?.unbekannt_grund ||
+                  'Der Aufbau ist noch nicht vollständig erfasst.'
+              }}
+            </span>
+            <span class="kz__klein">
+              Außentemperatur und Gebäudekennwert gehören zum <strong>Objekt</strong>: in der
+              Raumliste unter „Auslegungsdaten des Objekts". Es gibt keine geschätzten Vorgaben.
+            </span>
+          }
+        </dd>
+      </div>
+    </dl>
+
+    @if (raum(); as r) {
+      @if (r.kennzahlen.hinweise.length) {
+        <ul class="kz__hinweise">
+          @for (h of r.kennzahlen.hinweise; track $index) {
+            <li><span aria-hidden="true">•</span> {{ h }}</li>
+          }
+        </ul>
+      }
+    }
+
+    <p class="kz__haftung">
+      <span class="kz__haftung-mark" aria-hidden="true">!</span>
+      <span><strong>Überschlägig — kein Nachweis.</strong> {{ haftung }}</span>
+    </p>
+  </section>
+
+  @if (umrissFragen()) {
+    <app-bestaetigung
+      [offen]="true"
+      titel="Umriss entfernen?"
+      text="Der gezeichnete Umriss wird gelöscht. Fläche und Umfang sind danach wieder von Hand
+            einzutragen (die zuletzt berechneten Werte bleiben als Ausgangswert stehen), und die
+            Wände verlieren ihre Kantenzuordnung — sie bleiben im Aufbau erhalten und zählen
+            weiter in die Heizlast. Die Räume selbst werden nicht angetastet."
+      bestaetigenLabel="Umriss entfernen"
+      [gefahr]="true"
+      [laedt]="umrissLaeuft()"
+      (bestaetigen)="umrissEntfernenBestaetigen()"
+      (abbrechen)="umrissEntfernenAbbrechen()"
+    />
+  }
+</section>

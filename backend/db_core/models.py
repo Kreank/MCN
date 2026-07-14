@@ -326,6 +326,15 @@ class Property(models.Model):
     )
     property_type = models.TextField()  # WEG|RENTAL_PROPERTY|COMMERCIAL|MIXED|OTHER|EINFAMILIENHAUS
     status = models.TextField()  # ACTIVE|INACTIVE
+    # Auslegungsdaten fürs Raumaufmaß (Migration 0089). Bewusst NICHT vorbelegt:
+    # Norm-Außentemperaturen und Gebäudekennwerte sind DIN-Tabellenwerte, die MCN
+    # nicht mitliefert. Fehlen sie, ist die Heizlast unbekannt — nicht 0.
+    design_outdoor_temp_c = models.DecimalField(
+        max_digits=4, decimal_places=1, null=True, blank=True
+    )
+    heat_load_w_per_m2 = models.DecimalField(
+        max_digits=6, decimal_places=1, null=True, blank=True
+    )
     version = models.IntegerField()
     created_at = models.DateTimeField(db_default=Now())
     updated_at = models.DateTimeField(db_default=Now())
@@ -3933,3 +3942,233 @@ class BillingLink(models.Model):
 
     def __str__(self):
         return f"{self.source_kind} -> {self.invoice_id}"
+
+
+class Room(models.Model):
+    """property.room — Raum als Objektstammdatum (Aufmaß, Migration 0086).
+
+    `volume_m3` ist eine GENERATED-Spalte der Datenbank und deshalb hier
+    nicht schreibbar (`db_default` genügt nicht — Django dürfte sie nie in ein
+    INSERT/UPDATE aufnehmen; das verhindert `Meta.managed = False` in Verbindung
+    damit, dass der Service ausschließlich über explizite Feldlisten schreibt).
+    `building_id`/`unit_id` sind zusammengesetzte FKs (Composite-Ziel) und
+    werden wie bei TechnicalAsset als reine UUIDs geführt.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    property = models.ForeignKey(
+        Property, models.DO_NOTHING, db_column="property_id", related_name="rooms"
+    )
+    building_id = models.UUIDField(null=True, blank=True)
+    unit_id = models.UUIDField(null=True, blank=True)
+    storey = models.TextField(null=True, blank=True)
+    name = models.TextField()
+    # WOHNEN|SCHLAFEN|KUECHE|BAD|WC|FLUR|TREPPENHAUS|KELLER|DACHBODEN|TECHNIK|
+    # BUERO|LAGER|GEWERBE|SONSTIGES
+    room_type = models.TextField(null=True, blank=True)
+    floor_area_m2 = models.DecimalField(max_digits=10, decimal_places=3)
+    length_m = models.DecimalField(max_digits=8, decimal_places=3, null=True, blank=True)
+    width_m = models.DecimalField(max_digits=8, decimal_places=3, null=True, blank=True)
+    room_height_m = models.DecimalField(max_digits=8, decimal_places=3)
+    perimeter_m = models.DecimalField(max_digits=10, decimal_places=3, null=True, blank=True)
+    volume_m3 = models.DecimalField(
+        max_digits=13, decimal_places=3, null=True, blank=True, editable=False
+    )
+    indoor_temp_c = models.DecimalField(
+        max_digits=4, decimal_places=1, null=True, blank=True
+    )
+    air_change_rate = models.DecimalField(
+        max_digits=4, decimal_places=2, null=True, blank=True
+    )
+    heat_load_w_per_m2 = models.DecimalField(
+        max_digits=6, decimal_places=1, null=True, blank=True
+    )
+    riser_distance_m = models.DecimalField(
+        max_digits=8, decimal_places=2, null=True, blank=True
+    )
+    status = models.TextField(db_default="AKTIV")  # AKTIV|INAKTIV
+    note = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'property"."room'
+
+    def __str__(self):
+        return self.name
+
+
+class RoomSurface(models.Model):
+    """property.room_surface — Hüllfläche (Bauteil) eines Raumes.
+
+    `adjacent` — nicht `surface_type` — entscheidet, ob Wärme verloren geht.
+    Fehlt `u_value` oder `temp_factor`, ist die Heizlast UNBEKANNT, nicht 0.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    room = models.ForeignKey(
+        Room, models.DO_NOTHING, db_column="room_id", related_name="surfaces"
+    )
+    # AUSSENWAND|INNENWAND|DACHSCHRAEGE|DECKE|BODEN
+    surface_type = models.TextField()
+    # AUSSENLUFT|ERDREICH|UNBEHEIZT|BEHEIZT
+    adjacent = models.TextField()
+    orientation = models.TextField(null=True, blank=True)  # N|NO|O|SO|S|SW|W|NW
+    label = models.TextField(null=True, blank=True)
+    gross_area_m2 = models.DecimalField(max_digits=10, decimal_places=3)
+    u_value = models.DecimalField(max_digits=5, decimal_places=3, null=True, blank=True)
+    temp_factor = models.DecimalField(
+        max_digits=4, decimal_places=2, null=True, blank=True
+    )
+    # Herkunft aus dem Bauteilkatalog (0090). Der U-Wert oben ist eine KOPIE —
+    # eine spätere Katalogkorrektur ändert dieses Aufmaß nicht.
+    template = models.ForeignKey(
+        "ComponentTemplate",
+        models.DO_NOTHING,
+        db_column="template_id",
+        null=True,
+        blank=True,
+        related_name="surfaces",
+    )
+    # Polygonkante, auf der diese Wand steht (0091). NULL bei Decke/Boden/
+    # Dachschräge oder ohne Zeichnung.
+    edge_index = models.IntegerField(null=True, blank=True)
+    # 0093: Weiß die Fläche, dass sie gerechnet ist? true → der Server rechnet sie
+    # bei jeder Änderung von Umriss oder Raumhöhe NEU (Kantenlänge × Raumhöhe).
+    # false → Handeingabe (Giebel, Erker) und wird NIE überschrieben.
+    area_is_derived = models.BooleanField(db_default=False)
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'property"."room_surface'
+
+    def __str__(self):
+        return self.label or self.surface_type
+
+
+class RoomOpening(models.Model):
+    """property.room_opening — Fenster/Tür in einer Hüllfläche.
+
+    `area_m2` ist eine GENERATED-Spalte (quantity × width × height). Der Trigger
+    `property.enforce_room_opening_fits` garantiert: die Öffnung ist nie größer
+    als ihre Wand.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    room = models.ForeignKey(
+        Room, models.DO_NOTHING, db_column="room_id", related_name="openings"
+    )
+    surface = models.ForeignKey(
+        RoomSurface,
+        models.DO_NOTHING,
+        db_column="surface_id",
+        null=True,
+        blank=True,
+        related_name="openings",
+    )
+    # FENSTER|DACHFENSTER|TUER_AUSSEN|TUER_INNEN|SONSTIGES
+    opening_type = models.TextField()
+    label = models.TextField(null=True, blank=True)
+    quantity = models.IntegerField(db_default=1)
+    width_m = models.DecimalField(max_digits=6, decimal_places=3)
+    height_m = models.DecimalField(max_digits=6, decimal_places=3)
+    u_value = models.DecimalField(max_digits=5, decimal_places=3, null=True, blank=True)
+    area_m2 = models.DecimalField(
+        max_digits=12, decimal_places=3, null=True, blank=True, editable=False
+    )
+    # Herkunft aus dem Bauteilkatalog (0090) — der U-Wert oben ist eine KOPIE.
+    template = models.ForeignKey(
+        "ComponentTemplate",
+        models.DO_NOTHING,
+        db_column="template_id",
+        null=True,
+        blank=True,
+        related_name="openings",
+    )
+    # Abstand vom Anfangspunkt der Kante (0091). NULL = Lage nicht ausgemessen:
+    # die Öffnung zählt in Fläche und Heizlast, sie wird nur nicht gezeichnet.
+    position_m = models.DecimalField(
+        max_digits=6, decimal_places=3, null=True, blank=True
+    )
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'property"."room_opening'
+
+    def __str__(self):
+        return self.label or self.opening_type
+
+
+class ComponentTemplate(models.Model):
+    """property.component_template — Bauteilkatalog (Migration 0090).
+
+    Vorauswahl statt Zahlentipperei: „Doppelkastenfenster" statt „2,7".
+
+    INVARIANTE: Die Vorlage ist eine KOPIERQUELLE, kein Verweis. Der U-Wert wird
+    beim Erfassen in `room_surface`/`room_opening` **kopiert**; der Heizlast-
+    Rechner liest **nie** den Katalog. Eine spätere Katalogkorrektur ändert damit
+    kein Aufmaß rückwirkend (dieselbe Regel wie bei der Belegposition).
+
+    `u_value` wird OHNE Wert ausgeliefert — keine DIN-Tabellen im Produkt; der
+    Betrieb trägt ihn einmal ein.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    kind = models.TextField()  # FLAECHE|OEFFNUNG
+    name = models.TextField()
+    # AUSSENWAND|INNENWAND|DACHSCHRAEGE|DECKE|BODEN
+    default_surface_type = models.TextField(null=True, blank=True)
+    # FENSTER|DACHFENSTER|TUER_AUSSEN|TUER_INNEN|SONSTIGES
+    default_opening_type = models.TextField(null=True, blank=True)
+    u_value = models.DecimalField(max_digits=5, decimal_places=3, null=True, blank=True)
+    note = models.TextField(null=True, blank=True)
+    status = models.TextField(db_default="AKTIV")  # AKTIV|INAKTIV
+    sort_index = models.IntegerField(db_default=0)
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'property"."component_template'
+
+    def __str__(self):
+        return self.name
+
+
+class RoomVertex(models.Model):
+    """property.room_vertex — Umriss des Raumes als Polygon (Migration 0091).
+
+    Koordinaten in **Millimetern** (integer), im System des GESCHOSSES — nicht je
+    Raum. Zwei Räume derselben Etage liegen damit im selben Raster, und die
+    Etagenübersicht entsteht ohne weitere Daten.
+
+    Kante `i` ist das Paar (vertex i → vertex i+1), zyklisch. Sie ist keine Zeile;
+    `room_surface.edge_index` verweist auf sie über den Index.
+
+    Hat ein Raum Punkte, sind `room.floor_area_m2` und `room.perimeter_m` **daraus
+    gerechnet** (Gauß'sche Trapezformel bzw. Summe der Kantenlängen) — wer
+    zeichnet, misst nicht doppelt.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    room = models.ForeignKey(
+        Room, models.DO_NOTHING, db_column="room_id", related_name="vertices"
+    )
+    idx = models.IntegerField()
+    x_mm = models.IntegerField()
+    y_mm = models.IntegerField()
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'property"."room_vertex'
+        ordering = ["idx"]
+
+    def __str__(self):
+        return f"{self.idx}: ({self.x_mm}, {self.y_mm})"

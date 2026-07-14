@@ -35,6 +35,7 @@ from api.planung import router as planung_router
 from api.projekt import router as projekt_router
 from api.property import router as property_router
 from api.qualifikation import router as qualifikation_router
+from api.raum import router as raum_router
 from api.security import router as security_router
 from api.site_report import router as site_report_router
 from api.zeiterfassung import hr_router as zeit_stammdaten_router
@@ -53,6 +54,9 @@ def health(request):
 api.add_router("/auth", auth_router, tags=["auth"])
 api.add_router("/identity", identity_router, tags=["identity"])
 api.add_router("/property", property_router, tags=["property"])
+# Raumaufmaß (0086): derselbe Präfix, dasselbe Recht — der Raum ist
+# Objektstammdatum, kein Vorgangswert.
+api.add_router("/property", raum_router, tags=["property"])
 api.add_router("/workflow", projekt_router, tags=["workflow"])
 api.add_router("/workflow", aufgabe_router, tags=["workflow"])
 api.add_router("/workflow", auftrag_router, tags=["workflow"])

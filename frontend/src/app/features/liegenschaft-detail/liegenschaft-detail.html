@@ -128,6 +128,14 @@
         }
       }
 
+      <!-- ------------------------------ Räume ----------------------------- -->
+      <!-- Raumaufmaß: Grundlage für Heizlast, Leitungslängen und die spätere
+           3D-Planung. Die Kennzahlen rechnet der Server — hier wird nur
+           erfasst und angezeigt. -->
+      @if (tab() === 'raeume') {
+        <app-raumaufmass [propertyId]="daten()!.id" />
+      }
+
       <!-- ------------------------------ Beteiligte ------------------------ -->
       @if (tab() === 'beteiligte') {
         @if (darfAendern()) {

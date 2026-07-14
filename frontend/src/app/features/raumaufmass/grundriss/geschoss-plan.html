@@ -1,0 +1,102 @@
+<section class="gp" [attr.aria-labelledby]="ids + '-titel'">
+  <header class="gp__kopf">
+    <h3 class="gp__titel" [id]="ids + '-titel'">{{ label() }}</h3>
+    <p class="gp__summe">
+      {{ plaene().length }} gezeichnet · {{ zeig(flaecheSumme()) }} m²
+      @if (ausdehnung(); as a) {
+        <span class="gp__klein"> · Ausdehnung {{ zeig(a.breite) }} m × {{ zeig(a.tiefe) }} m </span>
+      }
+      @if (ohneUmriss().length) {
+        <span class="gp__klein">· {{ ohneUmriss().length }} ohne Umriss</span>
+      }
+    </p>
+  </header>
+
+  <div class="gp__buehne">
+    @if (plaene().length) {
+      <svg
+        class="gp__svg"
+        [attr.viewBox]="'0 0 ' + sicht().breite + ' ' + sicht().hoehe"
+        [style.aspectRatio]="sicht().breite + ' / ' + sicht().hoehe"
+        role="img"
+        [attr.aria-label]="text()"
+      >
+        <title>Grundriss {{ label() }}</title>
+        <desc>{{ text() }}</desc>
+
+        @for (p of plaene(); track p.id) {
+          <g
+            class="gp__raum"
+            [class.gp__raum--still]="p.still"
+            [class.gp__raum--hervor]="hervor() === p.id"
+            role="button"
+            tabindex="0"
+            [attr.aria-label]="p.titel + '. Öffnet den Raum.'"
+            (click)="oeffnen(p.id)"
+            (keydown)="taste($event, p.id)"
+            (mouseenter)="hervor.set(p.id)"
+            (mouseleave)="hervor.set(null)"
+            (focus)="hervor.set(p.id)"
+            (blur)="hervor.set(null)"
+          >
+            <title>{{ p.titel }}</title>
+            <polygon [attr.points]="p.polygon" class="gp__flaeche" />
+            <text [attr.x]="p.cx" [attr.y]="p.cy - 6" class="gp__name" text-anchor="middle">
+              {{ p.name }}
+            </text>
+            <text [attr.x]="p.cx" [attr.y]="p.cy + 14" class="gp__zahl" text-anchor="middle">
+              {{ zeig(p.flaeche) }} m²
+            </text>
+            @if (p.still) {
+              <!-- Nie nur Farbe: das Wort steht mit auf der Flaeche. -->
+              <text [attr.x]="p.cx" [attr.y]="p.cy + 32" class="gp__still" text-anchor="middle">
+                ⊘ stillgelegt
+              </text>
+            }
+          </g>
+        }
+      </svg>
+    } @else {
+      <div class="tab-platzhalter">
+        <p>In diesem Geschoss ist noch kein Raum gezeichnet.</p>
+        <p>Ein Raum erscheint hier, sobald sein Umriss gespeichert ist.</p>
+      </div>
+    }
+
+    <!-- Räume ohne Umriss verschwinden NICHT: sie stehen hier, mit dem Weg dorthin. -->
+    <aside class="gp__offen" [attr.aria-labelledby]="ids + '-offen'">
+      <h4 class="gp__offen-titel" [id]="ids + '-offen'">Noch nicht gezeichnet</h4>
+      @if (ohneUmriss().length === 0) {
+        <p class="gp__klein">Jeder Raum dieses Geschosses hat einen Umriss.</p>
+      } @else {
+        <p class="gp__klein">
+          Diese Räume sind erfasst, aber ohne Umriss — sie liegen deshalb auf keiner Fläche. Ihre
+          Zahlen (Fläche, Volumen) gelten trotzdem.
+        </p>
+        <ul class="gp__offen-liste">
+          @for (r of ohneUmriss(); track r.id) {
+            <li>
+              <span class="gp__offen-name">
+                {{ r.name }}
+                <span class="gp__klein">{{ r.nutzung }}</span>
+                @if (r.still) {
+                  <span class="stamp stamp--warn"
+                    ><span aria-hidden="true">⊘</span> stillgelegt</span
+                  >
+                }
+              </span>
+              <button
+                type="button"
+                class="gp__btn"
+                (click)="oeffnen(r.id)"
+                [attr.aria-label]="'Raum ' + r.name + ' zeichnen'"
+              >
+                zeichnen
+              </button>
+            </li>
+          }
+        </ul>
+      }
+    </aside>
+  </div>
+</section>

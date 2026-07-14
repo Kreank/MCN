@@ -1,0 +1,588 @@
+<section class="ge">
+  <p class="sr-only" role="status" aria-live="polite">{{ ansage() }}</p>
+
+  <!-- ============================ Werkzeugleiste ========================== -->
+  <div class="ge__leiste">
+    <div class="ge__gruppe" role="group" aria-label="Zeichnen">
+      <button
+        type="button"
+        class="ge__werkzeug"
+        [class.ge__werkzeug--an]="zeichnet()"
+        [attr.aria-pressed]="zeichnet()"
+        [disabled]="!darfAendern()"
+        (click)="zeichnenUm(!zeichnet())"
+      >
+        <span aria-hidden="true">✎</span>
+        {{ zeichnet() ? 'Zeichnen: an' : 'Zeichnen: aus' }}
+      </button>
+      @if (zeichnet() && punkte().length >= 3) {
+        <button type="button" class="ge__werkzeug" (click)="zeichnenUm(false)">
+          Umriss schließen
+        </button>
+      }
+      <button type="button" class="ge__werkzeug" (click)="einpassen()">Ansicht einpassen</button>
+    </div>
+
+    <label class="ge__raster">
+      <span class="ge__raster-label">Raster</span>
+      <select
+        class="ge__raster-wahl"
+        [id]="ids + '-raster'"
+        (change)="rasterSetzen($any($event.target).value)"
+      >
+        @for (r of rasterWahl; track r.wert) {
+          <option [value]="r.wert" [selected]="r.wert === raster()">{{ r.label }}</option>
+        }
+      </select>
+    </label>
+
+    <p class="ge__massstab">
+      <span class="ge__massstab-label">Ein Kästchen</span>
+      <strong>{{ massstab() }}</strong>
+    </p>
+  </div>
+
+  <!-- ============================ Meldungen ============================== -->
+  @if (fehler(); as f) {
+    <div class="melde melde--fehler" role="alert">
+      <span class="melde__mark" aria-hidden="true">!</span>
+      <span class="melde__text"><strong>Fehler:</strong> {{ f }}</span>
+    </div>
+  }
+
+  <!-- Was der Server mit 422 ablehnen würde — hier VORHER, im Klartext.
+       Die betroffenen Kanten sind rot UND benannt: Farbe ist nie der einzige Träger. -->
+  @if (punkte().length && befunde().length) {
+    <ul class="ge__befunde" role="alert">
+      @for (b of befunde(); track b.art) {
+        <li class="ge__befund">
+          <span class="stamp stamp--negativ">{{
+            b.art === 'SELBSTSCHNITT'
+              ? 'Selbstschnitt'
+              : b.art === 'DOPPELT'
+                ? 'Doppelter Punkt'
+                : b.art === 'ENTARTET'
+                  ? 'Keine Fläche'
+                  : 'Zu wenig Punkte'
+          }}</span>
+          <span>{{ b.text }}</span>
+        </li>
+      }
+    </ul>
+  }
+
+  @if (verwaisteWaende().length) {
+    <p class="ge__hinweis" role="status">
+      <span class="stamp stamp--warn">Kante entfällt</span>
+      {{ verwaisteWaende().length }}
+      {{ verwaisteWaende().length === 1 ? 'Wand liegt' : 'Wände liegen' }} auf einer Kante, die es
+      im neuen Umriss nicht mehr gibt. Beim Speichern verlieren sie ihre Kante — sie bleiben im
+      Aufbau stehen und zählen weiter in die Heizlast.
+    </p>
+  }
+
+  <div class="ge__buehne">
+    <!-- ========================== Die Zeichnung ========================== -->
+    <div class="ge__blatt">
+      <svg
+        #blatt
+        class="ge__svg"
+        [class.ge__svg--zeichnet]="zeichnet()"
+        [attr.viewBox]="'0 0 ' + sicht().breite + ' ' + sicht().hoehe"
+        [style.aspectRatio]="sicht().breite + ' / ' + sicht().hoehe"
+        role="application"
+        aria-roledescription="Zeichenfläche für den Raumumriss"
+        [attr.aria-label]="text()"
+        [attr.aria-describedby]="ids + '-hilfe'"
+        (pointerdown)="flaecheKlick($event, blatt)"
+        (pointermove)="punktZiehen($event, blatt)"
+        (pointerup)="punktLoslassen()"
+        (pointercancel)="punktLoslassen()"
+      >
+        <title>Grundriss des Raumes</title>
+        <desc>{{ text() }}</desc>
+
+        <defs>
+          <pattern
+            [attr.id]="ids + '-raster'"
+            [attr.width]="rasterSicht()"
+            [attr.height]="rasterSicht()"
+            patternUnits="userSpaceOnUse"
+          >
+            <path
+              [attr.d]="'M ' + rasterSicht() + ' 0 L 0 0 0 ' + rasterSicht()"
+              fill="none"
+              class="ge__gitter"
+            />
+          </pattern>
+        </defs>
+
+        <rect
+          x="0"
+          y="0"
+          [attr.width]="sicht().breite"
+          [attr.height]="sicht().hoehe"
+          [attr.fill]="'url(#' + ids + '-raster)'"
+          class="ge__grund"
+        />
+
+        <!-- Die Fläche -->
+        @if (punkte().length >= 3) {
+          <polygon
+            [attr.points]="polygon()"
+            class="ge__flaeche"
+            [class.ge__flaeche--fehler]="!gueltig()"
+          />
+        }
+
+        <!-- Die Kanten. Eine Kante MIT Wand ist dick, eine ohne dünn und gestrichelt
+             (Form, nicht nur Farbe). Fehlerhafte Kanten zusätzlich rot + im Text oben. -->
+        @for (k of kantenSicht(); track k.index) {
+          <g class="ge__kante" [class.ge__kante--fehler]="k.fehlerhaft">
+            <title>{{ k.titel }}</title>
+            <line
+              [attr.x1]="k.x1"
+              [attr.y1]="k.y1"
+              [attr.x2]="k.x2"
+              [attr.y2]="k.y2"
+              class="ge__kante-linie"
+              [class.ge__kante-linie--wand]="k.hatWand"
+            />
+            <text [attr.x]="k.mx" [attr.y]="k.my" class="ge__kante-text" text-anchor="middle">
+              {{ k.text }}
+            </text>
+          </g>
+        }
+
+        <!-- Fenster und Türen, maßstäblich in ihrer Kante. Nur MIT Lage —
+             eine Öffnung ohne `position_m` wird nicht gezeichnet und niemals bei 0
+             platziert; sie steht rechts in der Liste „ohne Lage in der Wand". -->
+        @for (o of oeffnungenSicht(); track o.uid) {
+          <g class="ge__oeffnung" [class.ge__oeffnung--tuer]="o.istTuer">
+            <title>{{ o.titel }}</title>
+            <line
+              [attr.x1]="o.x1"
+              [attr.y1]="o.y1"
+              [attr.x2]="o.x2"
+              [attr.y2]="o.y2"
+              class="ge__oeffnung-band"
+            />
+            @if (o.istTuer) {
+              <path [attr.d]="o.bogen" class="ge__tuer-bogen" fill="none" />
+            }
+            <text [attr.x]="o.tx" [attr.y]="o.ty" class="ge__oeffnung-text" text-anchor="middle">
+              {{ o.kuerzel }}
+            </text>
+          </g>
+        }
+
+        <!-- Die Punkte: fokussierbar, mit Pfeiltasten verschiebbar, Entf löscht.
+             Der GRIFF ist bewusst größer als der gezeichnete Punkt — die sichtbare
+             Marke darf klein und präzise sein, die Zielfläche muss die 24 px aus
+             WCAG 2.2 (2.5.8) sicher überschreiten. Ein Handschuh trifft keinen
+             11-Pixel-Kreis. -->
+        @for (p of punkteSicht(); track p.i) {
+          <g class="ge__punkt" [class.ge__punkt--fehler]="p.fehlerhaft">
+            <circle
+              [attr.cx]="p.x"
+              [attr.cy]="p.y"
+              r="11"
+              class="ge__punkt-marke"
+              [class.ge__punkt-marke--aktiv]="aktivePunkt() === p.i"
+            />
+            <text [attr.x]="p.x" [attr.y]="p.y + 4" class="ge__punkt-nr" text-anchor="middle">
+              {{ p.nr }}
+            </text>
+            <circle
+              [attr.id]="ids + '-punkt-' + p.i"
+              [attr.cx]="p.x"
+              [attr.cy]="p.y"
+              r="22"
+              class="ge__punkt-griff"
+              [attr.tabindex]="darfAendern() ? 0 : null"
+              role="button"
+              [attr.aria-label]="
+                p.titel + '. Pfeiltasten verschieben, Entf löscht, Enter öffnet die Kantenlänge.'
+              "
+              (pointerdown)="punktGreifen($event, p.i)"
+              (keydown)="punktTaste($event, p.i)"
+              (focus)="aktivePunkt.set(p.i)"
+            >
+              <title>{{ p.titel }}</title>
+            </circle>
+          </g>
+        }
+
+        <!-- Nordpfeil — aus den Ausrichtungen der Wände ABGELEITET, nicht erfunden. -->
+        @if (nordPfeil(); as np) {
+          <g class="ge__nord" aria-hidden="true">
+            <title>Norden, abgeleitet aus den Ausrichtungen der Wände</title>
+            <circle cx="60" cy="62" r="4" class="ge__nord-dot" />
+            <line x1="60" y1="62" [attr.x2]="np.x2" [attr.y2]="np.y2" class="ge__nord-linie" />
+            <text [attr.x]="np.tx" [attr.y]="np.ty + 5" class="ge__nord-text" text-anchor="middle">
+              N
+            </text>
+          </g>
+        }
+      </svg>
+
+      <p class="ge__hilfe" [id]="ids + '-hilfe'">
+        <strong>Tastatur:</strong> Punkt anspringen (Tab), verschieben (Pfeiltasten = ein
+        Rasterschritt, Shift+Pfeil = 10 mm), löschen (Entf), Kantenlänge eintippen (Enter). Wer
+        nicht zeichnen kann, erfasst den Raum vollständig über die Kantenliste rechts.
+      </p>
+
+      @if (ausserhalb()) {
+        <p class="ge__hinweis" role="status">
+          <span class="stamp stamp--warn">außerhalb</span>
+          Ein Teil des Umrisses liegt außerhalb der Ansicht.
+          <button type="button" class="mini" (click)="einpassen()">Ansicht einpassen</button>
+        </p>
+      }
+
+      <!-- Vorschau: verbindlich ist, was der Server nach dem Speichern zurückgibt. -->
+      <dl class="ge__vorschau">
+        <div>
+          <dt>Fläche <span class="stamp stamp--warn">Vorschau</span></dt>
+          <dd>{{ punkte().length >= 3 && gueltig() ? zeig(flaeche()) + ' m²' : '—' }}</dd>
+        </div>
+        <div>
+          <dt>Umfang <span class="stamp stamp--warn">Vorschau</span></dt>
+          <dd>{{ punkte().length >= 3 && gueltig() ? zeig(umfang()) + ' m' : '—' }}</dd>
+        </div>
+        <div>
+          <dt>Punkte</dt>
+          <dd>{{ punkte().length }}</dd>
+        </div>
+      </dl>
+      <p class="ge__vorschau-hinweis">
+        Hier gerechnet, damit es sofort sichtbar ist.
+        <strong>Verbindlich ist die Zahl, die der Server nach dem Speichern zurückgibt</strong> — er
+        rechnet die Fläche nach der Gauß'schen Trapezformel und schreibt sie in den Raum.
+      </p>
+    </div>
+
+    <!-- ========================== Die Kantenliste ======================== -->
+    <div class="ge__liste">
+      <h4 class="ge__liste-titel" [id]="ids + '-kanten'">Kanten</h4>
+      <p class="ge__liste-lead">
+        Die Liste ist die Zeichnung in Worten — jede Länge, jede Wand und jede Öffnung ist hier
+        erreichbar und editierbar.
+      </p>
+
+      @if (punkte().length === 0) {
+        <div class="tab-platzhalter">
+          <p>Noch kein Punkt gesetzt.</p>
+          @if (darfAendern()) {
+            <p>
+              Mit <strong>„Zeichnen: an"</strong> in die Fläche klicken — oder ohne Maus:
+              <button
+                type="button"
+                class="mini"
+                [id]="ids + '-punkt-plus'"
+                (click)="punktAnhaengen()"
+              >
+                ＋ Punkt anhängen
+              </button>
+            </p>
+          }
+        </div>
+      }
+
+      @for (z of zeilen(); track z.index) {
+        <article class="kz" [class.kz--fehler]="z.fehlerhaft">
+          <header class="kz__kopf">
+            <h5 class="kz__nr">Kante {{ z.nr }}</h5>
+            @if (z.fehlerhaft) {
+              <span class="stamp stamp--negativ">fehlerhaft</span>
+            }
+            @if (z.schliessend) {
+              <span class="stamp stamp--type">schließt den Umriss</span>
+            }
+          </header>
+
+          <div class="kz__zeile">
+            <label class="kz__feld">
+              <span class="kz__label">Länge (m)</span>
+              @if (z.schliessend) {
+                <!-- Sie ergibt sich daraus, dass der Umriss zugeht — sie zu tippen
+                     würde entweder Punkt 1 oder Kante 1 mitverbiegen. -->
+                <output class="kz__abgeleitet">{{ zeig(z.laengeM) }} m</output>
+              } @else {
+                <input
+                  class="kz__eingabe kz__eingabe--zahl"
+                  type="text"
+                  inputmode="decimal"
+                  [id]="ids + '-kante-' + z.index"
+                  [value]="z.feld"
+                  [disabled]="!darfAendern()"
+                  (input)="kanteTippen(z.index, $any($event.target).value)"
+                  (blur)="kanteUebernehmen(z.index)"
+                  (keydown.enter)="$any($event.target).blur()"
+                  [attr.aria-label]="'Länge der Kante ' + z.nr + ' in Metern'"
+                />
+              }
+            </label>
+
+            @if (z.schliessend) {
+              <p class="kz__notiz">
+                Diese Kante schließt den Umriss zurück auf Punkt 1. Ihre Länge folgt aus den anderen
+                Kanten und lässt sich nicht direkt eintragen.
+              </p>
+            }
+
+            <div class="kz__akt">
+              <button
+                type="button"
+                class="mini"
+                [disabled]="!darfAendern()"
+                (click)="punktNeuAufKante(z.index)"
+              >
+                ＋ Punkt hier
+              </button>
+            </div>
+          </div>
+
+          <!-- ------------------------------ Wand ---------------------------- -->
+          @if (z.huelle; as h) {
+            <div class="kz__wand">
+              <p class="kz__wand-kopf">
+                <span class="stamp stamp--type">{{ z.kuerzel }}</span>
+                <strong>{{ huelleName(h) }}</strong>
+                <span class="kz__klein">gegen {{ nachbarLabel(h) }}</span>
+                @if (z.richtung) {
+                  <span class="kz__klein">· Richtung {{ z.richtung }}</span>
+                }
+              </p>
+              <!-- BERECHNET oder ABWEICHEND — und nie im Unklaren, was davon gilt.
+                   Berechnet heißt: der SERVER rechnet sie und zieht sie nach, wenn
+                   sich Umriss oder Raumhöhe ändern. Abweichend heißt: sie steht
+                   fest und wird nie wieder angefasst. -->
+              <p class="kz__wand-zahl">
+                Brutto <strong>{{ zeig(z.bruttoM2) }} m²</strong>
+                @if (!z.ueberschrieben) {
+                  <span class="stamp stamp--positive">berechnet</span>
+                  @if (z.abgeleitetM2 != null) {
+                    <span class="kz__klein">
+                      aus der Zeichnung: {{ zeig(z.laengeM) }} m × Raumhöhe =
+                      {{ zeig(z.abgeleitetM2) }} m². Der Server rechnet sie nach, sobald sich Umriss
+                      oder Raumhöhe ändern.
+                    </span>
+                  } @else {
+                    <span class="kz__klein">
+                      Der Server rechnet sie aus der Kante. Die Vorschau hier bleibt leer, solange
+                      keine Raumhöhe eingetragen ist.
+                    </span>
+                  }
+                  <button
+                    type="button"
+                    class="mini"
+                    [disabled]="!darfAendern()"
+                    (click)="wandUebersteuern(z.index)"
+                  >
+                    Fläche abweichend eintragen
+                  </button>
+                } @else {
+                  <span class="stamp stamp--warn">abweichend angegeben</span>
+                  <span class="kz__klein">
+                    Von Hand eingetragen — sie wird <strong>nicht</strong> nachgerechnet, auch nicht
+                    bei geänderter Raumhöhe (Giebel, Erker: genau richtig).
+                    @if (z.abgeleitetM2 != null) {
+                      Aus der Kante berechnet wären {{ zeig(z.abgeleitetM2) }} m².
+                    }
+                  </span>
+                  <button
+                    type="button"
+                    class="mini"
+                    [disabled]="!darfAendern()"
+                    (click)="wandAbleiten(z.index)"
+                  >
+                    zurück auf berechnet
+                  </button>
+                }
+              </p>
+              <div class="kz__akt">
+                <button
+                  type="button"
+                  class="mini"
+                  [disabled]="!darfAendern()"
+                  (click)="fensterAnKante(z.index)"
+                >
+                  ＋ Fenster / Tür hier
+                </button>
+                <button
+                  type="button"
+                  class="mini"
+                  [disabled]="!darfAendern()"
+                  (click)="wandLoesen(z.index)"
+                >
+                  Kante lösen
+                </button>
+              </div>
+            </div>
+          } @else {
+            <p class="kz__ohne">
+              <span class="stamp stamp--warn">keine Wand</span>
+              Auf dieser Kante steht keine Hüllfläche — sie zählt nicht in die Heizlast.
+              @if (kanteBelegbar()) {
+                <button
+                  type="button"
+                  class="mini"
+                  [disabled]="!darfAendern()"
+                  (click)="wandAnlegen(z.index)"
+                >
+                  Wand zuordnen
+                </button>
+              } @else {
+                <span class="kz__klein">
+                  Erst den Umriss speichern — der Server kennt die Kante sonst noch nicht.
+                </span>
+              }
+            </p>
+          }
+
+          <!-- --------------------------- Öffnungen -------------------------- -->
+          @for (o of z.oeffnungen; track o.uid) {
+            <div class="kz__oeffnung">
+              <p class="kz__oeffnung-kopf">
+                <span class="stamp stamp--type">{{ o.istTuer ? 'Tür' : 'Fenster' }}</span>
+                <strong>{{ o.name }}</strong>
+                <span class="kz__klein">{{ zeig(o.breiteM) }} m breit</span>
+                @if (o.anzahl > 1) {
+                  <span class="kz__klein">· {{ o.anzahl }} Stück</span>
+                }
+              </p>
+              <label class="kz__feld kz__feld--klein">
+                <span class="kz__label">Lage ab Punkt {{ z.nr }} (m)</span>
+                <input
+                  class="kz__eingabe kz__eingabe--zahl"
+                  type="text"
+                  inputmode="decimal"
+                  [id]="ids + '-lage-' + o.uid"
+                  [value]="o.feld"
+                  [disabled]="!darfAendern()"
+                  placeholder="unbekannt"
+                  (input)="lageTippen(o.uid, $any($event.target).value)"
+                  (blur)="lageUebernehmen(o.uid)"
+                  (keydown.enter)="$any($event.target).blur()"
+                />
+              </label>
+              @if (o.positionM == null) {
+                <p class="kz__notiz">
+                  <span class="stamp stamp--warn">ohne Lage</span>
+                  Die Lage ist <strong>nicht ausgemessen</strong> — die Öffnung zählt trotzdem in
+                  Fläche und Heizlast, sie wird nur nicht gezeichnet. Sie wird
+                  <strong>nicht</strong> bei 0 m angenommen.
+                </p>
+              } @else if (passungGrund(o.passung); as g) {
+                <p class="kz__notiz kz__notiz--fehler" role="alert">
+                  <span class="stamp stamp--negativ">passt nicht</span> {{ g }}
+                </p>
+              } @else if (passungOffen(o.passung); as g) {
+                <!-- Lage da, Breite noch nicht: das ist NICHT „passt". Unvollständig
+                     heißt unbekannt — auch hier, nicht nur bei der Lage. -->
+                <p class="kz__notiz">
+                  <span class="stamp stamp--warn">unvollständig</span> {{ g }} Sie wird deshalb
+                  nicht gezeichnet.
+                </p>
+              }
+            </div>
+          }
+        </article>
+      }
+
+      @if (punkte().length) {
+        <button
+          type="button"
+          class="ge__plus"
+          [id]="ids + '-punkt-plus'"
+          [disabled]="!darfAendern()"
+          (click)="punktAnhaengen()"
+        >
+          ＋ Punkt anhängen
+        </button>
+      }
+
+      <!-- Öffnungen ohne Lage: sie verschwinden NICHT stillschweigend. -->
+      @if (ohneLage().length) {
+        <section class="ge__offen" [attr.aria-labelledby]="ids + '-offen'">
+          <h5 class="ge__offen-titel" [id]="ids + '-offen'">Ohne Lage in der Wand</h5>
+          <p class="ge__offen-lead">
+            Diese Öffnungen sind erfasst, aber ihre Lage in der Wand ist nicht ausgemessen. Sie
+            zählen in Fläche und Heizlast mit — gezeichnet werden sie nicht, und sie werden
+            <strong>nicht bei 0 m angenommen</strong>.
+          </p>
+          <ul class="ge__offen-liste">
+            @for (o of ohneLage(); track o.uid) {
+              <li>
+                <span
+                  >{{ o.name }} <span class="kz__klein">in {{ o.wand }}</span></span
+                >
+                <button type="button" class="mini" (click)="lageEintragen(o.uid)">
+                  Lage eintragen
+                </button>
+              </li>
+            }
+          </ul>
+        </section>
+      }
+
+      @if (ohneKante()) {
+        <p class="ge__hinweis">
+          <span class="stamp stamp--type">nicht zeichenbar</span>
+          {{ ohneKante() }}
+          {{ ohneKante() === 1 ? 'Öffnung sitzt' : 'Öffnungen sitzen' }} in einer Fläche ohne Kante
+          (Decke, Boden, Dachschräge — oder eine Wand ohne Kantenzuordnung). Sie
+          {{ ohneKante() === 1 ? 'zählt' : 'zählen' }} mit, lassen sich aber nicht in den Grundriss
+          zeichnen.
+        </p>
+      }
+    </div>
+  </div>
+
+  <!-- ============================ Speichern ============================== -->
+  <div class="ge__aktionen">
+    <button
+      type="button"
+      class="btn btn--primary"
+      [disabled]="speichert() || !!speicherSperre() || (punkte().length > 0 && punkte().length < 3)"
+      [attr.aria-busy]="speichert()"
+      (click)="speichern()"
+    >
+      {{ speichert() ? 'Wird gespeichert …' : 'Umriss speichern' }}
+    </button>
+
+    @if (geaendert()) {
+      <button type="button" class="btn" [disabled]="speichert()" (click)="verwerfen()">
+        Arbeitsstand verwerfen
+      </button>
+      <p class="ge__hinweis">
+        <span class="stamp stamp--warn">Ungespeichert</span>
+        Fläche und Umfang oben zeigen den gespeicherten Stand.
+      </p>
+    }
+
+    @if (raum().vertices?.length) {
+      <button
+        type="button"
+        class="btn"
+        [disabled]="!darfAendern() || speichert()"
+        (click)="entfernenAngefordert.emit()"
+      >
+        Umriss entfernen
+      </button>
+    }
+
+    @if (speicherSperre(); as s) {
+      <p class="ge__hinweis ge__hinweis--stark" role="status">
+        <span class="stamp stamp--warn">gesperrt</span>
+        {{ s }}
+        @if (aufbauGeaendert()) {
+          <button type="button" class="mini" (click)="aufbauSpeichern.emit()">
+            Aufbau jetzt speichern
+          </button>
+        }
+      </p>
+    }
+  </div>
+</section>

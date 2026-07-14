@@ -16,6 +16,13 @@
         <span>{{ k }}</span>
       </p>
     }
+    <!-- Der Name „Aufmaß" gehört jetzt dem RAUMaufmaß. Wer ganze Räume aufnehmen
+         will (Heizlast, Leitungslängen), ist dort richtig — nicht hier. -->
+    <p class="wz__verweis">
+      <span aria-hidden="true">📐</span>
+      <strong>Räume aufmessen?</strong> Das Raumaufmaß steht an der Liegenschaft:
+      <em>Liegenschaft › Räume</em>. Hier geht es um Mengen für den Beleg.
+    </p>
   </header>
 
   <div class="wz__tabs" role="tablist" aria-label="Werkzeuge">
@@ -47,7 +54,7 @@
     <p class="wz__zweck">{{ aktiverTab().zweck }}</p>
 
     @switch (aktiv()) {
-      @case ('aufmass') {
+      @case ('mengenermittlung') {
         <app-aufmass-rechner [kontext]="kontext()" />
       }
       @case ('heizlast') {

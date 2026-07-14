@@ -18,11 +18,15 @@ export interface WerkzeugTab {
 
 export const WERKZEUGE: readonly WerkzeugTab[] = [
   {
-    id: 'aufmass',
-    label: 'Aufmaß / Menge',
+    // Der Name „Aufmaß" gehört seit dem Raumaufmaß (Liegenschaft › Räume) dorthin.
+    // Dieses Werkzeug ermittelt eine MENGE (Teilmaße, Verschnitt, Gebinde) — die
+    // Datei- und Symbolnamen (`aufmass-rechner`, `aufmass()`) bleiben bewusst
+    // unverändert, hier ändert sich nur, was der Anwender sieht.
+    id: 'mengenermittlung',
+    label: 'Mengenermittlung',
     zweck:
       'Teilmaße addieren, Abzüge, Verschnitt, Gebinde — und die Menge direkt als ' +
-      'Angebotsposition übernehmen.',
+      'Angebotsposition übernehmen. Ganze Räume aufmessen: Liegenschaft › Räume.',
   },
   {
     id: 'heizlast',
@@ -56,7 +60,7 @@ export const WERKZEUGE: readonly WerkzeugTab[] = [
   },
 ];
 
-const STANDARD = 'aufmass';
+const STANDARD = 'mengenermittlung';
 
 /**
  * Werkzeuge — kleine Helfer für den SHK-Büroalltag. Rein rechnende Werkzeuge:

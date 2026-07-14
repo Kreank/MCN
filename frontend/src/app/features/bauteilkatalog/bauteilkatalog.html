@@ -1,0 +1,231 @@
+<section class="bk" aria-labelledby="bk-titel">
+  <p class="sr-only" role="status" aria-live="polite">{{ ansage() }}</p>
+
+  <header class="page-head">
+    <div>
+      <p class="page-head__kicker">
+        <span class="page-head__scale" aria-hidden="true"></span>
+        Einstellungen
+      </p>
+      <h1 id="bk-titel" class="page-head__titel">Bauteilkatalog</h1>
+    </div>
+  </header>
+
+  <app-einstellungen-nav />
+
+  <p class="page-hint">
+    Die Vorlagen für das Raumaufmaß: statt an jeder Wand einen U-Wert zu tippen, wird ein Bauteil
+    gewählt — „Fenster, Doppelkastenfenster", „Außenwand, Ziegel ungedämmt". Der U-Wert kommt mit.
+  </p>
+
+  <!-- Die zwei Sätze, ohne die der Katalog missverstanden wird. Sie stehen hier
+       oben, nicht in einer Fußnote. -->
+  <div class="bk__regeln">
+    <p class="bk__regel">
+      <span class="stamp stamp--type">Kopie, kein Verweis</span>
+      <span>{{ kopieHinweis }}</span>
+    </p>
+    <p class="bk__regel">
+      <span class="stamp stamp--warn">ohne U-Werte ausgeliefert</span>
+      <span>{{ ohneUWertHinweis }}</span>
+    </p>
+  </div>
+
+  @if (meldung(); as m) {
+    <p class="note note--error" role="alert">{{ m }}</p>
+  }
+
+  @switch (state().kind) {
+    @case ('loading') {
+      <p class="lade-hinweis" role="status">Der Bauteilkatalog wird geladen …</p>
+    }
+    @case ('forbidden') {
+      <app-kein-zugriff [detail]="$any(state()).detail" />
+    }
+    @case ('error') {
+      <div class="note note--error" role="alert">
+        <h2 class="note__titel">Bauteilkatalog konnte nicht geladen werden</h2>
+        <p class="note__text">Bitte erneut versuchen.</p>
+        <div class="note__aktionen">
+          <button type="button" class="btn btn--primary" (click)="neuLaden()">
+            Erneut versuchen
+          </button>
+        </div>
+      </div>
+    }
+    @case ('ready') {
+      @if (ohneWertAnzahl() > 0) {
+        <p class="bk__luecke" role="status">
+          <span class="stamp stamp--warn">U-Wert fehlt</span>
+          <span class="bk__luecke-text">
+            <strong
+              >{{ ohneWertAnzahl() }}
+              {{ ohneWertAnzahl() === 1 ? 'aktive Vorlage hat' : 'aktive Vorlagen haben' }}
+              noch keinen U-Wert.</strong
+            >
+            Das ist der Auslieferungszustand — kein Fehler. Solange er fehlt, bleibt die Heizlast
+            jeder damit erfassten Fläche <em>unbekannt</em> (sie wird nicht geschätzt).
+          </span>
+        </p>
+      }
+
+      @if (darfAnlegen()) {
+        <form class="bk__neu" [formGroup]="neuForm" (ngSubmit)="anlegen()" novalidate>
+          <h2 class="bk__neu-titel">Neue Vorlage</h2>
+          <div class="bk__neu-felder">
+            <app-feld
+              [control]="neuForm.controls.kind"
+              label="Gattung"
+              typ="select"
+              [pflicht]="true"
+              [optionen]="gattungOptionen"
+            />
+            <app-feld
+              [control]="neuForm.controls.name"
+              label="Bezeichnung"
+              [pflicht]="true"
+              hinweis="z. B. Fenster, Doppelkastenfenster"
+            />
+            <app-feld
+              [control]="neuForm.controls.art"
+              label="Art (Vorbelegung)"
+              typ="select"
+              platzhalter="ohne Vorbelegung"
+              [optionen]="artOptionen()"
+              hinweis="Wird im Raumaufmaß mit ausgewählt — überschreibbar."
+            />
+            <app-feld
+              [control]="neuForm.controls.u_value"
+              label="U-Wert (W/m²K)"
+              typ="zahl"
+              hinweis="Darf leer bleiben — dann später eintragen (es gibt keine Normvorgabe)."
+            />
+            <app-feld
+              [control]="neuForm.controls.note"
+              label="Notiz"
+              hinweis="Woher der Wert stammt (Herstellerangabe, Erfahrungswert)."
+            />
+          </div>
+          <button type="submit" class="btn btn--primary" [disabled]="laedt()">
+            Vorlage anlegen
+          </button>
+        </form>
+      }
+
+      @for (g of gruppen(); track g.key) {
+        <section class="bk__gruppe" [attr.aria-label]="g.titel">
+          <header class="bk__gruppe-kopf">
+            <h2 class="bk__gruppe-titel">{{ g.titel }}</h2>
+            <p class="bk__gruppe-lead">{{ g.lead }}</p>
+          </header>
+
+          @if (g.liste.length === 0) {
+            <p class="tab-platzhalter">Für diese Gattung ist noch keine Vorlage angelegt.</p>
+          } @else {
+            <div class="tabelle-rahmen">
+              <table class="bk__tabelle">
+                <caption class="sr-only">
+                  {{
+                    g.titel
+                  }}
+                  — Bezeichnung, Art, U-Wert und Status
+                </caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Bezeichnung</th>
+                    <th scope="col">Art</th>
+                    <th scope="col">U-Wert</th>
+                    <th scope="col">Status</th>
+                    @if (darfAendern()) {
+                      <th scope="col"><span class="sr-only">Aktionen</span></th>
+                    }
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (v of g.liste; track v.id) {
+                    <tr [class.bk__zeile--inaktiv]="v.status === 'INAKTIV'">
+                      <th scope="row">
+                        {{ v.name }}
+                        @if (v.note) {
+                          <span class="bk__notiz">{{ v.note }}</span>
+                        }
+                      </th>
+                      <td>{{ artLabel(v) }}</td>
+                      <td>
+                        @if (uOffen() === v.id) {
+                          <div class="bk__u-edit">
+                            <app-feld
+                              [control]="uControl"
+                              label="U-Wert (W/m²K)"
+                              typ="zahl"
+                              hinweis="Leeren = wieder ohne Wert."
+                            />
+                            <div class="bk__zeilen-aktionen">
+                              <button
+                                type="button"
+                                class="btn btn--primary"
+                                [disabled]="laedt()"
+                                (click)="uSpeichern(v)"
+                              >
+                                Speichern
+                              </button>
+                              <button
+                                type="button"
+                                class="btn"
+                                [disabled]="laedt()"
+                                (click)="uAbbrechen()"
+                              >
+                                Abbrechen
+                              </button>
+                            </div>
+                          </div>
+                        } @else if (ohneWert(v)) {
+                          <!-- Kein Fehler, sondern Auslieferungszustand — aber sichtbar,
+                               mit direktem Weg zum Eintragen. -->
+                          <span class="bk__ohne-wert">
+                            <span aria-hidden="true">?</span> noch nicht hinterlegt
+                          </span>
+                        } @else {
+                          <span class="bk__u-wert">{{ uWertAnzeige(v) }}</span>
+                        }
+                      </td>
+                      <td>
+                        <span
+                          class="bk__status"
+                          [class.bk__status--aktiv]="v.status === 'AKTIV'"
+                          [class.bk__status--inaktiv]="v.status === 'INAKTIV'"
+                        >
+                          <span aria-hidden="true">{{ v.status === 'AKTIV' ? '●' : '⊘' }}</span>
+                          {{ v.status === 'AKTIV' ? 'Aktiv' : 'Stillgelegt' }}
+                        </span>
+                      </td>
+                      @if (darfAendern()) {
+                        <td class="bk__aktionen">
+                          @if (uOffen() !== v.id) {
+                            <div class="bk__zeilen-aktionen">
+                              <button type="button" class="btn" (click)="uBearbeiten(v)">
+                                {{ ohneWert(v) ? 'U-Wert eintragen' : 'U-Wert ändern' }}
+                              </button>
+                              <button
+                                type="button"
+                                class="btn"
+                                [disabled]="laedt()"
+                                (click)="statusUmschalten(v)"
+                              >
+                                {{ v.status === 'AKTIV' ? 'Stilllegen' : 'Reaktivieren' }}
+                              </button>
+                            </div>
+                          }
+                        </td>
+                      }
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          }
+        </section>
+      }
+    }
+  }
+</section>

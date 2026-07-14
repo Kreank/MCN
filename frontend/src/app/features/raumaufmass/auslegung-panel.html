@@ -1,0 +1,81 @@
+<section class="au" aria-labelledby="au-titel" id="auslegung-panel">
+  <p class="sr-only" role="status" aria-live="polite">{{ ansage() }}</p>
+
+  <header class="au__kopf">
+    <h3 class="au__titel" id="au-titel" tabindex="-1" #kopf>Auslegungsdaten des Objekts</h3>
+    <p class="au__lead">
+      Diese Werte gelten für das <strong>ganze Objekt</strong> — alle Räume rechnen damit.
+      <strong>Ohne Außentemperatur kann die raumweise Heizlast nicht berechnet werden.</strong>
+      Wir liefern bewusst keine Normwerte mit: Klimadaten und Kennwerte trägt der Betrieb ein.
+    </p>
+  </header>
+
+  @if (aussenFehlt()) {
+    <div class="au__luecke" role="status">
+      <span class="stamp stamp--warn au__luecke-mark">Fehlt</span>
+      <span class="au__luecke-text">
+        <strong>Die Auslegungs-Außentemperatur fehlt.</strong> Deshalb steht bei jedem Raum
+        „Heizlast unbekannt" — es wird nichts geschätzt und nichts auf 0 gesetzt. Tragen Sie die
+        Norm-Außentemperatur Ihres Standorts ein (Beispielform: -12 — mit dem Minus der Tastatur),
+        dann rechnet der Server die Hüllflächen-Heizlast.
+      </span>
+    </div>
+  }
+
+  @if (fehler(); as f) {
+    <div class="melde melde--fehler" role="alert">
+      <span class="melde__mark" aria-hidden="true">!</span>
+      <span class="melde__text"><strong>Fehler:</strong> {{ f }}</span>
+    </div>
+  }
+  @if (erfolg(); as e) {
+    <div class="melde melde--erfolg" role="status">
+      <span class="melde__mark" aria-hidden="true">✓</span>
+      <span class="melde__text">{{ e }}</span>
+    </div>
+  }
+
+  <form class="au__form" [formGroup]="form" (submit)="$event.preventDefault(); speichern()">
+    <div class="au__felder">
+      <app-feld
+        [control]="form.controls.design_outdoor_temp_c"
+        label="Auslegungs-Außentemperatur (°C)"
+        typ="zahl"
+        [hinweis]="
+          aussenFehlt()
+            ? 'Erforderlich für das Hüllflächenverfahren. Leer = die Heizlast bleibt unbekannt.'
+            : 'Norm-Außentemperatur des Standorts, z. B. -12. Leer = Heizlast unbekannt.'
+        "
+      />
+      <app-feld
+        [control]="form.controls.heat_load_w_per_m2"
+        label="Gebäudekennwert (W/m²)"
+        typ="zahl"
+        [hinweis]="
+          kennwertFehlt()
+            ? 'Nur für das überschlägige Flächenverfahren. Leer = dieses Verfahren bleibt unbekannt.'
+            : 'Gilt für Räume ohne eigenen Kennwert (Flächenverfahren).'
+        "
+      />
+    </div>
+
+    <div class="au__aktionen">
+      <button
+        type="submit"
+        class="btn btn--primary"
+        [disabled]="speichert() || !darfAendern()"
+        [attr.aria-busy]="speichert()"
+      >
+        {{ speichert() ? 'Wird gespeichert …' : 'Auslegungsdaten speichern' }}
+      </button>
+      @if (!darfAendern()) {
+        <p class="au__hinweis">Zum Ändern fehlt das Recht am Objektregister.</p>
+      } @else {
+        <p class="au__hinweis">
+          Ein leeres Feld setzt den Wert zurück. Nach dem Speichern werden die Kennzahlen aller
+          Räume neu geholt.
+        </p>
+      }
+    </div>
+  </form>
+</section>

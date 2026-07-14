@@ -2,7 +2,7 @@
   <p class="wzd__lead">
     Rechnen, ohne den Beleg zu verlassen. Überschlagswerte werden als
     <strong>Textposition</strong> übernommen — sie dokumentieren die Annahme, sie setzen keinen
-    Preis und keine Menge. Das <strong>Aufmaß</strong> übergibt zusätzlich die
+    Preis und keine Menge. Die <strong>Mengenermittlung</strong> übergibt zusätzlich die
     <strong>Menge</strong> samt Rechenaufstellung; den Einzelpreis trägst du danach ein, die Summe
     rechnet der Server.
   </p>
@@ -34,7 +34,7 @@
     [attr.aria-labelledby]="'wzd-tab-' + aktiv()"
   >
     @switch (aktiv()) {
-      @case ('aufmass') {
+      @case ('mengenermittlung') {
         <app-aufmass-rechner
           [kontext]="kontext()"
           [uebernahme]="true"

@@ -1,7 +1,7 @@
 <div class="rechner">
   <form class="rechner__eingabe" [formGroup]="form" (submit)="$event.preventDefault()">
     <fieldset class="rechner__satz">
-      <legend class="rechner__legende">Aufmaß</legend>
+      <legend class="rechner__legende">Mengenermittlung</legend>
 
       <app-feld
         [control]="form.controls.bezeichnung"
@@ -185,4 +185,6 @@
   Die Menge geht mit der Rechenaufstellung in die Position — so bleibt nachvollziehbar, wie sie
   zustande kam. Der <strong>Einzelpreis wird nicht gesetzt</strong>: den trägt der Anwender im
   Positionsdialog nach oder er kommt aus dem Artikelstamm. Summen rechnet ausschließlich der Server.
+  Ganze <strong>Räume</strong> mit Höhe, Hüllflächen und Fenstern nimmt das
+  <strong>Raumaufmaß</strong> auf: Liegenschaft › Räume.
 </p>
