@@ -75,7 +75,23 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 > **Zeiterfassung mit Stempeluhr** (Migrationen 0066–0068, gesetzliche Pflicht
 > nach § 17 MiLoG), **Plantafel auf Dispo-Niveau** und **Werkzeuge** (Nav 92:
 > Heizlast, Heizkörper-Umrechnung, Volumenstrom, Einheiten). Details unten.
-> **AKTUELL (2026-07-12, Welle 3):** `e0403af` **EK→VK-Matrix, Fälligkeiten-Engine,
+> **AKTUELL (2026-07-14, Welle 5):** Der Baustellenbericht ist von einem Freitext-
+> zettel zur **beweisbaren Abrechnungsgrundlage** geworden. `3fcc37d`
+> **Berichtspositionen + Soll-Ist** (0080–0083: der Bericht führt Artikel/Leistungen
+> und Mengen — **niemals Preise**, denn er wird unterschrieben und versiegelt; er
+> startet vorbelegt mit dem Angebot als **Soll**, der Monteur korrigiert nur die
+> Abweichung, und daraus fällt Mehrverbrauch/Minderverbrauch/Zusatz/entfallen
+> heraus). `573a72d` + `b5e5c3b` **Abrechnung** (0084/0085/0088: Rechnung aus Angebot
+> bzw. aus Bericht+Zeiten, **„was ist noch nicht abgerechnet"**, Preisklärung statt
+> Sackgasse — **fehlender EK ergibt NIE 0 €**; die **Doppelabrechnung ist physisch
+> gesperrt**, und der **Storno löst die Bindung**, damit stornierte Leistung wieder
+> abrechenbar wird). Dabei **drei Doppelerstattungen** im Storno-/Gutschrift-Pfad
+> geschlossen (zwei davon vorbestehend) und ein **Zeitzonen-Fehler**, durch den eine
+> nachts erfasste Rechnungsadresse nicht galt — der Beleg wäre **ohne
+> Empfängeranschrift** rausgegangen. `ea6ebc9` **Raumaufmaß/Bauteilkatalog/Grundriss**
+> (0086/0087, 0089–0094, Arbeit eines Parallel-Agenten, **nicht reviewt**).
+> **2929 Tests grün.** Konzept für den KI-Ausbau: **`docs/ki-first-konzept.html`**.
+> **Welle 3 (2026-07-12):** `e0403af` **EK→VK-Matrix, Fälligkeiten-Engine,
 > HR-Reste und Aufmaß** — vier parallel gebaute Slices, wegen geteilter Dateien in
 > EINEM Commit: **EK→VK-Aufschlagsmatrix** (0069/0073 — Großhandelspreis rein,
 > Verkaufspreis raus; fehlt der EK, bleibt der VK **unbekannt, nie 0**),
@@ -90,37 +106,52 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 
 ## 0. Nächste Session — Stand & offene Entscheidungen (ZUERST LESEN)
 
-### 🔴 OFFEN aus der Raumaufmaß-Session (2026-07-13/14) — hier anfangen
+### ⭐ HIER ANFANGEN (Stand 2026-07-14, alles committet)
 
-**(1) GoBD-BUG im Bestandscode — nicht von diesem Slice, aber ECHT und dringend.**
+**Der Arbeitsbaum ist sauber. `master` trägt vier neue Commits:**
 
-    db_core/tests/test_erechnung_service.py
-      ::test_kunden_umzug_nach_veroeffentlichung_aendert_das_xml_nicht     FAILED
+| Commit | Inhalt |
+|---|---|
+| `3fcc37d` | **Berichtspositionen + Soll-Ist** (Migrationen 0080–0083) |
+| `573a72d` | **Abrechnung**: Rechnung aus Angebot/Auftrag, Doppelabrechnungssperre (0084/0085/0088) |
+| `b5e5c3b` | **Abrechnung im UI**: Preisklärung, gebundene Positionen, Zeile anhängen |
+| `ea6ebc9` | **Raumaufmaß/Bauteilkatalog/Grundriss** (0086/0087, 0089–0094) — Arbeit des Parallel-Agenten, **von niemandem reviewt** |
 
-Der Test fällt **auch gegen sauberes HEAD** (in einem eigenen Worktree
-nachgewiesen, ohne die Arbeit dieser Session und ohne die des Parallel-Agenten).
-Er ist **zeitabhängig**: tagsüber grün, nach Mitternacht rot — genau die Falle,
-vor der der Docstring von `beleg.party_address` selbst warnt (`localdate()` vs.
-`utcnow().date()`).
+**Verifikation:** 2929 Backend-Tests grün (14 Skips Bestand), `makemigrations --check`
+sauber, Migrationskette linear (ein Blatt, `0094`), Frontend-Build ohne Budget-Warnung.
 
-Bedeutung: Eine **veröffentlichte** Rechnung zieht ihre Empfängeranschrift rund
-um die Datumsgrenze offenbar **nicht mehr aus dem eingefrorenen Snapshot**. Ein
-festgeschriebener Beleg, dessen Inhalt sich ändert, wenn der Kunde umzieht — das
-ist der Kern dessen, was GoBD verbietet. Reproduzieren:
-`uv run pytest db_core/tests/test_erechnung_service.py::test_kunden_umzug_nach_veroeffentlichung_aendert_das_xml_nicht`
-(nachts, bzw. mit entsprechend gesetzter Zeit). **Bewusst nicht angefasst**
-(fremder Bereich, Parallel-Agent arbeitete dort). Das ist der erste Punkt.
+**→ Der nächste Slice ist `docs/ki-first-konzept.html`, Abschnitt 9: die
+Entitäts-Dossiers** (Kontakt / Liegenschaft / Projekt / Auftrag als
+rechtegefilterte Read-Services). Reine Rechenarbeit, kein Modell — aber ohne sie
+kann die KI später nie zuverlässig Auskunft geben. **Zuerst das Konzeptpapier
+lesen**, es erklärt das Warum.
 
-**(2) Nichts aus der Raumaufmaß-Session ist committet.** Der Arbeitsbaum enthält
-den Slice (Migrationen 0086/0087/0089–0094, `services/raum.py`,
-`services/bauteilkatalog.py`, `api/raum.py`, `features/raumaufmass/**`,
-`features/bauteilkatalog/**`, Tests, dieser HANDOFF) **gemischt mit der
-Abrechnungsbindung des Parallel-Agenten** (0084/0085/0088, `api/auftrag.py`,
-`api/beleg.py`, `services/abrechnung.py`). `models.py` und `api/api.py` sind von
-**beiden** angefasst → beim Einchecken **selektiv stagen** (Hunk-Staging), sonst
-reißt man Fremdarbeit mit. Stand der Verifikation: **2895 Backend-Tests grün**
-(der eine Fehlschlag ist Punkt 1), **207 Frontend-Tests grün**, Build ohne
-Budget-Warnung, `makemigrations --check` sauber.
+---
+
+#### ✅ ERLEDIGT: der „GoBD-Bug" aus der Raumaufmaß-Session
+
+Der Befund war **richtig gefunden, aber falsch diagnostiziert** — und ist behoben
+(`573a72d`). Zur Richtigstellung, damit niemand an der falschen Stelle sucht:
+
+- **Es war KEIN Snapshot-Bruch.** Der veröffentlichte Beleg zieht seine Anschrift
+  sehr wohl aus dem eingefrorenen `billing_snapshot`. Umgefallen ist die Zeile
+  *davor*: die Prüfung, dass die **neue** Adresse nach dem Umzug überhaupt gilt.
+- **Die echte Ursache:** `beleg.party_address` nahm `dj_timezone.localdate()` — und
+  weil `settings.TIME_ZONE = "UTC"` ist, ist das **das UTC-Datum**, nicht der Tag,
+  an dem der Betrieb arbeitet. Zwischen 00:00 und 02:00 MESZ liegen beide einen Tag
+  auseinander. Eine in diesem Fenster erfasste Rechnungsadresse galt für die
+  Belegausgabe **erst morgen** → der Beleg wäre **ohne Empfängeranschrift**
+  rausgegangen. Der Docstring warnte wörtlich vor genau dieser Falle und benannte
+  `localdate()` als Schutz — der wegen der Settings keiner war.
+- **Fix:** `db_core/betriebszeit.py` (`BETRIEBS_TZ`/`betriebs_datum()`, zentral — die
+  Zeitzone war im Repo bereits **zweimal dupliziert**). Umgestellt sind
+  `beleg.party_address` und `api/qualifikation.py` (dort rechnete der Service längst
+  in Betriebszeit, die API daneben in UTC — zwei Wahrheiten für dasselbe Datum).
+  **`publish_invoice` bleibt bewusst bei UTC** (muss deckungsgleich mit dem DB-Trigger
+  `(now() AT TIME ZONE 'UTC')::date` bleiben — nicht „mitziehen"!).
+- **Regressionstest:** `db_core/tests/test_betriebszeit.py` friert die Uhr auf
+  **00:30 Berlin** ein. Gegengeprüft: mit `localdate()` fällt er um. Ein Test, der
+  nicht rot wird, wenn der Fehler drin ist, wäre wertlos gewesen.
 
 **(3) Der Monteur kann keine Räume erfassen** — bewusst so. Das Rechtemodul
 `property` kennt **kein `EIGENE`**: Wer Räume anlegen darf, dürfte jede
@@ -134,6 +165,136 @@ steht aus.
 Zuschlagsfaktor.** Für eine echte Rohrnetzberechnung braucht es eine
 Leitungsführung — der **Grundriss (0091) ist jetzt die Grundlage dafür**. Das ist
 der natürliche nächste Ausbauschritt (und der Weg zur 3D-Planung).
+
+---
+
+### Welle 5 (2026-07-13/14): Berichtspositionen, Soll-Ist und Abrechnung
+
+Zwei Slices, die den Baustellenbericht vom Freitextzettel zur **beweisbaren
+Abrechnungsgrundlage** machen. **Kein KI-Anteil — reine Rechenarbeit** (und genau
+das ist der Punkt: was deterministisch geht, gehört deterministisch gebaut).
+
+**A) Berichtspositionen + Soll-Ist** (`3fcc37d`, Migrationen 0080–0083)
+
+`workflow.site_report_line` — der Bericht führt Positionen aus dem Artikel-/
+Leistungsstamm. Er startet **vorbelegt mit den Angebotspositionen als Sollmenge**;
+der Monteur korrigiert nur die Abweichung. Daraus fällt der Soll-Ist-Abgleich
+(MEHRVERBRAUCH / MINDERVERBRAUCH / ZUSATZ / ENTFALLEN / UNVERAENDERT), Reiter
+„Soll-Ist" in der Auftragsmappe. Vorbelegungs-Rangfolge, falls kein Angebot da ist:
+Wartungsvertrag → letzter Bericht an derselben Anlage → Vorgang → leer.
+
+- **INVARIANTE: Der Bericht führt KEINE PREISE.** Er wird vom Kunden unterschrieben
+  und danach versiegelt — ein unterschriebener Bericht *mit* Preisen wäre eine
+  **Preisvereinbarung**, die der Monteur auf der Baustelle abschließt; *mit* Mengen
+  ist er ein Leistungsnachweis. Ein Schema-Test durchsucht `information_schema` nach
+  Geldspalten und hält die Invariante auch gegen künftige Migrationen.
+- **INVARIANTE: Ein unterzeichneter Bericht ist versiegelt — auch seine Positionen**
+  (`protect_site_report_lines`, INSERT/UPDATE/DELETE, **OLD und NEW**; das
+  *Wegbewegen* einer Position ist damit abgedeckt). `FOR SHARE` serialisiert gegen
+  `sign_report`; Zwei-Sitzungs-Test in `db/tests/nebenlaeufigkeitstest_berichtspositionen.sh`.
+- **INVARIANTE: Trägt eine Position eine Herkunft, wird ihre Identität aus der
+  Angebotszeile ABGELEITET, nie vom Client geglaubt** (Trigger 0083, **fünf**
+  Gleichungen: Bezeichnung, Einheit, Sollmenge, Artikel, Leistung). **Drei
+  Review-Runden** waren nötig: Die Prüfung im *Service* ließ sich umgehen, indem der
+  Client die Felder schlicht **weglässt** — dann ließ sich ein fremdes Soll
+  unterschieben („angeboten: 500" neben einer Position mit 5 Stück, auf einem
+  versiegelten Kundendokument). **Deshalb liegt die Regel im TRIGGER.** Die
+  Präzisierung des Monteurs gehört in die **Notiz**, nicht in die Bezeichnung.
+- **Der Soll-Ist schlüsselt über die QUELLZEILE**, nicht über den bearbeitbaren Text.
+  Sonst zerfiel eine präzisierte Position („Rohr" → „Rohr DN20") in ENTFALLEN +
+  ZUSATZ, und das Büro fakturierte **14 Einheiten als Zusatzleistung statt 2 Einheiten
+  Mehrverbrauch**.
+- **`invoicing.quote.work_order_id` ist jetzt echt verdrahtet.** Die Spalte lag seit
+  0018 in der DB und wurde von **keinem Produktpfad** gesetzt — nur die Tests setzten
+  sie per Raw-ORM. Das Feature wäre in der Demo gelaufen und im Betrieb bei jedem
+  Auftrag ohne Projekt an einer leeren Angebotsliste gescheitert. **Der Projekt-Fallback
+  ist RAUS** (bei mehreren Aufträgen am selben Projekt war dasselbe Angebot Soll für
+  jeden Auftrag). Migration **0082 nimmt `work_order_id` von `freeze_sent_quote` aus**:
+  ein interner Verweis ist kein Beleginhalt — sonst wäre die Zuordnung genau dann
+  gesperrt, wenn man sie braucht (Angebot versenden → Kunde nimmt an → **dann** Auftrag).
+  **B-30 bleibt im Kern unangetastet** (Test beweist es).
+
+**B) Abrechnung** (`573a72d` Backend, `b5e5c3b` UI, Migrationen 0084/0085/0088)
+
+Rechnung **aus Angebot** (Positionen 1:1 kopiert) und **aus Auftrag** (Regie:
+Berichtspositionen + Zeitbuchungen). Dazu **„Was ist noch nicht abgerechnet?"** als
+Abfrage. `work_order.billing_mode` = `PAUSCHAL` (Default) | `REGIE`.
+
+- **INVARIANTE: Die Doppelabrechnungssperre liegt in der DATENBANK.**
+  `invoicing.billing_link` bindet Rechnungsposition an ihre Quelle; **drei partielle
+  UNIQUE-Indizes `WHERE released_at IS NULL`**. Ein UNIQUE auf der Rechnungsposition
+  selbst ginge **nicht**: nach einem Storno müssen dieselben Stunden wieder abrechenbar
+  sein, aber die Position ist dann unveränderlich und nicht entwertbar. **Der Storno
+  LÖST die Bindung** (Trigger) — die Leistung wird frei. Gleiches Muster wie bei den
+  Fälligkeiten: *die Idempotenz garantiert die DB, nicht der Service.*
+- **Was die DB NICHT sehen kann, fängt der Service:** Angebots- und Berichtspositionen
+  sind **disjunkte Quellen** — dieselbe Leistung ließe sich über beide Wege je einmal
+  fakturieren, ohne dass ein Index anschlägt (reproduziert: 178,50 € auf zwei
+  veröffentlichten Rechnungen). Die Sperre hängt deshalb am **Auftrag** (der einzigen
+  Klammer) und sitzt in **beiden** Rechnungswegen — **nicht** am Moduswechsel: der war
+  an `work_order.status='ABGERECHNET'` gehängt, einen Status, den im ganzen Repo
+  **niemand je setzt**. Eine Sperre, die aussah wie eine Sperre und keine war.
+- **INVARIANTE: Fehlender Preis ist keine Sackgasse, aber NIEMALS 0 €.** Ein Preis gilt
+  erst **ab > 0** als Preis (`_ist_preis`) — an allen drei Stellen, an denen die
+  DB-CHECKs `>= 0` erlauben: Festpreis 0, VK-Gruppe auf einem **0-EK aus einem
+  DATANORM-Importfehler**, Lohnsatz 0. Sonst landete die Position mit **0,00 €** auf
+  einer plausibel aussehenden, um den vollen Betrag zu niedrigen Rechnung — und die
+  Vorschau nickte es ab. Stattdessen: **strukturierte Klärungsliste** (422 mit
+  `preis_unbekannt`), Dialog fragt die Preise ab, Vorschläge sind **nie
+  vorausgefüllt**, **kein „später"-Knopf**. Ein genannter Preis wird **nur akzeptiert,
+  wo der Server keinen hat** — sonst wäre die Aufschlagsmatrix (Mindestmarge!)
+  umgehbar. **Kein Schreibpfad in `pricing.article`** (statisch getestet).
+- **Storno/Gutschrift: der Zustandsraum ist vollständig entschieden** (Tabelle im
+  Docstring von `create_correction`). **Drei Doppelerstattungen geschlossen, zwei davon
+  VORBESTEHEND:** Storno nach Gutschrift; Gutschrift nach Storno (die neue
+  Vollgutschrift-Sperre griff dort ausgerechnet nicht, weil der Storno die Bindungen
+  bereits gelöst hatte); mehrfache Vollgutschrift auf eine **ungebundene** Rechnung
+  (200 % Erstattung). **Vollgutschrift auf eine gebundene Rechnung ist verboten** (sie
+  ist ein verkappter Storno); **Teilgutschrift bleibt erlaubt** und lässt die Leistung
+  abgerechnet — eine Kulanz heißt nicht, dass nicht gearbeitet wurde. Präzedenzfall ist
+  die bestehende Grenze bei den Abschlägen.
+- **Zeile anhängen** (`POST /invoices/{id}/lines`, `DELETE .../lines/last`): 0088
+  erlaubt das INSERT einer ungebundenen Zeile am gebundenen Beleg — aber es **führte
+  kein Pfad dorthin** (`update_invoice` ersetzt den ganzen Satz per Delete+Insert).
+  **Die neue Zeile wird VOR die Anrechnungspositionen eingefügt** (UPDATE **absteigend**,
+  sonst kollidiert das Umnummerieren mit sich selbst); *die Anrechnung schließt den
+  Beleg ab*. `remove_last_invoice_line` weist eine **Anrechnungsposition** ab — sie
+  steht per Konstruktion hinten, die „letzte Zeile" einer SR **ist** regelmäßig die
+  Anrechnung; sie zu löschen forderte den **bereits gezahlten Abschlag ein zweites Mal**
+  (Brutto sprang 4.760 → 5.950 €).
+- **§ 35a:** Der Anhänge-Dialog hätte den Arbeitskosten-Ausweis **zerstört** — eine
+  einzige Zeile ohne Lohnkennzeichnung macht ihn für die **ganze** Rechnung
+  unbestimmbar, und ausgerechnet die im Dialog beworbene „Anfahrtspauschale" fällt
+  darunter (Privatkunde verliert **20 % Steuerbonus**). Der Dialog führt die Angabe
+  jetzt in derselben Konvention wie der Beleg-Editor: **Pflicht genau dort, wo Schaden
+  entsteht**, sonst freiwillig. Wo der Anteil ehrlich nicht ermittelbar ist, ist der
+  Ausweg das **bewusste Abschalten** des Ausweises — nicht das Raten.
+  *Der Fehler steckte nicht in einer Zeile Code, sondern in dem, was das Formular nicht
+  gefragt hat.*
+
+**Offen / ehrlich:**
+- Die **Nebenläufigkeit beim Anhängen** ist konstruktiv gesichert (`select_for_update`
+  in allen drei Schreibern + Constraint-Mapping → 422 statt 500), aber **nicht durch
+  einen Zwei-Sitzungs-Test nachgewiesen**. Muster dafür existiert
+  (`db/tests/nebenlaeufigkeitstest_berichtspositionen.sh`).
+- **Schlussrechnung aus dem Abrechnungslauf** gibt es nicht (`rechnung_aus_*` erzeugt
+  immer `RECHNUNG`); der bestehende Abschlagspfad (0060/0061) bleibt zuständig.
+- Der **Anrechnungs-Umnummerierungspfad ist aus dem UI nicht erreichbar** (gebundene
+  Belege sind nie SCHLUSSRECHNUNG) — reine API-Absicherung.
+
+### Lehre aus dieser Welle (für die nächste Session wichtiger als der Code)
+
+**Elf Fehler fand erst die Review-Schleife — ausnahmslos solche, die in Geld geendet
+hätten.** Das Muster war jedes Mal dasselbe: **Nicht der Code war naiv, sondern der
+Testumfang.** „Grün" hieß zuverlässig „der Normalfall stimmt"; die Fehler wohnten in
+den Sonderfällen, die Geld bewegen — Storno, Gutschrift, Abschlag, Nachtstunde,
+Importfehler mit Preis 0, mehrere Steuersätze.
+
+Zwei Konsequenzen fürs Vorgehen:
+1. **Die Bruchfälle dem Implementierer NAMENTLICH vorgeben**, statt „schreib Tests" zu
+   sagen. Das ist der einzige Weg, der funktioniert hat.
+2. **Was im Service sitzt, ist umgehbar; erst was im Trigger sitzt, hält.** Drei
+   Reparaturen mussten deshalb ein zweites Mal gemacht werden.
 
 **(5) Dev-DB-Rest:** In `mitra_crm_test` stehen Testräume aus den E2E-Läufen
 (`ZZ-TEST-RUN2`, `ZZ-UI-E1`, `E2E-B-Raum`, `E2E-C-Grundriss`, `Wohnzimmer`,
