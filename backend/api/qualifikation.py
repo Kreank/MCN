@@ -20,6 +20,7 @@ from ninja.responses import Status
 from ninja.security import django_auth
 
 from api.permissions import require
+from db_core.betriebszeit import betriebs_datum
 from db_core.models import Employee, Qualification
 from db_core.services import qualifikation as qualifikation_service
 
@@ -207,10 +208,12 @@ class EmployeeQualificationIn(Schema):
 
 
 def _eq_out(eq):
-    # `timezone.localdate()`, nicht `date.today()`: Letzteres liest die
-    # OS-Zeitzone. Auf einem UTC-Server stünde das Häkchen zwischen 00:00 und
-    # 02:00 Ortszeit einen Tag daneben.
-    heute = timezone.localdate()
+    # `betriebs_datum()`, nicht `localdate()` und nicht `date.today()`:
+    # `settings.TIME_ZONE` ist UTC, `localdate()` liefert also das UTC-Datum —
+    # zwischen 00:00 und 02:00 MESZ stünde das Häkchen einen Tag daneben. Der
+    # Service (`services/qualifikation.py`) rechnet längst in BETRIEBS_TZ; die
+    # API zog hier eine zweite, abweichende Wahrheit.
+    heute = betriebs_datum()
     gueltig = (eq.valid_until is None or eq.valid_until >= heute) and (
         eq.valid_from is None or eq.valid_from <= heute
     )

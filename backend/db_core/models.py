@@ -1876,6 +1876,13 @@ class WorkOrder(models.Model):
     is_warranty_case = models.BooleanField(db_default=models.Value(False))
     ordered_at = models.DateTimeField(null=True, blank=True)
     desired_date = models.DateField(null=True, blank=True)
+    # Abrechnungsart (Migration 0084): PAUSCHAL | REGIE.
+    # PAUSCHAL (Default): Die Rechnung ist die ANGEBOTSKOPIE. Zeiten und
+    # Berichtspositionen sind Nachweis, kein Rechnungsposten — das Angebot enthält
+    # die Leistung bereits; beides zu fakturieren hieße doppelt kassieren. Das
+    # Soll-Ist (0080) bleibt die interne Nachkalkulation.
+    # REGIE: Die Rechnung entsteht aus Bericht + Zeiten (dem Ist).
+    billing_mode = models.TextField(db_default=models.Value("PAUSCHAL"))
     version = models.IntegerField()
     created_at = models.DateTimeField(db_default=Now())
     updated_at = models.DateTimeField(db_default=Now())
@@ -3861,3 +3868,68 @@ class AssignmentTemplateMember(models.Model):
     class Meta:
         managed = False
         db_table = 'workflow"."assignment_template_member'
+
+
+class BillingLink(models.Model):
+    """invoicing.billing_link — die Abrechnungsbindung (Migration 0084).
+
+    **Kein Beleg**, sondern eine interne Verknüpfung mit genau einer Aussage:
+    „Diese Berichtsposition / diese Zeitbuchung / diese Angebotsposition ist in
+    DIESER Rechnungsposition abgerechnet."
+
+    **INVARIANTE: Dieselbe Leistung kann physisch nicht zweimal abgerechnet
+    werden.** Drei partielle UNIQUE-Indizes (je Quellspalte,
+    `WHERE released_at IS NULL`) garantieren das in der **Datenbank** — nicht im
+    Service. Zwei parallele Rechnungsläufe können dieselbe Zeitbuchung nicht
+    beide greifen.
+
+    **Der Storno löst die Bindung** (`released_at`, Trigger
+    `invoicing.release_billing_links_on_cancel`) — und nur er. Eine GUTSCHRIFT
+    ist eine Teilkorrektur: die Ursprungsrechnung besteht weiter und fordert
+    weiterhin Geld, ihre Leistung ist also weiterhin abgerechnet. Dieselbe Grenze
+    zieht das Modul schon bei den Abschlägen (`advance_blocking_final`).
+
+    Genau EINE Quellspalte ist gesetzt, passend zu `source_kind` (CHECK).
+    `invoice_line_id` ist bei einer **aktiven** Bindung immer gesetzt (CHECK);
+    NULL kann sie nur bei einer gelösten sein, deren Entwurfsposition entfernt
+    wurde (`abrechnung.bindungen_loesen`).
+
+    Kein DELETE (Trigger): Ein gelöschter Link machte die Sperre spurlos
+    rückgängig. Aufgehoben wird ausschließlich über `released_at` — mit Grund,
+    mit Zeitstempel, im Audit.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    invoice = models.ForeignKey(
+        Invoice, models.DO_NOTHING, db_column="invoice_id",
+        related_name="billing_links",
+    )
+    invoice_line = models.ForeignKey(
+        InvoiceLine, models.DO_NOTHING, db_column="invoice_line_id",
+        null=True, blank=True, related_name="billing_links",
+    )
+    # BERICHTSPOSITION | ZEITBUCHUNG | ANGEBOTSPOSITION
+    source_kind = models.TextField()
+    site_report_line = models.ForeignKey(
+        SiteReportLine, models.DO_NOTHING, db_column="site_report_line_id",
+        null=True, blank=True, related_name="billing_links",
+    )
+    time_entry = models.ForeignKey(
+        TimeEntry, models.DO_NOTHING, db_column="time_entry_id",
+        null=True, blank=True, related_name="billing_links",
+    )
+    quote_line = models.ForeignKey(
+        QuoteLine, models.DO_NOTHING, db_column="quote_line_id",
+        null=True, blank=True, related_name="billing_links",
+    )
+    released_at = models.DateTimeField(null=True, blank=True)
+    released_reason = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'invoicing"."billing_link'
+
+    def __str__(self):
+        return f"{self.source_kind} -> {self.invoice_id}"

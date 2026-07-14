@@ -131,6 +131,34 @@ def test_correction_teilmenge(app_user):
 
 
 @pytest.mark.django_db
+def test_storno_nach_gutschrift_ist_verboten(app_user):
+    """Keine doppelte Erstattung: Der Storno kehrt die VOLLEN Ursprungsbeträge um.
+
+    Rechnung 1.045,00 € brutto, Gutschrift über Position 1 (−285,60 €), danach ein
+    Storno über −1.045,00 € — der Kunde bekäme die 285,60 € ein zweites Mal
+    erstattet. Der Storno prüfte bisher nur, ob schon ein STORNO existiert, nicht
+    ob schon eine GUTSCHRIFT besteht.
+    """
+    origin = _published_invoice(app_user)
+    beleg_service.create_correction(app_user.id, invoice_id=origin.id, positions=[1])
+    with pytest.raises(ValueError) as exc:
+        beleg_service.create_cancellation(app_user.id, invoice_id=origin.id)
+    assert "Gutschrift" in str(exc.value)
+    # Kein Stornobeleg entstanden.
+    assert not Invoice.objects.filter(
+        reference_invoice_id=origin.id, invoice_type="STORNO"
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_storno_ohne_gutschrift_geht_weiterhin(app_user):
+    """Die Regel greift nur nach einer Gutschrift — der Normalweg bleibt offen."""
+    origin = _published_invoice(app_user)
+    storno = beleg_service.create_cancellation(app_user.id, invoice_id=origin.id)
+    assert storno.gross_total == -origin.gross_total
+
+
+@pytest.mark.django_db
 def test_correction_unbekannte_position(app_user):
     origin = _published_invoice(app_user)
     with pytest.raises(ValueError):
@@ -156,3 +184,64 @@ def test_storno_zeilen_sind_negiert(app_user):
         assert line.quantity > 0  # DB-CHECK quantity > 0 bleibt gewahrt
         assert line.unit_price < 0  # Invertierung über den Preis
         assert line.net_amount < 0
+
+@pytest.mark.django_db
+def test_gutschrift_nach_storno_ist_verboten(app_user):
+    """Der Spiegelfall zu `test_storno_nach_gutschrift_ist_verboten` (Befund H-1).
+
+    Rechnung 975,80 € brutto → STORNO −975,80 € → Vollgutschrift −975,80 €: Der
+    Kunde bekäme alles ZWEIMAL zurück. Die Vollgutschrift-Sperre greift hier
+    nicht — der Storno hat die Bindungen gerade gelöst, sie sieht keine mehr.
+    """
+    origin = _published_invoice(app_user)
+    assert origin.gross_total == Decimal("975.80")
+    beleg_service.create_cancellation(app_user.id, invoice_id=origin.id)
+
+    with pytest.raises(ValueError) as exc:
+        beleg_service.create_correction(
+            app_user.id, invoice_id=origin.id, positions=[1, 2]
+        )
+    assert "storniert" in str(exc.value)
+    assert not Invoice.objects.filter(invoice_type="GUTSCHRIFT").exists()
+
+    # Auch die Teilgutschrift ist auf dem aufgehobenen Beleg zu.
+    with pytest.raises(ValueError):
+        beleg_service.create_correction(
+            app_user.id, invoice_id=origin.id, positions=[1]
+        )
+    # Und die Erstattung bleibt bei genau einem Storno.
+    krediert = sum(
+        inv.gross_total
+        for inv in Invoice.objects.filter(reference_invoice_id=origin.id)
+    )
+    assert krediert == -origin.gross_total
+
+
+@pytest.mark.django_db
+def test_teilgutschrift_ohne_storno_geht_weiterhin(app_user):
+    """Die neue Sperre greift nur nach einem Storno — der Normalweg bleibt offen."""
+    origin = _published_invoice(app_user)
+    gutschrift = beleg_service.create_correction(
+        app_user.id, invoice_id=origin.id, positions=[1]
+    )
+    assert gutschrift.gross_total == Decimal("-285.60")
+
+
+@pytest.mark.django_db
+def test_gutschriften_koennen_den_rechnungsbetrag_nicht_uebersteigen(app_user):
+    """Zwei Vollgutschriften auf eine ungebundene Rechnung: mehr als 100 % zurück.
+
+    Ohne Abrechnungsbindung ist die Vollgutschrift zulässig (sie verschenkt keine
+    gebundene Leistung). Eine ZWEITE darf es nicht geben — sonst wären 200 %
+    erstattet.
+    """
+    origin = _published_invoice(app_user)
+    beleg_service.create_correction(
+        app_user.id, invoice_id=origin.id, positions=[1, 2]
+    )
+    with pytest.raises(ValueError) as exc:
+        beleg_service.create_correction(
+            app_user.id, invoice_id=origin.id, positions=[1]
+        )
+    assert "Rechnungsbetrag" in str(exc.value)
+    assert Invoice.objects.filter(invoice_type="GUTSCHRIFT").count() == 1

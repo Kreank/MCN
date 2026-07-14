@@ -20,6 +20,7 @@ from lxml import etree
 from pypdf import PdfReader
 
 from db_core import storage as storage_module
+from db_core.betriebszeit import betriebs_datum
 from db_core.db_context import business_transaction
 from db_core.models import PartyAddress
 from db_core.services import auftrag as auftrag_service
@@ -555,7 +556,13 @@ def test_kunden_umzug_nach_veroeffentlichung_aendert_das_xml_nicht(
     # Echter Umzug: die bisherige Rechnungsadresse beenden (die Exclusion
     # excl_party_address_primary lässt keine zwei zeitgleich primären zu), dann
     # die neue eintragen.
-    heute = date.today()
+    #
+    # `betriebs_datum()` und NICHT `date.today()`: Letzteres liest die
+    # OS-Zeitzone (hier Europe/Berlin), `party_address` rechnet aber im
+    # Betriebsdatum. Auf einem Rechner in einer anderen Zeitzone — oder zwischen
+    # 00:00 und 02:00 MESZ — liefen die beiden auseinander und der Test schlug
+    # aus einem Grund fehl, der mit der E-Rechnung nichts zu tun hat.
+    heute = betriebs_datum()
     with business_transaction(app_user.id):
         PartyAddress.objects.filter(
             party_id=kunde.id, address_type="BILLING"

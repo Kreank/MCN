@@ -17,6 +17,7 @@ from ninja.security import django_auth
 
 from api.permissions import require
 from db_core.models import StatusChange, WorkOrder
+from db_core.services import abrechnung as abrechnung_service
 from db_core.services import auftrag as auftrag_service
 
 router = Router()
@@ -81,6 +82,9 @@ class WorkOrderDetailOut(WorkOrderOut):
     customer_reference: str | None = None
     order_evidence_reference: str | None = None
     responsibility_confirmed_at: datetime | None = None
+    # PAUSCHAL (Default) | REGIE — steuert, WORAUS die Rechnung entsteht
+    # (Angebotskopie vs. Bericht + Zeiten), Migration 0084.
+    billing_mode: str = "PAUSCHAL"
     version: int
     parties: list[WorkOrderPartyOut]
     history: list[StatusChangeOut]
@@ -244,6 +248,7 @@ def _work_order_detail(work_order_id):
         customer_reference=order.customer_reference,
         order_evidence_reference=order.order_evidence_reference,
         responsibility_confirmed_at=order.responsibility_confirmed_at,
+        billing_mode=order.billing_mode,
         version=order.version,
         parties=parties,
         history=history,
@@ -354,6 +359,116 @@ def set_order_evidence(request, work_order_id: UUID, payload: EvidenceIn):
     except ValueError as exc:
         raise HttpError(422, str(exc))
     return _work_order_detail(work_order_id)
+
+
+class WorkOrderPatchIn(Schema):
+    """Änderbare Kopffelder des Auftrags. Zurzeit nur die Abrechnungsart."""
+    billing_mode: str | None = None
+
+
+@router.patch("/work_orders/{work_order_id}", response=WorkOrderDetailOut, auth=django_auth)
+def update_work_order(request, work_order_id: UUID, payload: WorkOrderPatchIn):
+    """Auftrag ändern — derzeit die **Abrechnungsart** (PAUSCHAL | REGIE).
+
+    PAUSCHAL (Default): Die Rechnung ist die Angebotskopie; Zeiten und
+    Berichtspositionen sind Nachweis, kein Rechnungsposten. REGIE: Die Rechnung
+    entsteht aus Bericht + Zeiten.
+
+    **Zwei Rechte, fail-closed** (Review-Befund H-2): Der Auftrag gehört dem
+    Modul `workflow`, aber die Abrechnungsart entscheidet darüber, **wie und
+    woraus abgerechnet wird** — sie ist eine kaufmännische Weichenstellung.
+    Deshalb verlangt dieser Endpunkt zusätzlich `invoicing/AENDERN`. Wer Aufträge
+    disponieren darf, darf damit nicht automatisch die Abrechnungsart umlegen.
+    """
+    actor, _ = require(request, "workflow", "AENDERN")
+    require(request, "invoicing", "AENDERN")
+    if payload.billing_mode is None:
+        raise HttpError(422, "Es wurde kein änderbares Feld übergeben.")
+    try:
+        abrechnung_service.set_billing_mode(
+            actor, work_order_id=work_order_id, billing_mode=payload.billing_mode
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _work_order_detail(work_order_id)
+
+
+# --- Offene Abrechnung ------------------------------------------------------
+
+class PreisVorschlagOut(Schema):
+    art: str
+    betrag: Decimal
+    quelle: str
+
+
+class OffeneBerichtspositionOut(Schema):
+    site_report_line_id: UUID
+    site_report_id: UUID
+    report_date: date
+    position_number: int
+    line_type: str
+    description: str
+    quantity: Decimal | None = None
+    unit: str | None = None
+    # Der fehlende Preis wird HIER schon sichtbar — nicht erst beim
+    # Abrechnungslauf. `einzelpreis` ist **null = unbekannt, nie 0**.
+    preis_status: str            # BEKANNT | UNBEKANNT
+    einzelpreis: Decimal | None = None
+    grund: str | None = None
+    grund_text: str | None = None
+    vorschlaege: list[PreisVorschlagOut] = []
+
+
+class OffeneZeitgruppeOut(Schema):
+    """Abgerechnet wird je **Lohngruppe** — oder, ohne Lohngruppe, je Mitarbeiter
+    (dann ist `quelle_id` seine app_user_id und `wage_group_id` null)."""
+    quelle_id: UUID
+    bezeichnung: str
+    wage_group_id: UUID | None = None
+    stunden: Decimal
+    time_entry_ids: list[UUID]
+    preis_status: str
+    einzelpreis: Decimal | None = None
+    grund: str | None = None
+    grund_text: str | None = None
+    vorschlaege: list[PreisVorschlagOut] = []
+
+
+class UnsignierterBerichtOut(Schema):
+    id: UUID
+    report_date: date
+    status: str
+    activity_text: str
+
+
+class OffeneAbrechnungOut(Schema):
+    work_order_id: UUID
+    billing_mode: str
+    # False bei PAUSCHAL: Die Positionen sind dann **Nachweis**, kein
+    # Rechnungsposten — das Angebot enthält die Leistung bereits.
+    abrechenbar: bool
+    hinweis: str
+    berichtspositionen: list[OffeneBerichtspositionOut]
+    zeitgruppen: list[OffeneZeitgruppeOut]
+    nicht_unterzeichnete_berichte: list[UnsignierterBerichtOut]
+
+
+@router.get("/work_orders/{work_order_id}/offene-abrechnung", response=OffeneAbrechnungOut)
+def offene_abrechnung(request, work_order_id: UUID):
+    """Was ist an diesem Auftrag noch **nicht** abgerechnet?
+
+    Berichtspositionen und Zeitbuchungen ohne aktive Abrechnungsbindung — mit
+    `preis_status`, damit ein fehlender Preis geklärt werden kann, **bevor**
+    jemand fakturieren will.
+
+    Das ist eine Auftragssicht über die ganze Baustelle; sie lässt sich nicht auf
+    eigene Zeilen begrenzen. `require` ist fail-closed: Scope EIGENE → **403**.
+    """
+    require(request, "workflow", "LESEN")
+    try:
+        return abrechnung_service.offene_abrechnung(work_order_id)
+    except ValueError as exc:
+        raise HttpError(404, str(exc))
 
 
 @router.post(

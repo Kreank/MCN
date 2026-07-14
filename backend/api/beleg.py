@@ -17,6 +17,7 @@ from ninja.security import django_auth
 from api.permissions import require
 from db_core.mail_crypto import MailKeyError
 from db_core.models import Invoice, Quote
+from db_core.services import abrechnung as abrechnung_service
 from db_core.services import beleg as beleg_service
 from db_core.services import beleg_pdf as beleg_pdf_service
 from db_core.services import beleg_versand as beleg_versand_service
@@ -899,6 +900,185 @@ def create_invoice(request, payload: InvoiceIn):
     except ValueError as exc:
         raise HttpError(422, str(exc))
     return Status(201, _invoice_detail(invoice.id))
+
+
+# ---------------------------------------------------------------------------
+# Abrechnung: aus Angebot bzw. aus Auftrag (Migration 0084)
+# ---------------------------------------------------------------------------
+
+class PreisVorschlagOut(Schema):
+    """Ein **Vorschlag**, nie ein automatisch gesetzter Preis."""
+    art: str                      # LETZTER_PREIS | LISTENPREIS | LOHNGRUPPE
+    betrag: Decimal
+    quelle: str
+
+
+class PreisKlaerungOut(Schema):
+    """Eine Position, für die der Server **keinen** Preis hat.
+
+    Strukturiert, damit das UI daraus eine Klärungsmaske bauen kann: Der Nutzer
+    nennt den Einzelpreis und schickt denselben Aufruf mit `preise` erneut. Eine
+    0-€-Position gibt es nicht, und weggelassen wird auch nichts.
+    """
+    quelle_art: str               # BERICHTSPOSITION | ZEITGRUPPE
+    quelle_id: UUID
+    bezeichnung: str
+    menge: Decimal | None = None
+    einheit: str | None = None
+    # EK_FEHLT | KEINE_VK_REGEL | KEINE_HERKUNFT | LEISTUNG_UNVOLLSTAENDIG |
+    # LOHNGRUPPE_FEHLT | VK_NULL | LOHNSATZ_NULL
+    #
+    # VK_NULL / LOHNSATZ_NULL sind die **stille Null**: Der Server hat eine Zahl,
+    # aber sie ist 0,00 € (0-EK aus dem Import, Festpreis 0,00, Lohnsatz 0,00 €/h
+    # — die CHECKs erlauben überall `>= 0`). Das ist kein Preis, sondern eine
+    # Lücke. Eigener Grund, damit das UI den Nutzer in den **Stamm** schickt und
+    # nicht auf die Suche nach einem fehlenden Einkaufspreis.
+    grund: str
+    grund_text: str
+    vorschlaege: list[PreisVorschlagOut] = []
+
+
+class PreisKlaerungFehlerOut(Schema):
+    detail: str
+    preis_unbekannt: list[PreisKlaerungOut]
+
+
+class RechnungAusAngebotIn(Schema):
+    quote_id: UUID
+    invoice_date: date | None = None
+    due_date: date | None = None
+    payment_term_days: int | None = None
+    discount_percent: Decimal | None = None
+    discount_days: int | None = None
+    show_labour_costs: bool = True
+
+
+class RechnungAusAuftragIn(Schema):
+    work_order_id: UUID
+    # Pflicht und bewusst ohne Default: Welcher Steuersatz gilt, ist eine
+    # steuerliche Entscheidung des Belegs — kein Ratespiel des Servers.
+    tax_code: str
+    # Die Klärung des Menschen: {quelle_id → Einzelpreis} für Positionen, deren
+    # Preis der Server NICHT kennt. Für alle anderen wird er abgelehnt (422) —
+    # sonst ließe sich die eine Rechenstelle stillschweigend unterlaufen.
+    preise: dict[UUID, Decimal] = {}
+    mit_berichten: bool = True
+    mit_zeiten: bool = True
+    invoice_date: date | None = None
+    due_date: date | None = None
+    payment_term_days: int | None = None
+    discount_percent: Decimal | None = None
+    discount_days: int | None = None
+    show_labour_costs: bool = True
+
+
+@router.post("/invoices/aus-angebot", response={201: InvoiceDetailOut}, auth=django_auth)
+def rechnung_aus_angebot(request, payload: RechnungAusAngebotIn):
+    """Rechnung (ENTWURF) aus einem Angebot — die **Angebotskopie**.
+
+    Positionen werden wertgleich kopiert (der Kunde hat *diesen* Preis
+    akzeptiert, nicht den heutigen Listenpreis); ALTERNATIV/BEDARF bleiben außen
+    vor. Jede übernommene Betragsposition bekommt eine **Abrechnungsbindung** —
+    ein zweiter Lauf über dasselbe Angebot scheitert (422).
+    """
+    actor, _ = require(request, "invoicing", "ANLEGEN")
+    try:
+        invoice = abrechnung_service.rechnung_aus_angebot(
+            actor,
+            quote_id=payload.quote_id,
+            invoice_date=payload.invoice_date,
+            due_date=payload.due_date,
+            payment_term_days=payload.payment_term_days,
+            discount_percent=payload.discount_percent,
+            discount_days=payload.discount_days,
+            show_labour_costs=payload.show_labour_costs,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return Status(201, _invoice_detail(invoice.id))
+
+
+@router.post(
+    "/invoices/aus-auftrag",
+    response={201: InvoiceDetailOut, 422: PreisKlaerungFehlerOut},
+    auth=django_auth,
+)
+def rechnung_aus_auftrag(request, payload: RechnungAusAuftragIn):
+    """Rechnung (ENTWURF) aus **Bericht + Zeiten** eines REGIE-Auftrags.
+
+    Nur unterzeichnete Berichte (ein nicht abgenommener Nachweis ist keine
+    Abrechnungsgrundlage) und nur Arbeitszeit-Buchungen; alles, was bereits eine
+    aktive Bindung trägt, bleibt draußen. **Preise rechnet der Server**
+    (`vk_vorschlag` / `wage_group.hourly_rate`).
+
+    Steht für eine Position kein Preis fest, antwortet der Endpunkt mit **422 und
+    einer strukturierten Klärungsliste** (`preis_unbekannt`) — nicht mit 0,00 €
+    und nicht mit einer stillschweigend weggelassenen Position. Der Nutzer nennt
+    die fehlenden Einzelpreise in `preise` und ruft denselben Endpunkt erneut auf.
+
+    Das Recht ist dasselbe wie fürs Anlegen (`invoicing/ANLEGEN`): Ein genannter
+    Preis geht in **diesen Beleg**, nie in den Artikelstamm.
+    """
+    actor, _ = require(request, "invoicing", "ANLEGEN")
+    try:
+        invoice = abrechnung_service.rechnung_aus_auftrag(
+            actor,
+            work_order_id=payload.work_order_id,
+            tax_code=payload.tax_code,
+            preise={str(k): v for k, v in (payload.preise or {}).items()},
+            mit_berichten=payload.mit_berichten,
+            mit_zeiten=payload.mit_zeiten,
+            invoice_date=payload.invoice_date,
+            due_date=payload.due_date,
+            payment_term_days=payload.payment_term_days,
+            discount_percent=payload.discount_percent,
+            discount_days=payload.discount_days,
+            show_labour_costs=payload.show_labour_costs,
+        )
+    except abrechnung_service.PreisUnbekannt as exc:
+        return Status(
+            422,
+            PreisKlaerungFehlerOut(
+                detail=str(exc),
+                preis_unbekannt=[PreisKlaerungOut(**p) for p in exc.positionen],
+            ),
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return Status(201, _invoice_detail(invoice.id))
+
+
+class BindungLoesenIn(Schema):
+    reason: str
+
+
+@router.post(
+    "/invoices/{invoice_id}/bindungen-loesen",
+    response=InvoiceDetailOut,
+    auth=django_auth,
+)
+def bindungen_loesen(request, invoice_id: UUID, payload: BindungLoesenIn):
+    """Löst die Abrechnungsbindungen eines **Entwurfs** und entfernt die
+    gebundenen Positionen aus ihm.
+
+    Der Weg aus einem verunglückten Entwurf: Die Quellen werden wieder
+    abrechenbar — und zwar **weil der Entwurf sie nicht mehr in Rechnung
+    stellt**. Beides in einer Transaktion; die Doppelabrechnungssperre bleibt
+    lückenlos.
+
+    Recht **STORNIEREN** (wie Storno/Gutschrift): Eine gestellte Bindung wieder
+    aufzulösen ist eine bewusste, begründungspflichtige kaufmännische
+    Entscheidung. Eine **veröffentlichte** Rechnung wird nicht entbunden, sondern
+    storniert (422).
+    """
+    actor, _ = require(request, "invoicing", "STORNIEREN")
+    try:
+        abrechnung_service.bindungen_loesen(
+            actor, invoice_id=invoice_id, reason=payload.reason
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _invoice_detail(invoice_id)
 
 
 @router.get("/invoices/anrechenbare-abschlaege", response=list[AnrechenbarerAbschlagOut])

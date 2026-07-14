@@ -23,12 +23,14 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from django.utils import timezone as dj_timezone
 
+from db_core.betriebszeit import betriebs_datum
 from db_core.db_context import business_transaction
 from db_core.gate_errors import as_business_error
 from db_core.models import (
     Article,
     Assembly,
     BelegRubrik,
+    BillingLink,
     CompanyProfile,
     Invoice,
     InvoiceAdvance,
@@ -1710,16 +1712,19 @@ def party_address(party_id, on_date=None):
     der Beleg ginge ohne Empfängeranschrift raus. Maßgeblich ist, wohin der Beleg
     JETZT geht.
 
-    `localdate()` und NICHT `utcnow().date()`: `party_address.valid_from` wird von
-    `identity.add_address` mit dem LOKALEN Datum gesetzt. Zwischen 00:00 und 02:00
-    MESZ liegt das UTC-Datum einen Tag zurück — eine am selben lokalen Tag erfasste
-    Adresse fiele dann still aus dem Gültigkeitsfenster.
+    Stichtag ist das **Betriebsdatum** (`betriebs_datum()`), NICHT
+    `dj_timezone.localdate()`: `settings.TIME_ZONE` ist UTC, `localdate()` liefert
+    also das UTC-Datum. Zwischen 00:00 und 02:00 MESZ liegt das einen Tag zurück —
+    eine am selben lokalen Tag erfasste Adresse (`identity.add_address` bekommt das
+    Datum vom Menschen bzw. vom Frontend) fiele dann still aus dem Gültigkeits-
+    fenster, und der Beleg ginge **ohne Empfängeranschrift** raus. Genau davor warnte
+    dieser Docstring schon, während `localdate()` den Schutz gar nicht leisten konnte.
 
     (Die Ableitung von Beleg- und Fälligkeitsdatum in `publish_invoice` bleibt
     bewusst bei UTC: sie muss deckungsgleich mit dem DB-Trigger bleiben, der
     `(now() AT TIME ZONE 'UTC')::date` setzt.)
     """
-    stichtag = on_date or dj_timezone.localdate()
+    stichtag = on_date or betriebs_datum()
     zuordnungen = [
         pa
         for pa in PartyAddress.objects.filter(party_id=party_id).select_related("address")
@@ -2330,9 +2335,184 @@ def _anrechnung_sperre_pruefen(origin):
     )
 
 
+def _erteilte_gutschriften(origin_id):
+    """Die veröffentlichten GUTSCHRIFTEN zu einer Rechnung: (Summe, Belegnummern).
+
+    Die Summe ist ein **positiver** Betrag (Kreditbelege führen negative Summen).
+    Nur veröffentlichte zählen — ein Entwurf hat noch nichts erstattet.
+    """
+    rows = list(
+        Invoice.objects.filter(
+            reference_invoice_id=origin_id,
+            invoice_type="GUTSCHRIFT",
+            status="VEROEFFENTLICHT",
+        ).values_list("invoice_number", "gross_total")
+    )
+    summe = sum(
+        (abs(g) for _nr, g in rows if g is not None), Decimal("0.00")
+    )
+    nummern = sorted(nr for nr, _g in rows if nr)
+    return summe, nummern
+
+
+def _vollgutschrift_sperre_pruefen(origin, positions):
+    """Eine **Vollgutschrift** auf eine abgerechnungsgebundene Rechnung ist ein
+    verkappter Storno — und wird abgelehnt (Entscheidung des Users).
+
+    Der Unterschied ist keine Formsache, er entscheidet über die Leistung:
+
+    * Der **Storno** hebt die Rechnung auf und **löst die Bindungen**
+      (`invoicing.release_billing_links_on_cancel`). Die Stunden und
+      Berichtspositionen werden wieder abrechenbar.
+    * Die **Gutschrift** ist eine Teilkorrektur. Die Ursprungsrechnung besteht
+      weiter und fordert weiterhin Geld — die Leistung bleibt abgerechnet, und die
+      Bindung bleibt (bewusst) bestehen. Das ist fachlich richtig: Eine Kulanz oder
+      ein Preisnachlass heißt nicht, dass nicht gearbeitet wurde.
+
+    Wer den **vollen Betrag** gutschreibt, meint aber den Storno — und bekäme mit
+    der Gutschrift das Gegenteil: eine Rechnung über 0 €, deren Leistung für immer
+    als abgerechnet gilt und **nie wieder** in Rechnung gestellt werden kann. Der
+    zweideutige Fall wird deshalb **verboten statt interpretiert**.
+
+    **Die Grenze wird über den Betrag gezogen, nicht über die Positionen**: Zwei
+    Teilgutschriften, die zusammen den Rechnungsbetrag ausschöpfen, sind derselbe
+    verkappte Storno wie eine Gutschrift über alle Positionen. Maßgeblich ist also
+
+        Summe bereits erteilter Gutschriften + diese Korrektur >= Rechnungsbetrag
+
+    Muster und Ton folgen `_anrechnung_sperre_pruefen`: Der zweideutige Vorgang
+    wird abgelehnt und der Weg genannt, der zum Ziel führt.
+
+    **Zweite, schwächere Grenze — sie gilt IMMER, auch ohne Bindung:** Die Summe
+    der Gutschriften darf den Rechnungsbetrag nicht **übersteigen**. Auf einer
+    ungebundenen Rechnung (z. B. handgeschriebener Beleg) ist die Vollgutschrift
+    zulässig — sie verschenkt keine Leistung, weil keine gebunden ist. Aber 120 %
+    zurückerstatten kann kein Fall rechtfertigen; das wäre eine Überzahlung
+    zulasten des Hauses.
+    """
+    brutto = origin.gross_total or Decimal("0.00")
+    if brutto <= 0:  # pragma: no cover — eine Rechnung über 0 € gibt es nicht
+        return
+    _prepared, _net, _tax, gross = _negated_lines(
+        list(origin.lines.all()), set(positions)
+    )
+    bereits, nummern = _erteilte_gutschriften(origin.id)
+    summe = bereits + abs(gross)
+    vorher = (
+        f" (bereits gutgeschrieben: {', '.join(nummern)})" if nummern else ""
+    )
+    gebunden = BillingLink.objects.filter(
+        invoice_id=origin.id, released_at__isnull=True
+    ).exists()
+    if gebunden and summe >= brutto:
+        raise ValueError(
+            "Diese Korrektur schöpft den vollen Rechnungsbetrag aus"
+            f"{vorher} — das ist ein Storno, keine Gutschrift. Eine Gutschrift lässt "
+            "die Rechnung bestehen: Die abgerechneten Leistungen (Berichtspositionen, "
+            "Zeitbuchungen, Angebotspositionen) blieben gebunden und wären nie wieder "
+            "abrechenbar. Wenn die Rechnung falsch war, ist sie zu STORNIEREN — das "
+            "hebt sie auf und gibt die Leistungen wieder frei."
+        )
+    if summe > brutto:
+        raise ValueError(
+            "Diese Korrektur überschriebe den Rechnungsbetrag "
+            f"({brutto} €){vorher}: Es würde mehr erstattet, als je in Rechnung "
+            "gestellt wurde. Eine Gutschrift kann eine Rechnung höchstens "
+            "vollständig aufzehren."
+        )
+
+
+def _gutschrift_nach_storno_pruefen(origin):
+    """Auf eine **stornierte** Rechnung wird **keine Gutschrift** mehr erteilt.
+
+    Der Spiegelfall zu `_storno_nach_gutschrift_pruefen` (Review-Befund H-1): Der
+    Storno hat die Rechnung bereits **vollständig** umgekehrt — der Kunde schuldet
+    nichts mehr. Eine Gutschrift daneben ist ein **zweiter** Kreditbeleg über
+    dieselbe Leistung: Rechnung 975,80 €, STORNO −975,80 €, Gutschrift −975,80 €
+    ergibt eine Erstattung von 1.951,60 € auf eine Forderung, die es nicht mehr
+    gibt.
+
+    Die Doppelabrechnungssperre (`_vollgutschrift_sperre_pruefen`) fängt das
+    **nicht** ab: Sie steigt bei einer stornierten Rechnung sofort aus, weil der
+    Storno die Bindungen ja gerade **gelöst** hat — sie sieht keine aktive
+    `billing_link` mehr und lässt die Vollgutschrift durch. Genau hier reißt das
+    Loch auf, und genau hier wird es geschlossen.
+
+    Der richtige Weg nach einem Storno ist die **neue, korrigierte Rechnung**: Die
+    Leistungen sind durch das Storno wieder frei und lassen sich erneut (und dann
+    richtig) fakturieren. Auf einem aufgehobenen Beleg gibt es nichts mehr zu
+    korrigieren.
+    """
+    nummern = sorted(
+        nr
+        for nr in Invoice.objects.filter(
+            reference_invoice_id=origin.id,
+            invoice_type="STORNO",
+            status="VEROEFFENTLICHT",
+        ).values_list("invoice_number", flat=True)
+        if nr
+    )
+    if not nummern:
+        return
+    raise ValueError(
+        f"Diese Rechnung ist bereits storniert ({', '.join(nummern)}) — der volle "
+        "Betrag wurde damit schon zurückgenommen. Eine Gutschrift darauf gäbe dem "
+        "Kunden denselben Betrag ein zweites Mal zurück. Der stornierte Beleg wird "
+        "nicht korrigiert: Die Leistungen sind wieder frei, stellen Sie die "
+        "Rechnung neu."
+    )
+
+
+def _storno_nach_gutschrift_pruefen(origin):
+    """Eine Rechnung mit bereits erteilter Gutschrift wird **nicht** storniert.
+
+    Sonst wird derselbe Betrag **zweimal** erstattet (Review-Befund H-1b): Der
+    Stornobeleg kehrt die **vollen** Ursprungsbeträge um — die bereits erteilte
+    Gutschrift steht als eigener Beleg daneben und bleibt bestehen. Rechnung 1.000
+    €, Gutschrift −100 €, Storno −1.000 € ergibt einen Saldo von −100 € zugunsten
+    eines Kunden, der nur 900 € zu zahlen hatte.
+
+    **Warum kein „Restbetrags-Storno"?** Er wäre die fachlich schönere Antwort,
+    lässt sich aus dem Bestand aber nicht **belastbar** rechnen: Die Positionen
+    eines Kreditbelegs werden neu durchnummeriert (`_negated_lines` vergibt
+    `new_pos`), und es gibt keine Spalte, die eine Gutschriftposition auf die
+    Ursprungsposition zurückführt. Welche Positionen noch offen sind, ließe sich nur
+    über Textvergleiche **raten** — im GoBD-Belegpfad ist Raten keine Option. Und
+    ein Storno, der nur einen Teilbetrag umkehrt, wäre kein Storno mehr: Er ist der
+    Beleg „diese Rechnung gilt nicht", und die DB hängt genau daran die Freigabe der
+    Abrechnungsbindungen.
+
+    Also die amtssichere Grenze: Storno **vor** jeder Gutschrift, oder gar nicht.
+    Der verbleibende Weg auf einer teilgutgeschriebenen Rechnung ist die weitere
+    Gutschrift über den Rest.
+
+    **Bewusst in Kauf genommen:** Eine Rechnung, die schon eine Teilgutschrift
+    trägt, lässt sich nicht mehr stornieren — ihre Abrechnungsbindungen bleiben
+    also bestehen. Das ist die konservative Seite des Fehlers: Lieber eine Leistung,
+    die abgerechnet bleibt (sie WURDE ja in Rechnung gestellt und nur teilweise
+    erlassen), als eine doppelte Erstattung an den Kunden.
+    """
+    _summe, nummern = _erteilte_gutschriften(origin.id)
+    if not nummern:
+        return
+    raise ValueError(
+        f"Zu dieser Rechnung besteht bereits eine Gutschrift ({', '.join(nummern)}). "
+        "Ein Storno kehrt die VOLLEN Ursprungsbeträge um — der bereits "
+        "gutgeschriebene Anteil würde dem Kunden ein zweites Mal erstattet. Eine "
+        "teilweise gutgeschriebene Rechnung wird nicht storniert; korrigieren Sie "
+        "den Restbetrag mit einer weiteren Gutschrift."
+    )
+
+
 def create_cancellation(actor_app_user_id, *, invoice_id):
     """Storniert eine veröffentlichte Rechnung durch einen Stornobeleg (STORNO)
-    mit vollständig invertierten Positionen."""
+    mit vollständig invertierten Positionen.
+
+    Nicht möglich, wenn zur Rechnung bereits eine **Gutschrift** besteht: Der
+    Storno kehrte den vollen Betrag um, die Gutschrift bliebe daneben bestehen —
+    der Kunde bekäme denselben Betrag zweimal erstattet
+    (siehe `_storno_nach_gutschrift_pruefen`).
+    """
     origin = (
         Invoice.objects.filter(id=invoice_id)
         .prefetch_related("lines", "parties")
@@ -2349,6 +2529,7 @@ def create_cancellation(actor_app_user_id, *, invoice_id):
         reference_invoice_id=origin.id, invoice_type="STORNO", status="VEROEFFENTLICHT"
     ).exists():
         raise ValueError("Diese Rechnung wurde bereits storniert.")
+    _storno_nach_gutschrift_pruefen(origin)
     return _create_credit(actor_app_user_id, origin, invoice_type="STORNO", positions=None)
 
 
@@ -2366,6 +2547,33 @@ def create_correction(actor_app_user_id, *, invoice_id, positions):
     dort nur das **Storno** der Schlussrechnung (das dreht die Anrechnung
     vollständig mit um und gibt den Abschlag frei); danach lässt sich die
     Schlussrechnung neu und richtig stellen.
+
+    **Und eine Vollgutschrift auf eine abrechnungsgebundene Rechnung ist ein
+    verkappter Storno** — sie wird abgelehnt (`_vollgutschrift_sperre_pruefen`):
+    Die Gutschrift lässt die Rechnung bestehen, die gebundenen Leistungen blieben
+    für immer abgerechnet. Teilgutschriften bleiben zulässig; eine Kulanz heißt
+    nicht, dass nicht gearbeitet wurde.
+
+    ## Der Zustandsraum der Folgebelege, einmal vollständig
+
+    Ein Kreditbeleg (STORNO/GUTSCHRIFT) verweist über `reference_invoice_id` auf
+    genau eine veröffentlichte Rechnung. Auf einer Rechnung sind damit vier
+    Übergänge denkbar — jeder ist entschieden, keiner offen:
+
+    | Bestand → Neuer Beleg | Ergebnis | Wo entschieden |
+    |---|---|---|
+    | (nichts) → STORNO | **erlaubt**, kehrt alles um, löst die Bindungen | `create_cancellation` |
+    | (nichts) → GUTSCHRIFT | **erlaubt**, solange sie den Betrag nicht ausschöpft | `_vollgutschrift_sperre_pruefen` |
+    | STORNO → STORNO | **422** — „bereits storniert" | `create_cancellation` |
+    | GUTSCHRIFT → STORNO | **422** — der Storno kehrte die VOLLEN Beträge um, die Gutschrift stünde daneben | `_storno_nach_gutschrift_pruefen` |
+    | STORNO → GUTSCHRIFT | **422** — doppelte Erstattung (Review-Befund H-1) | `_gutschrift_nach_storno_pruefen` |
+    | GUTSCHRIFT → GUTSCHRIFT | **erlaubt**, bis die Summe aller Gutschriften den Rechnungsbetrag erreicht (gebunden) bzw. übersteigt (ungebunden) | `_vollgutschrift_sperre_pruefen` |
+
+    Der Kreditbeleg selbst ist in **beiden** Richtungen Endstation: Weder Storno
+    noch Gutschrift lassen sich stornieren oder korrigieren (`_CREDIT_TYPES`-Tor
+    hier und in `create_cancellation`). Und ein **Entwurf** eines Kreditbelegs
+    zählt nirgends mit — er hat nichts erstattet; alle Prüfungen sehen nur
+    `status = VEROEFFENTLICHT`. Damit ist der Raum lückenlos abgedeckt.
     """
     if not positions:
         raise ValueError(
@@ -2382,6 +2590,7 @@ def create_correction(actor_app_user_id, *, invoice_id, positions):
         raise ValueError("Nur veröffentlichte Rechnungen können korrigiert werden (B-21).")
     if origin.invoice_type in _CREDIT_TYPES:
         raise ValueError("Eine Gutschrift/Storno kann nicht korrigiert werden.")
+    _gutschrift_nach_storno_pruefen(origin)
     _anrechnung_sperre_pruefen(origin)
     if origin.invoice_type == FINAL_TYPE and InvoiceAdvance.objects.filter(
         final_invoice_id=origin.id
@@ -2403,6 +2612,7 @@ def create_correction(actor_app_user_id, *, invoice_id, positions):
         raise ValueError(
             f"Unbekannte oder nicht korrigierbare Position(en): {sorted(unknown)}."
         )
+    _vollgutschrift_sperre_pruefen(origin, positions)
     return _create_credit(
         actor_app_user_id, origin, invoice_type="GUTSCHRIFT", positions=set(positions)
     )
