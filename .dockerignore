@@ -1,0 +1,40 @@
+# Build-Kontext ist die Repo-Wurzel (backend/ + db/ + frontend/ werden
+# gebraucht). Alles andere kostet nur Zeit — oder gehört ausdrücklich NICHT ins
+# Image.
+
+.git
+.claude
+.gitattributes
+
+# Secrets. Landen sonst über den Build-Kontext im Image.
+**/.env
+**/*.local
+deploy/.env
+
+# Händler- und Fremdunterlagen (untracked, teils vertraulich)
+DATANORM/
+Hero Wissen/
+IDS/
+
+# Python
+**/.venv/
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+backend/staticfiles/
+
+# Node: node_modules wird im Image per `npm ci` frisch gebaut (Windows-Binaries
+# aus dem Host wären im Linux-Image ohnehin unbrauchbar).
+frontend/node_modules/
+frontend/dist/
+frontend/.angular/
+
+# Doku und Datenbank-Testskripte werden zur Laufzeit nicht gebraucht;
+# db/migrations dagegen SCHON (siehe backend.Dockerfile).
+docs/
+db/tests/
+
+# IDE / OS
+.idea/
+.vscode/
+Thumbs.db

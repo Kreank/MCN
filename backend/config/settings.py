@@ -24,6 +24,27 @@ SECRET_KEY = os.environ.get(
 # Secure-Flags der Cookies und die Vergabe des Dev-Passworts in seed_demo — ein
 # versehentlich mit Default-DEBUG deployter Dienst wäre sonst gleich doppelt offen.
 DEBUG = os.environ.get("MCN_DEBUG", "0") == "1"
+
+# Der SECRET_KEY ist die EINZIGE Einstellung, die bei Vergessen ÖFFNET statt zu
+# schließen: Aus ihm werden Session-Cookies UND Passwort-Reset-Token abgeleitet.
+# Bliebe in Produktion der repo-öffentliche Default (oder der .env.example-
+# Platzhalter) stehen, liefen beide mit einem jedem bekannten Schlüssel — Sitzungen
+# und fremde Passwort-Resets wären fälschbar, und wegen des Fail-safe-DEBUG liefe
+# der Dienst dabei klaglos weiter. Deshalb hier fail-closed: ohne echten Schlüssel
+# bricht der Start ab (wie beim fehlenden PDF-Font), statt offen zu laufen.
+_UNSICHERE_KEYS = {
+    "django-insecure-nur-fuer-entwicklung",
+    "HIER_EIN_ERZEUGTES_GEHEIMNIS_EINSETZEN",
+}
+if not DEBUG and SECRET_KEY in _UNSICHERE_KEYS:
+    from django.core.exceptions import ImproperlyConfigured
+
+    raise ImproperlyConfigured(
+        "MCN_SECRET_KEY ist in Produktion (MCN_DEBUG=0) nicht gesetzt — es steht "
+        "noch der repo-öffentliche Default bzw. der .env.example-Platzhalter. "
+        "Erzeuge einen Schlüssel (z. B. `python -c \"import secrets; "
+        "print(secrets.token_urlsafe(64))\"`) und setze MCN_SECRET_KEY."
+    )
 ALLOWED_HOSTS = os.environ.get("MCN_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
 
 INSTALLED_APPS = [
@@ -127,14 +148,41 @@ CSRF_TRUSTED_ORIGINS = os.environ.get(
     "MCN_CSRF_TRUSTED_ORIGINS", "http://localhost:4200,http://127.0.0.1:8000"
 ).split(",")
 
+# Hinter einem TLS-terminierenden Reverse Proxy (nginx, siehe deploy/) kommt die
+# Anfrage im Container als http an. Ohne diesen Hinweis hält Django jede Anfrage
+# für unverschlüsselt und lässt die CSRF-Referer-Prüfung (die nur für HTTPS
+# greift) aus. Bewusst OPT-IN: den Header darf man nur trauen, wenn ein Proxy ihn
+# garantiert setzt/überschreibt — sonst könnte ihn ein Client selbst fälschen.
+if os.environ.get("MCN_BEHIND_TLS_PROXY", "0") == "1":
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
 LANGUAGE_CODE = "de-de"
 TIME_ZONE = "UTC"          # Nummernkreis-Jahreszuordnung erfolgt in UTC (db/README.md)
 USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = "static/"
+# Ziel von `collectstatic`. Gebraucht wird das nur im Containerbetrieb: dort
+# sammelt der Entrypoint die Django-Admin-Assets in ein Volume, aus dem nginx
+# `/static/` ausliefert (Django selbst liefert ohne DEBUG keine statischen
+# Dateien aus). Im Dev-Betrieb bleibt das Verzeichnis leer und ungenutzt.
+STATIC_ROOT = os.environ.get("MCN_STATIC_ROOT") or (BASE_DIR / "staticfiles")
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# --- Mailversand: Transportweg -------------------------------------------
+# Django-Default ist der SMTP-Backend. Der gesamte Versand des Systems
+# (Rechnung, Angebot, MAHNUNG, Passwort-Reset) läuft über
+# django.core.mail.get_connection() und damit über GENAU diese Einstellung —
+# es gibt keinen zweiten Weg nach außen.
+# Auf einer Demo-Instanz wird sie deshalb auf
+#   django.core.mail.backends.console.EmailBackend
+# gesetzt: dann landet jede Mail im Container-Log statt beim Kunden. Der
+# Default bleibt SMTP, damit eine echte Installation nicht stillschweigend
+# nichts versendet.
+EMAIL_BACKEND = os.environ.get(
+    "MCN_EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend"
+)
 
 # Angular-Dev-Server. Der Dev-Proxy (frontend/proxy.conf.json) leitet /api auf
 # denselben Origin, CORS greift dort also gar nicht — die Einstellung deckt den

@@ -1,0 +1,69 @@
+# Der eigentliche Anwendungsteil — von 10-mcn-config.sh in den passenden
+# server{}-Block eingebunden (HTTP, solange es kein Zertifikat gibt; sonst HTTPS).
+# __ADMIN_GUARD__ wird vom Entrypoint durch die Zugriffsregeln für /admin/ ersetzt.
+
+root /usr/share/nginx/html;
+index index.html;
+
+# DATANORM-Importe dürfen bis 80 MB groß sein (POST .../imports/datanorm),
+# dazu kommen Baustellenfotos. Der nginx-Default (1 MB) würde beides mit einem
+# 413 abweisen, lange bevor Django den Upload überhaupt sieht.
+client_max_body_size 100m;
+
+# Kein Server-Header mit Versionsnummer.
+server_tokens off;
+
+# ---------------------------------------------------------------------------
+# /admin/ — NICHT öffentlich.
+# ---------------------------------------------------------------------------
+# Das Django-Admin kennt die Rechtematrix des Systems nicht: es geht an
+# Statusautomaten, Vier-Augen-Freigaben und Belegtoren vorbei, und wer drin ist,
+# legt sich einen Superuser an. Es ist der einzige Weg, Benutzer anzulegen
+# (im Leitstand fehlt die Benutzeranlage noch) — deshalb wird es nicht
+# abgeschaltet, sondern eingesperrt: IP-Allowlist und optional Basic-Auth.
+location /admin/ {
+__ADMIN_GUARD__
+    proxy_pass http://backend:8000;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_redirect off;
+}
+
+# Statische Dateien des Django-Admin (collectstatic → gemeinsames Volume).
+# Ohne DEBUG liefert Django sie nicht selbst aus.
+location /static/ {
+    alias /srv/static/;
+    access_log off;
+    expires 1h;
+}
+
+# ---------------------------------------------------------------------------
+# /api/ — die einzige Verbindung zum Backend. Same-Origin, deshalb kein CORS.
+# ---------------------------------------------------------------------------
+location /api/ {
+    proxy_pass http://backend:8000;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_redirect off;
+    # Beleg-PDF/ZUGFeRD rendern und archivieren in einem Aufruf; DATANORM-Importe
+    # laufen noch länger. Der 60-s-Default wäre zu knapp.
+    proxy_read_timeout 300s;
+    proxy_send_timeout 300s;
+    # Server-Sent Events (KI-Streaming, später): nicht puffern.
+    proxy_buffering off;
+}
+
+# ---------------------------------------------------------------------------
+# Angular (SPA). Gehashte Bundles dürfen lange gecacht werden, index.html nie.
+# ---------------------------------------------------------------------------
+location = /index.html {
+    add_header Cache-Control "no-store" always;
+}
+
+location / {
+    try_files $uri $uri/ /index.html;
+}

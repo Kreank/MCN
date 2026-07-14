@@ -1,0 +1,210 @@
+# MCN — Demo-/Betriebsstack.
+#
+#   cd deploy && cp .env.example .env && $EDITOR .env && docker compose up -d --build
+#
+# Vier Dauerläufer (nginx, backend, postgres, minio), ein Scheduler und zwei
+# Nicht-Dauerläufer (minio-init, certbot).
+#
+# EINZIGE TÜR NACH AUSSEN IST NGINX (80/443). Backend, Postgres und MinIO haben
+# KEINE ports:-Angabe — sie sind ausschließlich im Docker-Netz `mcn` erreichbar.
+# Das ist kein Stilfrage: ein Postgres mit veröffentlichtem Port ist eine offene
+# Datenbank im Internet, und der MinIO-Bucket enthält Kundenunterschriften.
+name: mcn
+
+services:
+
+  # -------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${MCN_DB_NAME}
+      POSTGRES_USER: ${MCN_DB_USER}
+      POSTGRES_PASSWORD: ${MCN_DB_PASSWORD}
+      # Der Nummernkreis rechnet Jahre in UTC (db/README.md) — der Container
+      # bleibt bei UTC, damit die DB-Trigger dieselbe Zeit sehen wie Django.
+      TZ: UTC
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # pg_isready gegen die ECHTE Datenbank und den echten Benutzer. „Port
+      # offen" beweist nichts: Postgres nimmt Verbindungen an, während es noch
+      # die Wiederherstellung fährt.
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\" -q"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 15s
+    networks: [mcn]
+
+  # -------------------------------------------------------------------------
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MCN_MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MCN_MINIO_SECRET_KEY}
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 10s
+    networks: [mcn]
+
+  # Nicht-Dauerläufer: legt den Bucket an und beendet sich.
+  # Das Backend legt ihn zwar auch lazy an (db_core/storage.py: ensure_bucket) —
+  # aber dann erst beim ersten PDF-Abruf, und ein Fehler dort fiele einem
+  # Geschäftsführer vor die Füße statt beim Hochfahren auf.
+  minio-init:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "mc alias set mcn http://minio:9000 \"$$MCN_MINIO_ACCESS_KEY\" \"$$MCN_MINIO_SECRET_KEY\" &&
+       mc mb --ignore-existing \"mcn/$$MCN_MINIO_BUCKET\" &&
+       mc anonymous set none \"mcn/$$MCN_MINIO_BUCKET\" &&
+       echo \"[minio-init] Bucket $$MCN_MINIO_BUCKET bereit (nicht oeffentlich).\""
+    environment:
+      MCN_MINIO_ACCESS_KEY: ${MCN_MINIO_ACCESS_KEY}
+      MCN_MINIO_SECRET_KEY: ${MCN_MINIO_SECRET_KEY}
+      MCN_MINIO_BUCKET: ${MCN_MINIO_BUCKET}
+    restart: "no"
+    networks: [mcn]
+
+  # -------------------------------------------------------------------------
+  backend:
+    build:
+      context: ..
+      dockerfile: deploy/backend.Dockerfile
+    image: mcn-backend:latest
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      # Im Docker-Netz heißen die Dienste wie ihre Services. Diese Werte
+      # überschreiben bewusst, was in der .env stehen mag — dort sind sie
+      # dokumentiert, hier sind sie wahr.
+      MCN_DB_HOST: postgres
+      MCN_DB_PORT: "5432"
+      MCN_MINIO_ENDPOINT: http://minio:9000
+      MCN_STATIC_ROOT: /srv/static
+      # nginx terminiert TLS; ohne diesen Schalter hielte Django jede Anfrage
+      # für unverschlüsselt.
+      MCN_BEHIND_TLS_PROXY: "1"
+    volumes:
+      # collectstatic → nginx liest daraus (nur die Django-Admin-Assets).
+      - static:/srv/static
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      # Kein curl im slim-Image — Python ist ohnehin da.
+      #
+      # Der Host-Header MUSS gesetzt werden: Django prüft ihn gegen
+      # MCN_ALLOWED_HOSTS. Ohne ihn ginge die Anfrage mit Host `127.0.0.1:8000`
+      # raus — die steht dort (zu Recht) nicht drin, Django antwortet mit
+      # **400 Bad Request**, der Container gilt für immer als unhealthy, und der
+      # Scheduler startet nie. (Genau so ist es bei der Verifikation passiert:
+      # gunicorn lief einwandfrei, der Healthcheck log.)
+      test: ["CMD", "python", "-c", "import os,sys,urllib.request; r=urllib.request.Request('http://127.0.0.1:8000/api/health', headers={'Host': os.environ.get('MCN_DOMAIN') or 'localhost'}); sys.exit(0 if urllib.request.urlopen(r, timeout=5).status == 200 else 1)"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 120s      # migrate + Seed dürfen dauern
+    networks: [mcn]
+    # KEIN ports: — das Backend ist nur über nginx erreichbar.
+
+  # -------------------------------------------------------------------------
+  # Fälligkeiten (Wartung, Prüffristen, Gewährleistung). Ohne ihn wird NIE etwas
+  # fällig — siehe scheduler-entrypoint.sh.
+  scheduler:
+    image: mcn-backend:latest
+    restart: unless-stopped
+    entrypoint: ["/usr/local/bin/scheduler-entrypoint.sh"]
+    env_file: [.env]
+    environment:
+      MCN_DB_HOST: postgres
+      MCN_DB_PORT: "5432"
+      MCN_MINIO_ENDPOINT: http://minio:9000
+      # Der Scheduler seedet NICHT und setzt KEINE Passwörter — das tut der
+      # Backend-Entrypoint. Sonst liefen beide gegeneinander.
+      MCN_SEED: "0"
+      MCN_DEMO_PASSWORD: ""
+    depends_on:
+      backend:
+        condition: service_healthy      # erst wenn migrate durch ist
+    networks: [mcn]
+
+  # -------------------------------------------------------------------------
+  nginx:
+    build:
+      context: ..
+      dockerfile: deploy/nginx.Dockerfile
+    image: mcn-nginx:latest
+    restart: unless-stopped
+    environment:
+      MCN_DOMAIN: ${MCN_DOMAIN}
+      MCN_ADMIN_ALLOW_IPS: ${MCN_ADMIN_ALLOW_IPS:-}
+      MCN_ADMIN_BASIC_AUTH: ${MCN_ADMIN_BASIC_AUTH:-}
+    ports:
+      - "${MCN_HTTP_PORT:-80}:80"
+      - "${MCN_HTTPS_PORT:-443}:443"
+    volumes:
+      - certbot-conf:/etc/letsencrypt:ro
+      - certbot-www:/var/www/certbot:ro
+      - static:/srv/static:ro
+    depends_on:
+      backend:
+        condition: service_started      # nginx darf früher da sein (502 statt Absturz)
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/nginx-health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks: [mcn]
+
+  # -------------------------------------------------------------------------
+  # Nicht-Dauerläufer, aber restart-fähig: erneuert das Zertifikat.
+  # Erstausstellung EINMALIG von Hand (siehe docs/deployment.md):
+  #   docker compose run --rm certbot certonly --webroot -w /var/www/certbot \
+  #       -d "$MCN_DOMAIN" --email "$MCN_CERTBOT_EMAIL" --agree-tos --no-eff-email
+  # Danach nginx neu starten, damit er in den HTTPS-Modus wechselt.
+  certbot:
+    image: certbot/certbot:v5.1.0
+    restart: unless-stopped
+    volumes:
+      - certbot-conf:/etc/letsencrypt
+      - certbot-www:/var/www/certbot
+    # Erneuerung zweimal täglich (Let's-Encrypt-Empfehlung); nginx liest das
+    # neue Zertifikat erst nach einem Neustart/Reload — deshalb im Anschluss
+    # ein `docker compose restart nginx` per Hand oder nach der Erneuerung.
+    entrypoint: >
+      /bin/sh -c "trap exit TERM;
+      while :; do
+        certbot renew --webroot -w /var/www/certbot --quiet;
+        sleep 12h & wait $${!};
+      done"
+    networks: [mcn]
+
+volumes:
+  # Der Datenbestand. Ohne diese beiden sind die Klicks der Geschäftsführer nach
+  # jedem `docker compose down` weg.
+  pgdata:
+  miniodata:
+  static:
+  certbot-conf:
+  certbot-www:
+
+networks:
+  mcn:
+    driver: bridge
