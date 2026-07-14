@@ -14,9 +14,12 @@ import {
   QuoteCreate,
   QuoteDetail,
   QuoteEmailResult,
+  QuoteLineInput,
   QuotePage,
   QuoteQuery,
   QuoteUpdate,
+  RechnungAusAngebot,
+  RechnungAusAuftrag,
 } from './beleg.model';
 
 /** Typisierter Zugriff auf die Beleg-API (dev-Proxy: /api -> :8000). */
@@ -182,5 +185,63 @@ export class BelegService {
     return this.http.get(`/api/invoicing/invoices/${id}/zugferd.pdf`, {
       responseType: 'blob',
     });
+  }
+
+  // --- Abrechnung (Migration 0084) -----------------------------------------
+
+  /**
+   * Rechnung (ENTWURF) aus einem Angebot — die **Angebotskopie** (PAUSCHAL).
+   * Positionen werden wertgleich kopiert; Alternativ-/Bedarfspositionen bleiben
+   * draußen. Ein zweiter Lauf über dasselbe Angebot scheitert (422).
+   */
+  rechnungAusAngebot(payload: RechnungAusAngebot): Observable<InvoiceDetail> {
+    return this.http.post<InvoiceDetail>('/api/invoicing/invoices/aus-angebot', payload);
+  }
+
+  /**
+   * Rechnung (ENTWURF) aus **Bericht + Zeiten** eines REGIE-Auftrags.
+   *
+   * Fehlt ein Preis, antwortet der Server mit **422 und `preis_unbekannt`** — kein
+   * Fehlerbalken, sondern eine Klärungsaufgabe (siehe `PreisKlaerungFehler`). Der
+   * Aufrufer nennt die Einzelpreise in `preise` und ruft erneut auf.
+   */
+  rechnungAusAuftrag(payload: RechnungAusAuftrag): Observable<InvoiceDetail> {
+    return this.http.post<InvoiceDetail>('/api/invoicing/invoices/aus-auftrag', payload);
+  }
+
+  /**
+   * Notausgang für einen verunglückten Entwurf: löst die Abrechnungsbindungen und
+   * entfernt die gebundenen Positionen aus ihm. Die Quellen werden wieder
+   * abrechenbar — und zwar WEIL der Entwurf sie nicht mehr in Rechnung stellt.
+   *
+   * Recht **invoicing/STORNIEREN**, Begründung Pflicht. Eine veröffentlichte
+   * Rechnung wird nicht entbunden, sondern storniert (422).
+   */
+  bindungenLoesen(id: string, reason: string): Observable<InvoiceDetail> {
+    return this.http.post<InvoiceDetail>(
+      `/api/invoicing/invoices/${id}/bindungen-loesen`,
+      { reason },
+    );
+  }
+
+  /**
+   * Hängt EINE Position an einen Rechnungsentwurf an (ans Ende).
+   *
+   * Der Weg, einen **gebundenen** Entwurf zu ergänzen (Anfahrt, Rabatt, Text):
+   * Der Beleg-Editor ersetzt den ganzen Positionssatz per Delete+Insert und läuft
+   * damit gegen die gebundene Zeile (422) — das INSERT einer neuen Zeile lässt die
+   * DB dagegen ausdrücklich zu (Migration 0088).
+   */
+  addInvoiceLine(id: string, line: QuoteLineInput): Observable<InvoiceDetail> {
+    return this.http.post<InvoiceDetail>(`/api/invoicing/invoices/${id}/lines`, line);
+  }
+
+  /**
+   * Entfernt die **letzte** Position eines Entwurfs — nur, wenn sie ungebunden ist
+   * (sonst 422). Die Rücknahme einer gerade angehängten Zeile; jede andere zu
+   * entfernen hieße umnummerieren, und das wäre ein UPDATE auf gebundene Zeilen.
+   */
+  removeLastInvoiceLine(id: string): Observable<InvoiceDetail> {
+    return this.http.delete<InvoiceDetail>(`/api/invoicing/invoices/${id}/lines/last`);
   }
 }

@@ -1,0 +1,127 @@
+<app-dialog
+  [offen]="offen()"
+  titel="Preise klären"
+  [backdropSchliesst]="false"
+  (schliessen)="onAbbrechen()"
+>
+  <form
+    id="preis-klaerung-form"
+    class="pk"
+    [formGroup]="form()"
+    (submit)="$event.preventDefault(); onAbsenden()"
+    novalidate
+  >
+    <p class="pk__intro">
+      Für {{ positionen().length === 1 ? 'diese Position' : 'diese Positionen' }} kennt der Server
+      <strong>keinen Preis</strong>. Sie werden <strong>nicht mit 0,00 € abgerechnet</strong> und
+      auch nicht weggelassen — nenne den Einzelpreis für diesen Beleg, oder brich ab und pflege
+      Artikel bzw. Lohngruppe im Stamm.
+    </p>
+    <p class="pk__intro pk__intro--fein">
+      Ein genannter Preis gilt nur für <strong>diesen</strong> Beleg; er wird nicht in den
+      Artikelstamm geschrieben. Zeilensumme, Steuer und Gesamt rechnet weiterhin der Server.
+    </p>
+
+    @if (fehler(); as f) {
+      <div class="melde melde--fehler" role="alert">
+        <span class="melde__mark" aria-hidden="true">!</span>
+        <span class="melde__text"><strong>Fehler:</strong> {{ f }}</span>
+      </div>
+    }
+
+    <ul class="pk__liste" role="list">
+      @for (p of positionen(); track p.quelle_id) {
+        <li class="pk__pos">
+          <div class="pk__kopf">
+            <span class="stamp stamp--warn pk__marke">
+              <span aria-hidden="true">▲</span> Preis unbekannt
+            </span>
+            <span class="stamp stamp--type">
+              {{ p.quelle_art === 'ZEITGRUPPE' ? 'Zeiten' : 'Berichtsposition' }}
+            </span>
+          </div>
+
+          <p class="pk__bez">{{ p.bezeichnung }}</p>
+          <p class="pk__menge">
+            <span class="pk__menge-label">Menge:</span> {{ menge(p) }}
+          </p>
+          <p class="pk__grund">{{ p.grund_text }}</p>
+
+          @if (feld(p.quelle_id); as c) {
+            <div class="feld-gruppe pk__feld">
+              <label class="feld-gruppe__label" [for]="'pk-' + p.quelle_id">
+                {{ preisLabel(p) }}
+                <span class="feld-gruppe__stern" aria-hidden="true">*</span>
+                <span class="sr-only">(Pflichtfeld)</span>
+              </label>
+              <input
+                class="feld-gruppe__input pk__input"
+                [id]="'pk-' + p.quelle_id"
+                type="text"
+                inputmode="decimal"
+                [formControlName]="p.quelle_id"
+                placeholder="z. B. 42,00"
+                aria-required="true"
+                [attr.aria-describedby]="
+                  'pk-hint-' + p.quelle_id + (fehlerText(p.quelle_id) ? ' pk-err-' + p.quelle_id : '')
+                "
+                [attr.aria-invalid]="fehlerText(p.quelle_id) ? true : null"
+              />
+              <p class="feld-gruppe__hinweis" [id]="'pk-hint-' + p.quelle_id">
+                Netto, ohne Tausenderpunkt (1500 oder 1500,50). Muss größer als 0,00 € sein.
+              </p>
+              @if (fehlerText(p.quelle_id); as f) {
+                <p class="feld-gruppe__fehler" [id]="'pk-err-' + p.quelle_id" role="alert">
+                  <span class="feld-gruppe__fehler-mark" aria-hidden="true">▲</span>{{ f }}
+                </p>
+              }
+            </div>
+          }
+
+          @if (p.vorschlaege.length > 0) {
+            <div class="pk__vorschlaege">
+              <span class="pk__vorschlaege-label" [id]="'pk-vl-' + p.quelle_id">
+                Vorschläge (nicht vorausgefüllt — du entscheidest):
+              </span>
+              <ul class="pk__chips" role="list" [attr.aria-labelledby]="'pk-vl-' + p.quelle_id">
+                @for (v of p.vorschlaege; track $index) {
+                  <li>
+                    <button
+                      type="button"
+                      class="pk__chip"
+                      [disabled]="laedt()"
+                      (click)="vorschlagUebernehmen(p.quelle_id, v)"
+                    >
+                      <span class="pk__chip-art">{{ vorschlagLabel(v) }}</span>
+                      <span class="pk__chip-quelle">{{ v.quelle }}</span>
+                    </button>
+                  </li>
+                }
+              </ul>
+            </div>
+          } @else {
+            <p class="pk__kein-vorschlag">
+              Kein Vorschlag verfügbar — diese Position wurde noch nie berechnet und trägt keinen
+              Listenpreis.
+            </p>
+          }
+        </li>
+      }
+    </ul>
+  </form>
+
+  <div dialog-aktionen class="dialog__aktionen">
+    <button type="button" class="btn" [disabled]="laedt()" (click)="onAbbrechen()">
+      Abbrechen
+    </button>
+    <button
+      type="submit"
+      form="preis-klaerung-form"
+      class="btn btn--primary"
+      [disabled]="laedt()"
+      [attr.aria-busy]="laedt()"
+    >
+      {{ laedt() ? 'Rechnung wird erzeugt …' : 'Preise übernehmen und Rechnung erzeugen' }}
+    </button>
+  </div>
+</app-dialog>

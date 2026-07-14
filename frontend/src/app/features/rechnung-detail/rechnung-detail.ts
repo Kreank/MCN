@@ -9,11 +9,13 @@ import { MailService } from '../../core/mail.service';
 import { PartyService } from '../../core/party.service';
 import { AuthService } from '../../core/auth.service';
 import {
+  BillingSource,
   InvoiceDetail,
   InvoicePartyCreate,
   InvoiceStatus,
   InvoiceType,
   LineType,
+  QuoteLineInput,
 } from '../../core/beleg.model';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { Bestaetigung } from '../../shared/bestaetigung/bestaetigung';
@@ -23,7 +25,7 @@ import { Dialog } from '../../shared/dialog/dialog';
 import { Feld, FeldOption } from '../../shared/formular/feld';
 import { ReferenzWahl, RefSuche } from '../../shared/formular/referenz-wahl';
 import { apiFehlerZuweisen } from '../../shared/formular/api-fehler';
-import { apiZuDeAnzeige } from '../../shared/formular/dezimal';
+import { apiZuDeAnzeige, deZuApiDezimal, dezimalValidator } from '../../shared/formular/dezimal';
 import { fristAbgelaufen, isoDatumDe } from '../../shared/datum';
 import { dateiDownloadAusloesen } from '../../shared/datei-download';
 import {
@@ -69,10 +71,314 @@ export class RechnungDetail {
 
   // --- Beteiligten hinzufügen (nur im Entwurf) ----------------------------
   protected readonly darfAendern = computed(() => this.auth.darf('invoicing', 'AENDERN'));
-  /** Positionen im Beleg-Editor bearbeiten — nur Entwurf + Recht invoicing/AENDERN. */
+  /**
+   * Positionen im Beleg-Editor bearbeiten — nur Entwurf + Recht invoicing/AENDERN
+   * **und nur ohne aktive Abrechnungsbindung**.
+   *
+   * Der DB-Trigger `invoicing.protect_billed_invoice_lines` weist seit Migration
+   * 0088 UPDATE und DELETE **einer gebundenen Zeile** ab (das INSERT einer neuen
+   * Zeile dagegen nicht). Der Editor ersetzt den Positionssatz per Delete+Insert
+   * und trifft dabei zwangsläufig die gebundene Zeile; er liefe also unweigerlich
+   * in einen 422. Ihn anzubieten hieße, den Nutzer in eine Sackgasse zu schicken.
+   * Ergänzt wird ein gebundener Entwurf über „Position anhängen"; der Ausweg aus
+   * einem verunglückten Lauf bleibt „Bindungen lösen".
+   */
   protected readonly darfBearbeiten = computed(
-    () => this.daten()?.status === 'ENTWURF' && this.auth.darf('invoicing', 'AENDERN'),
+    () =>
+      this.daten()?.status === 'ENTWURF' &&
+      !this.daten()?.gebunden &&
+      this.auth.darf('invoicing', 'AENDERN'),
   );
+
+  // --- Abrechnungsbindungen (Migration 0084) -------------------------------
+  /** Der Notausgang verlangt STORNIEREN — wie Storno/Gutschrift. */
+  protected readonly darfEntbinden = computed(() => this.auth.darf('invoicing', 'STORNIEREN'));
+  /** Nur ein gebundener ENTWURF lässt sich entbinden (veröffentlicht → stornieren). */
+  protected readonly kannEntbinden = computed(
+    () => !!this.daten()?.gebunden && this.daten()?.status === 'ENTWURF',
+  );
+  protected readonly loesenOffen = signal(false);
+  protected readonly loesenLaedt = signal(false);
+
+  loesenFragen(): void {
+    this.meldung.set(null);
+    this.loesenOffen.set(true);
+  }
+  loesenAbbrechen(): void {
+    if (!this.loesenLaedt()) this.loesenOffen.set(false);
+  }
+  loesenBestaetigen(grund: string | null): void {
+    const d = this.daten();
+    if (!d || this.loesenLaedt() || !grund) return;
+    this.loesenLaedt.set(true);
+    this.svc.bindungenLoesen(d.id, grund).subscribe({
+      next: (aktualisiert) => {
+        this.loesenLaedt.set(false);
+        this.loesenOffen.set(false);
+        this.state.set({ kind: 'ready', data: aktualisiert });
+        this.meldung.set({
+          art: 'erfolg',
+          text:
+            'Bindungen gelöst. Die gebundenen Positionen wurden aus dem Entwurf entfernt; ' +
+            'Berichtspositionen, Zeiten bzw. Angebotspositionen sind wieder abrechenbar.',
+        });
+      },
+      error: (err) => {
+        this.loesenLaedt.set(false);
+        this.loesenOffen.set(false);
+        this.meldung.set({ art: 'fehler', text: this.fehlerText(err) });
+      },
+    });
+  }
+
+  // --- Position anhängen (der Weg für den GEBUNDENEN Entwurf) --------------
+  // Der Beleg-Editor ersetzt den ganzen Positionssatz per Delete+Insert und läuft
+  // damit gegen die gebundene Zeile (422). Das **INSERT einer neuen** Zeile lässt
+  // die DB dagegen ausdrücklich zu (Migration 0088) — Anfahrtspauschale,
+  // Rabattzeile, Zusatztext. Deshalb dieser schmale Weg statt der Notbremse.
+  protected readonly zeileOffen = signal(false);
+  protected readonly zeileLaedt = signal(false);
+  protected readonly zeileMeldung = signal<string | null>(null);
+  protected readonly zeileEntfernenLaedt = signal(false);
+
+  protected readonly lineTypOptionen: FeldOption[] = [
+    { wert: 'MATERIAL', label: 'Material' },
+    { wert: 'ARBEITSZEIT', label: 'Arbeitszeit' },
+    { wert: 'PAUSCHALE', label: 'Pauschale' },
+    { wert: 'FREMDLEISTUNG', label: 'Fremdleistung' },
+    { wert: 'FAHRT', label: 'Fahrt' },
+    { wert: 'ZUSCHLAG', label: 'Zuschlag' },
+    { wert: 'TEXT', label: 'Textzeile (ohne Betrag)' },
+  ];
+  protected readonly taxCodeOptionen: FeldOption[] = [
+    { wert: 'DE_19', label: 'USt 19 %' },
+    { wert: 'DE_7', label: 'USt 7 %' },
+    { wert: 'DE_0', label: 'Steuerfrei (0 %)' },
+    { wert: 'DE_13B', label: '§ 13b UStG (Reverse Charge)' },
+  ];
+
+  protected readonly zeileForm = this.fb.group({
+    line_type: this.fb.control<LineType>('PAUSCHALE', {
+      nonNullable: true,
+      validators: [Validators.required],
+    }),
+    description: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.required],
+    }),
+    // Menge und Einzelpreis sind im Dialog als Pflicht ausgezeichnet (`[pflicht]`
+    // → `aria-required`) — dann muss die Validierung das auch durchsetzen: der
+    // `dezimalValidator` allein lässt das leere Feld durch, und der Server nähme es
+    // erst als 422 zurück. Bei einer **Textzeile** tragen beide Felder keinen Wert
+    // (sie sind ausgeblendet); dort wird `required` zur Laufzeit wieder entfernt.
+    quantity: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.required, dezimalValidator],
+    }),
+    unit: this.fb.control('', { nonNullable: true }),
+    unit_price: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.required, dezimalValidator],
+    }),
+    discount_percent: this.fb.control('', {
+      nonNullable: true,
+      validators: [dezimalValidator],
+    }),
+    tax_code: this.fb.control('DE_19', { nonNullable: true }),
+    // § 35a — dieselbe Konvention wie im Beleg-Editor: ohne Häkchen leitet der
+    // Server den Anteil aus der Positionsart ab (ARBEITSZEIT/FAHRT voll, MATERIAL
+    // 0,00, sonst UNBESTIMMT). Mit Häkchen gilt der eingetragene Betrag.
+    labour_manual: this.fb.control(false, { nonNullable: true }),
+    labour_net_amount: this.fb.control('', {
+      nonNullable: true,
+      validators: [dezimalValidator],
+    }),
+  });
+
+  /** Signal-Spiegel der Positionsart (das Formular selbst ist kein Signal). */
+  protected readonly zeileTyp = signal<LineType>('PAUSCHALE');
+  /** Text-/Zwischensummenzeilen tragen keinen Betrag (Server weist ihn ab). */
+  protected readonly zeileIstText = computed(() => this.isText(this.zeileTyp()));
+
+  /**
+   * Ob der Server den § 35a-Anteil aus der Positionsart ABLEITEN kann.
+   * ARBEITSZEIT/FAHRT sind voll begünstigt, MATERIAL gar nicht — bei PAUSCHALE,
+   * FREMDLEISTUNG und ZUSCHLAG bleibt er **unbestimmt**, bis ihn jemand setzt.
+   */
+  protected readonly zeileLohnAbleitbar = computed(() => {
+    const t = this.zeileTyp();
+    return t === 'ARBEITSZEIT' || t === 'FAHRT' || t === 'MATERIAL';
+  });
+
+  /**
+   * Der Anteil MUSS angegeben werden — sonst zerstört die angehängte Zeile den
+   * bestehenden § 35a-Ausweis der Rechnung.
+   *
+   * Der Ausweis ist eine Aussage über den **ganzen Beleg**: eine einzige Position
+   * ohne bestimmten Anteil macht ihn unbestimmbar (`OFFENE_POSITIONEN`), und dann
+   * weist die Rechnung gar keine Arbeitskosten mehr aus — der Privatkunde verliert
+   * 20 % Steuerermäßigung auf ALLES. Genau das droht hier: der Dialog bewirbt die
+   * „Anfahrtspauschale", und `PAUSCHALE` ist die Voreinstellung.
+   *
+   * Deshalb Pflichtfeld statt bloßem Hinweis — aber nur, wo wirklich etwas kaputt
+   * gehen kann: Die Rechnung weist aus (`show_labour_costs`) UND ihr Ausweis ist
+   * heute bestimmbar. Ist er ohnehin schon offen oder abgeschaltet, bleibt die
+   * Angabe freiwillig (das Häkchen wie im Editor).
+   *
+   * Wer den Anteil nicht kennt (z. B. eine Fremdleistung, deren Aufteilung der
+   * Subunternehmer noch nicht geliefert hat), hat einen ausdrücklichen Ausweg: den
+   * Ausweis in der Übersicht abschalten. Das ist eine bewusste Entscheidung — und
+   * genau das ist der Punkt. Eine „0" vorauszufüllen wäre keine: sie behauptete,
+   * die Position enthalte keine Arbeitskosten, ohne dass es jemand gesagt hat.
+   */
+  protected readonly zeileLohnPflicht = computed(() => {
+    const d = this.daten();
+    if (!d || this.zeileIstText() || this.zeileLohnAbleitbar()) return false;
+    return !!d.show_labour_costs && !!d.arbeitskosten?.bestimmbar;
+  });
+
+  /** Zeigt die Betragseingabe (Pflichtangabe oder freiwillig per Häkchen). */
+  protected zeileLohnBetragSichtbar(): boolean {
+    if (this.zeileIstText()) return false;
+    return this.zeileLohnPflicht() || this.zeileForm.controls.labour_manual.value;
+  }
+
+  /**
+   * Was der Server ohne Angabe ableiten wird — als Hinweis im Dialog (er RECHNET
+   * damit nichts, er sagt nur an, was passiert). Methode statt `computed`: liest
+   * einen FormControl-Wert, und der ist kein Signal.
+   */
+  protected zeileLohnHinweis(): string | null {
+    if (this.zeileIstText() || this.zeileForm.controls.labour_manual.value) return null;
+    switch (this.zeileTyp()) {
+      case 'ARBEITSZEIT':
+      case 'FAHRT':
+        return 'Zählt in voller Höhe als Arbeitskosten (§ 35a EStG).';
+      case 'MATERIAL':
+        return 'Zählt nicht als Arbeitskosten (Material ist nicht begünstigt).';
+      default:
+        return (
+          'Arbeitskostenanteil unbestimmt: Diese Rechnung weist ohnehin keine ' +
+          'Arbeitskosten nach § 35a aus, daran ändert die Position nichts.'
+        );
+    }
+  }
+
+  /** Angehängt werden darf nur an einen Entwurf — angeboten, wo der Editor zu ist. */
+  protected readonly kannZeileAnhaengen = computed(
+    () => this.daten()?.status === 'ENTWURF' && !!this.daten()?.gebunden && this.darfAendern(),
+  );
+  /**
+   * Die letzte Zeile lässt sich nur zurücknehmen, wenn sie NICHT gebunden ist — und
+   * nicht die **Anrechnung** einer Abschlagsrechnung: die gehört zur Verkettung und
+   * wird über die Abschlagszuordnung gepflegt (der Server weist sie mit 422 ab).
+   */
+  protected readonly kannLetzteEntfernen = computed(() => {
+    const d = this.daten();
+    if (!d || d.status !== 'ENTWURF' || !d.gebunden || !this.darfAendern()) return false;
+    const letzte = d.lines[d.lines.length - 1];
+    return !!letzte && !letzte.billing_source && !letzte.advance_invoice_id;
+  });
+
+  zeileOeffnen(): void {
+    this.zeileForm.reset({
+      line_type: 'PAUSCHALE',
+      description: '',
+      quantity: '',
+      unit: '',
+      unit_price: '',
+      discount_percent: '',
+      tax_code: 'DE_19',
+      // Kein Vorbelegen mit 0: ein stiller Nullwert behauptete „keine
+      // Arbeitskosten", ohne dass es jemand gesagt hätte.
+      labour_manual: false,
+      labour_net_amount: '',
+    });
+    this.zeileTyp.set('PAUSCHALE');
+    this.betragsfelderPflicht(true);
+    this.lohnfeldPflicht();
+    this.zeileMeldung.set(null);
+    this.meldung.set(null);
+    this.zeileOffen.set(true);
+  }
+
+  zeileSchliessen(): void {
+    if (!this.zeileLaedt()) this.zeileOffen.set(false);
+  }
+
+  zeileAbsenden(): void {
+    const d = this.daten();
+    if (!d || this.zeileLaedt()) return;
+    serverFehlerZuruecksetzen(this.zeileForm);
+    this.zeileMeldung.set(null);
+    felderAlsBeruehrtMarkieren(this.zeileForm);
+    if (this.zeileForm.invalid) return;
+
+    const v = this.zeileForm.getRawValue();
+    const text = this.isText(v.line_type);
+    // § 35a: Der Betrag geht nur mit, wenn er ausdrücklich angegeben wurde —
+    // sonst `null` = „nichts gesagt", und der Server leitet ab (bzw. lässt den
+    // Anteil unbestimmt). Eine Textzeile trägt keinen Betrag und damit auch
+    // keinen Anteil (der Server weist ihn ab).
+    const manuell = v.labour_manual || this.zeileLohnPflicht();
+    // Dezimalfelder gehen als Punkt-String hinaus (deZuApiDezimal) — nie als
+    // JS-number. Gerechnet wird ausschließlich auf dem Server.
+    const payload: QuoteLineInput = text
+      ? { line_type: v.line_type, description: v.description.trim() }
+      : {
+          line_type: v.line_type,
+          description: v.description.trim(),
+          quantity: deZuApiDezimal(v.quantity) || null,
+          unit: v.unit.trim() || null,
+          unit_price: deZuApiDezimal(v.unit_price) || null,
+          discount_percent: deZuApiDezimal(v.discount_percent) || null,
+          tax_code: v.tax_code,
+          labour_net_amount: manuell ? deZuApiDezimal(v.labour_net_amount) || null : null,
+        };
+
+    this.zeileLaedt.set(true);
+    this.svc.addInvoiceLine(d.id, payload).subscribe({
+      next: (aktualisiert) => {
+        this.zeileLaedt.set(false);
+        this.zeileOffen.set(false);
+        this.state.set({ kind: 'ready', data: aktualisiert });
+        this.meldung.set({ art: 'erfolg', text: 'Position wurde angehängt.' });
+      },
+      error: (err) => {
+        this.zeileLaedt.set(false);
+        this.zeileMeldung.set(apiFehlerZuweisen(err, this.zeileForm).formular);
+      },
+    });
+  }
+
+  letzteEntfernen(): void {
+    const d = this.daten();
+    if (!d || this.zeileEntfernenLaedt()) return;
+    this.zeileEntfernenLaedt.set(true);
+    this.meldung.set(null);
+    this.svc.removeLastInvoiceLine(d.id).subscribe({
+      next: (aktualisiert) => {
+        this.zeileEntfernenLaedt.set(false);
+        this.state.set({ kind: 'ready', data: aktualisiert });
+        this.meldung.set({ art: 'erfolg', text: 'Letzte Position wurde entfernt.' });
+      },
+      error: (err) => {
+        this.zeileEntfernenLaedt.set(false);
+        this.meldung.set({ art: 'fehler', text: this.fehlerText(err) });
+      },
+    });
+  }
+
+  /** Herkunft einer gebundenen Position im Klartext (nie nur Farbe). */
+  bindungLabel(q: BillingSource | null | undefined): string | null {
+    if (!q) return null;
+    const map: Record<BillingSource, string> = {
+      BERICHTSPOSITION: 'aus Baustellenbericht',
+      ZEITBUCHUNG: 'aus Zeiterfassung',
+      ANGEBOTSPOSITION: 'aus Angebot',
+    };
+    return map[q] ?? q;
+  }
   /** Beteiligte lassen sich nur am Entwurf ergänzen (Server erzwingt es). */
   protected readonly kannBeteiligen = computed(() => this.daten()?.status === 'ENTWURF');
   protected readonly beteiligtOffen = signal(false);
@@ -292,6 +598,26 @@ export class RechnungDetail {
       this.load(id);
     });
 
+    // Positionsart spiegeln: eine Textzeile trägt keinen Betrag, die Geldfelder
+    // verschwinden dann aus dem Dialog (der Server weist sie ohnehin ab). Mit
+    // ihnen fällt auch ihre Pflicht — ein ausgeblendetes Pflichtfeld wäre eine
+    // unsichtbare Sackgasse.
+    this.zeileForm.controls.line_type.valueChanges
+      .pipe(takeUntilDestroyed())
+      .subscribe((t) => {
+        this.zeileTyp.set(t);
+        this.betragsfelderPflicht(!this.isText(t));
+        // Die Positionsart entscheidet, ob der Server den § 35a-Anteil ableiten
+        // kann — und damit, ob er angegeben werden MUSS.
+        this.lohnfeldPflicht();
+      });
+
+    // Häkchen „abweichend angeben" an → der Betrag ist Pflicht (sonst hielte sich
+    // der Bediener für fertig, während der Server wieder ableitet).
+    this.zeileForm.controls.labour_manual.valueChanges
+      .pipe(takeUntilDestroyed())
+      .subscribe(() => this.lohnfeldPflicht());
+
     // Ob ein Absenderkonto konfiguriert ist, entscheidet über die Versand-Aktion.
     // Nur laden, wenn die Rolle überhaupt versenden darf.
     if (this.darfVersenden()) {
@@ -495,6 +821,41 @@ export class RechnungDetail {
   }
   isText(t: LineType): boolean {
     return t === 'TEXT' || t === 'ZWISCHENSUMME';
+  }
+
+  /**
+   * Menge/Einzelpreis pflichtig schalten — genau dann, wenn sie im Dialog stehen.
+   * Eine Textzeile trägt keinen Betrag; ihre Felder sind ausgeblendet und dürfen
+   * das Formular nicht blockieren.
+   */
+  private betragsfelderPflicht(pflicht: boolean): void {
+    for (const c of [this.zeileForm.controls.quantity, this.zeileForm.controls.unit_price]) {
+      c.setValidators(pflicht ? [Validators.required, dezimalValidator] : [dezimalValidator]);
+      c.updateValueAndValidity({ emitEvent: false });
+    }
+  }
+
+  /**
+   * Den § 35a-Betrag pflichtig schalten — genau dann, wenn er im Dialog steht:
+   * erzwungen (`zeileLohnPflicht`) oder freiwillig per Häkchen. Ohne diesen
+   * Validator liefe ein leeres Feld als „nichts angegeben" durch, und der Ausweis
+   * der ganzen Rechnung fiele weg, ohne dass es jemand bemerkt.
+   *
+   * Wo die Angabe Pflicht ist, entfällt die Wahl: das Häkchen wird gesetzt (und
+   * im Dialog gar nicht erst angeboten).
+   */
+  private lohnfeldPflicht(): void {
+    const manuell = this.zeileForm.controls.labour_manual;
+    if (this.zeileLohnPflicht() && !manuell.value) {
+      manuell.setValue(true, { emitEvent: false });
+    }
+    const c = this.zeileForm.controls.labour_net_amount;
+    c.setValidators(
+      this.zeileLohnBetragSichtbar()
+        ? [Validators.required, dezimalValidator]
+        : [dezimalValidator],
+    );
+    c.updateValueAndValidity({ emitEvent: false });
   }
 
   roleLabel(r: string): string {

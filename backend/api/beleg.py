@@ -16,7 +16,7 @@ from ninja.security import django_auth
 
 from api.permissions import require
 from db_core.mail_crypto import MailKeyError
-from db_core.models import Invoice, Quote
+from db_core.models import BillingLink, Invoice, Quote
 from db_core.services import abrechnung as abrechnung_service
 from db_core.services import beleg as beleg_service
 from db_core.services import beleg_pdf as beleg_pdf_service
@@ -85,6 +85,13 @@ class QuoteLineOut(Schema):
     # Anrechnungsposition einer Schlussrechnung (negativer Betrag). Read-only: der
     # Editor darf sie nicht ändern — sie wird aus der Verkettung erzeugt.
     advance_invoice_id: UUID | None = None
+    # Herkunft der **Abrechnungsbindung** (Migration 0084):
+    # BERICHTSPOSITION | ZEITBUCHUNG | ANGEBOTSPOSITION — oder null (frei erfasst).
+    #
+    # Nur bei Rechnungen gesetzt. Das UI braucht es, um genau **diese** Zeilen als
+    # unveränderlich zu kennzeichnen (der Trigger sperrt UPDATE/DELETE je Zeile,
+    # nicht den Beleg) — statt den Nutzer in einen Serverfehler laufen zu lassen.
+    billing_source: str | None = None
 
 
 class RubrikOut(Schema):
@@ -631,7 +638,23 @@ class InvoiceDetailOut(InvoiceOut):
     skonto_zahlbetrag: Decimal | None = None
     version: int
     project: ProjectRefOut | None = None
+    work_order_id: UUID | None = None
     work_order_number: str | None = None
+    # Trägt die Rechnung **aktive** Abrechnungsbindungen (Migration 0084)?
+    #
+    # Gesperrt sind damit die **gebundenen Zeilen** — nicht der Beleg (Migration
+    # 0088 hat den Trigger genau darauf verengt): `protect_billed_invoice_lines`
+    # weist UPDATE und DELETE einer gebundenen Zeile ab; das **INSERT einer neuen**
+    # Zeile ist erlaubt (sie kann keine Bindung tragen).
+    #
+    # Fürs UI folgt daraus zweierlei:
+    #  * Der **Editor** (`PUT /invoices/{id}`) ist trotzdem verschlossen: Er
+    #    ersetzt den ganzen Positionssatz per Delete+Insert und trifft dabei die
+    #    gebundene Zeile (422). Ihn anzubieten hieße, in eine Sackgasse zu führen.
+    #  * **Ergänzen geht trotzdem** — über `POST /invoices/{id}/lines` (eine Zeile
+    #    ans Ende). Die Notbremse `bindungen-loesen` (die alle gebundenen
+    #    Positionen verwirft) bleibt dem verunglückten Lauf vorbehalten.
+    gebunden: bool = False
     published_at: datetime | None = None
     has_snapshot: bool = False
     content_hash: str | None = None
@@ -745,6 +768,13 @@ def _invoice_detail(invoice_id):
         raise HttpError(404, "Rechnung nicht gefunden.")
 
     nummern = _rubrik_nummern(invoice)
+    # Aktive Abrechnungsbindungen dieser Rechnung: EINE Query, kein N+1. Nur
+    # `released_at IS NULL` zählt — eine gelöste Bindung sperrt nichts mehr.
+    bindung_je_zeile = dict(
+        BillingLink.objects.filter(
+            invoice_id=invoice.id, released_at__isnull=True
+        ).values_list("invoice_line_id", "source_kind")
+    )
     lines = [
         QuoteLineOut(
             position_number=l.position_number,
@@ -765,6 +795,7 @@ def _invoice_detail(invoice_id):
             source_article_id=l.source_article_id,
             source_assembly_id=l.source_assembly_id,
             advance_invoice_id=l.advance_invoice_id,
+            billing_source=bindung_je_zeile.get(l.id),
         )
         for l in sorted(invoice.lines.all(), key=lambda l: l.position_number)
     ]
@@ -851,9 +882,11 @@ def _invoice_detail(invoice_id):
         version=invoice.version,
         property=_property_ref(invoice),
         project=project,
+        work_order_id=invoice.work_order_id,
         work_order_number=(
             invoice.work_order.order_number if invoice.work_order_id else None
         ),
+        gebunden=bool(bindung_je_zeile),
         published_at=invoice.published_at,
         has_snapshot=invoice.billing_snapshot is not None,
         content_hash=invoice.content_hash,
@@ -1182,6 +1215,53 @@ def update_invoice(request, invoice_id: UUID, payload: InvoiceUpdateIn):
                 else None
             ),
         )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _invoice_detail(invoice_id)
+
+
+@router.post(
+    "/invoices/{invoice_id}/lines", response={201: InvoiceDetailOut}, auth=django_auth
+)
+def add_invoice_line(request, invoice_id: UUID, payload: QuoteLineIn):
+    """Hängt EINE Position an einen Rechnungsentwurf an (ans Ende der Leistung).
+
+    Trägt der Beleg die **Anrechnung** von Abschlagsrechnungen, so bleibt die die
+    letzte Position: die neue Zeile geht davor, der Abzug rückt nach.
+
+    Der Weg, einen **gebundenen** Entwurf zu ergänzen (Anfahrtspauschale, Rabatt,
+    Zusatztext), ohne die Notbremse `bindungen-loesen` zu ziehen: Der Editor
+    (`PUT /invoices/{id}`) ersetzt den ganzen Positionssatz per Delete+Insert und
+    läuft damit zwangsläufig gegen die gebundene Zeile (422). Das **INSERT einer
+    neuen** Zeile lässt der DB-Trigger dagegen ausdrücklich zu (Migration 0088) —
+    sie kann keine Bindung tragen.
+
+    Recht `invoicing/AENDERN` wie beim Editor. Summen rechnet der Server aus allen
+    Zeilen neu.
+    """
+    actor, _ = require(request, "invoicing", "AENDERN")
+    try:
+        beleg_service.add_invoice_line(
+            actor, invoice_id=invoice_id, line=payload.dict()
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return Status(201, _invoice_detail(invoice_id))
+
+
+@router.delete("/invoices/{invoice_id}/lines/last", response=InvoiceDetailOut, auth=django_auth)
+def remove_last_invoice_line(request, invoice_id: UUID):
+    """Entfernt die **letzte** Position eines Entwurfs — nur, wenn sie ungebunden ist.
+
+    Die Rücknahme einer gerade angehängten Zeile. Bewusst nur die letzte: jede
+    andere zu entfernen hieße umnummerieren, und ein UPDATE auf eine gebundene
+    Zeile weist die DB ab. Eine gebundene letzte Zeile → 422 (dann bleibt nur
+    `bindungen-loesen`). Eine **Anrechnungsposition** ebenfalls → 422: sie gehört
+    zur Abschlagsverkettung und wird über die Abschlagszuordnung gepflegt.
+    """
+    actor, _ = require(request, "invoicing", "AENDERN")
+    try:
+        beleg_service.remove_last_invoice_line(actor, invoice_id=invoice_id)
     except ValueError as exc:
         raise HttpError(422, str(exc))
     return _invoice_detail(invoice_id)

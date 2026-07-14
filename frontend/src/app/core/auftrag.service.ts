@@ -4,11 +4,13 @@ import { Observable } from 'rxjs';
 import {
   EvidenceInput,
   Kundenhistorie,
+  OffeneAbrechnung,
   ResponsibilityInput,
   WorkOrderCreate,
   WorkOrderDetail,
   WorkOrderPage,
   WorkOrderPartyCreate,
+  WorkOrderPatch,
   WorkOrderQuery,
   WorkOrderStatusInput,
 } from './auftrag.model';
@@ -70,5 +72,27 @@ export class AuftragService {
    */
   advanceStatus(id: string, payload: WorkOrderStatusInput): Observable<WorkOrderDetail> {
     return this.http.post<WorkOrderDetail>(`${this.base}/${id}/status`, payload);
+  }
+
+  /**
+   * Was ist an diesem Auftrag noch **nicht** abgerechnet — mit `preis_status` je
+   * Position, damit ein fehlender Preis geklärt werden kann, BEVOR jemand
+   * fakturieren will.
+   *
+   * Auftragssicht über die ganze Baustelle: Rollen mit row_scope EIGENE bekommen
+   * 403 (fail-closed). Der Reiter wird bei ihnen gar nicht erst angeboten.
+   */
+  offeneAbrechnung(id: string): Observable<OffeneAbrechnung> {
+    return this.http.get<OffeneAbrechnung>(`${this.base}/${id}/offene-abrechnung`);
+  }
+
+  /**
+   * Abrechnungsart umstellen (PAUSCHAL | REGIE). Verlangt workflow/AENDERN UND
+   * invoicing/AENDERN. Ist der Auftrag bereits abgerechnet (aktive Bindungen oder
+   * eine wirksame veröffentlichte Rechnung), antwortet der Server mit 422 — der
+   * Moduswechsel wäre sonst das Tor zur Doppelabrechnung.
+   */
+  setBillingMode(id: string, payload: WorkOrderPatch): Observable<WorkOrderDetail> {
+    return this.http.patch<WorkOrderDetail>(`${this.base}/${id}`, payload);
   }
 }

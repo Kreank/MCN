@@ -48,6 +48,22 @@
         <a mappe-kopf class="btn btn--primary" [routerLink]="['/dokumente/rechnung', daten()!.id]">
           Bearbeiten
         </a>
+      } @else if (daten()!.status === 'ENTWURF' && daten()!.gebunden && darfAendern()) {
+        <button
+          mappe-kopf
+          type="button"
+          class="btn"
+          disabled
+          aria-label="Beleg-Editor — nicht möglich: Er schreibt den ganzen Positionssatz zurück und würde die gebundenen Positionen anfassen. Nutze „Position anhängen“ oder löse die Bindungen."
+          aria-describedby="bindung-hinweis"
+        >
+          Bearbeiten
+        </button>
+      }
+      @if (kannEntbinden() && darfEntbinden()) {
+        <button mappe-kopf type="button" class="btn" (click)="loesenFragen()">
+          Bindungen lösen
+        </button>
       }
       @if (darfVersenden() && kannVersenden()) {
         @if (mailKontoVorhanden()) {
@@ -98,6 +114,57 @@
       }
 
       @if (tab() === 'positionen') {
+        @if (daten()!.gebunden) {
+          <div id="bindung-hinweis" class="note note--warn bindung" role="note">
+            <h3 class="note__titel">
+              <span aria-hidden="true">🔒</span> Positionen aus der Abrechnung
+            </h3>
+            <p class="note__text">
+              Diese Rechnung stammt aus einem Abrechnungslauf. Die mit
+              <strong>„gebunden"</strong> markierten Positionen hängen an ihrer Quelle
+              (Baustellenbericht, Zeiterfassung oder Angebot) — die Bindung ist der Nachweis, dass
+              genau diese Leistung berechnet wurde, und sie verhindert, dass dieselbe Leistung ein
+              zweites Mal in Rechnung geht. Sie lassen sich deshalb <strong>weder ändern noch
+              löschen</strong>.
+            </p>
+            @if (daten()!.status === 'ENTWURF') {
+              <p class="note__text">
+                <strong>Ergänzen geht trotzdem:</strong> Über <strong>„Position anhängen"</strong>
+                kommen neue Zeilen ans Ende des Belegs — Anfahrtspauschale, Rabatt, Zusatztext. Nur
+                der Beleg-Editor bleibt zu: Er schreibt den <em>ganzen</em> Positionssatz zurück und
+                würde dabei die gebundenen Zeilen anfassen.
+              </p>
+              <p class="note__text">
+                War der Abrechnungslauf selbst falsch, ist <strong>„Bindungen lösen"</strong> der Weg
+                zurück: Die gebundenen Positionen werden aus dem Entwurf entfernt und die Quellen
+                wieder abrechenbar. Danach ist der Entwurf normal bearbeitbar.
+              </p>
+            } @else {
+              <p class="note__text">
+                Der Beleg ist veröffentlicht und damit unveränderlich (GoBD). Freigegeben werden die
+                Leistungen nur durch ein <strong>Storno</strong> — eine Gutschrift löst die Bindung
+                nicht.
+              </p>
+            }
+            @if (kannZeileAnhaengen()) {
+              <div class="note__aktionen">
+                <button type="button" class="btn btn--primary" (click)="zeileOeffnen()">
+                  <span aria-hidden="true">＋</span> Position anhängen
+                </button>
+                @if (kannLetzteEntfernen()) {
+                  <button
+                    type="button"
+                    class="btn"
+                    [disabled]="zeileEntfernenLaedt()"
+                    (click)="letzteEntfernen()"
+                  >
+                    {{ zeileEntfernenLaedt() ? 'Wird entfernt …' : 'Letzte Position entfernen' }}
+                  </button>
+                }
+              </div>
+            }
+          </div>
+        }
         @if (daten()!.lines.length === 0) {
           <div class="tab-platzhalter"><p>Diese Rechnung enthält noch keine Positionen.</p></div>
         } @else {
@@ -117,6 +184,7 @@
                   <tr
                     [class.pos--text]="isText(l.line_type)"
                     [class.pos--anrechnung]="!!l.advance_invoice_id"
+                    [class.pos--gebunden]="!!l.billing_source"
                   >
                     <td class="pos__nr">{{ l.position_number }}</td>
                     <td>
@@ -128,6 +196,13 @@
                           {{ lineTypeLabel(l.line_type) }}
                         }
                       </span>
+                      <!-- Gebundene Zeile: Text UND Symbol, nie nur Farbe (WCAG 1.4.1). -->
+                      @if (bindungLabel(l.billing_source); as herkunft) {
+                        <span class="pos__bindung">
+                          <span aria-hidden="true">🔒</span> gebunden — stammt {{ herkunft }};
+                          nicht änderbar
+                        </span>
+                      }
                     </td>
                     <td class="pos__num">{{ menge(l.quantity, l.unit) }}</td>
                     <td class="pos__num">{{ euro(l.unit_price) }}</td>
@@ -414,6 +489,128 @@
       [laedt]="publishLaedt()"
       (bestaetigen)="publishBestaetigen()"
       (abbrechen)="publishAbbrechen()"
+    />
+
+    <!-- ------------------- Position anhängen (gebundener Entwurf) ---------- -->
+    <app-dialog
+      [offen]="zeileOffen()"
+      titel="Position anhängen"
+      (schliessen)="zeileSchliessen()"
+    >
+      <form id="zeile-form" class="dialog-form" (submit)="$event.preventDefault(); zeileAbsenden()" novalidate>
+        @if (zeileMeldung(); as fm) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+          </div>
+        }
+        <p class="zeile-hinweis">
+          Die Position wird <strong>ans Ende der Leistungspositionen</strong> gehängt (Einfügen
+          mitten im Beleg müsste die gebundenen Zeilen umnummerieren — das lässt die Datenbank nicht
+          zu). Eine Anrechnung von Abschlagsrechnungen bleibt die letzte Position des Belegs. Die
+          Summen rechnet der Server aus allen Zeilen neu.
+        </p>
+
+        <app-feld
+          [control]="zeileForm.controls.line_type"
+          label="Positionsart"
+          typ="select"
+          [pflicht]="true"
+          [optionen]="lineTypOptionen"
+        />
+        <app-feld
+          [control]="zeileForm.controls.description"
+          label="Bezeichnung"
+          [pflicht]="true"
+        />
+        @if (!zeileIstText()) {
+          <app-feld
+            [control]="zeileForm.controls.quantity"
+            label="Menge"
+            typ="zahl"
+            [pflicht]="true"
+            hinweis="Ohne Tausenderpunkt (1500 oder 1500,5)."
+          />
+          <app-feld [control]="zeileForm.controls.unit" label="Einheit" hinweis="z. B. Stk, h, m" />
+          <app-feld
+            [control]="zeileForm.controls.unit_price"
+            label="Einzelpreis (€, netto)"
+            typ="zahl"
+            [pflicht]="true"
+          />
+          <app-feld
+            [control]="zeileForm.controls.discount_percent"
+            label="Rabatt (%)"
+            typ="zahl"
+            hinweis="Optional, z. B. 5 oder 2,5"
+          />
+          <app-feld
+            [control]="zeileForm.controls.tax_code"
+            label="Steuersatz"
+            typ="select"
+            [pflicht]="true"
+            [optionen]="taxCodeOptionen"
+          />
+
+          <!-- § 35a EStG: Der Ausweis ist eine Aussage über den GANZEN Beleg —
+               eine einzige Position ohne bestimmten Anteil macht ihn unbestimmbar,
+               und der Privatkunde verliert 20 % Steuerermäßigung auf alles. Für
+               PAUSCHALE/FREMDLEISTUNG/ZUSCHLAG (und PAUSCHALE ist hier die
+               Voreinstellung) kann der Server nichts ableiten: Wo die Rechnung
+               heute ausweist, ist die Angabe deshalb Pflicht. -->
+          @if (zeileLohnPflicht()) {
+            <p class="zeile-lohn__warnung" role="status">
+              <span aria-hidden="true">⚠</span>
+              Diese Rechnung <strong>weist Arbeitskosten nach § 35a EStG aus</strong>. Aus der
+              Positionsart „{{ lineTypeLabel(zeileTyp()) }}“ lässt sich der Anteil nicht
+              ableiten — bleibt er offen, entfällt der Ausweis der
+              <strong>gesamten Rechnung</strong>, und der Privatkunde verliert 20 %
+              Steuerermäßigung. Enthält die Position keine Arbeitskosten, hier
+              <strong>0</strong> eintragen. Ist der Anteil nicht zu ermitteln, den Ausweis in
+              der Übersicht bewusst abschalten.
+            </p>
+          } @else {
+            <app-feld
+              [control]="zeileForm.controls.labour_manual"
+              label="Arbeitskostenanteil abweichend angeben (§ 35a)"
+              typ="checkbox"
+            />
+            @if (zeileLohnHinweis(); as lh) {
+              <p class="zeile-lohn__hinw" role="status">{{ lh }}</p>
+            }
+          }
+          @if (zeileLohnBetragSichtbar()) {
+            <app-feld
+              [control]="zeileForm.controls.labour_net_amount"
+              label="davon Arbeitskosten (netto)"
+              typ="zahl"
+              [pflicht]="true"
+              hinweis="In Euro, höchstens der Positionsbetrag. Lohn-, Maschinen- und Fahrtkosten zählen; Material nicht (Verbrauchsmittel schon)."
+            />
+          }
+        }
+      </form>
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="zeileLaedt()" (click)="zeileSchliessen()">Abbrechen</button>
+        <button type="submit" form="zeile-form" class="btn btn--primary" [disabled]="zeileLaedt()" [attr.aria-busy]="zeileLaedt()">
+          {{ zeileLaedt() ? 'Wird angehängt …' : 'Position anhängen' }}
+        </button>
+      </div>
+    </app-dialog>
+
+    <!-- Notausgang aus einem verunglückten Abrechnungslauf. Er wirft die
+         gebundenen Positionen weg — deshalb Bestätigung UND Pflichtbegründung. -->
+    <app-bestaetigung
+      [offen]="loesenOffen()"
+      titel="Abrechnungsbindungen lösen?"
+      text="Die gebundenen Positionen werden aus diesem Entwurf ENTFERNT. Die zugehörigen Berichtspositionen, Zeitbuchungen bzw. Angebotspositionen werden dadurch wieder abrechenbar — genau weil dieser Entwurf sie nicht mehr in Rechnung stellt. Selbst erfasste Positionen bleiben erhalten."
+      bestaetigenLabel="Bindungen lösen"
+      [gefahr]="true"
+      [begruendungPflicht]="true"
+      begruendungLabel="Begründung (wird im Audit festgehalten)"
+      [laedt]="loesenLaedt()"
+      (bestaetigen)="loesenBestaetigen($event)"
+      (abbrechen)="loesenAbbrechen()"
     />
   }
 }

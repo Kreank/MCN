@@ -48,6 +48,16 @@ _CONSTRAINT_MESSAGES = {
     "work_day_unique": (
         "Für diesen Mitarbeiter existiert bereits ein Arbeitstag mit diesem Datum."
     ),
+    # Zwei Bearbeiter schreiben gleichzeitig Positionen desselben Entwurfs: Die
+    # Positionsnummer wird aus dem Bestand abgeleitet. Die Schreiber (`beleg.
+    # add_invoice_line`, `beleg.set_invoice_advances`) sperren die Rechnung
+    # `FOR UPDATE` und lesen den Bestand innerhalb der Transaktion — das
+    # serialisiert sie gegeneinander. Bleibt die UNIQUE als letzte Instanz (Gürtel
+    # und Hosenträger) — sie darf nie als 500 enden.
+    "invoice_line_invoice_id_position_number_key": (
+        "Die Position wurde gleichzeitig von jemand anderem geändert. Bitte den "
+        "Beleg neu laden und den Vorgang wiederholen."
+    ),
 }
 
 

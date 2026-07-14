@@ -883,6 +883,221 @@ def update_invoice(
 
 
 # ---------------------------------------------------------------------------
+# Einzelne Position anhängen / entfernen — der Weg für den GEBUNDENEN Entwurf
+# ---------------------------------------------------------------------------
+# `update_invoice` ersetzt den **ganzen** Positionssatz (Delete + Insert). Trägt
+# die Rechnung eine Abrechnungsbindung (Migration 0084), trifft das DELETE die
+# gebundene Zeile — und `invoicing.protect_billed_invoice_lines` weist es ab
+# (422). Der Editor ist damit für einen gebundenen Entwurf verschlossen.
+#
+# Migration **0088** hat den Trigger aber bewusst verengt: Gesperrt sind nur
+# UPDATE und DELETE einer **gebundenen Zeile**. Das **INSERT einer neuen** Zeile
+# ist erlaubt — eine Zeile, die es noch nicht gibt, kann keine Bindung tragen und
+# gefährdet die Doppelabrechnungssperre nicht. Genau dafür sind diese beiden
+# Funktionen da: Anfahrtspauschale, Rabattzeile, Zusatztext auf einer aus dem
+# Abrechnungslauf entstandenen Rechnung — **ohne** die Notbremse
+# `bindungen_loesen` zu ziehen, die alle gebundenen Positionen verwürfe.
+#
+# Drei Grenzen, die aus dem Trigger und aus der Abschlagsverkettung folgen und
+# deshalb nicht verhandelbar sind:
+#
+# * **Angehängt wird ans Ende der LEISTUNGSpositionen.** Trägt der Beleg
+#   Anrechnungspositionen einer Schlussrechnung (`advance_invoice_id IS NOT NULL`),
+#   so schließen die den Beleg ab (`_anrechnung_schreiben`) — die neue Zeile geht
+#   also VOR sie, und die Anrechnung rückt um eins nach hinten. Sonst stünde eine
+#   Leistungszeile hinter dem Abzug, und der nächste `set_invoice_advances` liefe
+#   in die UNIQUE (invoice_id, position_number), weil er die Anrechnung hinter die
+#   höchste Leistungsnummer setzt. Das Umnummerieren ist erlaubt: eine
+#   Anrechnungszeile trägt nie eine `billing_link` (sie entsteht aus der
+#   Verkettung, nicht aus dem Abrechnungslauf) — `protect_billed_invoice_lines`
+#   sieht sie also nicht. Ein Einfügen mitten in die Leistungspositionen bleibt
+#   dagegen verwehrt: das verschöbe gebundene Zeilen.
+# * **Entfernt wird nur die LETZTE Leistungszeile, und nur wenn sie ungebunden
+#   ist.** Eine Zeile aus der Mitte zu löschen hinterließe eine Lücke in der
+#   Nummerierung (Schließen = Umnummerieren = UPDATE auf gebundene Zeilen). Das
+#   ist die Rücknahme eines gerade gemachten Fehlers, nicht der allgemeine Editor.
+# * **Eine Anrechnungsposition wird hier NIE angefasst.** Sie ist die Projektion
+#   der Verkettung (`invoice_advance`); einzeln entfernt bliebe die Verkettung
+#   stehen, der Abzug verschwände aus den Summen — der Entwurf forderte den bereits
+#   gezahlten Abschlag ein zweites Mal. Gepflegt wird sie ausschließlich über
+#   `set_invoice_advances`.
+#
+# **Sperre.** Jeder Schreiber, der Positionsnummern aus dem BESTAND ableitet,
+# sperrt die Rechnung `FOR UPDATE` und liest die Zeilen erst DANACH — innerhalb
+# derselben Transaktion. Das sind drei: `add_invoice_line` (`max + 1` bzw. das
+# Umnummerieren), `remove_last_invoice_line` (die letzte Zeile) und
+# `set_invoice_advances` (hängt die Anrechnung hinter die höchste Leistungsnummer).
+# Nur beides zusammen serialisiert: Sperre ohne Lesen in der Transaktion hieße, mit
+# einem Bestand zu rechnen, der vor der Sperre gelesen wurde — der Nebenläufer
+# hätte inzwischen angehängt. Die UNIQUE (invoice_id, position_number) bleibt die
+# letzte Instanz; sie ist auf einen 422 gemappt (`gate_errors`) und darf nie als
+# 500 enden.
+
+def _anrechnung_zeilen(bestehende):
+    """Die Anrechnungspositionen (Projektion der Abschlagsverkettung) im Bestand."""
+    return [l for l in bestehende if l.advance_invoice_id is not None]
+
+
+def add_invoice_line(actor_app_user_id, *, invoice_id, line):
+    """Hängt EINE Position an einen Rechnungsentwurf an (ans Ende der Leistung).
+
+    Der einzige Weg, einen **gebundenen** Entwurf noch zu ergänzen. Die Summen
+    rechnet — wie überall — der Server: aus **allen** Zeilen neu, nie aus einer
+    Differenz.
+
+    `rubrik` verweist auf einen **bestehenden** Abschnitt (Nummer); neue Abschnitte
+    legt der Editor an, und der steht dem gebundenen Beleg nicht zur Verfügung.
+    """
+    with as_business_error():
+        with business_transaction(actor_app_user_id):
+            invoice = (
+                Invoice.objects.select_for_update().filter(id=invoice_id).first()
+            )
+            if invoice is None:
+                raise ValueError("Rechnung nicht gefunden.")
+            if invoice.status not in INVOICE_EDITIERBAR:
+                raise ValueError(
+                    f"Rechnung im Status {invoice.status} ist unveränderlich "
+                    "(veröffentlicht)."
+                )
+            if invoice.invoice_type in _CREDIT_TYPES:
+                raise ValueError(
+                    "Gutschriften und Stornobelege werden nicht über den Editor "
+                    "geändert."
+                )
+
+            # Validierung und Geldrechnung der neuen Zeile laufen durch dieselbe
+            # Rechenstelle wie im Editor (`_prepare_lines`) — kein zweiter Rechenweg.
+            prepared, *_ = _prepare_lines([line])
+            row = dict(prepared[0])
+            ref = row.pop("_rubrik", None)
+            if ref is not None:
+                rubrik = BelegRubrik.objects.filter(
+                    invoice_id=invoice.id, position_number=ref
+                ).first()
+                if rubrik is None:
+                    raise ValueError(
+                        f"Abschnitt {ref} gibt es auf diesem Beleg nicht. Eine "
+                        "angehängte Position kann nur einem bestehenden Abschnitt "
+                        "zugeordnet werden."
+                    )
+                row["rubrik_id"] = rubrik.id
+
+            bestehende = list(InvoiceLine.objects.filter(invoice_id=invoice.id))
+            anrechnung = _anrechnung_zeilen(bestehende)
+            if anrechnung:
+                # VOR den Abzug: er schließt den Beleg ab. Umnummeriert wird in
+                # ABSTEIGENDER Reihenfolge — aufsteigend liefe das erste UPDATE in
+                # die UNIQUE gegen seinen eigenen Nachfolger.
+                row["position_number"] = min(l.position_number for l in anrechnung)
+                for l in sorted(
+                    anrechnung, key=lambda l: l.position_number, reverse=True
+                ):
+                    InvoiceLine.objects.filter(id=l.id).update(
+                        position_number=l.position_number + 1
+                    )
+            else:
+                row["position_number"] = (
+                    max((l.position_number for l in bestehende), default=0) + 1
+                )
+
+            # Die Summen hängen nicht an der Nummerierung — der verschobene Abzug
+            # zählt unverändert mit.
+            net_total, tax_total, gross_total = _totals(
+                [_totals_row(l) for l in bestehende] + [row]
+            )
+            if invoice.invoice_type == FINAL_TYPE:
+                _anrechnung_pruefen(gross_total)
+
+            InvoiceLine.objects.create(id=uuid.uuid4(), invoice_id=invoice.id, **row)
+            Invoice.objects.filter(id=invoice.id).update(
+                net_total=net_total, tax_total=tax_total, gross_total=gross_total
+            )
+    invoice.refresh_from_db()
+    return invoice
+
+
+def remove_last_invoice_line(actor_app_user_id, *, invoice_id):
+    """Entfernt die **letzte** Position eines Entwurfs — nur, wenn sie ungebunden ist.
+
+    Die Rücknahme einer gerade angehängten Zeile (Vertipper in der
+    Anfahrtspauschale). Bewusst nur die letzte: Jede andere Zeile zu entfernen
+    hieße umnummerieren, und das ist ein UPDATE, das an einer gebundenen Zeile
+    scheitert. Ist die letzte Zeile gebunden, bleibt nur `bindungen_loesen` — oder
+    eine ausgleichende Position.
+
+    Ist die letzte Zeile die **Anrechnung** einer Schlussrechnung, wird ebenfalls
+    abgewiesen: sie gehört zur Abschlagsverkettung und wird über
+    `set_invoice_advances` gepflegt, nicht hier.
+    """
+    with as_business_error():
+        with business_transaction(actor_app_user_id):
+            invoice = (
+                Invoice.objects.select_for_update().filter(id=invoice_id).first()
+            )
+            if invoice is None:
+                raise ValueError("Rechnung nicht gefunden.")
+            if invoice.status not in INVOICE_EDITIERBAR:
+                raise ValueError(
+                    f"Rechnung im Status {invoice.status} ist unveränderlich "
+                    "(veröffentlicht)."
+                )
+            if invoice.invoice_type in _CREDIT_TYPES:
+                raise ValueError(
+                    "Gutschriften und Stornobelege werden nicht über den Editor "
+                    "geändert."
+                )
+            bestehende = list(InvoiceLine.objects.filter(invoice_id=invoice.id))
+            if not bestehende:
+                raise ValueError("Die Rechnung hat keine Position.")
+            letzte = max(bestehende, key=lambda l: l.position_number)
+            if letzte.advance_invoice_id is not None:
+                raise ValueError(
+                    f"Position {letzte.position_number} ist die Anrechnung einer "
+                    "Abschlags-/Teilrechnung und Teil der Abschlagsverkettung. Sie "
+                    "kann nicht einzeln entfernt werden — sonst forderte die "
+                    "Schlussrechnung den bereits berechneten Betrag ein zweites Mal. "
+                    "Die Anrechnung wird über die Abschlagszuordnung gepflegt."
+                )
+            if BillingLink.objects.filter(
+                invoice_line_id=letzte.id, released_at__isnull=True
+            ).exists():
+                raise ValueError(
+                    f"Position {letzte.position_number} ist an die Abrechnung "
+                    "gebunden (Bericht, Zeitbuchung oder Angebot) und kann nicht "
+                    "entfernt werden. Sie ist der Nachweis, dass genau diese Leistung "
+                    "berechnet wurde. Wenn der Abrechnungslauf falsch war: Bindungen "
+                    "lösen."
+                )
+            rest = [l for l in bestehende if l.id != letzte.id]
+            net_total, tax_total, gross_total = _totals(
+                [_totals_row(l) for l in rest]
+            )
+
+            InvoiceLine.objects.filter(id=letzte.id).delete()
+            Invoice.objects.filter(id=invoice.id).update(
+                net_total=net_total, tax_total=tax_total, gross_total=gross_total
+            )
+    invoice.refresh_from_db()
+    return invoice
+
+
+def _totals_row(line):
+    """Eine bestehende Positionszeile in der Form, die `_totals` liest.
+
+    Text-/Zwischensummenzeilen und Alternativ-/Bedarfspositionen filtert `_totals`
+    selbst heraus — ihre leeren Beträge werden nie gelesen.
+    """
+    return {
+        "line_type": line.line_type,
+        "line_kind": line.line_kind,
+        "net_amount": line.net_amount,
+        "tax_code_id": line.tax_code_id,
+        "tax_rate_percent": line.tax_rate_percent,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Abschlags-/Teil-/Schlussrechnung (Migration 0060)
 # ---------------------------------------------------------------------------
 # Die Schlussrechnung listet die volle Leistung und zieht die bereits gestellten
@@ -1329,12 +1544,21 @@ def _anrechnung_schreiben(invoice, rows, abschlaege, *, prepared_user_lines):
     Läuft innerhalb einer laufenden `business_transaction`. Die Anrechnungs-
     positionen stehen IMMER hinter den Leistungspositionen (der Abzug schließt den
     Beleg ab) und sind keinem Abschnitt zugeordnet.
+
+    Die Anrechnung setzt hinter der HÖCHSTEN Leistungsnummer auf — nicht hinter
+    `len(...)`. Beides fällt nur zusammen, solange die Leistungsnummern lückenlos
+    sind. `abrechnung.bindungen_loesen` löscht Zeilen ohne Umnummerieren und
+    hinterlässt Lücken; träfe eine solche Rechnung je auf eine Anrechnung, vergäbe
+    `len(...)` eine bereits belegte Nummer (UNIQUE-Verletzung).
     """
     for row in rows:
         InvoiceAdvance.objects.create(
             id=uuid.uuid4(), final_invoice_id=invoice.id, **row
         )
-    lines = _anrechnung_lines(rows, abschlaege, len(prepared_user_lines))
+    start = max(
+        (r["position_number"] for r in prepared_user_lines), default=0
+    )
+    lines = _anrechnung_lines(rows, abschlaege, start)
     for row in lines:
         InvoiceLine.objects.create(id=uuid.uuid4(), invoice_id=invoice.id, **row)
     return _totals(list(prepared_user_lines) + lines)
@@ -1570,37 +1794,49 @@ def set_invoice_advances(actor_app_user_id, *, invoice_id, advance_invoice_ids):
     Ersetzt die Verkettung vollständig (das UI schickt die ganze Auswahl) und baut
     die Anrechnungspositionen daraus neu auf. Die Leistungspositionen bleiben
     unangetastet; die Kopfsummen werden aus allen Positionen neu abgeleitet.
+
+    Sperrt die Rechnung `FOR UPDATE` und liest die Leistungspositionen DANACH
+    (innerhalb der Transaktion): Die Anrechnung setzt hinter der höchsten
+    Leistungsnummer auf, und `add_invoice_line` verschiebt genau diese Nummern.
+    Gelesen vor der Sperre, rechnete diese Funktion mit einem überholten Bestand
+    und vergäbe eine bereits belegte Positionsnummer.
     """
-    invoice = (
-        Invoice.objects.filter(id=invoice_id).prefetch_related("lines").first()
-    )
-    if invoice is None:
-        raise ValueError("Rechnung nicht gefunden.")
-    if invoice.invoice_type != FINAL_TYPE:
-        raise ValueError("Abschlagsrechnungen kann nur eine Schlussrechnung anrechnen.")
-    if invoice.status not in INVOICE_EDITIERBAR:
-        raise ValueError(
-            f"Rechnung im Status {invoice.status} ist unveränderlich (veröffentlicht)."
-        )
-    abschlaege = _abschlaege_laden(
-        invoice.work_order_id, advance_invoice_ids, final_invoice_id=invoice.id
-    )
-    rows = _anrechnung_rows(abschlaege)
-    # Leistungspositionen = alles, was keine Anrechnung ist. Sie behalten ihre
-    # Nummern; die Anrechnung hängt sich hinten an.
-    user_lines = [
-        {
-            "line_type": l.line_type,
-            "line_kind": l.line_kind,
-            "net_amount": l.net_amount,
-            "tax_code_id": l.tax_code_id,
-            "tax_rate_percent": l.tax_rate_percent,
-        }
-        for l in sorted(invoice.lines.all(), key=lambda l: l.position_number)
-        if l.advance_invoice_id is None
-    ]
     with as_business_error():
         with business_transaction(actor_app_user_id):
+            invoice = (
+                Invoice.objects.select_for_update().filter(id=invoice_id).first()
+            )
+            if invoice is None:
+                raise ValueError("Rechnung nicht gefunden.")
+            if invoice.invoice_type != FINAL_TYPE:
+                raise ValueError(
+                    "Abschlagsrechnungen kann nur eine Schlussrechnung anrechnen."
+                )
+            if invoice.status not in INVOICE_EDITIERBAR:
+                raise ValueError(
+                    f"Rechnung im Status {invoice.status} ist unveränderlich "
+                    "(veröffentlicht)."
+                )
+            abschlaege = _abschlaege_laden(
+                invoice.work_order_id, advance_invoice_ids,
+                final_invoice_id=invoice.id,
+            )
+            rows = _anrechnung_rows(abschlaege)
+            # Leistungspositionen = alles, was keine Anrechnung ist. Sie behalten
+            # ihre Nummern; die Anrechnung hängt sich hinter die höchste.
+            user_lines = [
+                {
+                    "position_number": l.position_number,
+                    "line_type": l.line_type,
+                    "line_kind": l.line_kind,
+                    "net_amount": l.net_amount,
+                    "tax_code_id": l.tax_code_id,
+                    "tax_rate_percent": l.tax_rate_percent,
+                }
+                for l in InvoiceLine.objects.filter(
+                    invoice_id=invoice.id, advance_invoice__isnull=True
+                ).order_by("position_number")
+            ]
             InvoiceLine.objects.filter(
                 invoice_id=invoice.id, advance_invoice__isnull=False
             ).delete()

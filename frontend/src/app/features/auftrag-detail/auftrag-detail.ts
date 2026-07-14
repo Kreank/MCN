@@ -22,6 +22,7 @@ import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { Dateien } from '../../shared/dateien/dateien';
 import { Berichte } from '../../shared/berichte/berichte';
 import { SollIstAbgleich } from '../../shared/soll-ist/soll-ist';
+import { Abrechnung } from './abrechnung';
 import { ZielFilter } from '../../core/datei.model';
 import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 import { Dialog } from '../../shared/dialog/dialog';
@@ -70,6 +71,7 @@ const STATUS_KANDIDATEN: WorkOrderStatus[] = [
     ReferenzWahl,
     Berichte,
     SollIstAbgleich,
+    Abrechnung,
   ],
   templateUrl: './auftrag-detail.html',
   styleUrl: './auftrag-detail.scss',
@@ -96,15 +98,31 @@ export class AuftragDetail {
    */
   protected readonly darfSollIst = computed(() => this.auth.darfAlle('workflow', 'LESEN'));
 
+  /**
+   * `offene-abrechnung` ist dieselbe Auftragssicht über die ganze Baustelle wie
+   * das Soll-Ist — Rollen mit row_scope EIGENE bekommen 403 (fail-closed). Der
+   * Reiter wird bei ihnen gar nicht erst angeboten; dazu braucht es das
+   * Abrechnungsmodul überhaupt lesen zu dürfen.
+   */
+  protected readonly darfAbrechnung = computed(
+    () => this.auth.darfAlle('workflow', 'LESEN') && this.auth.darf('invoicing', 'LESEN'),
+  );
+
   protected readonly tabs = computed<MappeTab[]>(() => [
     { id: 'uebersicht', label: 'Übersicht' },
     { id: 'beteiligte', label: 'Beteiligte' },
     { id: 'termine', label: 'Termine' },
     { id: 'berichte', label: 'Berichte' },
     ...(this.darfSollIst() ? [{ id: 'soll-ist', label: 'Soll-Ist' }] : []),
+    ...(this.darfAbrechnung() ? [{ id: 'abrechnung', label: 'Abrechnung' }] : []),
     { id: 'verlauf', label: 'Verlauf' },
     { id: 'dateien', label: 'Dateien' },
   ]);
+
+  /** Die Abrechnung hat den Auftrag geändert (Abrechnungsart) — übernehmen. */
+  auftragUebernehmen(d: WorkOrderDetail): void {
+    this.aktualisieren(d);
+  }
 
   // --- Termine-Tab (Einsätze des Auftrags + Kundenhistorie) -----------------
   // Lazy: erst beim Öffnen des Reiters laden; je Auftrag einmal.

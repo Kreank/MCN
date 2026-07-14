@@ -194,6 +194,10 @@
         <app-soll-ist [workOrderId]="daten()!.id" [propertyId]="daten()!.property.id" />
       }
 
+      @if (tab() === 'abrechnung' && darfAbrechnung()) {
+        <app-abrechnung [auftrag]="daten()!" (geaendert)="auftragUebernehmen($event)" />
+      }
+
       @if (tab() === 'dateien') {
         <app-dateien [ziel]="dateienZiel()" />
       }

@@ -1,0 +1,335 @@
+@if (meldung(); as m) {
+  <div
+    class="melde melde--{{ m.art === 'erfolg' ? 'erfolg' : 'fehler' }} ab__melde"
+    [attr.role]="m.art === 'fehler' ? 'alert' : 'status'"
+  >
+    <span class="melde__mark" aria-hidden="true">{{ m.art === 'fehler' ? '!' : '✓' }}</span>
+    <span class="melde__text">
+      <strong>{{ m.art === 'fehler' ? 'Fehler:' : 'Erledigt:' }}</strong> {{ m.text }}
+    </span>
+    <button type="button" class="melde__zu" (click)="meldungSchliessen()" aria-label="Meldung schließen">
+      <span aria-hidden="true">✕</span>
+    </button>
+  </div>
+}
+
+<!-- ------------------------------ Abrechnungsart ------------------------- -->
+<section class="ab__block" aria-labelledby="ab-modus-h">
+  <h3 class="ab__h" id="ab-modus-h">Abrechnungsart</h3>
+
+  <form [formGroup]="modusForm" (submit)="$event.preventDefault(); modusSpeichern()" novalidate>
+    <fieldset class="ab__modus" [disabled]="!darfModusWechseln() || modusLaedt()">
+      <legend class="sr-only">Woraus entsteht die Rechnung dieses Auftrags?</legend>
+
+      <label class="ab__modus-wahl" [class.ab__modus-wahl--aktiv]="modusGewaehlt() === 'PAUSCHAL'">
+        <input type="radio" class="ab__radio" value="PAUSCHAL" formControlName="billing_mode" />
+        <span class="ab__modus-text">
+          <span class="ab__modus-name">Pauschal</span>
+          <span class="ab__modus-erklaerung">
+            Die Rechnung ist die <strong>Angebotskopie</strong>: Der Kunde hat diesen Preis
+            akzeptiert. Zeiten und Berichtspositionen sind <strong>Nachweis</strong> und interne
+            Nachkalkulation — sie werden nicht zusätzlich fakturiert.
+          </span>
+        </span>
+      </label>
+
+      <label class="ab__modus-wahl" [class.ab__modus-wahl--aktiv]="modusGewaehlt() === 'REGIE'">
+        <input type="radio" class="ab__radio" value="REGIE" formControlName="billing_mode" />
+        <span class="ab__modus-text">
+          <span class="ab__modus-name">Regie</span>
+          <span class="ab__modus-erklaerung">
+            Die Rechnung ist das <strong>Ist</strong>: Sie entsteht aus den unterzeichneten
+            Baustellenberichten und den Zeitbuchungen dieses Auftrags.
+          </span>
+        </span>
+      </label>
+    </fieldset>
+
+    @if (darfModusWechseln()) {
+      <div class="ab__modus-aktion">
+        <button
+          type="submit"
+          class="btn btn--primary"
+          [disabled]="!modusGeaendert() || modusLaedt()"
+          [attr.aria-busy]="modusLaedt()"
+        >
+          {{ modusLaedt() ? 'Wird umgestellt …' : 'Abrechnungsart umstellen' }}
+        </button>
+        @if (modusGeaendert()) {
+          <span class="ab__modus-hinweis">
+            Aktuell gespeichert: <strong>{{ modusLabel(auftrag().billing_mode) }}</strong>
+          </span>
+        }
+      </div>
+    } @else {
+      <p class="ab__hinweis">
+        Zum Umstellen braucht es die Rechte <em>Aufträge ändern</em> und
+        <em>Abrechnung ändern</em> — die Abrechnungsart ist eine kaufmännische
+        Weichenstellung, keine Dispositionsangabe.
+      </p>
+    }
+
+    @if (modusFehler(); as f) {
+      <div class="melde melde--fehler ab__modus-fehler" role="alert">
+        <span class="melde__mark" aria-hidden="true">!</span>
+        <span class="melde__text"><strong>Wechsel abgelehnt:</strong> {{ f }}</span>
+      </div>
+    }
+  </form>
+</section>
+
+<!-- --------------------------- Offene Abrechnung ------------------------- -->
+@switch (zustand().kind) {
+  @case ('loading') {
+    <p class="lade-hinweis" role="status">Offene Abrechnung wird geladen …</p>
+  }
+
+  @case ('forbidden') {
+    <p class="note note--error" role="alert">
+      Diese Ansicht zeigt die ganze Baustelle — dafür fehlt dir die Berechtigung (Sichtbereich
+      „eigene Zeilen").
+    </p>
+  }
+
+  @case ('error') {
+    <div class="note note--error" role="alert">
+      <p class="note__text">Die offene Abrechnung konnte nicht geladen werden.</p>
+      <div class="note__aktionen">
+        <button type="button" class="btn" (click)="neuLaden()">Erneut versuchen</button>
+      </div>
+    </div>
+  }
+
+  @case ('ready') {
+    @if (offen(); as o) {
+      <section class="ab__block" aria-labelledby="ab-offen-h">
+        <h3 class="ab__h" id="ab-offen-h">Was ist noch nicht abgerechnet?</h3>
+
+        <p class="ab__hinweis ab__hinweis--kraeftig">
+          <span aria-hidden="true">{{ o.abrechenbar ? '→' : 'ℹ' }}</span> {{ o.hinweis }}
+        </p>
+
+        @if (o.nicht_unterzeichnete_berichte.length > 0) {
+          <div class="note note--warn ab__unsigniert" role="note">
+            <p class="note__text">
+              <span aria-hidden="true">▲</span>
+              {{ o.nicht_unterzeichnete_berichte.length }}
+              {{ o.nicht_unterzeichnete_berichte.length === 1 ? 'Bericht ist' : 'Berichte sind' }}
+              noch nicht unterzeichnet und fließen deshalb <strong>nicht</strong> in die Abrechnung
+              ein. Ein nicht abgenommener Nachweis ist keine Abrechnungsgrundlage.
+            </p>
+            <ul class="ab__unsigniert-liste">
+              @for (b of o.nicht_unterzeichnete_berichte; track b.id) {
+                <li>{{ datum(b.report_date) }} · {{ berichtStatusLabel(b.status) }} · {{ b.activity_text }}</li>
+              }
+            </ul>
+          </div>
+        }
+
+        <!-- Berichtspositionen -->
+        <h4 class="ab__h4">Berichtspositionen</h4>
+        @if (o.berichtspositionen.length === 0) {
+          <p class="ab__leer">Keine offenen Berichtspositionen.</p>
+        } @else {
+          <div class="ab__wrap">
+            <table class="ab__tab">
+              <caption class="sr-only">
+                Offene Berichtspositionen dieses Auftrags mit Preisstatus
+              </caption>
+              <thead>
+                <tr>
+                  <th scope="col">Bericht</th>
+                  <th scope="col">Position</th>
+                  <th scope="col" class="num">Menge</th>
+                  <th scope="col">Preis</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (p of o.berichtspositionen; track p.site_report_line_id) {
+                  <tr [class.ab__zeile--offen]="unbekannt(p)">
+                    <td class="ab__td-datum">{{ datum(p.report_date) }}</td>
+                    <td>
+                      <span class="ab__pos-nr">Pos. {{ p.position_number }}</span>
+                      {{ p.description }}
+                    </td>
+                    <td class="num">{{ menge(p.quantity, p.unit) }}</td>
+                    <td>
+                      @if (unbekannt(p)) {
+                        <span class="stamp stamp--warn ab__marke">
+                          <span aria-hidden="true">▲</span> Preis unbekannt
+                        </span>
+                        <span class="ab__grund">{{ p.grund_text }}</span>
+                      } @else {
+                        <span class="ab__preis">{{ euro(p.einzelpreis) }}</span>
+                        <span class="ab__preis-fein">je {{ p.unit || 'Einheit' }}</span>
+                      }
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+
+        <!-- Zeiten -->
+        <h4 class="ab__h4">Zeitbuchungen</h4>
+        @if (o.zeitgruppen.length === 0) {
+          <p class="ab__leer">Keine offenen Zeitbuchungen.</p>
+        } @else {
+          <div class="ab__wrap">
+            <table class="ab__tab">
+              <caption class="sr-only">
+                Offene Zeitbuchungen dieses Auftrags, gebündelt je Lohngruppe
+              </caption>
+              <thead>
+                <tr>
+                  <th scope="col">Zeitgruppe</th>
+                  <th scope="col" class="num">Stunden</th>
+                  <th scope="col">Stundensatz</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (z of o.zeitgruppen; track z.quelle_id) {
+                  <tr [class.ab__zeile--offen]="unbekannt(z)">
+                    <td>{{ z.bezeichnung }}</td>
+                    <td class="num">{{ menge(z.stunden, 'h') }}</td>
+                    <td>
+                      @if (unbekannt(z)) {
+                        <span class="stamp stamp--warn ab__marke">
+                          <span aria-hidden="true">▲</span> Preis unbekannt
+                        </span>
+                        <span class="ab__grund">{{ z.grund_text }}</span>
+                      } @else {
+                        <span class="ab__preis">{{ euro(z.einzelpreis) }}</span>
+                        <span class="ab__preis-fein">je Stunde</span>
+                      }
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+
+        <p class="ab__fuss">
+          Ein unbekannter Preis wird <strong>nicht</strong> zu 0,00 €: Beim Abrechnen fragt das
+          System ihn ab. Beträge und Summen rechnet ausschließlich der Server.
+        </p>
+      </section>
+
+      <!-- ----------------------- Abrechnen -------------------------------- -->
+      @if (darfAbrechnen()) {
+        <section class="ab__block" aria-labelledby="ab-lauf-h">
+          <h3 class="ab__h" id="ab-lauf-h">Rechnung erzeugen</h3>
+
+          @if (o.billing_mode === 'PAUSCHAL') {
+            <form
+              class="ab__lauf"
+              [formGroup]="angebotForm"
+              (submit)="$event.preventDefault(); ausAngebot()"
+              novalidate
+            >
+              <p class="ab__hinweis">
+                Aus dem beauftragten Angebot entsteht eine Rechnung im Entwurf — die Positionen
+                werden <strong>wertgleich kopiert</strong> (Alternativ- und Bedarfspositionen
+                bleiben draußen). Ein zweiter Lauf über dasselbe Angebot wird abgelehnt.
+              </p>
+
+              @if (angeboteLaden()) {
+                <p class="lade-hinweis" role="status">Angebote werden geladen …</p>
+              } @else if (angebotOptionen().length === 0) {
+                <p class="ab__leer">
+                  Diesem Auftrag ist kein abrechenbares Angebot zugeordnet. Die Zuordnung setzt du
+                  im Reiter <strong>Soll-Ist</strong>.
+                </p>
+              } @else {
+                <app-feld
+                  [control]="angebotForm.controls.quote_id"
+                  label="Angebot"
+                  typ="select"
+                  [pflicht]="true"
+                  platzhalter="Bitte wählen"
+                  [optionen]="angebotOptionen()"
+                />
+                <button
+                  type="submit"
+                  class="btn btn--primary"
+                  [disabled]="aktionLaedt()"
+                  [attr.aria-busy]="aktionLaedt()"
+                >
+                  {{ aktionLaedt() ? 'Rechnung wird erzeugt …' : 'Rechnung aus Angebot' }}
+                </button>
+              }
+
+              @if (angeboteOhneSoll().length > 0) {
+                <p class="ab__hinweis">
+                  <span aria-hidden="true">ℹ</span> Nicht auswählbar, weil sie nie hinausgegangen
+                  bzw. abgelehnt/ersetzt sind (kein Soll):
+                  @for (q of angeboteOhneSoll(); track q.id) {
+                    <span class="ab__kein-soll">{{ q.quote_number ?? q.title }} ({{ q.status }})</span>
+                  }
+                </p>
+              }
+            </form>
+          } @else {
+            <form
+              class="ab__lauf"
+              [formGroup]="regieForm"
+              (submit)="$event.preventDefault(); ausAuftrag()"
+              novalidate
+            >
+              <p class="ab__hinweis">
+                Aus den offenen Berichtspositionen und Zeitbuchungen entsteht eine Rechnung im
+                Entwurf. Fehlt für eine Position ein Preis, fragt das System ihn ab —
+                <strong>keine Position wird weggelassen oder mit 0,00 € berechnet</strong>.
+              </p>
+
+              <app-feld
+                [control]="regieForm.controls.tax_code"
+                label="Steuersatz"
+                typ="select"
+                [pflicht]="true"
+                platzhalter="Bitte wählen"
+                hinweis="Pflicht und ohne Vorbelegung: Welcher Steuersatz gilt, ist eine steuerliche Entscheidung des Belegs."
+                [optionen]="taxCodeOptionen"
+              />
+              <app-feld
+                [control]="regieForm.controls.mit_berichten"
+                label="Berichtspositionen abrechnen"
+                typ="checkbox"
+              />
+              <app-feld
+                [control]="regieForm.controls.mit_zeiten"
+                label="Zeitbuchungen abrechnen"
+                typ="checkbox"
+                hinweis="Führt der Bericht die Arbeitszeit schon als Position und läuft daneben die Stempeluhr, stünde dieselbe Stunde zweimal auf der Rechnung. Nur ein Mensch kann entscheiden, welche die Wahrheit ist."
+              />
+              <button
+                type="submit"
+                class="btn btn--primary"
+                [disabled]="aktionLaedt()"
+                [attr.aria-busy]="aktionLaedt()"
+              >
+                {{ aktionLaedt() ? 'Rechnung wird erzeugt …' : 'Rechnung aus Auftrag (Regie)' }}
+              </button>
+            </form>
+          }
+        </section>
+      } @else {
+        <p class="ab__hinweis">
+          Zum Erzeugen einer Rechnung fehlt dir das Recht <em>Abrechnung anlegen</em>.
+        </p>
+      }
+    }
+  }
+}
+
+<!-- Die Preisklärung: ein 422 ist hier kein Fehlerbalken, sondern eine Aufgabe. -->
+<app-preis-klaerung
+  [offen]="klaerungOffen()"
+  [positionen]="klaerungPositionen()"
+  [laedt]="aktionLaedt()"
+  [fehler]="klaerungFehler()"
+  (absenden)="klaerungAbsenden($event)"
+  (abbrechen)="klaerungAbbrechen()"
+/>

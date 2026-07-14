@@ -251,3 +251,46 @@ a.ref:focus-visible {
     font-style: italic;
   }
 }
+
+/* --- Abrechnungsbindung (Migration 0084) --------------------------------- */
+.bindung {
+  margin-bottom: var(--space-5);
+}
+
+/* Gebundene Zeile. Die Kante ist nur Lesehilfe — die Aussage traegt der Text
+   „gebunden — stammt aus …" samt Symbol (WCAG 1.4.1: nie nur Farbe). */
+.pos--gebunden {
+  box-shadow: inset 3px 0 0 var(--navy);
+}
+.pos__bindung {
+  display: block;
+  margin-top: var(--space-1);
+  font-size: 0.72rem;
+  color: var(--ink-muted);
+}
+.zeile-hinweis {
+  margin: 0 0 var(--space-4);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+  line-height: 1.5;
+}
+
+/* § 35a im Anhänge-Dialog: die Warnung ist der Grund, warum das Feld Pflicht ist —
+   sie steht direkt darüber, nicht im Kleingedruckten. Der Rahmen trägt die
+   Aussage nie allein (Text + Zeichen, nie nur Farbe). */
+.zeile-lohn__warnung {
+  margin: var(--space-2) 0;
+  padding: var(--space-3);
+  border: 1px solid var(--amber);
+  border-left: 4px solid var(--amber);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  font-size: var(--step--1);
+  line-height: 1.5;
+}
+.zeile-lohn__hinw {
+  margin: calc(var(--space-2) * -1) 0 var(--space-3);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+  line-height: 1.5;
+}

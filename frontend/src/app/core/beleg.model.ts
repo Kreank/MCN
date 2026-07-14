@@ -112,7 +112,21 @@ export interface QuoteLine {
    * Verkettung. Bei allen anderen Positionen null.
    */
   advance_invoice_id?: string | null;
+  /**
+   * Herkunft der **Abrechnungsbindung** (Migration 0084) — nur bei Rechnungen:
+   * `BERICHTSPOSITION` | `ZEITBUCHUNG` | `ANGEBOTSPOSITION`, sonst null.
+   *
+   * Eine gebundene Zeile stammt aus dem Abrechnungslauf und ist der Nachweis,
+   * dass genau diese Leistung fakturiert wurde. Der DB-Trigger
+   * `invoicing.protect_billed_invoice_lines` sperrt seit Migration 0088 genau
+   * **diese Zeile** (UPDATE und DELETE) — nicht den ganzen Beleg. Das INSERT einer
+   * neuen, ungebundenen Zeile bleibt erlaubt (siehe `InvoiceDetail.gebunden`).
+   */
+  billing_source?: BillingSource | null;
 }
+
+/** Quellart einer Abrechnungsbindung. */
+export type BillingSource = 'BERICHTSPOSITION' | 'ZEITBUCHUNG' | 'ANGEBOTSPOSITION';
 
 /** Abschnitt (Rubrik) eines Belegs — gliedert die Positionen. */
 export interface Rubrik {
@@ -277,7 +291,21 @@ export interface InvoiceDetail extends Invoice {
   skonto_zahlbetrag: string | null;
   version: number;
   project: QuoteProjectRef | null;
+  work_order_id: string | null;
   work_order_number: string | null;
+  /**
+   * Trägt die Rechnung **aktive** Abrechnungsbindungen? Dann sind die **gebundenen
+   * Zeilen** unveränderlich: Der DB-Trigger `invoicing.protect_billed_invoice_lines`
+   * weist seit Migration 0088 UPDATE und DELETE **einer gebundenen Zeile** ab — das
+   * INSERT einer neuen, ungebundenen Zeile dagegen nicht.
+   *
+   * Der **Editor** bleibt trotzdem zu: Er ersetzt den ganzen Positionssatz per
+   * Delete+Insert und trifft dabei zwangsläufig die gebundene Zeile (422). Ergänzen
+   * lässt sich der Beleg über „Position anhängen" (`POST /invoices/{id}/lines`);
+   * der Ausweg aus einem verunglückten Entwurf bleibt „Bindungen lösen"
+   * (Recht invoicing/STORNIEREN).
+   */
+  gebunden: boolean;
   published_at: string | null;
   has_snapshot: boolean;
   content_hash: string | null;
@@ -468,4 +496,77 @@ export interface CreditRef {
   invoice_number: string | null;
   invoice_type: InvoiceType;
   gross_total: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Abrechnung: aus Angebot bzw. aus Auftrag (Migration 0084)
+// ---------------------------------------------------------------------------
+
+/** POST /api/invoicing/invoices/aus-angebot — die Angebotskopie (PAUSCHAL). */
+export interface RechnungAusAngebot {
+  quote_id: string;
+  invoice_date?: string | null;
+  due_date?: string | null;
+  payment_term_days?: number | null;
+  discount_percent?: string | null;
+  discount_days?: number | null;
+  show_labour_costs?: boolean;
+}
+
+/**
+ * POST /api/invoicing/invoices/aus-auftrag — Regieabrechnung aus Bericht + Zeiten.
+ *
+ * `tax_code` ist **Pflicht und hat keinen Default**: welcher Steuersatz gilt, ist
+ * eine steuerliche Entscheidung des Belegs, kein Ratespiel des Servers.
+ *
+ * `preise` ({quelle_id → Einzelpreis als Punkt-String}) ist die **Klärung des
+ * Menschen** — nur für Positionen, deren Preis der Server NICHT kennt. Für alle
+ * anderen lehnt er ihn ab (422); die eine Rechenstelle wird nicht unterlaufen.
+ */
+export interface RechnungAusAuftrag {
+  work_order_id: string;
+  tax_code: string;
+  preise?: Record<string, string>;
+  mit_berichten?: boolean;
+  mit_zeiten?: boolean;
+  invoice_date?: string | null;
+  due_date?: string | null;
+  payment_term_days?: number | null;
+  discount_percent?: string | null;
+  discount_days?: number | null;
+  show_labour_costs?: boolean;
+}
+
+/** Ein **Vorschlag** für einen unbekannten Preis — nie vorausgefüllt. */
+export interface PreisVorschlag {
+  art: 'LETZTER_PREIS' | 'LISTENPREIS' | 'LOHNGRUPPE';
+  betrag: string;
+  quelle: string;
+}
+
+/**
+ * Eine Position, für die der Server **keinen** Preis hat (aus dem 422-Körper).
+ *
+ * Das ist kein Fehlerbalken, sondern eine Aufgabe: Der Mensch nennt den
+ * Einzelpreis, derselbe Aufruf geht mit `preise` erneut hinaus. Weggelassen wird
+ * **nichts** und mit 0,00 € abgerechnet auch nichts — eine zu niedrige Rechnung,
+ * die plausibel aussieht, ist der teuerste Fehler dieses Systems.
+ */
+export interface PreisKlaerung {
+  quelle_art: 'BERICHTSPOSITION' | 'ZEITGRUPPE';
+  quelle_id: string;
+  bezeichnung: string;
+  menge: string | null;
+  einheit: string | null;
+  /** EK_FEHLT | KEINE_VK_REGEL | KEINE_HERKUNFT | LEISTUNG_UNVOLLSTAENDIG |
+   *  LOHNGRUPPE_FEHLT | VK_NULL | LOHNSATZ_NULL */
+  grund: string;
+  grund_text: string;
+  vorschlaege: PreisVorschlag[];
+}
+
+/** Der 422-Körper von `aus-auftrag`, wenn Preise fehlen. */
+export interface PreisKlaerungFehler {
+  detail: string;
+  preis_unbekannt: PreisKlaerung[];
 }

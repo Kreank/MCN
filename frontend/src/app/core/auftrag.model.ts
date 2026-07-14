@@ -55,14 +55,98 @@ export interface WorkOrderParty {
   source: string;
 }
 
+/**
+ * Woraus die Rechnung dieses Auftrags entsteht (Migration 0084).
+ *
+ * - `PAUSCHAL` (Default): Die Rechnung ist die **Angebotskopie**. Zeiten und
+ *   Berichtspositionen sind **Nachweis**, kein Rechnungsposten — das Angebot
+ *   enthält die Leistung bereits; sie zusätzlich zu fakturieren hieße, doppelt
+ *   zu kassieren.
+ * - `REGIE`: Die Rechnung entsteht aus dem **Ist** (unterzeichnete Berichte +
+ *   Zeitbuchungen).
+ */
+export type BillingMode = 'PAUSCHAL' | 'REGIE';
+
 export interface WorkOrderDetail extends WorkOrder {
   description: string | null;
   customer_reference: string | null;
   order_evidence_reference: string | null;
   responsibility_confirmed_at: string | null;
+  billing_mode: BillingMode;
   version: number;
   parties: WorkOrderParty[];
   history: StatusChangeEntry[];
+}
+
+// PATCH /api/workflow/work_orders/{id}
+// Verlangt workflow/AENDERN UND invoicing/AENDERN. Nach erfolgter Abrechnung
+// lehnt der Server den Wechsel mit 422 ab (Doppelabrechnungssperre).
+export interface WorkOrderPatch {
+  billing_mode: BillingMode;
+}
+
+// --- Offene Abrechnung ------------------------------------------------------
+// GET /api/workflow/work_orders/{id}/offene-abrechnung
+// Auftragssicht über die ganze Baustelle: Scope EIGENE bekommt 403 (fail-closed).
+
+/** Ein **Vorschlag** für einen unbekannten Preis — nie ein gesetzter Wert. */
+export interface PreisVorschlag {
+  art: 'LETZTER_PREIS' | 'LISTENPREIS' | 'LOHNGRUPPE';
+  /** Decimal als String (Geld wird nie als JS-number geführt). */
+  betrag: string;
+  quelle: string;
+}
+
+/** `UNBEKANNT` heißt: der Server hat KEINEN Preis — nicht 0,00 €. */
+export type PreisStatus = 'BEKANNT' | 'UNBEKANNT';
+
+export interface OffeneBerichtsposition {
+  site_report_line_id: string;
+  site_report_id: string;
+  report_date: string;
+  position_number: number;
+  line_type: string;
+  description: string;
+  quantity: string | null;
+  unit: string | null;
+  preis_status: PreisStatus;
+  /** null = unbekannt, NIE 0. */
+  einzelpreis: string | null;
+  grund: string | null;
+  grund_text: string | null;
+  vorschlaege: PreisVorschlag[];
+}
+
+/** Abgerechnet wird je **Lohngruppe** — ohne Lohngruppe je Mitarbeiter. */
+export interface OffeneZeitgruppe {
+  quelle_id: string;
+  bezeichnung: string;
+  wage_group_id: string | null;
+  stunden: string;
+  time_entry_ids: string[];
+  preis_status: PreisStatus;
+  einzelpreis: string | null;
+  grund: string | null;
+  grund_text: string | null;
+  vorschlaege: PreisVorschlag[];
+}
+
+export interface UnsignierterBericht {
+  id: string;
+  report_date: string;
+  status: string;
+  activity_text: string;
+}
+
+export interface OffeneAbrechnung {
+  work_order_id: string;
+  billing_mode: BillingMode;
+  /** false bei PAUSCHAL: die Positionen sind **Nachweis**, kein Rechnungsposten. */
+  abrechenbar: boolean;
+  hinweis: string;
+  berichtspositionen: OffeneBerichtsposition[];
+  zeitgruppen: OffeneZeitgruppe[];
+  nicht_unterzeichnete_berichte: UnsignierterBericht[];
 }
 
 // --- Schreib-Payloads ------------------------------------------------------
