@@ -106,25 +106,114 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 
 ## 0. Nächste Session — Stand & offene Entscheidungen (ZUERST LESEN)
 
-### ⭐ HIER ANFANGEN (Stand 2026-07-14, alles committet)
+### ⭐ HIER ANFANGEN (Stand 2026-07-14)
 
-**Der Arbeitsbaum ist sauber. `master` trägt vier neue Commits:**
+**`a3af19c` — Entitäts-Dossiers, Forderungsgrenze, Erstattung am Kreditbeleg.**
+Damit ist **Slice 3 aus `docs/ki-first-konzept.html`** (Abschnitt 9) erledigt.
+**3061 Tests grün** (vorher 2929), Migrationskopf **0097** (einziges Leaf),
+`makemigrations --check` sauber, Frontend-Build ohne Budget-Warnung.
+Vier Review-Runden, Browser-Durchlauf inkl. rechtearmem Login.
 
-| Commit | Inhalt |
-|---|---|
-| `3fcc37d` | **Berichtspositionen + Soll-Ist** (Migrationen 0080–0083) |
-| `573a72d` | **Abrechnung**: Rechnung aus Angebot/Auftrag, Doppelabrechnungssperre (0084/0085/0088) |
-| `b5e5c3b` | **Abrechnung im UI**: Preisklärung, gebundene Positionen, Zeile anhängen |
-| `ea6ebc9` | **Raumaufmaß/Bauteilkatalog/Grundriss** (0086/0087, 0089–0094) — Arbeit des Parallel-Agenten, **von niemandem reviewt** |
+**→ Der nächste Slice ist `docs/ki-first-konzept.html`, Abschnitt 9, Zeile 4:
+das KI-Fundament verdrahten** — Models für `ai.*` (die vier Tabellen aus
+`0027_ki_grundlagen.sql` sind gebaut und werden von **null** Backend-Zeilen
+benutzt), Executor, Hash-/Version-Verifizierer, `EXPIRED`-Job, Router,
+Vorschlags-Kachel. Erst danach kommt die Auskunft per Tool-Calling (Slice 5).
 
-**Verifikation:** 2929 Backend-Tests grün (14 Skips Bestand), `makemigrations --check`
-sauber, Migrationskette linear (ein Blatt, `0094`), Frontend-Build ohne Budget-Warnung.
+**⚠️ Der Arbeitsbaum ist NICHT sauber.** Darin liegt die uncommittete Arbeit eines
+**Parallel-Agenten**: eine **globale Suche + Kommandopalette**
+(`api/suche.py`, `db_core/services/suche.py` + Tests, `shared/kommandopalette/`,
+`core/suche.service.ts`, Änderungen an `app.html`/`app.ts`/`shared/dialog`,
+`docs/demo-szenario.md`). **Sie ist von niemandem reviewt** und war beim Commit von
+`a3af19c` noch in Bearbeitung. `api/api.py` und dieses Dokument sind **geteilte
+Dateien** — beim Einchecken selektiv stagen (die Suche-Registrierung in `api.py`
+gehört zu diesem fremden Slice, nicht zu `a3af19c`).
 
-**→ Der nächste Slice ist `docs/ki-first-konzept.html`, Abschnitt 9: die
-Entitäts-Dossiers** (Kontakt / Liegenschaft / Projekt / Auftrag als
-rechtegefilterte Read-Services). Reine Rechenarbeit, kein Modell — aber ohne sie
-kann die KI später nie zuverlässig Auskunft geben. **Zuerst das Konzeptpapier
-lesen**, es erklärt das Warum.
+#### Was `a3af19c` enthält
+
+**Die Dossiers** (`GET /api/dossier/{kontakt|liegenschaft|projekt|auftrag}/{id}`,
+Ansicht `/dossier/:typ/:id`, verlinkt aus den vier Mappen): ein deterministischer,
+rechtegefilterter Read-Service je Entität, der alles Relevante in **einem** Aufruf
+zusammenträgt. Kein Modell — aber ohne ihn kann die KI nie zuverlässig antworten.
+
+- **INVARIANTE: Der KERN der Entität ist hart getort (`require` → 403), jeder
+  weitere Baustein prüft SEIN Modul mit dem weichen `check()`.** Fehlt das Recht,
+  fehlt der **Baustein** (`null` + `<name>_sichtbar=false`), nicht die Antwort —
+  sonst gäbe es kein Dossier für den, der 90 % davon sehen darf. Muster: das
+  `ek_allowed`-Flag der Auswertungen. `row_scope EIGENE` bleibt **fail-closed**:
+  Ein MONTEUR bekommt gar kein Dossier — das ist richtig, nicht aufzuweichen.
+- **INVARIANTE: „Nicht sichtbar" wird ausgesprochen, nie als 0 gezeigt.** Das UI
+  nennt das fehlende Recht beim Namen (`invoicing/LESEN`). Ein fehlender *Wert* ist
+  „unbekannt", nie 0,00 € (Review-Fund: das Projekt-Dossier **crashte**, wenn die
+  Marge unbekannt war — der Guard prüfte das Recht, nicht den Wert, und `!`
+  dereferenzierte `null`. Der Build war grün; gefunden hat es erst die Review).
+- **Zutrittshinweise gibt es NICHT an der Liegenschaft** (nur am Einsatz). Das
+  Dossier zeigt sie **mit benannter Herkunft**, statt ein Objektfeld zu erfinden.
+  Ein permanentes Feld wäre eine eigene fachliche Entscheidung — offen.
+- Wiederverwendet statt nachgebaut: `soll_ist`, `offene_abrechnung`,
+  `faelligkeit.liste`, `_marge_by_project` (jetzt **projektgefiltert** — vorher
+  hätte ein Einzel-Dossier mit der **Firmengröße** skaliert). Read-only ist
+  statisch **und** verhaltensbasiert nachgewiesen.
+
+**Die Forderungsgrenze** liegt jetzt an **einer** Stelle
+(`services/buchhaltung.py`: `forderungen` / `offene_forderungen` /
+`mit_zahlungsstand` / `zahlungsspiegel`). Vorher galt überall „veröffentlicht und
+nicht bezahlt" — eine **stornierte Rechnung blieb damit offener Posten UND
+Mahnkandidat**. Beim Beheben fielen vier weitere Geldfehler heraus:
+
+- **Der Mahnbrief nannte den ALTEN Betrag.** `beleg_versand` rechnete `Brutto −
+  Gezahltes` und kannte Gutschriften nicht: Bildschirm 285,60 €, versendeter Brief
+  **880,60 €**. Die einzige Stelle, die nach außen wirkt.
+- Eine Rechnung mit **Teilgutschrift + Restzahlung** galt als TEILZAHLUNG und wurde
+  **weiter gemahnt**, obwohl der Kunde alles gezahlt hatte, was er schuldete.
+- **Der Schreibpfad des Mahnwesens hielt die Grenze nicht** (`POST …/dunning` auf
+  eine stornierte Rechnung → **201**). Jetzt Guard im Service (422 mit Grund) **und
+  im Trigger** (0097). Der Kreditbeleg-Weg war vorher nur *zufällig* dicht (die DB
+  lehnte ihn als „nicht fällig" ab) — eine Grenze aus Versehen.
+- Ein **vollständig erstatteter Kreditbeleg** blieb dauerhaft „OFFEN".
+
+**Die Erstattung wird auf dem STORNO-/GUTSCHRIFTBELEG gebucht** (User-Entscheidung).
+
+- **INVARIANTE: Die Erstattungspflicht steht auf GENAU EINEM Beleg — dem
+  Kreditbeleg.** Das Original zeigt nach der Verrechnung **nie** einen negativen
+  offenen Betrag. Ein Kreditbeleg wird zuerst mit der noch offenen Forderung
+  **verrechnet**; nur was darüber hinausgeht (bereits gezahltes Geld) bleibt als
+  Erstattung stehen. Vorher stand die Pflicht auf **zwei** Belegen, und **keine
+  Buchung machte beide ruhig** — die Einladung zur Doppelerstattung, die in Welle 5
+  schon dreimal geschlossen wurde.
+- Der **Erhaltungssatz fällt aus der Formel**: Σ offen = Σ Brutto − Σ Gezahltes,
+  cent-genau, ohne Division. Die Zuteilung bei mehreren Kreditbelegen kann Geld
+  zwischen Zeilen verschieben, aber **keins erfinden und keins verlieren**.
+- **SQL-Annotation und Python-Sicht werden bei JEDEM Test gegeneinander gefahren**
+  (`_spiegel()`); Service und DB-Trigger sind mit 10 Fällen als deckungsgleich
+  **bewiesen**, nicht behauptet.
+
+**Review-Funde aus `ea6ebc9`** (Raumaufmaß — war tatsächlich ungeprüft):
+
+- Die **Heizlast ließ sich über Query-Parameter auf 0 kW rechnen**
+  (`?kennwert_w_m2=0`) bzw. negativ. Service, DB-CHECK und Frontend prüften — nur
+  dieser Pfad nicht. Jetzt **eine** Prüfstelle + **Paritätstest** gegen den
+  DB-CHECK („Service weist ab ⟺ DB weist ab"). Dass der Angular-Client die
+  Parameter nie sendet, ist **kein Argument**: Die KI geht nach der Vision durch
+  denselben Service.
+- Die **negative Nettowandfläche war NICHT physisch unmöglich** (kein
+  INSERT-Trigger auf `room_surface`) — der Schutz lag in der **Reihenfolge im
+  Service**. Migration **0095**. Erst seit ihr stimmt, was 0089 und dieses Dokument
+  behaupteten.
+- Zwei Quelldateien trugen ein **NUL-Byte** und waren für git **binär** (nicht
+  diffbar) — in einem Projekt mit Review-Pflicht ein echter Mangel. Statischer
+  Wächter dagegen.
+- `GET /work_orders/{id}/offene-abrechnung` hing nur an `workflow/LESEN`, **führt
+  aber Einzelpreise**. Das Frontend gatete längst auf `invoicing/LESEN` — **der
+  Server war laxer als sein eigenes UI**. Nachgezogen.
+
+**Migrationen:** 0095 (INSERT-Trigger Wandfläche), 0096 (Index
+`reference_invoice_id`), 0097 (Mahnsperre im Trigger).
+
+**Lehre dieser Welle:** Sieben der neun Fehler saßen **nicht im neuen Code**,
+sondern im Bestand — sichtbar wurden sie erst, als der neue Code die Grenze
+*richtig* zog und dem Altbestand widersprach. **Eine konsolidierte Rechenstelle ist
+ein Fehlerdetektor**, nicht nur Kosmetik.
 
 ---
 
@@ -947,6 +1036,15 @@ Scratch-Daten; bei Bedarf auf INAKTIV setzen.
       Raumes nicht gegen (b) serialisiert. Hat der Raum **noch keine** Hüllfläche, greift
       (b) nicht: Die Wandfläche ist dann **unbekannt**, nicht 0 — Fenster dürfen vor den
       Wänden erfasst werden.
+      **Erst seit Migration 0095 stimmt das wirklich** (späterer Review-Fund): Auf
+      `room_surface` lag **kein INSERT-Trigger**, und der Ausstieg „Σ Wand = 0 ⇒ keine
+      Prüfung" deckte den Fall zu, in dem die erste Wand **unter** einer bereits
+      erfassten freien Öffnung entsteht (reproduziert, −15,000 m²). Erreichbar war das
+      nur am Service vorbei, weil `set_aufbau` Wände vor Öffnungen einfügt — der Schutz
+      lag also in der **Reihenfolge im Service**, nicht in der DB. Genau die Projektlehre:
+      *was im Service sitzt, ist umgehbar.* 0095 lässt den Trigger auch bei INSERT feuern
+      und rechnet die neue Wand zu Σ Bauteilflächen hinzu; der legitime Fall „Öffnung vor
+      der Wand" bleibt erlaubt — verboten ist das **Ergebnis**, nicht die Reihenfolge.
     - **INVARIANTE: Der Anker ist unveränderlich** (`property.forbid_room_reassign`,
       0089). Eine Wand wandert nicht in einen anderen Raum, ein Fenster auch nicht —
       sonst umginge ein `UPDATE room_id` beide Grenzen (Review-Fund, reproduziert).
@@ -978,6 +1076,15 @@ Scratch-Daten; bei Bedarf auf INAKTIV setzen.
       Klimadaten, keine U-Wert-Tabellen, keine f-Faktoren, keine Standard-Luftwechsel-
       raten. Alles Eingaben des Betriebs. Beide Verfahren sind ausdrücklich
       **überschlägig — KEIN Nachweis nach DIN EN 12831**.
+    - **Der Was-wäre-wenn-Pfad ist kein Nebeneingang** (Review-Fund, behoben): Die
+      Query-Parameter `?kennwert_w_m2=` / `?aussentemperatur_c=` machten **keine** der
+      Prüfungen, die `set_auslegung` und die DB-CHECKs aus 0089 machen —
+      `kennwert_w_m2=0` verwarf den Objektwert (0 ist nicht `None`) und wies **0,0 kW**
+      aus statt „unbekannt"; `aussentemperatur_c=500` ergab eine **negative** Heizlast.
+      Jetzt läuft die Übersteuerung durch **dieselbe Prüfstelle**
+      (`raum._pruefe_auslegungswerte`) → 422 mit Grund, nie ein gerechnetes Ergebnis.
+      Dass der Angular-Client die Parameter nie sendet, ist **kein** Argument: Die KI
+      geht durch denselben Service.
     - **Rechte:** kein neues Modul — die Endpunkte hängen am bestehenden `property`
       (LESEN/ANLEGEN/AENDERN). **Achtung:** `property` kennt **kein `EIGENE`**; wer Räume
       erfassen darf, darf jede Liegenschaft ändern. Die MONTEUR-Rolle bekommt deshalb
@@ -1568,6 +1675,10 @@ gültiges Szenario (geprüfter Auftrag + Beteiligte).
 - **Kein Löschen** (GoBD/Audit): Rechnungen nur Storno; Projekte nur verschieben/
   archivieren; überall „Löschen"→Archivieren/Storno/Status.
 - **Lagerverwaltung vorerst weggelassen** (DB-Beschluss B-26 verbietet Bestände).
+- **RAG/Firmenwissen: pgvector im BESTEHENDEN Postgres, eigenes Schema `knowledge`,
+  KEINE zweite Datenbank und kein separater Vektor-Dienst** (User-Entscheidung
+  2026-07-14). Zeitpunkt: **ganz zum Schluss** — nach dem KI-Ausbau, erst recht nach
+  der Demo. Details siehe Abschnitt 11.
 
 ## 8. Nächste Bereiche (priorisierter Backlog) + Gotchas
 
@@ -1718,6 +1829,139 @@ treibt: **auslagern, nicht das Budget lockern.**
   `umsetzungsstand-frontend`, dieses Handoff.
 - **Git:** Branch `master`. Jeder Slice ist ein eigener Commit mit ausführlicher
   deutscher Message — `git log --oneline` gibt die Historie.
+
+## 10. Deployment & Backup — SPERRBLOCK vor dem Echtbetrieb
+
+> **Der Demo-Datenbestand steht in `docs/demo-szenario.md`** (vom User
+> freigegeben: WEG Badensche Straße 53 mit Verwaltung Stegos, EFH Peter Borm,
+> sechs SHK-Szenarien). **`seed_demo` ist NICHT die Demo** — es ist
+> Entwicklerfutter und wirkt vor dem Chef wie fremder Beispielkram. Dort steht
+> auch die **Mieter-Lücke** (`tenure.occupancy` trägt keinen Beteiligten) und die
+> Entscheidung **ein Artikelstamm, mehrere Anbindungen — kein „Gerätewissen"-Silo**.
+
+**Stand 2026-07-14: Es gibt KEIN Deployment-Setup** (kein Dockerfile, kein
+compose, keine CI, kein Backup). Das System läuft ausschließlich auf der
+Entwicklungsmaschine. Für eine **Demo** ist das in Ordnung — für **Echtbetrieb
+nicht**, und zwar nicht aus Bequemlichkeitsgründen, sondern weil unten drei Dinge
+stehen, die Daten unwiederbringlich vernichten.
+
+### Was für die Demo-Instanz gilt (bewusst schlank)
+
+Vier Container: **nginx** (liefert das gebaute Angular aus, reicht `/api` ans
+Backend weiter, terminiert TLS), **backend** (Django + gunicorn), **postgres 16**,
+**minio**. Das Frontend bekommt **keinen** Laufzeit-Container — der Angular-Build
+ist statisch und wird per Multi-Stage-Build ins nginx-Image kopiert. Postgres und
+MinIO bekommen **keine Ports nach außen** (im Dev sind 55432/9100 offen, weil man
+von Windows draufkommen muss; auf einem Server wäre das eine offene Datenbank im
+Internet).
+
+- **`/admin/` darf NICHT öffentlich erreichbar sein.** Das Django-Admin kennt die
+  Rechtematrix nicht — wer dort drin ist, legt Superuser an. nginx sperrt
+  `location /admin/` (IP-Allowlist oder Basic-Auth); Zugriff per SSH-Tunnel.
+- **Mailversand auf der Demo-Instanz TOTLEGEN** (kein `MCN_MAIL_KEY`,
+  `EMAIL_BACKEND` auf console; Seed-Adressen auf `@example.com`). Der Versandpfad
+  ist scharf: Ein neugieriger Klick auf „Mahnung versenden" schickt eine **echte
+  Mahnung** an eine echte Adresse. Es ist die einzige Aktion im System, die nach
+  außen wirkt.
+- **Volumes für Postgres und MinIO** — sonst sind nach jedem Neustart alle Klicks
+  der Demo-Nutzer weg.
+- **Benutzeranlage fehlt im Leitstand.** Es gibt **keinen** Endpunkt und keine UI,
+  um einen Benutzer zu erzeugen — die Rechtematrix kann Rollen nur an **bestehende**
+  Benutzer vergeben. Neue Benutzer entstehen heute nur über `/admin/` oder
+  `createsuperuser`. Für die Demo: Demo-Benutzer samt Rollen per
+  Management-Command im Entrypoint anlegen, nicht von Hand im Admin klicken.
+  **Offener Slice:** „Benutzer einladen" im Leitstand (spätestens wenn echte
+  Mitarbeitende draufkommen).
+- Settings sind bereits deployfähig: `MCN_DEBUG` ist **fail-safe aus** (Dev muss es
+  bewusst einschalten), Session-/CSRF-Cookies laufen in Produktion automatisch nur
+  über HTTPS, `MCN_ALLOWED_HOSTS`/`MCN_CSRF_TRUSTED_ORIGINS` kommen aus Env-Vars.
+  Das Frontend ruft die API über **relative Pfade** (`/api/...`) — same-origin
+  hinter nginx, **kein CORS nötig**.
+- **Secrets gehören nicht ins Image** (`MCN_SECRET_KEY` hat noch einen
+  „django-insecure"-Default). Auf dem Server erzeugen, per Env einspeisen.
+- **Scheduler nicht vergessen:** `wartung_faellige_ausloesen` muss täglich laufen
+  (Wartungen, Prüffristen, Gewährleistung). Ohne Cron tauchen nie Fälligkeiten auf,
+  und niemand versteht warum.
+
+### Vor dem Echtbetrieb: Backup ist Pflicht (User-Entscheidung 2026-07-14)
+
+Bewusst **auf später verschoben** — für Seed-Daten wäre eine Backup-Strategie
+Overengineering. **Aber: Bevor die erste echte Rechnung im System steht, muss das
+hier stehen.** Das System ist GoBD-relevant (Rechnungen unveränderlich, kein
+Löschen, zehn Jahre Aufbewahrung).
+
+**INVARIANTE: Es gibt ZWEI Datentöpfe, und sie sind nicht gleich viel wert.**
+- Die **Beleg-PDFs** in MinIO sind ersetzbar — sie werden aus dem eingefrorenen
+  `billing_snapshot` neu gerendert. Cache, kein Original.
+- **Unwiederbringlich sind: Kundenunterschriften unter Baustellenberichten,
+  Baustellenfotos, Atteste.** Die existieren **nur** als Datei in MinIO. Ist MinIO
+  weg, bleibt in der DB ein unterzeichneter, versiegelter Bericht — **ohne die
+  Unterschrift, wegen der er überhaupt existiert.** Der Beweiswert ist dann null.
+
+**INVARIANTE: Reihenfolge ist erst DB, dann MinIO — nie umgekehrt.** Eine Datei in
+MinIO ohne DB-Eintrag ist ein harmloser Waise. Ein DB-Eintrag, der auf eine im
+Backup fehlende Datei zeigt, ist ein kaputter Beleg.
+
+**INVARIANTE: Ohne `MCN_MAIL_KEY` ist das DB-Backup teilweise wertlos.** Der
+Fernet-Schlüssel entschlüsselt SMTP-Zugangsdaten und Händler-Credentials. Er
+gehört in den Passwortmanager, **nicht nur** in die `.env` auf dem Server —
+zusammen mit `MCN_SECRET_KEY` und den MinIO-Keys.
+
+Bausteine, wenn es so weit ist: nächtlicher `pg_dump` **plus WAL-Archivierung**
+(Point-in-Time statt „gestern Nacht"), MinIO gespiegelt (`mc mirror`) in ein
+zweites, **versioniertes** Ziel, beides verschlüsselt und **offsite**, Aufbewahrung
+lang genug, dass ein drei Wochen unbemerkter Fehler noch reparabel ist.
+
+**Und das Wichtigste: ein Restore-Skript, das eine Wegwerf-Umgebung aus dem Backup
+hochzieht — quartalsweise scharf gefahren.** Ein Backup, das nie zurückgespielt
+wurde, ist kein Backup, sondern eine Hoffnung. Erst der gelungene Restore beweist,
+dass Schlüssel, Reihenfolge und Volumes stimmen.
+
+## 11. Firmenwissen / RAG — entschieden, aber GANZ ZUM SCHLUSS
+
+Ziel des Users: Firmenwissen (SOPs, CRM-Anleitung, Herstellerunterlagen) als
+durchsuchbares Werkzeug **im Leitstand-Frontend**. **Zeitpunkt: ganz am Ende** —
+nach dem KI-Ausbau (Dossiers → Vorschläge → Chat), erst recht nach der Demo.
+Nicht vorziehen. Die Entscheidung ist trotzdem hier festgehalten, damit sie beim
+KI-Ausbau **nicht neu aufgemacht** wird.
+
+**ENTSCHIEDEN: pgvector im bestehenden Postgres, eigenes Schema `knowledge`.**
+Keine zweite Datenbank, kein Qdrant/Weaviate.
+
+**Warum dieselbe Datenbank — das Argument hängt an den RECHTEN, nicht an der
+Bequemlichkeit.** SOPs sind harmlos, aber die Wissensbasis bleibt nicht dabei:
+Sobald Angebote, Baustellenberichte oder Kundenkorrespondenz indiziert werden,
+gilt die Rechtematrix. Ein Monteur mit `row_scope='EIGENE'` darf über die Suche
+**nichts finden, was er in der Oberfläche nie sähe**. Liegen die Vektoren in einer
+fremden DB, müsste man die Rechte dorthin **duplizieren** (zwei Wahrheiten, die
+auseinanderlaufen) oder **nachträglich filtern** — und nachträglich filtern heißt:
+Der Treffer ist bereits gefunden, man hofft nur, ihn rechtzeitig wegzuwerfen.
+**Genau so lecken RAG-Systeme.** Im selben Postgres ist die Rechteprüfung ein JOIN
+in derselben Abfrage, mit **demselben Filter wie die Entitäts-Dossiers**.
+
+**Warum trotzdem ein eigenes Schema — WICHTIG:**
+**`knowledge.*` ist AUSDRÜCKLICH VOM SCHUTZSTANDARD AUSGENOMMEN**
+(No-Delete/Audit/No-Truncate gilt dort **nicht**). Ein RAG-Index wird bei jedem
+Re-Index weggeworfen und neu gebaut; bei einem Modellwechsel muss **alles** neu
+eingebettet werden. Wer dort pflichtschuldig den No-Delete-Trigger anhängt, macht
+Re-Indexieren **physisch unmöglich**. Denkrahmen wie beim Beleg-PDF: **der Index
+ist Cache, nicht Original** — Quelle sind die Dateien in MinIO/`content.file`. Ein
+verlorener Index kostet Rechenzeit, keine Daten; er gehört deshalb auch **nicht**
+ins GoBD-Backup (hält die wertvolle Sicherung schlank).
+
+**Zwei Konstruktionsregeln, wenn es so weit ist:**
+- **Embedding-Modell und Dimension an JEDEN Chunk schreiben.** Sonst mischen sich
+  beim Modellwechsel alte und neue Vektoren, die Ähnlichkeiten werden stillschweigend
+  Unsinn — die Suche liefert ja weiterhin *irgendetwas*, nur das Falsche.
+- **Herkunft von Anfang an trennen** (`source_kind` + optionale Entitäts-FKs):
+  SOP-Chunks tragen keinen Entitätsbezug und sind für alle sichtbar;
+  ein Chunk aus einem Baustellenbericht trägt die Referenz auf seinen Auftrag und
+  wird **exakt wie der Auftrag** gefiltert. Dann ist der Rechtefilter eine
+  WHERE-Bedingung und keine Architekturfrage.
+
+Eine eigene Datenbank wäre erst bei Millionen Chunks oder eigenem Betreiberteam
+richtig. Für einen Handwerksbetrieb mit ein paar tausend Dokumenten ist pgvector
+im vorhandenen Postgres nicht der Kompromiss, sondern die richtige Wahl.
 
 ---
 Viel Erfolg. Halte dich an das Slice-Rezept, verifiziere end-to-end (nicht nur
