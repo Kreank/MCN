@@ -147,6 +147,19 @@
                     @if (r.is_overdue) {
                       <span class="row__flag">überfällig</span>
                     }
+                    <!-- Storniert/gutgeschrieben immer als TEXT, nie nur farblich. -->
+                    @if (r.is_storniert) {
+                      <span class="row__flag row__flag--storno">storniert · fordert nichts mehr</span>
+                    } @else if (istGutgeschrieben(r)) {
+                      <span class="row__flag row__flag--storno">
+                        gutgeschrieben {{ euro(r.credit_total) }}
+                      </span>
+                    }
+                    <!-- Die Erstattungspflicht steht auf GENAU EINEM Beleg (dem
+                         Kreditbeleg) — und sagt es als Text, nicht nur als Vorzeichen. -->
+                    @if (istZuErstatten(r)) {
+                      <span class="row__flag">{{ euro(r.zu_erstatten) }} zu erstatten</span>
+                    }
                     @if (r.dunning_level) {
                       <span class="row__dun">Mahnstufe {{ r.dunning_level }}</span>
                     }

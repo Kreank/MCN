@@ -11,19 +11,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from django.db.models import (
-    Case,
-    DecimalField,
-    F,
-    Max,
-    OuterRef,
-    Q,
-    Subquery,
-    Sum,
-    Value,
-    When,
-)
-from django.db.models.functions import Coalesce
+from django.db.models import F, Max, Q
 from django.http import HttpResponse
 from ninja import Query, Router, Schema
 from ninja.errors import HttpError
@@ -41,58 +29,26 @@ from db_core.services import datev as datev_service
 from db_core.services import firma as firma_service
 from db_core.services import mahnlauf as mahnlauf_service
 from db_core.services import vier_augen
-from db_core.services.buchhaltung import PAYMENT_SIGN
+from db_core.services.buchhaltung import (
+    PAYMENT_SIGN,
+    mit_zahlungsstand as _mit_zahlungsstand,
+    zahlungsspiegel as _zahlungsspiegel,
+)
 from db_core.services.mail import MailSendError
 
 router = Router()
 
-_POS = tuple(t for t, s in PAYMENT_SIGN.items() if s > 0)
-_NEG = tuple(t for t, s in PAYMENT_SIGN.items() if s < 0)
 _ZERO = Decimal("0.00")
 
-PAYMENT_STATUSES = ("OFFEN", "TEILZAHLUNG", "BEZAHLT", "UEBERZAHLT")
+PAYMENT_STATUSES = ("OFFEN", "TEILZAHLUNG", "BEZAHLT", "UEBERZAHLT", "AUSGEGLICHEN")
 
 
 # --- Ableitungen -----------------------------------------------------------
-
-def _paid_subquery():
-    """Subquery: vorzeichenbehaftete Summe der Zahlungen je Rechnung (als eigene
-    Aggregation, damit kein Join-Kreuzprodukt mit anderen Relationen entsteht)."""
-    return Subquery(
-        Payment.objects.filter(invoice_id=OuterRef("pk"))
-        .values("invoice_id")
-        .annotate(
-            s=Sum(
-                Case(
-                    When(payment_type__in=_POS, then=F("amount")),
-                    When(payment_type__in=_NEG, then=-F("amount")),
-                    default=Value(0),
-                    output_field=DecimalField(max_digits=15, decimal_places=2),
-                )
-            )
-        )
-        .values("s"),
-        output_field=DecimalField(max_digits=15, decimal_places=2),
-    )
-
-
-def _level_subquery():
-    return Subquery(
-        DunningNotice.objects.filter(invoice_id=OuterRef("pk"))
-        .values("invoice_id")
-        .annotate(m=Max("level"))
-        .values("m")
-    )
-
-
-def _payment_status(paid: Decimal, gross: Decimal) -> str:
-    if paid <= _ZERO:
-        return "OFFEN"
-    if paid < gross:
-        return "TEILZAHLUNG"
-    if paid == gross:
-        return "BEZAHLT"
-    return "UEBERZAHLT"
+# Zahlungsstand, offener Betrag und die Grenze „ist das noch eine Forderung?"
+# stehen NICHT in der DB — sie werden abgeleitet. Die Ableitung liegt in
+# `db_core.services.buchhaltung` (dort, wo auch PAYMENT_SIGN wohnt): EINE
+# Rechenstelle, von der offene Posten, Mahnwesen, Mahnlauf und Dossier ziehen.
+# Hier wird nichts nachgerechnet — hier wird gemappt.
 
 
 def _debtor_name(invoice):
@@ -118,9 +74,27 @@ class OpenItemOut(Schema):
     due_date: date | None = None
     gross_total: Decimal | None = None
     paid_total: Decimal
+    # Summe der veröffentlichten Storno-/Gutschriftbelege zu dieser Rechnung (≤ 0).
+    credit_total: Decimal
+    # Was zwischen diesem Beleg und seinem Gegenbeleg VERRECHNET ist (≥ 0). Auf der
+    # Rechnung: der Teil der Kreditbelege, der die noch offene Forderung aufzehrt.
+    # Auf dem Kreditbeleg: sein Anteil daran. Nur der Rest ist zu erstatten.
+    verrechnet: Decimal
+    # Brutto abzüglich des Verrechneten. Es gilt: open_amount = forderungsbetrag − paid_total.
+    forderungsbetrag: Decimal
+    # Forderungsbetrag minus Gezahltes. Negativ = Guthaben des Kunden (zu erstatten).
     open_amount: Decimal
+    # Klartext für die Oberfläche (Status nie nur über Farbe):
+    zu_erstatten: Decimal  # noch an den Kunden zurückzuzahlen (0, wenn nichts offen)
+    erstattet: Decimal  # bereits an den Kunden zurückgezahlt
     payment_status: str
     is_overdue: bool
+    # Aufgehoben durch einen veröffentlichten STORNO — fordert nichts mehr.
+    # Status nie nur über Farbe: das UI schreibt „storniert" dazu.
+    is_storniert: bool
+    # Fordert diese Rechnung überhaupt (noch) Geld? Kreditbelege und stornierte
+    # Rechnungen: nein.
+    ist_forderung: bool
     dunning_level: int | None = None
 
 
@@ -313,7 +287,17 @@ class DunningRowOut(Schema):
     open_amount: Decimal
     dunning_level: int | None = None
     last_issued_at: date | None = None
+    # Verzugstage AUS dem Zahlungsspiegel (None, sobald nichts mehr offen ist) — die
+    # Liste rechnet sie NICHT selbst nach.
     days_overdue: int | None = None
+    # Storniert → die Mahnhistorie bleibt sichtbar (kein Löschen), aber es wird
+    # keine weitere Stufe mehr ausgestellt.
+    is_storniert: bool
+    # Lässt sich diese Rechnung (weiter) mahnen? Nur eine offene Forderung.
+    mahnbar: bool
+    # Warum nicht mehr mahnbar? Das UI nennt den tatsächlichen Zustand (BEZAHLT ist
+    # nicht „ausgeglichen": bei BEZAHLT hat jemand gezahlt).
+    payment_status: str
 
 
 class DunningListOut(Schema):
@@ -414,13 +398,8 @@ def _payment_detail(p):
 
 
 def _open_item_out(inv, today):
-    gross = inv.gross_total or _ZERO
-    paid = inv.paid_total if inv.paid_total is not None else _ZERO
-    open_amount = gross - paid
-    status = _payment_status(paid, gross)
-    is_overdue = bool(
-        inv.due_date and inv.due_date < today and open_amount > _ZERO
-    )
+    """Mappt eine annotierte Rechnung — der Geldstand kommt AUS dem Zahlungsspiegel."""
+    s = _zahlungsspiegel(inv, heute=today)
     return OpenItemOut(
         id=inv.id,
         invoice_number=inv.invoice_number,
@@ -430,11 +409,18 @@ def _open_item_out(inv, today):
         invoice_date=inv.invoice_date,
         due_date=inv.due_date,
         gross_total=inv.gross_total,
-        paid_total=paid,
-        open_amount=open_amount,
-        payment_status=status,
-        is_overdue=is_overdue,
-        dunning_level=inv.dunning_level,
+        paid_total=s["paid_total"],
+        credit_total=s["credit_total"],
+        verrechnet=s["verrechnet"],
+        forderungsbetrag=s["forderungsbetrag"],
+        open_amount=s["open_amount"],
+        zu_erstatten=s["zu_erstatten"],
+        erstattet=s["erstattet"],
+        payment_status=s["payment_status"],
+        is_overdue=s["is_overdue"],
+        is_storniert=s["is_storniert"],
+        ist_forderung=s["ist_forderung"],
+        dunning_level=s["dunning_level"],
     )
 
 
@@ -449,32 +435,35 @@ def list_open_items(
 ):
     """Offene Posten: veröffentlichte Rechnungen mit abgeleitetem Zahlungsstatus
     und offenem Betrag. Filter: Zahlungsstatus, überfällig, Belegart, Suche
-    (Rechnungsnummer)."""
+    (Rechnungsnummer).
+
+    Die **Liste zeigt weiterhin jeden veröffentlichten Beleg** — auch stornierte
+    Rechnungen und Kreditbelege (GoBD: es verschwindet nichts, und der Beleg bleibt
+    aus der Buchhaltung erreichbar). Was sich ändert, ist die **Aussage**: Eine
+    stornierte oder vollständig gutgeschriebene Rechnung fordert 0,00 € und ist nie
+    „überfällig". Der `overdue`-Filter fördert nur noch echte Forderungen zutage.
+    """
     require(request, "invoicing", "LESEN")
     if filters.payment_status and filters.payment_status not in PAYMENT_STATUSES:
         raise HttpError(422, f"Unbekannter payment_status '{filters.payment_status}'.")
 
     today = date.today()
-    qs = (
-        Invoice.objects.filter(status="VEROEFFENTLICHT")
-        .annotate(
-            paid_total=Coalesce(
-                _paid_subquery(),
-                Value(_ZERO, output_field=DecimalField(max_digits=15, decimal_places=2)),
-            ),
-            dunning_level=_level_subquery(),
-        )
-        .prefetch_related("parties__party")
-    )
+    base = Invoice.objects.filter(status="VEROEFFENTLICHT")
     if filters.q:
-        qs = qs.filter(invoice_number__icontains=filters.q.strip())
+        base = base.filter(invoice_number__icontains=filters.q.strip())
     if filters.invoice_type:
-        qs = qs.filter(invoice_type=filters.invoice_type)
-    if filters.overdue:
-        qs = qs.filter(
-            due_date__lt=today, gross_total__gt=F("paid_total")
-        )
-    qs = qs.order_by(F("due_date").asc(nulls_last=True), "-created_at", "id")
+        base = base.filter(invoice_type=filters.invoice_type)
+    # Überfällig ist nur, was überhaupt (noch) fordert → die Forderungsgrenze aus
+    # dem Buchhaltungs-Service statt `gross_total > paid_total` (das hielt eine
+    # stornierte Rechnung für einen überfälligen Posten).
+    qs = (
+        buchhaltung_service.offene_forderungen(base, stichtag=today)
+        if filters.overdue
+        else _mit_zahlungsstand(base)
+    )
+    qs = qs.prefetch_related("parties__party").order_by(
+        F("due_date").asc(nulls_last=True), "-created_at", "id"
+    )
 
     start = (page - 1) * page_size
     if filters.payment_status:
@@ -502,13 +491,8 @@ def get_open_item(request, invoice_id: UUID):
     require(request, "invoicing", "LESEN")
     today = date.today()
     inv = (
-        Invoice.objects.filter(id=invoice_id, status="VEROEFFENTLICHT")
-        .annotate(
-            paid_total=Coalesce(
-                _paid_subquery(),
-                Value(_ZERO, output_field=DecimalField(max_digits=15, decimal_places=2)),
-            ),
-            dunning_level=_level_subquery(),
+        _mit_zahlungsstand(
+            Invoice.objects.filter(id=invoice_id, status="VEROEFFENTLICHT")
         )
         .select_related("property__address", "project", "work_order")
         .prefetch_related("parties__party")
@@ -644,22 +628,26 @@ def correct_invoice(request, invoice_id: UUID, payload: CorrectionIn):
 
 @router.get("/dunning", response=DunningListOut)
 def list_dunning(request, level: int | None = Query(None)):
-    """Mahnliste: veröffentlichte Rechnungen, die überfällig mit offenem Betrag
-    sind oder bereits gemahnt wurden. Optional nach aktueller Mahnstufe gefiltert
-    (level=0 → überfällig, aber noch ungemahnt)."""
+    """Mahnliste: veröffentlichte Rechnungen, die als offene Forderung überfällig
+    sind **oder** bereits gemahnt wurden. Optional nach aktueller Mahnstufe
+    gefiltert (level=0 → überfällig, aber noch ungemahnt).
+
+    **Ein neuer Mahnfall entsteht nur aus einer echten Forderung** (Grenze aus dem
+    Buchhaltungs-Service: kein Kreditbeleg, nicht storniert, offener Betrag nach
+    Gutschriften und Zahlungen > 0). Eine **bereits gemahnte** Rechnung bleibt
+    dagegen sichtbar, auch wenn sie danach storniert wurde — die Mahnhistorie wird
+    nicht gelöscht (GoBD). Sie ist dann aber `mahnbar=False`: der Mahnlauf
+    überspringt sie, und das UI sagt es dazu.
+    """
     require(request, "invoicing", "LESEN")
     today = date.today()
+    # `storniert` ist die Annotation aus `mit_zahlungsstand` (Exists auf den
+    # veröffentlichten STORNO) — dasselbe Prädikat wie in `forderungen()`.
+    ist_forderung = ~Q(invoice_type__in=beleg_service.CREDIT_TYPES) & Q(storniert=False)
     qs = (
-        Invoice.objects.filter(status="VEROEFFENTLICHT")
-        .annotate(
-            paid_total=Coalesce(
-                _paid_subquery(),
-                Value(_ZERO, output_field=DecimalField(max_digits=15, decimal_places=2)),
-            ),
-            dunning_level=_level_subquery(),
-        )
+        _mit_zahlungsstand(Invoice.objects.filter(status="VEROEFFENTLICHT"))
         .filter(
-            Q(due_date__lt=today, gross_total__gt=F("paid_total"))
+            (ist_forderung & Q(due_date__lt=today, open_amount__gt=_ZERO))
             | Q(dunning_level__isnull=False)
         )
         .prefetch_related("parties__party")
@@ -675,12 +663,10 @@ def list_dunning(request, level: int | None = Query(None)):
 
     items = []
     for inv in qs:
-        cur = inv.dunning_level or 0
+        s = _zahlungsspiegel(inv, heute=today)
+        cur = s["dunning_level"] or 0
         if level is not None and cur != level:
             continue
-        gross = inv.gross_total or _ZERO
-        paid = inv.paid_total or _ZERO
-        days_overdue = (today - inv.due_date).days if inv.due_date else None
         items.append(
             DunningRowOut(
                 id=inv.id,
@@ -688,10 +674,18 @@ def list_dunning(request, level: int | None = Query(None)):
                 debtor=_debtor_name(inv),
                 due_date=inv.due_date,
                 gross_total=inv.gross_total,
-                open_amount=gross - paid,
-                dunning_level=inv.dunning_level,
+                open_amount=s["open_amount"],
+                dunning_level=s["dunning_level"],
                 last_issued_at=last_issued.get(inv.id),
-                days_overdue=days_overdue,
+                # Überfälligkeitstage kommen AUS dem Zahlungsspiegel — hier wird
+                # nichts nachgerechnet. Die eigene Rechnung („today − due_date",
+                # sobald der Beleg eine Forderung IST) ließ eine voll bezahlte,
+                # früher gemahnte Rechnung als „30 Tage überfällig" erscheinen,
+                # direkt neben „nichts mehr offen". Im Verzug ist nur, wer schuldet.
+                days_overdue=s["days_overdue"],
+                is_storniert=s["is_storniert"],
+                mahnbar=s["mahnbar"],
+                payment_status=s["payment_status"],
             )
         )
 

@@ -225,6 +225,14 @@
   color: var(--warn-ink);
   font-weight: 600;
 }
+// Storniert bzw. (teil-)gutgeschrieben: neutral, nicht alarmierend — es ist kein
+// Mangel, sondern eine Tatsache über den Beleg. Der Text trägt die Aussage; die
+// Farbe ist nur Zugabe (WCAG 1.4.1: Status nie allein über Farbe).
+.row__flag--storno {
+  background: var(--surface-sunken);
+  color: var(--ink-muted);
+  border: 1px solid var(--line);
+}
 .row__dun {
   display: inline-flex;
   align-items: center;

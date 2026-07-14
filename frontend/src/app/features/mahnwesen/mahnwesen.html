@@ -14,8 +14,10 @@
   </header>
 
   <p class="page-head__hint">
-    Überfällige veröffentlichte Rechnungen mit aktueller Mahnstufe. Der Mahnlauf
-    bündelt die fälligen nächsten Stufen zu einem bestätigten Stapel.
+    Überfällige offene Forderungen mit aktueller Mahnstufe. Der Mahnlauf bündelt
+    die fälligen nächsten Stufen zu einem bestätigten Stapel. Stornierte Rechnungen
+    fordern nichts mehr und werden nicht gemahnt — bereits gemahnte bleiben mit
+    ihrem Verlauf sichtbar, eskalieren aber nicht weiter.
   </p>
 
   <div class="tabs" role="group" aria-label="Mahnstufe filtern">
@@ -73,9 +75,16 @@
             </thead>
             <tbody>
               @for (r of filtered(); track r.id) {
-                <tr>
+                <tr [class.zeile--erledigt]="!r.mahnbar">
                   <td>
                     <a class="zelle-link" [routerLink]="['/buchhaltung', r.id]">{{ r.invoice_number }}</a>
+                    <!-- Nie nur Farbe: der Grund steht als Text daneben — und er
+                         nennt den TATSÄCHLICHEN Zustand (bezahlt ≠ ausgeglichen). -->
+                    @if (r.is_storniert) {
+                      <span class="hinweis-flag">storniert · keine weitere Mahnstufe</span>
+                    } @else if (!r.mahnbar) {
+                      <span class="hinweis-flag">{{ nichtMahnbarText(r) }}</span>
+                    }
                   </td>
                   <td>{{ r.debtor || '—' }}</td>
                   <td class="num">{{ d(r.due_date) }}</td>

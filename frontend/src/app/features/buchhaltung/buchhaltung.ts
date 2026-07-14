@@ -5,6 +5,7 @@ import { RouterLink } from '@angular/router';
 import { Subject, debounceTime, distinctUntilChanged } from 'rxjs';
 import { BuchhaltungService } from '../../core/buchhaltung.service';
 import {
+  OpenItem,
   OpenItemPage,
   PaymentStatus,
   euro,
@@ -38,11 +39,18 @@ export class Buchhaltung {
   private readonly auth = inject(AuthService);
 
   protected readonly pageSize = 20;
+  // Alle fünf abgeleiteten Zahlungsstände sind filterbar. „Überzahlt" und
+  // „Ausgeglichen" fehlten hier: Eine stornierte Rechnung (AUSGEGLICHEN) und eine
+  // nach Zahlung stornierte (UEBERZAHLT — dem Kunden ist Geld zu erstatten!) waren
+  // nur unter „Alle" auffindbar. Ein Segment weniger heißt nicht weniger Belege,
+  // sondern nur, dass man sie nicht mehr findet.
   protected readonly segments: Segment[] = [
     { value: null, label: 'Alle' },
     { value: 'OFFEN', label: 'Offen' },
     { value: 'TEILZAHLUNG', label: 'Teilzahlung' },
     { value: 'BEZAHLT', label: 'Bezahlt' },
+    { value: 'UEBERZAHLT', label: 'Überzahlt' },
+    { value: 'AUSGEGLICHEN', label: 'Ausgeglichen' },
   ];
 
   protected readonly query = signal('');
@@ -225,6 +233,18 @@ export class Buchhaltung {
   }
   isCredit(t: string): boolean {
     return t === 'GUTSCHRIFT' || t === 'STORNO';
+  }
+  /** Rechnung mit (Teil-)Gutschrift: die Forderung ist gemindert, aber sie besteht. */
+  istGutgeschrieben(r: OpenItem): boolean {
+    return !r.is_storniert && Number(r.credit_total) < 0;
+  }
+  /**
+   * Diesem Beleg steht eine Erstattung an den Kunden offen. Auf einer Rechnung ist
+   * das die echte Überzahlung; nach Storno/Gutschrift steht sie auf dem KREDITBELEG
+   * — und nur dort, damit sie nicht zweimal ausgezahlt wird.
+   */
+  istZuErstatten(r: OpenItem): boolean {
+    return Number(r.zu_erstatten) > 0;
   }
   d(iso: string | null): string {
     if (!iso) return '—';

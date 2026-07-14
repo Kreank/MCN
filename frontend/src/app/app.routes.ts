@@ -170,6 +170,17 @@ export const routes: Routes = [
           import('./features/auftrag-detail/auftrag-detail').then((m) => m.AuftragDetail),
       },
       {
+        // Entitäts-Dossier: alles zu EINER Entität in EINEM Aufruf.
+        // BEWUSST OHNE `darfGuard`: das Kernrecht hängt an der Dossier-Art
+        // (kontakt→identity, liegenschaft→property, projekt/auftrag→workflow)
+        // und steht erst im Routenparameter — ein statischer Guard könnte hier
+        // nur raten. Der Server tort hart (403); die Komponente zeigt dann
+        // „Kein Zugriff". Dieselbe Linie wie bei /zeiterfassung.
+        path: 'dossier/:typ/:id',
+        title: 'Dossier — MCN Leitstand',
+        loadComponent: () => import('./features/dossier/dossier').then((m) => m.Dossier),
+      },
+      {
         path: 'planung',
         pathMatch: 'full',
         title: 'Planung — MCN Leitstand',

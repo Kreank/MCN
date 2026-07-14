@@ -284,6 +284,21 @@
   white-space: nowrap;
 }
 
+// Storniert / gutgeschrieben: der Beleg sagt selbst, warum er nichts (mehr)
+// fordert und warum es hier kein „Mahnung erzeugen" gibt. Klartext statt eines
+// wortlos fehlenden Knopfes.
+.forderung-note {
+  margin: 0 0 var(--space-5);
+  padding: var(--space-4) var(--space-5);
+  border: 1.5px solid var(--line-strong);
+  border-left-width: 4px;
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  color: var(--ink);
+  font-size: var(--step--1);
+  line-height: 1.5;
+}
+
 // Skonto-Hinweis im Übersichts-Raster: Klartext, nie nur eine Zahl.
 .skonto-note {
   display: block;

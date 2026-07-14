@@ -341,3 +341,15 @@ def test_schreibende_abrechnung_verlangt_das_recht(client_with_role, daten):
     assert BillingLink.objects.filter(
         invoice_id=invoice.id, released_at__isnull=True
     ).count() == 1
+
+
+@pytest.mark.django_db
+def test_offene_abrechnung_ohne_invoicing_recht_verboten(client_with_role, daten):
+    """Geld hängt an `invoicing`. Die offene Abrechnung führt **Einzelpreise und
+    Preisvorschläge** — sie darf nicht allein an `workflow/LESEN` hängen.
+    DISPOSITION hat workflow/LESEN, aber KEIN invoicing (Migration 0026) und sieht
+    damit die Preise nicht. Das Dossier zieht dieselbe Grenze; die beiden dürfen
+    nicht auseinanderlaufen."""
+    dispo = client_with_role("DISPOSITION")
+    r = dispo.get(f"/api/workflow/work_orders/{daten['order'].id}/offene-abrechnung")
+    assert r.status_code == 403, r.content

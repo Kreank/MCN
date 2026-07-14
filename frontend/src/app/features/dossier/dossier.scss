@@ -1,0 +1,422 @@
+/*
+  Dossier — „Akte" statt Reiter-Mappe.
+
+  Bewusst NICHT die Tabellenwüste des Standard-CRM: eine durchlaufende Akte mit
+  seitlichem Sprungmarken-Index (klebt auf breiten Schirmen), Abschnitts-
+  Trennkanten in Navy und einer Kennungs-Typografie in Mono.
+
+  Alle generischen Bausteine (.stamp, .feld-raster, .note, .btn,
+  .tab-platzhalter) kommen aus styles.scss — hier steht nur, was das Dossier
+  eigenhat. Das hält das Stil-Budget (8/10 kB je Komponente).
+*/
+
+.ds {
+  max-width: var(--content-w, 76rem);
+  margin: 0 auto;
+}
+
+/* --- Kopf ---------------------------------------------------------------- */
+.ds__kopf {
+  margin-bottom: var(--space-5);
+}
+
+.ds__back {
+  display: inline-block;
+  margin-bottom: var(--space-3);
+  color: var(--ink-muted);
+  font-size: var(--step--1);
+  text-decoration: none;
+
+  &:hover {
+    color: var(--accent-ink);
+    text-decoration: underline;
+  }
+}
+
+.ds__kicker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-1);
+  color: var(--accent-ink);
+  font-family: var(--font-mono, monospace);
+  font-size: var(--step--2);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* Kleine „Massstabs"-Marke (Bauzeichnung) — reine Deko. */
+.ds__scale {
+  width: 1.75rem;
+  height: 0.5rem;
+  border: 1.5px solid var(--accent);
+  border-top: 0;
+}
+
+.ds__titelzeile {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3);
+  justify-content: space-between;
+}
+
+.ds__titel {
+  margin: 0;
+  font-size: var(--step-3);
+  line-height: 1.15;
+}
+
+.ds__stempel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.ds__lead {
+  max-width: 52rem;
+  margin: var(--space-3) 0 0;
+  color: var(--ink-muted);
+  font-size: var(--step--1);
+  line-height: 1.55;
+}
+
+/* --- Sprungmarken-Index + Inhalt ---------------------------------------- */
+.ds__index {
+  margin-bottom: var(--space-5);
+}
+
+.ds__index-liste {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ds__index-link {
+  display: inline-block;
+  padding: 0.3rem 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: var(--step--2);
+  text-decoration: none;
+  transition: background 120ms ease, border-color 120ms ease;
+
+  &:hover {
+    border-color: var(--accent);
+    background: var(--surface-sunken);
+  }
+}
+
+@media (min-width: 68rem) {
+  .ds__index {
+    position: sticky;
+    top: var(--space-4);
+    float: left;
+    width: 13rem;
+    margin: 0 var(--space-6) var(--space-6) 0;
+  }
+
+  .ds__index-liste {
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+
+  .ds__index-link {
+    display: block;
+    border: 0;
+    border-left: 2px solid var(--line);
+    border-radius: 0;
+    background: none;
+    padding: 0.3rem 0.6rem;
+
+    &:hover {
+      border-left-color: var(--accent);
+      background: var(--surface-sunken);
+    }
+  }
+
+  .ds__inhalt {
+    overflow: hidden; /* eigener Blockkontext neben dem gefloateten Index */
+  }
+}
+
+/* --- Abschnitt ----------------------------------------------------------- */
+.ds-abschnitt {
+  padding: var(--space-5) 0;
+  border-top: 1.5px solid var(--line);
+
+  &:first-child {
+    border-top: 0;
+    padding-top: 0;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 4px;
+  }
+}
+
+.ds-abschnitt__titel {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+  font-size: var(--step-1);
+
+  &::before {
+    content: '';
+    width: 0.4rem;
+    height: 1.1em;
+    background: var(--accent);
+    border-radius: 1px;
+  }
+}
+
+.ds-abschnitt__hinweis {
+  max-width: 52rem;
+  margin: 0 0 var(--space-3);
+  color: var(--ink-muted);
+  font-size: var(--step--1);
+  line-height: 1.55;
+}
+
+.ds-unter {
+  margin: var(--space-4) 0 var(--space-2);
+  font-size: var(--step-0);
+  color: var(--ink-muted);
+  font-weight: 600;
+}
+
+.ds-beschreibung {
+  max-width: 52rem;
+  margin: var(--space-3) 0 0;
+  white-space: pre-wrap;
+}
+
+/* --- Listen -------------------------------------------------------------- */
+.ds-liste {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.ds-zeile {
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--radius-1, 4px);
+  background: var(--surface);
+}
+
+.ds-zeile__haupt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.ds-zeile__titel {
+  font-weight: 600;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+a.ds-zeile__titel:hover {
+  color: var(--accent-ink);
+  text-decoration: underline;
+}
+
+.ds-zeile__meta {
+  margin: var(--space-1) 0 0;
+  color: var(--ink-muted);
+  font-size: var(--step--1);
+  line-height: 1.5;
+}
+
+.ds-zeile__text {
+  margin: var(--space-2) 0 0;
+  white-space: pre-wrap;
+}
+
+.ds-kennung {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.9em;
+  color: var(--ink-muted);
+}
+
+.ds-mini {
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+.ds-haken {
+  display: inline-block;
+  width: 1.2em;
+  color: var(--ink-muted);
+}
+
+/* --- Chips --------------------------------------------------------------- */
+.ds-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ds-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  margin-right: 0.35rem;
+  padding: 0.15rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--neutral-tint);
+  font-size: var(--step--2);
+}
+
+.ds-chip--gross {
+  padding: 0.35rem 0.75rem;
+  font-size: var(--step--1);
+  font-weight: 600;
+}
+
+.ds-chip__zusatz {
+  color: var(--warn-ink);
+  font-weight: 400;
+}
+
+/* --- KPI ----------------------------------------------------------------- */
+.ds-kpi {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: var(--space-3);
+  margin: 0 0 var(--space-4);
+}
+
+.ds-kpi__zelle {
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-1, 4px);
+  background: var(--surface);
+
+  dt {
+    color: var(--ink-muted);
+    font-size: var(--step--2);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  dd {
+    margin: var(--space-1) 0 0;
+    font-size: var(--step-1);
+    font-weight: 700;
+  }
+}
+
+.ds-kpi__zelle--warn {
+  border-color: color-mix(in srgb, var(--warn) 55%, transparent);
+  background: var(--warn-tint);
+}
+
+.ds-kpi__zusatz {
+  display: block;
+  margin-top: 0.15rem;
+  color: var(--ink-muted);
+  font-size: var(--step--2);
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+/*
+  „unbekannt" ist ein Wort, keine Zahl — und es wird als solches gezeigt:
+  kursiv, gedämpft, nie im Zahlensatz. Der Unterschied zu „0" muss auf einen
+  Blick sichtbar sein (und steht ohnehin im Text — nie nur in der Farbe).
+*/
+.ds-unbekannt {
+  font-style: italic;
+  font-weight: 500;
+  color: var(--ink-muted);
+}
+
+/* --- Rechte-Sperre ------------------------------------------------------- */
+.ds-sperre {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  max-width: 52rem;
+  margin: 0;
+  padding: var(--space-4);
+  border: 1.5px dashed var(--line-strong);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--radius-1, 4px);
+  background: var(--surface-sunken);
+  color: var(--ink-muted);
+  font-size: var(--step--1);
+  line-height: 1.55;
+
+  strong {
+    color: var(--ink);
+  }
+}
+
+.ds-sperre__mark {
+  flex: none;
+  font-size: 1.1em;
+}
+
+.ds-sperre__recht {
+  padding: 0.05rem 0.35rem;
+  border-radius: 3px;
+  background: var(--neutral-tint);
+  color: var(--ink);
+  font-family: var(--font-mono, monospace);
+  font-size: 0.95em;
+}
+
+/* --- Warnhinweis (Text + Zeichen, nie nur Farbe) ------------------------- */
+.ds-warnung {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+  max-width: 52rem;
+  margin: 0 0 var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid color-mix(in srgb, var(--warn) 55%, transparent);
+  border-radius: var(--radius-1, 4px);
+  background: var(--warn-tint);
+  color: var(--warn-ink);
+  font-size: var(--step--1);
+  line-height: 1.5;
+
+  strong {
+    color: var(--ink);
+  }
+
+  span[aria-hidden] {
+    font-weight: 800;
+  }
+}
+
+/* --- Marge --------------------------------------------------------------- */
+.ds-marge {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+  gap: var(--space-4);
+}
+
+/* Kein Bewegungsdrang gegen den Nutzerwunsch. */
+@media (prefers-reduced-motion: reduce) {
+  .ds__index-link {
+    transition: none;
+  }
+}

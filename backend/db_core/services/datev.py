@@ -114,7 +114,7 @@ from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal
 
 from db_core.models import Invoice, InvoiceAdvance
-from db_core.services.beleg import SUMMENWIRKSAM, TEXT_TYPES
+from db_core.services.beleg import CREDIT_TYPES, SUMMENWIRKSAM, TEXT_TYPES
 from db_core.services.firma import get_company_profile
 
 _ROUND2 = Decimal("0.01")
@@ -123,7 +123,11 @@ _NULL = Decimal("0.00")
 # Belegarten, die im Modus ANZAHLUNG gegen das Anzahlungskonto buchen.
 _ADVANCE_TYPES = ("ABSCHLAGSRECHNUNG", "TEILRECHNUNG")
 _FINAL_TYPE = "SCHLUSSRECHNUNG"
-_CREDIT_TYPES = ("GUTSCHRIFT", "STORNO")
+# Kreditbelege — EINE Liste im Repo (sie wohnt im Belegmodul). Hier stand eine
+# inhaltsgleiche Kopie; zwei Listen, die dasselbe bedeuten, driften irgendwann
+# auseinander, und dann bucht der Export eine Belegart falsch herum.
+# `test_kreditbelegliste_kommt_aus_dem_belegmodul` beweist byte-identischen Export.
+_CREDIT_TYPES = CREDIT_TYPES
 
 MODE_REVENUE = "ERLOES"
 MODE_ADVANCE = "ANZAHLUNG"

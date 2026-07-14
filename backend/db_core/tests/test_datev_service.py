@@ -680,3 +680,86 @@ def test_anzahlung_reine_rechnung_bleibt_erloes(app_user):
     assert len(saetze) == 1
     assert saetze[0]["gegenkonto"] == "8400"
     assert _beleg_summe(saetze, inv.invoice_number) == inv.gross_total
+
+
+# --- Eine Liste der Kreditbelege (Review-Aufräumen) -------------------------
+
+# Je Kreditbelegart: WIE entsteht ein echter Beleg dieser Art? Der Test unten fährt
+# den Export mit einem Beleg JEDER Art aus `beleg.CREDIT_TYPES` — und weist eine
+# Belegart ohne Fixture ausdrücklich ab. Kommt also eine hinzu, geht er rot.
+_KREDIT_FIXTUREN = {
+    "STORNO": lambda user, inv: beleg_service.create_cancellation(
+        user.id, invoice_id=inv.id
+    ),
+    "GUTSCHRIFT": lambda user, inv: beleg_service.create_correction(
+        user.id, invoice_id=inv.id, positions=[1]
+    ),
+}
+
+
+@pytest.mark.django_db
+def test_kreditbelegliste_kommt_aus_dem_belegmodul(app_user):
+    """`datev._CREDIT_TYPES` hielt eine inhaltsgleiche KOPIE der Kreditbelegliste.
+
+    Sie ist jetzt auf `beleg.CREDIT_TYPES` gezogen. Der Test beweist ZWEI Dinge:
+
+    1. **Jede Kreditbelegart kehrt die Buchungsrichtung um.** Der Export wird mit
+       einem echten Beleg JEDER Art aus `beleg.CREDIT_TYPES` gefahren; für jede muss
+       eine Fixture da sein. Bekommt die Liste eine weitere Belegart, **geht dieser
+       Test rot** — die DATEV-Buchungsrichtung ist dann eine bewusste Entscheidung
+       und kein Nebeneffekt.
+       *(Genau das behauptete der frühere Docstring, ohne es zu belegen: Sein
+       Byte-Vergleich lief über eine Fixture mit nur RECHNUNG + STORNO — eine dritte
+       Belegart hätte ihn nicht bewegt. Ein Test, der Sicherheit nur behauptet, ist
+       schlimmer als keiner.)*
+    2. **Das Ziehen der Liste bewegt den Export nicht:** derselbe Zeitraum, einmal
+       mit der gezogenen Liste, einmal mit der alten Kopie — **byte-identisch**.
+       `erzeugt_am` wird festgesetzt, sonst wäre der Zeitstempel im EXTF-Kopf der
+       einzige Unterschied.
+    """
+    ohne_fixture = set(beleg_service.CREDIT_TYPES) - set(_KREDIT_FIXTUREN)
+    assert not ohne_fixture, (
+        f"Neue Kreditbelegart(en) {sorted(ohne_fixture)} in beleg.CREDIT_TYPES: Die "
+        "DATEV-Buchungsrichtung dafür ist zu entscheiden und hier abzudecken "
+        "(_KREDIT_FIXTUREN) — sie darf nicht stillschweigend mitlaufen."
+    )
+    _config(app_user)
+
+    kreditbelege = {}
+    for art in beleg_service.CREDIT_TYPES:
+        # Je Art ein eigener Ursprung: Storno nach Gutschrift ist (zu Recht) gesperrt.
+        inv = _published(
+            app_user,
+            lines=[{"line_type": "MATERIAL", "description": "Ziegel", "quantity": 10,
+                    "unit": "Stk", "unit_price": "100.00", "tax_code": "DE_19"}],
+        )
+        kredit = _KREDIT_FIXTUREN[art](app_user, inv)
+        assert kredit.invoice_type == art
+        assert kredit.gross_total == -inv.gross_total
+        kreditbelege[art] = kredit
+    _force_deferred_checks()
+
+    erzeugt = datetime(2026, 7, 14, 12, 0, 0)
+    _, neu = datev_service.build_datev_export(_HEUTE, _HEUTE, erzeugt_am=erzeugt)
+
+    # Je Ursprungsrechnung ein Satz (Soll) und je Kreditbeleg ein Gegensatz (Haben).
+    zeilen = [r.split(";") for r in _booking_rows(neu)]
+    assert len(zeilen) == 2 * len(beleg_service.CREDIT_TYPES)
+    for art, kredit in kreditbelege.items():
+        zeile = next(z for z in zeilen if z[10] == f'"{kredit.invoice_number}"')
+        assert zeile[1] == '"H"', (
+            f"{art} muss die Buchungsrichtung umkehren (Haben) — sonst erhöht ein "
+            "Kreditbeleg den Erlös, statt ihn zurückzunehmen."
+        )
+    assert sorted(z[1] for z in zeilen).count('"S"') == len(beleg_service.CREDIT_TYPES)
+
+    alte_kopie = ("GUTSCHRIFT", "STORNO")
+    original = datev_service._CREDIT_TYPES
+    try:
+        datev_service._CREDIT_TYPES = alte_kopie
+        _, alt = datev_service.build_datev_export(_HEUTE, _HEUTE, erzeugt_am=erzeugt)
+    finally:
+        datev_service._CREDIT_TYPES = original
+
+    assert neu == alt, "Der DATEV-Export ist nicht mehr byte-identisch."
+    assert datev_service._CREDIT_TYPES is beleg_service.CREDIT_TYPES

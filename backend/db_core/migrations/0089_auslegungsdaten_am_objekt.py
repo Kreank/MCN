@@ -53,6 +53,16 @@ Hüllfläche**, greift (b) nicht — dann ist die Wandfläche schlicht *unbekann
 Der Kennzahlen-Service meldet sie in diesem Fall als `null`, nicht als negative
 oder erfundene Zahl.
 
+**NACHTRAG (Migration 0095, späterer Review-Fund): Die Aussage „physisch
+unmöglich" stimmte hier noch nicht.** Auf `room_surface` lag nur ein UPDATE- und
+ein DELETE-Trigger, **kein INSERT** — und der Ausstieg „Σ Wand = 0 ⇒ keine
+Prüfung" deckte genau den Fall zu, in dem die erste Wand unter einer bereits
+erfassten freien Öffnung *entsteht* (25 m² Fenster, dann Wand mit 10 m² →
+`wall_area_net_m2 = −15,000`). Erreichbar war das nur am Service vorbei, weil
+`set_aufbau` Wände vor Öffnungen einfügt — der Schutz lag also in der
+**Reihenfolge im Service**, nicht in der DB. **0095 schließt das** (INSERT-Zweig
+im Trigger). Erst ab dort ist die Aussage wahr.
+
 Neu abgedeckt ist damit auch das **Löschen einer Wand**, unter der freie
 Öffnungen liegen — bisher konnte es (b) verletzen. Der Serialisierungspunkt wird
 von der Wand- auf die **Raumzeile** gehoben: Nur so sind zwei gleichzeitige

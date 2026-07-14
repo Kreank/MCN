@@ -21,7 +21,7 @@
   @case ('ready') {
     <app-mappe
       kicker="Rechnung {{ daten()!.invoice_number }}"
-      [titel]="typeLabel(daten()!.invoice_type) + ' · ' + euro(daten()!.open_amount) + ' offen'"
+      [titel]="typeLabel(daten()!.invoice_type) + ' · ' + kopfBetrag()"
       backLink="/buchhaltung"
       backLabel="Offene Posten"
       [tabs]="tabs"
@@ -75,6 +75,69 @@
       }
 
       @if (tab() === 'uebersicht') {
+        <!-- Warum ist hier kein „Mahnung erzeugen"? Das sagt der Beleg selbst —
+             statt den Knopf wortlos verschwinden zu lassen. -->
+        <!-- Der Sachverhalt in Klartext, nie nur über Farbe. Die Erstattungspflicht
+             steht auf GENAU EINEM Beleg: dem Kreditbeleg. -->
+        @if (istFolgebeleg()) {
+          <p class="forderung-note" role="status">
+            @if (zuErstatten() > 0) {
+              <strong>Zu erstatten: {{ euro(daten()!.zu_erstatten) }}.</strong>
+              Das ist das Geld, das der Kunde auf
+              {{ daten()!.origin ? 'Rechnung ' + daten()!.origin!.invoice_number : 'die Ursprungsrechnung' }}
+              bereits gezahlt hat. Erfassen Sie die Rückzahlung als
+              <em>Rückerstattung</em> — <strong>hier auf diesem Beleg</strong>, nicht
+              auf der Rechnung.
+              @if (istVerrechnet()) {
+                Die übrigen {{ euro(daten()!.verrechnet) }} sind mit der offenen
+                Forderung verrechnet und fließen nicht zurück.
+              }
+            } @else if (bereitsErstattet() > 0) {
+              <strong>Bereits erstattet.</strong>
+              {{ euro(daten()!.erstattet) }} wurden an den Kunden zurückgezahlt; dieser
+              Beleg ist erledigt (0,00 € offen). Es steht nichts mehr zur Erstattung an
+              — auch nicht auf der Ursprungsrechnung.
+            } @else {
+              <strong>Verrechnet — nichts zu erstatten.</strong>
+              {{ euro(daten()!.verrechnet) }} sind mit der offenen Forderung
+              @if (daten()!.origin) {
+                aus Rechnung {{ daten()!.origin!.invoice_number }}
+              }
+              verrechnet. Der Kunde hatte insoweit noch nicht gezahlt, also fließt kein
+              Geld zurück.
+            }
+          </p>
+        } @else if (daten()!.is_storniert) {
+          <p class="forderung-note" role="status">
+            <strong>Storniert.</strong> Diese Rechnung ist durch einen veröffentlichten
+            Stornobeleg aufgehoben — sie fordert kein Geld mehr und wird nicht (weiter)
+            gemahnt. Bereits erzeugte Mahnungen bleiben im Verlauf erhalten.
+            @if (unverrechneteGutschrift() > 0) {
+              Die gezahlten {{ euro(daten()!.paid_total) }} sind dem Kunden zu erstatten —
+              gebucht wird das <strong>auf dem Stornobeleg</strong> (siehe „Storno /
+              Korrektur" unten), nicht hier. So steht die Erstattungspflicht auf genau
+              einem Beleg und kann nicht doppelt ausgezahlt werden.
+            }
+          </p>
+        } @else if (gutschriftsanteil()) {
+          <p class="forderung-note" role="status">
+            <strong>Gutschrift berücksichtigt.</strong> {{ euro(daten()!.credit_total) }}
+            wurden gutgeschrieben, davon sind {{ euro(daten()!.verrechnet) }} mit der
+            offenen Forderung verrechnet. Gefordert und gemahnt wird nur noch der
+            geminderte Betrag von {{ euro(daten()!.forderungsbetrag) }}.
+            @if (unverrechneteGutschrift() > 0) {
+              Die übrigen {{ euroZahl(unverrechneteGutschrift()) }} sind dem Kunden zu
+              erstatten — gebucht wird das <strong>auf dem Gutschriftbeleg</strong>
+              (siehe „Storno / Korrektur" unten), nicht hier.
+            }
+          </p>
+        } @else if (guthaben()) {
+          <p class="forderung-note" role="status">
+            <strong>Überzahlt.</strong> Der Kunde hat
+            {{ euro(daten()!.zu_erstatten) }} mehr gezahlt, als in Rechnung steht. Der
+            Betrag ist ihm zu erstatten (Zahlungsart <em>Rückerstattung</em>).
+          </p>
+        }
         <dl class="feld-raster">
           <div class="feld"><dt class="feld__label">Rechnungsnummer</dt><dd class="feld__wert">{{ daten()!.invoice_number }}</dd></div>
           <div class="feld"><dt class="feld__label">Belegart</dt><dd class="feld__wert">{{ typeLabel(daten()!.invoice_type) }}</dd></div>
@@ -82,8 +145,35 @@
           <div class="feld"><dt class="feld__label">Rechnungsdatum</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.invoice_date">{{ d(daten()!.invoice_date) }}</dd></div>
           <div class="feld"><dt class="feld__label">Fällig am</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.due_date">{{ d(daten()!.due_date) }}</dd></div>
           <div class="feld"><dt class="feld__label">Bruttobetrag</dt><dd class="feld__wert">{{ euro(daten()!.gross_total) }}</dd></div>
+          @if (gutschriftsanteil() || daten()!.is_storniert) {
+            <div class="feld">
+              <dt class="feld__label">Storno/Gutschrift</dt>
+              <dd class="feld__wert">{{ euro(daten()!.credit_total) }}</dd>
+            </div>
+          }
+          @if (verrechnet() > 0) {
+            <div class="feld">
+              <dt class="feld__label">Verrechnet</dt>
+              <dd class="feld__wert">{{ euro(daten()!.verrechnet) }}</dd>
+            </div>
+          }
+          @if (gutschriftsanteil() || daten()!.is_storniert) {
+            <div class="feld">
+              <dt class="feld__label">Noch in Rechnung</dt>
+              <dd class="feld__wert">{{ euro(daten()!.forderungsbetrag) }}</dd>
+            </div>
+          }
           <div class="feld"><dt class="feld__label">Bezahlt</dt><dd class="feld__wert">{{ euro(daten()!.paid_total) }}</dd></div>
-          <div class="feld feld--stark"><dt class="feld__label">Offener Betrag</dt><dd class="feld__wert">{{ euro(daten()!.open_amount) }}</dd></div>
+          @if (bereitsErstattet() > 0) {
+            <div class="feld">
+              <dt class="feld__label">Bereits erstattet</dt>
+              <dd class="feld__wert">{{ euro(daten()!.erstattet) }}</dd>
+            </div>
+          }
+          <div class="feld feld--stark">
+            <dt class="feld__label">{{ zuErstatten() > 0 ? 'Zu erstatten' : 'Offener Betrag' }}</dt>
+            <dd class="feld__wert">{{ zuErstatten() > 0 ? euro(daten()!.zu_erstatten) : euro(daten()!.open_amount) }}</dd>
+          </div>
           @if (daten()!.skonto_betrag) {
             <div class="feld">
               <dt class="feld__label">Skonto</dt>

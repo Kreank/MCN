@@ -46,6 +46,10 @@
       }
       <span mappe-kopf class="stamp {{ priorityClass(daten()!.priority) }}">{{ priorityLabel(daten()!.priority) }}</span>
       <span mappe-kopf class="stamp {{ statusClass(daten()!.status) }}">{{ statusLabel(daten()!.status) }}</span>
+      <!-- Weg ins Dossier: dieselbe Entität, aber alles auf einer Seite. -->
+      <a mappe-kopf class="btn" [routerLink]="['/dossier/auftrag', daten()!.id]">
+        Dossier — alles auf einen Blick
+      </a>
 
       @if (tab() === 'uebersicht') {
         @if (darfAendern() || (darfFreigeben() && freigabeMoeglich())) {

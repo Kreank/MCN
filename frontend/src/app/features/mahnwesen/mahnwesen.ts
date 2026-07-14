@@ -1,7 +1,7 @@
 import { Component, computed, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { BuchhaltungService } from '../../core/buchhaltung.service';
-import { DunningList, euro } from '../../core/buchhaltung.model';
+import { DunningList, DunningRow, euro } from '../../core/buchhaltung.model';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 
@@ -85,6 +85,29 @@ export class Mahnwesen {
   }
 
   // ---- Darstellungshelfer -------------------------------------------------
+
+  /**
+   * Warum eskaliert diese Zeile nicht weiter? Der Text nennt den tatsächlichen
+   * Zustand aus dem Zahlungsspiegel.
+   *
+   * „ausgeglichen" hieß hier pauschal alles, was nicht mehr mahnbar war — auch die
+   * **bezahlte** Rechnung. Das ist das falsche Wort: Bei BEZAHLT hat der Kunde
+   * gezahlt; „ausgeglichen" meint, dass durch Storno/Vollgutschrift nichts mehr zu
+   * fordern IST (niemand hat gezahlt). Zwei verschiedene Sachverhalte.
+   */
+  nichtMahnbarText(r: DunningRow): string {
+    switch (r.payment_status) {
+      case 'BEZAHLT':
+        return 'bezahlt · nichts mehr offen';
+      case 'UEBERZAHLT':
+        return 'überzahlt · Erstattung an den Kunden offen';
+      case 'AUSGEGLICHEN':
+        return 'ausgeglichen · nichts mehr zu fordern';
+      default:
+        return 'keine offene Forderung · keine weitere Mahnstufe';
+    }
+  }
+
   euro(v: string | null): string {
     return euro(v);
   }

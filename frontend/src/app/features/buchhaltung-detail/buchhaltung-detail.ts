@@ -14,7 +14,12 @@ import {
   felderAlsBeruehrtMarkieren,
   serverFehlerZuruecksetzen,
 } from '../../shared/formular/formular.util';
-import { apiZuDeAnzeige, deZuApiDezimal, dezimalValidator } from '../../shared/formular/dezimal';
+import {
+  apiZuDeAnzeige,
+  apiZuDeEingabe,
+  deZuApiDezimal,
+  dezimalValidator,
+} from '../../shared/formular/dezimal';
 import { fristAbgelaufen, isoDatumDe } from '../../shared/datum';
 import { VerbotenState, fehlerDetail, fehlerState, istVerboten } from '../../shared/http-fehler';
 import { BuchhaltungService } from '../../core/buchhaltung.service';
@@ -95,11 +100,76 @@ export class BuchhaltungDetail {
   /**
    * Storno-/Gutschriftbelege sind selbst schon Folgebelege und lassen sich weder
    * erneut stornieren noch korrigieren (der Server lehnt es mit 422 ab — die UI
-   * bietet es gar nicht erst an). Deckt sich mit `_CREDIT_TYPES` im Backend.
+   * bietet es gar nicht erst an). Deckt sich mit `CREDIT_TYPES` im Backend.
    */
   protected readonly istFolgebeleg = computed(() => {
     const t = this.daten()?.invoice_type;
     return t === 'STORNO' || t === 'GUTSCHRIFT';
+  });
+
+  /** Diese Rechnung trägt (Teil-)Gutschriften — die Forderung ist gemindert. */
+  protected readonly gutschriftsanteil = computed(
+    () => !this.istFolgebeleg() && Number(this.daten()?.credit_total ?? 0) < 0,
+  );
+
+  /**
+   * Der Kunde hat mehr gezahlt, als (noch) gefordert ist — der Betrag ist ihm zu
+   * erstatten.
+   *
+   * **Auf einer Rechnung ist das nur noch die ECHTE Überzahlung** (er hat schlicht
+   * zu viel überwiesen). Der Storno einer bezahlten Rechnung führt hier NICHT mehr
+   * her: Seine Erstattungspflicht steht auf dem Kreditbeleg — und dort allein.
+   * Vorher stand sie auf beiden Belegen und blieb am Original auch nach der
+   * Erstattung stehen; wer die Liste abarbeitete, zahlte zweimal aus.
+   */
+  protected readonly guthaben = computed(
+    () => !this.istFolgebeleg() && Number(this.daten()?.open_amount ?? 0) < 0,
+  );
+
+  // --- Verrechnung (Kreditbelege) -------------------------------------------
+  /** Noch an den Kunden zurückzuzahlen (> 0 nur, solange etwas offen ist). */
+  protected readonly zuErstatten = computed(() =>
+    Number(this.daten()?.zu_erstatten ?? 0),
+  );
+  /** Bereits an den Kunden zurückgezahlt (Rückerstattungsbuchungen). */
+  protected readonly bereitsErstattet = computed(() =>
+    Number(this.daten()?.erstattet ?? 0),
+  );
+  /** Mit dem Gegenbeleg verrechneter Betrag (Rechnung ↔ Kreditbeleg). */
+  protected readonly verrechnet = computed(() => Number(this.daten()?.verrechnet ?? 0));
+  /** Was der Kunde auf DIESEN Beleg gezahlt hat. */
+  protected readonly gezahlt = computed(() => Number(this.daten()?.paid_total ?? 0));
+
+  /**
+   * Der Teil der Storno-/Gutschriftbeträge, der NICHT mit der offenen Forderung
+   * verrechnet werden konnte — also das Geld, das der Kunde bereits gezahlt hat und
+   * das ihm zusteht. Es ist auf dem Kreditbeleg zu erstatten, nicht hier.
+   */
+  protected readonly unverrechneteGutschrift = computed(() => {
+    const d = this.daten();
+    if (!d || this.istFolgebeleg()) return 0;
+    return -Number(d.credit_total) - this.verrechnet();
+  });
+
+  /**
+   * Dieser Kreditbeleg ist (ganz oder teilweise) mit der offenen Forderung der
+   * Ursprungsrechnung verrechnet — insoweit fließt kein Geld zurück.
+   */
+  protected readonly istVerrechnet = computed(
+    () => this.istFolgebeleg() && this.verrechnet() > 0,
+  );
+
+  /** Der zu erstattende Betrag als deutsche Eingabe (ohne Tausenderpunkt!). */
+  protected readonly zuErstattenEingabe = computed(() =>
+    apiZuDeEingabe(this.daten()?.zu_erstatten ?? null, 2),
+  );
+
+  /** Kopfzeile: ein Kreditbeleg ist nicht „offen", er ist „zu erstatten". */
+  protected readonly kopfBetrag = computed(() => {
+    const d = this.daten();
+    if (!d) return '';
+    if (this.zuErstatten() > 0) return `${euro(d.zu_erstatten)} zu erstatten`;
+    return `${euro(d.open_amount)} offen`;
   });
 
   // --- Zahlung erfassen ----------------------------------------------------
@@ -246,9 +316,13 @@ export class BuchhaltungDetail {
   // ---- Zahlung erfassen ---------------------------------------------------
   zahlungOeffnen(): void {
     this.zahlungForm.reset({
-      amount: '',
+      // Auf einem Kreditbeleg ist die zu erfassende Buchung die RÜCKERSTATTUNG (dort
+      // und nur dort wird sie gebucht) — und ihr Betrag steht fest: der offene Rest.
+      // Vorbelegen, nicht raten lassen: Ein hier erfasster „Zahlungseingang" wäre die
+      // Umkehrung des Vorgangs.
+      amount: this.zuErstatten() > 0 ? this.zuErstattenEingabe() : '',
       paid_at: this.heute(),
-      payment_type: 'ZAHLUNG',
+      payment_type: this.istFolgebeleg() ? 'RUECKERSTATTUNG' : 'ZAHLUNG',
       external_reference: '',
     });
     this.zahlungMeldung.set(null);
@@ -540,6 +614,10 @@ export class BuchhaltungDetail {
   }
   euro(v: string | null): string {
     return euro(v);
+  }
+  /** Wie `euro`, aber für bereits gerechnete Zahlen (verrechnete Restbeträge). */
+  euroZahl(v: number): string {
+    return euro(v.toFixed(2));
   }
   d(iso: string | null): string {
     if (!iso) return '—';

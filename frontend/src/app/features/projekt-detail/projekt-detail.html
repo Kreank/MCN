@@ -45,6 +45,10 @@
         <span mappe-kopf class="stamp stamp--type">{{ c.name }}</span>
       }
       <span mappe-kopf class="stamp {{ statusClass(daten()!.status) }}">{{ statusLabel(daten()!.status) }}</span>
+      <!-- Weg ins Dossier: dieselbe Entität, aber alles auf einer Seite. -->
+      <a mappe-kopf class="btn" [routerLink]="['/dossier/projekt', daten()!.id]">
+        Dossier — alles auf einen Blick
+      </a>
 
       <!-- ------------------------------ Übersicht ------------------------- -->
       @if (tab() === 'uebersicht') {

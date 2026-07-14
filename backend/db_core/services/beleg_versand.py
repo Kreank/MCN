@@ -16,10 +16,10 @@ Fehlermeldungen aufgenommen.
 """
 from decimal import Decimal
 
-from db_core.models import ContactPoint, DunningNotice, Invoice, Payment, Quote
+from db_core.models import ContactPoint, DunningNotice, Invoice, Quote
 from db_core.services import beleg_pdf as beleg_pdf_service
+from db_core.services import buchhaltung as buchhaltung_service
 from db_core.services import firma as firma_service
-from db_core.services.buchhaltung import PAYMENT_SIGN
 from db_core.services.mail import send_mail
 
 # Empfänger wie im PDF: primärer INVOICE_RECIPIENT gewinnt, sonst INVOICE_DEBTOR.
@@ -194,20 +194,23 @@ def debtor_email(invoice):
 
 
 def _open_amount(invoice):
-    """Best-effort offener Betrag der Rechnung (Brutto minus Zahlungen), sonst None.
+    """Der offene Betrag der Rechnung — aus der EINEN Rechenstelle, sonst None.
 
-    Verwendet dieselbe Vorzeichenkonvention wie die Buchhaltung (PAYMENT_SIGN):
-    Geldeingänge reduzieren, Rückflüsse/Stornos erhöhen den offenen Posten.
+    Hier stand einmal eine **zweite** Ableitung (`gross_total − Σ PAYMENT_SIGN·amount`).
+    Sie kannte die **Gutschriften nicht**: Nach einer Teilgutschrift sagten Bildschirm,
+    Mahnlauf und offene Posten 285,60 € offen, der versendete Mahntext dagegen
+    880,60 € — der Kunde wurde über Geld gemahnt, das das Haus selbst erlassen hatte.
+    Der Betrag im Brief kommt deshalb aus `buchhaltung.zahlungsspiegel`, genau wie
+    jede andere Oberfläche. Es gibt keine zweite Definition von „offen".
     """
-    gross = invoice.gross_total
-    if gross is None:
+    if invoice.gross_total is None:
         return None
-    paid = Decimal("0.00")
-    for p in Payment.objects.filter(invoice_id=invoice.id).only(
-        "payment_type", "amount"
-    ):
-        paid += PAYMENT_SIGN.get(p.payment_type, 0) * p.amount
-    return gross - paid
+    annotiert = buchhaltung_service.mit_zahlungsstand(
+        Invoice.objects.filter(id=invoice.id)
+    ).first()
+    if annotiert is None:
+        return None
+    return buchhaltung_service.zahlungsspiegel(annotiert)["open_amount"]
 
 
 def _format_amount(amount, currency):

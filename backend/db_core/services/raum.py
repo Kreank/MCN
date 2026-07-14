@@ -169,6 +169,14 @@ NUMERIK_LIEGENSCHAFT = {
     "design_outdoor_temp_c": (4, 1, False),
     "heat_load_w_per_m2":    (6, 1, True),
 }
+# Wertebereich der Auslegungsdaten — Spiegel der DB-CHECKs aus Migration 0089:
+#   design_outdoor_temp_c BETWEEN -40 AND 30      heat_load_w_per_m2 > 0
+# `NUMERIK_LIEGENSCHAFT` deckt nur Skala und Spaltenbreite ab; diese beiden
+# Grenzen sind fachlich. Sie stehen HIER genau einmal und werden von JEDEM Pfad
+# benutzt — auch vom Was-wäre-wenn (Query-Parameter). Ein Kennwert 0 wäre sonst
+# kein „unbekannt", sondern die Aussage „0 kW Heizlast".
+AUSSENTEMP_MIN = Decimal("-40")
+AUSSENTEMP_MAX = Decimal("30")
 # GENERATED: property.room_opening.area_m2 = round(quantity * width * height, 3).
 # Die Faktoren passen je einzeln in ihre Spalte, ihr PRODUKT kann trotzdem
 # überlaufen — deshalb wird auch das Ergebnis geprüft.
@@ -1348,12 +1356,41 @@ class Auslegung(NamedTuple):
     kennwert_w_m2: Decimal | None
 
 
+def _pruefe_auslegungswerte(temp, kennwert):
+    """Die EINE Prüfstelle für die Wertebereiche der Auslegungsdaten.
+
+    Sie gilt für den Schreibpfad (`set_auslegung`) **und** für die Übersteuerung
+    am Aufruf (`auslegung`). Sonst entstünde eine dritte Wahrheit: Die DB nähme
+    einen Kennwert von 0 nie an — er erreichte sie über den Was-wäre-wenn-Pfad
+    aber auch nie, und das Ergebnis wären **0,0 kW** statt „unbekannt".
+
+    Dass der Angular-Client die Parameter nicht sendet, ist dabei kein Argument:
+    Nach der Vision geht die KI durch denselben Service wie ein Mensch.
+    """
+    if temp is not None and not (AUSSENTEMP_MIN <= temp <= AUSSENTEMP_MAX):
+        raise ValueError(
+            f"{FELD_LABEL['design_outdoor_temp_c']}: Der Wert muss zwischen "
+            f"{_zahl_de(AUSSENTEMP_MIN)} und {_zahl_de(AUSSENTEMP_MAX)} °C liegen "
+            "(design_outdoor_temp_c)."
+        )
+    if kennwert is not None and kennwert <= 0:
+        raise ValueError(
+            f"{FELD_LABEL['heat_load_w_per_m2']}: Der Wert muss größer als 0 sein "
+            "— 0 ist kein Kennwert, sondern eine unbekannte Größe "
+            "(heat_load_w_per_m2)."
+        )
+
+
 def auslegung(prop, aussentemperatur_c=None, kennwert_w_m2=None):
     """Wirksame Auslegungsdaten: Objektwerte, optional übersteuert.
 
     `prop` ist die Liegenschaft des Raumes (oder None). Fehlt ein Wert an beiden
     Stellen, bleibt er `None` — es wird **nichts erfunden** (keine
     DIN-Klimatabelle, kein erfundener Gebäudekennwert).
+
+    Die Übersteuerung durchläuft **dieselben Grenzen** wie der Schreibpfad
+    (`_pruefe_auslegungswerte`): ein ungültiger Parameter liefert nie ein
+    gerechnetes Ergebnis, sondern einen Fehler mit benanntem Grund (→ 422).
     """
     aussen = _numerik(
         _dec(aussentemperatur_c, "aussentemperatur_c"), "aussentemperatur_c",
@@ -1363,6 +1400,7 @@ def auslegung(prop, aussentemperatur_c=None, kennwert_w_m2=None):
         _dec(kennwert_w_m2, "kennwert_w_m2"), "kennwert_w_m2",
         NUMERIK_LIEGENSCHAFT["heat_load_w_per_m2"],
     )
+    _pruefe_auslegungswerte(aussen, kennwert)
     if prop is not None:
         if aussen is None:
             aussen = prop.design_outdoor_temp_c
@@ -1397,14 +1435,11 @@ def set_auslegung(actor_app_user_id, property_id, daten):
         raise ValueError(f"Unbekannte Felder: {', '.join(sorted(unbekannt))}")
 
     werte = _numerik_felder(dict(daten or {}), NUMERIK_LIEGENSCHAFT)
-    temp = werte.get("design_outdoor_temp_c")
-    if temp is not None and not (Decimal("-40") <= temp <= Decimal("30")):
-        raise ValueError(
-            "design_outdoor_temp_c muss zwischen -40 und 30 °C liegen."
-        )
-    kennwert = werte.get("heat_load_w_per_m2")
-    if kennwert is not None and kennwert <= 0:
-        raise ValueError("heat_load_w_per_m2 muss größer als 0 sein.")
+    # Dieselbe Prüfstelle wie beim Was-wäre-wenn-Pfad (`auslegung`) — sonst laufen
+    # Schreibweg und Lese-Übersteuerung auseinander.
+    _pruefe_auslegungswerte(
+        werte.get("design_outdoor_temp_c"), werte.get("heat_load_w_per_m2")
+    )
 
     if werte:
         try:

@@ -622,3 +622,54 @@ def test_patch_ohne_recht_403(client_with_role, admin_client, objekt):
 def test_ohne_login_abgelehnt(anonymous_client, objekt):
     r = anonymous_client.get(f"/api/property/properties/{objekt.id}/rooms")
     assert r.status_code in (401, 403)
+
+
+# --- Der Was-wäre-wenn-Pfad ist kein Nebeneingang (Review-Befund) -----------
+#
+# Die Query-Parameter machten KEINE der Prüfungen, die `set_auslegung` und die
+# DB-CHECKs aus 0089 machen. Dass der Angular-Client sie nie sendet, ist kein
+# Argument: Nach der Vision geht die KI durch denselben Service.
+
+@pytest.mark.django_db
+def test_kennwert_null_ist_kein_kennwert_sondern_422(admin_client, objekt):
+    """`?kennwert_w_m2=0` verwarf den Objektwert (0 ist nicht None) und wies
+    **0,0 W** aus statt „unbekannt" — die Liegenschaft hätte 0,0 kW Heizlast
+    behauptet. Ein ungültiger Parameter liefert nie ein gerechnetes Ergebnis."""
+    _set_auslegung(admin_client, objekt, design_outdoor_temp_c="-10.0",
+                   heat_load_w_per_m2="70.0")
+    raum = _post_raum(admin_client, objekt)
+
+    r = admin_client.get(
+        f"/api/property/properties/{objekt.id}/aufmass?kennwert_w_m2=0"
+    )
+    assert r.status_code == 422, r.content
+    assert "Kennwert" in r.json()["detail"]
+
+    r = admin_client.get(f"/api/property/rooms/{raum['id']}?kennwert_w_m2=0")
+    assert r.status_code == 422
+    r = admin_client.get(
+        f"/api/property/properties/{objekt.id}/rooms?kennwert_w_m2=0"
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.django_db
+def test_negativer_kennwert_ist_422(admin_client, objekt):
+    _post_raum(admin_client, objekt)
+    r = admin_client.get(
+        f"/api/property/properties/{objekt.id}/aufmass?kennwert_w_m2=-50"
+    )
+    assert r.status_code == 422, r.content
+
+
+@pytest.mark.django_db
+def test_aussentemperatur_ausserhalb_des_bereichs_ist_422(admin_client, objekt):
+    """500 °C außen ⇒ ΔT negativ ⇒ negative Heizlast. Die DB nähme den Wert nie
+    an (CHECK −40…30) — er erreichte sie nur nie."""
+    _post_raum(admin_client, objekt)
+    for wert in ("500", "-60"):
+        r = admin_client.get(
+            f"/api/property/properties/{objekt.id}/aufmass?aussentemperatur_c={wert}"
+        )
+        assert r.status_code == 422, (wert, r.content)
+        assert "Auslegungs-Außentemperatur" in r.json()["detail"]

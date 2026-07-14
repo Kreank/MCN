@@ -15,7 +15,10 @@ Zeile → 404.
 Liegenschaft wird dafür je Anfrage **einmal** geladen (kein N+1 über die Räume).
 Die Query-Parameter `aussentemperatur_c`/`kennwert_w_m2` übersteuern die
 Objektwerte (Was-wäre-wenn); gepflegt werden sie über
-`PATCH /properties/{id}/auslegung`.
+`PATCH /properties/{id}/auslegung`. **Sie sind kein Nebeneingang:** Der Service
+prüft sie gegen exakt dieselben Grenzen wie den Schreibpfad und den DB-CHECK
+(0089) — ein ungültiger Parameter ergibt **422 mit Grund**, nie ein gerechnetes
+Ergebnis (`kennwert_w_m2=0` hieße sonst „0,0 kW", nicht „unbekannt").
 
 **Der Bauteilkatalog ist eine Kopierquelle** (Migration 0090): `template_id` an
 Wand und Öffnung ist ein **Herkunftsvermerk**; der U-Wert wird beim Erfassen in

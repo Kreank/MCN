@@ -1016,3 +1016,176 @@ def test_update_ist_teilupdate(app_user):
     # Nicht gesendete Felder bleiben unangetastet.
     assert room.note == "Erstaufnahme"
     assert room.name == "Wohnzimmer"
+
+
+# --- Der Was-wäre-wenn-Pfad hält dieselben Grenzen (Review-Befund) ----------
+#
+# `set_auslegung` und die DB-CHECKs aus 0089 verlangen `heat_load_w_per_m2 > 0`
+# und `design_outdoor_temp_c ∈ [-40, 30]`. Die Übersteuerungsparameter des
+# Aufmaß-Endpunkts gingen an beidem vorbei: `kennwert_w_m2=0` verwarf den
+# Objektwert (0 ist nicht None) und wies **0,0 kW** aus statt „unbekannt" — die
+# Kernhaltung des Slices, ausgerechnet auf dem Pfad, den die KI nehmen wird.
+
+@pytest.mark.django_db
+def test_uebersteuerung_kennwert_null_ist_kein_kennwert(app_user):
+    """`kennwert_w_m2=0` darf NICHT „0 W Heizlast" bedeuten — 0 ist kein Kennwert."""
+    prop = _property(app_user)
+    with pytest.raises(ValueError) as exc:
+        raum_service.auslegung(prop, kennwert_w_m2=Decimal("0"))
+    assert "Kennwert" in str(exc.value)
+
+
+@pytest.mark.django_db
+def test_uebersteuerung_kennwert_negativ_wird_abgewiesen(app_user):
+    prop = _property(app_user)
+    with pytest.raises(ValueError):
+        raum_service.auslegung(prop, kennwert_w_m2=Decimal("-50"))
+
+
+@pytest.mark.django_db
+def test_uebersteuerung_aussentemperatur_ausserhalb_wird_abgewiesen(app_user):
+    """ΔT = innen − außen: 500 °C außen ergäbe eine NEGATIVE Heizlast. Die DB
+    nähme den Wert nie an — er erreichte sie nur nie."""
+    prop = _property(app_user)
+    for wert in (Decimal("500"), Decimal("-60")):
+        with pytest.raises(ValueError):
+            raum_service.auslegung(prop, aussentemperatur_c=wert)
+
+
+@pytest.mark.django_db
+def test_uebersteuerung_an_den_grenzen_bleibt_erlaubt(app_user):
+    """Die Ränder gehören zum zulässigen Bereich (dieselben wie im DB-CHECK)."""
+    prop = _property(app_user)
+    for wert in (Decimal("-40"), Decimal("30"), Decimal("0")):
+        assert raum_service.auslegung(
+            prop, aussentemperatur_c=wert
+        ).aussentemperatur_c == wert
+    assert raum_service.auslegung(
+        prop, kennwert_w_m2=Decimal("0.1")
+    ).kennwert_w_m2 == Decimal("0.1")
+
+
+def _db_nimmt(app_user, prop, feld, wert):
+    """Nimmt die DATENBANK diesen Wert an? (CHECK aus 0089, am Service vorbei)"""
+    try:
+        with business_transaction(app_user.id):
+            with connection.cursor() as cur:
+                cur.execute(
+                    f"UPDATE property.property SET {feld} = %s WHERE id = %s",
+                    [wert, str(prop.id)],
+                )
+    except Error:
+        return False
+    return True
+
+
+@pytest.mark.django_db
+def test_grenzen_von_service_und_db_check_laufen_nicht_auseinander(app_user):
+    """EINE Wahrheit: Was der Service abweist, weist auch die DB ab — und
+    umgekehrt. Sonst entsteht genau die dritte Grenze, die dieser Befund war."""
+    prop = _property(app_user)
+    faelle = [
+        ("design_outdoor_temp_c", "aussentemperatur_c",
+         [Decimal("-40.1"), Decimal("-40"), Decimal("0"), Decimal("30"),
+          Decimal("30.1"), Decimal("500")]),
+        ("heat_load_w_per_m2", "kennwert_w_m2",
+         [Decimal("-50"), Decimal("0"), Decimal("0.1"), Decimal("80")]),
+    ]
+    for spalte, param, werte in faelle:
+        for wert in werte:
+            try:
+                raum_service.auslegung(prop, **{param: wert})
+                service_ok = True
+            except ValueError:
+                service_ok = False
+            db_ok = _db_nimmt(app_user, prop, spalte, wert)
+            assert service_ok == db_ok, (
+                f"{spalte}={wert}: Service {service_ok}, DB {db_ok}"
+            )
+
+
+# --- Trigger: auch der INSERT einer Wand (Migration 0095) -------------------
+
+@pytest.mark.django_db
+def test_trigger_erste_wand_unter_freier_oeffnung_wird_gesperrt(app_user):
+    """Auf `room_surface` lag KEIN INSERT-Trigger, und Grenze (b) stieg bei
+    Σ Wand = 0 aus. Also: Raum ohne Hüllflächen + freie Öffnung 25 m², danach die
+    erste Wand mit 10 m² INSERTen → `wall_area_net_m2 = −15,000`. Der Schutz lag
+    allein in der REIHENFOLGE von `set_aufbau` (Wände vor Öffnungen) — was im
+    Service sitzt, ist umgehbar."""
+    prop = _property(app_user)
+    room = _raum(app_user, prop)
+    # Legitim: die Öffnung wird vor der Wand erfasst (Wandfläche unbekannt, nicht 0).
+    raum_service.set_aufbau(
+        app_user.id, room.id, [],
+        [_fenster(surface_ref=None, width_m=Decimal("5.000"),
+                  height_m=Decimal("5.000"))],
+    )
+    with pytest.raises(Error) as exc:
+        with business_transaction(app_user.id):
+            with connection.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO property.room_surface
+                        (id, room_id, surface_type, adjacent, gross_area_m2)
+                    VALUES (%s, %s, 'AUSSENWAND', 'AUSSENLUFT', 10.000)
+                    """,
+                    [str(uuid.uuid4()), str(room.id)],
+                )
+    assert "Nettowandfläche" in str(exc.value)
+    assert not RoomSurface.objects.filter(room_id=room.id).exists()
+    assert raum_service.kennzahlen(Room.objects.get(id=room.id))[
+        "wall_area_net_m2"
+    ] is None
+
+
+@pytest.mark.django_db
+def test_trigger_erste_wand_gross_genug_wird_angenommen(app_user):
+    """Die Gegenprobe: Die Wand darf nach der Öffnung kommen, solange das
+    ERGEBNIS nicht negativ wird. Verboten ist die negative Fläche, nicht die
+    Reihenfolge."""
+    prop = _property(app_user)
+    room = _raum(app_user, prop)
+    raum_service.set_aufbau(
+        app_user.id, room.id, [],
+        [_fenster(surface_ref=None, width_m=Decimal("2.000"),
+                  height_m=Decimal("1.000"))],   # 2 m²
+    )
+    with business_transaction(app_user.id):
+        with connection.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO property.room_surface
+                    (id, room_id, surface_type, adjacent, gross_area_m2)
+                VALUES (%s, %s, 'AUSSENWAND', 'AUSSENLUFT', 10.000)
+                """,
+                [str(uuid.uuid4()), str(room.id)],
+            )
+    k = raum_service.kennzahlen(Room.objects.get(id=room.id))
+    assert k["wall_area_net_m2"] == Decimal("8.000")
+
+
+@pytest.mark.django_db
+def test_set_aufbau_laeuft_unveraendert_durch(app_user):
+    """Der reguläre Weg darf durch den INSERT-Trigger NICHT in eine Sackgasse
+    laufen: `set_aufbau` ersetzt den ganzen Satz und fügt Wände vor Öffnungen
+    ein — ein Zwischenzustand innerhalb derselben Transaktion darf nicht feuern."""
+    prop = _property(app_user)
+    room = _raum(app_user, prop)
+    room = raum_service.set_aufbau(
+        app_user.id, room.id,
+        [_wand("s1", gross_area_m2=Decimal("10.000")),
+         _wand("s2", gross_area_m2=Decimal("12.000"))],
+        [_fenster("s1", width_m=Decimal("2.000"), height_m=Decimal("1.500")),
+         _fenster(surface_ref=None, width_m=Decimal("1.000"),
+                  height_m=Decimal("1.000"))],
+    )
+    assert len(room.surfaces.all()) == 2
+    assert len(room.openings.all()) == 2
+    # Und ein zweiter Durchlauf mit demselben Satz ebenso (Delete+Insert).
+    room = raum_service.set_aufbau(
+        app_user.id, room.id,
+        [_wand("s1", gross_area_m2=Decimal("10.000"))],
+        [_fenster("s1", width_m=Decimal("2.000"), height_m=Decimal("1.500"))],
+    )
+    assert len(room.surfaces.all()) == 1

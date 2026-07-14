@@ -2,7 +2,16 @@
 // Beträge kommen als String (Decimal) — verlustfrei behalten, nur zur Anzeige
 // mit Number() formatieren.
 
-export type PaymentStatus = 'OFFEN' | 'TEILZAHLUNG' | 'BEZAHLT' | 'UEBERZAHLT';
+/** AUSGEGLICHEN: nichts mehr zu fordern und nichts zu erstatten — die Rechnung ist
+ *  durch Storno/Gutschrift verrechnet, es floss kein Geld. NICHT „bezahlt" (niemand
+ *  hat gezahlt) und nicht „offen". Auf einem KREDITBELEG heißt es: vollständig mit
+ *  der offenen Forderung verrechnet, es ist nichts zu erstatten. */
+export type PaymentStatus =
+  | 'OFFEN'
+  | 'TEILZAHLUNG'
+  | 'BEZAHLT'
+  | 'UEBERZAHLT'
+  | 'AUSGEGLICHEN';
 
 export interface OpenItem {
   id: string;
@@ -14,9 +23,31 @@ export interface OpenItem {
   due_date: string | null;
   gross_total: string | null;
   paid_total: string;
+  /** Summe der veröffentlichten Storno-/Gutschriftbelege zu dieser Rechnung (≤ 0). */
+  credit_total: string;
+  /**
+   * Was zwischen diesem Beleg und seinem Gegenbeleg VERRECHNET ist (≥ 0).
+   *
+   * Auf der Rechnung: der Teil der Kreditbelege, der die noch offene Forderung
+   * aufzehrt. Auf dem Kreditbeleg: sein Anteil daran — nur der REST davon ist dem
+   * Kunden zu erstatten. Die Erstattungspflicht steht damit auf genau EINEM Beleg
+   * (dem Kreditbeleg); die Rechnung wird durch einen Kreditbeleg nie negativ.
+   */
+  verrechnet: string;
+  /** Brutto abzüglich des Verrechneten. Es gilt: open_amount = forderungsbetrag − paid_total. */
+  forderungsbetrag: string;
+  /** Forderungsbetrag minus Gezahltes. Negativ = Guthaben des Kunden. */
   open_amount: string;
+  /** Noch an den Kunden zurückzuzahlen (0, wenn nichts offen ist). */
+  zu_erstatten: string;
+  /** Bereits an den Kunden zurückgezahlt. */
+  erstattet: string;
   payment_status: PaymentStatus;
   is_overdue: boolean;
+  /** Durch einen veröffentlichten STORNO aufgehoben — fordert nichts mehr. */
+  is_storniert: boolean;
+  /** Fordert dieser Beleg (noch) Geld? Kreditbelege und Stornierte: nein. */
+  ist_forderung: boolean;
   dunning_level: number | null;
 }
 
@@ -106,7 +137,14 @@ export interface DunningRow {
   open_amount: string;
   dunning_level: number | null;
   last_issued_at: string | null;
+  /** Verzugstage aus dem Zahlungsspiegel — null, sobald nichts mehr offen ist. */
   days_overdue: number | null;
+  /** Storniert: die Mahnhistorie bleibt sichtbar, aber es geht keine Stufe weiter. */
+  is_storniert: boolean;
+  /** Lässt sich (weiter) mahnen? Nur eine offene Forderung. */
+  mahnbar: boolean;
+  /** OFFEN | TEILZAHLUNG | BEZAHLT | UEBERZAHLT | AUSGEGLICHEN — der wahre Zustand. */
+  payment_status: string;
 }
 
 export interface DunningLevelInfo {
@@ -194,6 +232,7 @@ const PAYMENT_STATUS_LABELS: Record<PaymentStatus, string> = {
   TEILZAHLUNG: 'Teilzahlung',
   BEZAHLT: 'Bezahlt',
   UEBERZAHLT: 'Überzahlt',
+  AUSGEGLICHEN: 'Ausgeglichen',
 };
 
 export function paymentStatusLabel(s: PaymentStatus): string {

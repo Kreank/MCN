@@ -21,6 +21,7 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
 
+from django.db.models import Exists, OuterRef
 from django.utils import timezone as dj_timezone
 
 from db_core.betriebszeit import betriebs_datum
@@ -95,7 +96,11 @@ INVOICE_TYPES = (
     "GUTSCHRIFT",
     "STORNO",
 )
-_CREDIT_TYPES = ("GUTSCHRIFT", "STORNO")
+# Kreditbelege (Korrekturbelege): sie tragen NEGATIVE Summen und fordern nichts.
+# EINE Liste im ganzen Repo — `auswertungen` und `buchhaltung` ziehen von hier
+# (`_CREDIT_TYPES` bleibt der modulinterne Kurzname).
+CREDIT_TYPES = ("GUTSCHRIFT", "STORNO")
+_CREDIT_TYPES = CREDIT_TYPES
 # Abschlags-/Teil-/Schlussrechnung (Migration 0060). Abschlag und Teilrechnung
 # verhalten sich technisch identisch (gleiche Tore, gleiche Verkettung); der Typ
 # bleibt getrennt, weil er fachlich etwas anderes aussagt (Abschlag = Zwischen-
@@ -1239,13 +1244,30 @@ def arbeitskosten(invoice):
     }
 
 
+def _veroeffentlichte_stornos():
+    """Die veröffentlichten STORNO-Belege — das eine Prädikat „ist storniert?".
+
+    Es gibt genau **eine** Definition davon; sie wird nur in zwei Formen ausgeliefert
+    (ID-Menge für `exclude`, `Exists` für die SQL-Annotation). Eine zweite Definition
+    liefe irgendwann auseinander — und dann stünde eine stornierte Rechnung in der
+    einen Ansicht als überfällig und in der anderen nicht.
+    """
+    return Invoice.objects.filter(invoice_type="STORNO", status="VEROEFFENTLICHT")
+
+
 def _stornierte_belege():
     """IDs aller Belege, zu denen ein veröffentlichter STORNO existiert."""
-    return set(
-        Invoice.objects.filter(
-            invoice_type="STORNO", status="VEROEFFENTLICHT"
-        ).values_list("reference_invoice_id", flat=True)
-    )
+    return set(_veroeffentlichte_stornos().values_list("reference_invoice_id", flat=True))
+
+
+def storniert_exists():
+    """`Exists`-Ausdruck: Trägt DIESE Rechnung einen veröffentlichten STORNO?
+
+    Für Annotationen/Filter auf großen Rechnungsmengen (offene Posten, Mahnwesen) —
+    dasselbe Prädikat wie `stornierte_belege()`, nur ohne die Ergebnisliste in den
+    Python-Speicher zu ziehen.
+    """
+    return Exists(_veroeffentlichte_stornos().filter(reference_invoice_id=OuterRef("pk")))
 
 
 def _korrigierte_belege():
@@ -1260,6 +1282,18 @@ def _korrigierte_belege():
             invoice_type__in=_CREDIT_TYPES, status="VEROEFFENTLICHT"
         ).values_list("reference_invoice_id", flat=True)
     )
+
+
+def stornierte_belege():
+    """Öffentlicher Zugang zu `_stornierte_belege` (IDs stornierter Belege).
+
+    Leser außerhalb dieses Moduls (Dossier) brauchen dieselbe Menge: eine
+    stornierte Rechnung ist keine Forderung mehr. Die Frage „ist dieser Beleg
+    storniert?" darf es genau **einmal** im Repo geben — eine zweite Definition
+    liefe irgendwann auseinander, und dann stünde eine stornierte Rechnung in der
+    einen Ansicht als überfällig und in der anderen nicht.
+    """
+    return _stornierte_belege()
 
 
 def _gebundene_abschlaege(advance_ids, *, exclude_final_id=None):

@@ -44,6 +44,10 @@
     >
       <span mappe-kopf class="stamp stamp--type">{{ typeLabel(daten()!.party_type) }}</span>
       <span mappe-kopf class="stamp {{ statusClass(daten()!.status) }}">{{ statusLabel(daten()!.status) }}</span>
+      <!-- Weg ins Dossier: dieselbe Entität, aber alles auf einer Seite. -->
+      <a mappe-kopf class="btn" [routerLink]="['/dossier/kontakt', daten()!.id]">
+        Dossier — alles auf einen Blick
+      </a>
 
       <!-- ------------------------------ Stammdaten ------------------------ -->
       @if (tab() === 'stammdaten') {

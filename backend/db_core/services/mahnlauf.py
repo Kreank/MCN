@@ -8,9 +8,14 @@ gewollt, ein Fehler bei einer Rechnung bricht den Lauf nicht ab.
 
 Eskalationsregel (aus der Mahnstufen-Konfiguration abgeleitet, keine neue Logik):
 Eine Rechnung ist Kandidat für Stufe `k = aktuelle_stufe + 1`, wenn
-  - sie veröffentlicht, überfällig und mit offenem Betrag ist,
+  - sie eine **offene Forderung** ist (`buchhaltung.offene_forderungen` — die eine
+    Grenze: veröffentlicht, kein Kreditbeleg, NICHT storniert, offener Betrag nach
+    Abzug von Gutschriften und Zahlungen > 0) und überfällig,
   - Stufe `k` existiert und aktiv ist,
   - die Frist der Stufe erreicht ist: Überfälligkeitstage >= days_after_due(k).
+
+Der Mahnlauf definiert „offen" NICHT selbst: Er mahnte sonst stornierte Rechnungen
+— Geld, das der Kunde nicht mehr schuldet.
 Die lückenlose Eskalation (max+1) erzwingt zusätzlich der DB-Trigger; `run`
 prüft die Stufe vor dem Ausstellen erneut, damit ein zwischenzeitlich anderweitig
 gemahnter Beleg nicht doppelt eskaliert (stale → übersprungen statt 500).
@@ -19,61 +24,18 @@ Der eigentliche Schreibvorgang läuft über `buchhaltung.issue_dunning_notice`
 (business_transaction/Audit); der Versand über `beleg_versand.send_dunning_email`.
 """
 from datetime import date
-from decimal import Decimal
 
-from django.db.models import (
-    Case,
-    DecimalField,
-    F,
-    Max,
-    OuterRef,
-    Subquery,
-    Sum,
-    Value,
-    When,
-)
+from django.db.models import F
 from django.db import IntegrityError
-from django.db.models.functions import Coalesce
 
 from db_core.mail_crypto import MailKeyError
-from db_core.models import DunningLevel, DunningNotice, Invoice, Payment
+from db_core.models import DunningLevel
 from db_core.services import beleg_versand, buchhaltung
-from db_core.services.buchhaltung import PAYMENT_SIGN
 from db_core.services.mail import MailSendError
 
-_ZERO = Decimal("0.00")
-_POS = tuple(t for t, s in PAYMENT_SIGN.items() if s > 0)
-_NEG = tuple(t for t, s in PAYMENT_SIGN.items() if s < 0)
-
-
-def _paid_subquery():
-    """Vorzeichenbehaftete Zahlungssumme je Rechnung (eigene Aggregation, kein
-    Join-Kreuzprodukt) — spiegelt api.buchhaltung._paid_subquery."""
-    return Subquery(
-        Payment.objects.filter(invoice_id=OuterRef("pk"))
-        .values("invoice_id")
-        .annotate(
-            s=Sum(
-                Case(
-                    When(payment_type__in=_POS, then=F("amount")),
-                    When(payment_type__in=_NEG, then=-F("amount")),
-                    default=Value(0),
-                    output_field=DecimalField(max_digits=15, decimal_places=2),
-                )
-            )
-        )
-        .values("s"),
-        output_field=DecimalField(max_digits=15, decimal_places=2),
-    )
-
-
-def _level_subquery():
-    return Subquery(
-        DunningNotice.objects.filter(invoice_id=OuterRef("pk"))
-        .values("invoice_id")
-        .annotate(m=Max("level"))
-        .values("m")
-    )
+# Zahlungsstand UND Forderungsgrenze: EINE Rechenstelle
+# (db_core.services.buchhaltung). Diese Datei führte beides früher als eigene
+# Kopie — und mahnte deshalb stornierte Rechnungen.
 
 
 def list_candidates(*, stichtag=None):
@@ -86,23 +48,19 @@ def list_candidates(*, stichtag=None):
     """
     stichtag = stichtag or date.today()
     levels = {lv.level: lv for lv in DunningLevel.objects.all()}
+    # Grundmenge = offene, überfällige FORDERUNGEN (die eine Grenze). Damit sind
+    # stornierte Rechnungen, Kreditbelege und durch Gutschriften aufgezehrte
+    # Beträge hier gar nicht erst im Rennen.
     qs = (
-        Invoice.objects.filter(status="VEROEFFENTLICHT")
-        .annotate(
-            paid_total=Coalesce(
-                _paid_subquery(),
-                Value(_ZERO, output_field=DecimalField(max_digits=15, decimal_places=2)),
-            ),
-            current_level=_level_subquery(),
-        )
-        .filter(due_date__lt=stichtag, gross_total__gt=F("paid_total"))
+        buchhaltung.offene_forderungen(stichtag=stichtag)
         .prefetch_related("parties__party")
         .order_by(F("due_date").asc(nulls_last=True), "id")
     )
 
     candidates = []
     for inv in qs:
-        cur = inv.current_level or 0
+        spiegel = buchhaltung.zahlungsspiegel(inv, heute=stichtag)
+        cur = spiegel["dunning_level"] or 0
         nxt = cur + 1
         lvl = levels.get(nxt)
         if lvl is None or not lvl.active:
@@ -117,7 +75,7 @@ def list_candidates(*, stichtag=None):
                 "invoice_number": inv.invoice_number,
                 "debtor": party.display_name if party else None,
                 "due_date": inv.due_date,
-                "open_amount": (inv.gross_total or _ZERO) - (inv.paid_total or _ZERO),
+                "open_amount": spiegel["open_amount"],
                 "current_level": cur,
                 "next_level": nxt,
                 "next_level_label": lvl.label,

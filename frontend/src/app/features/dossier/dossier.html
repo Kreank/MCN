@@ -1,0 +1,1278 @@
+<!--
+  Entitäts-Dossier — eine Ansicht für vier Entitätsarten.
+
+  Kernregeln, die dieses Template durchsetzt:
+  * Ein Baustein OHNE Recht erscheint als „Nicht sichtbar — dafür fehlt das
+    Recht (<modul>/LESEN)". Er wird nie ausgeblendet und nie als leer/0 gezeigt.
+  * Ein fehlender Wert heißt „unbekannt" (euro()/stunden()/tage() liefern das
+    Wort) — nie 0,00 €, nie 0 h, nie 0 %.
+  * Jeder Status steht als TEXT da (Stempel = Text + Farbe, nie Farbe allein).
+-->
+
+<!-- Wiederverwendete Bausteine ------------------------------------------- -->
+
+<ng-template #gesperrt let-recht="recht" let-was="was">
+  <p class="ds-sperre" role="note">
+    <span class="ds-sperre__mark" aria-hidden="true">⛔</span>
+    <span>
+      <strong>Nicht sichtbar</strong> — dafür fehlt das Recht
+      <code class="ds-sperre__recht">{{ recht }}</code> ({{ was }}).
+      Der Baustein existiert; er wird Ihnen nur nicht ausgeliefert.
+      <strong>Das ist nicht „nichts vorhanden"</strong> und schon gar nicht „0".
+    </span>
+  </p>
+</ng-template>
+
+<ng-template #leer let-text="text">
+  <div class="tab-platzhalter"><p>{{ text }}</p></div>
+</ng-template>
+
+<!-- Offene Posten (Kontakt / Liegenschaft / Projekt / Auftrag) -->
+<ng-template #postenBlock let-op="op">
+  @if (op.posten.length === 0) {
+    <ng-container [ngTemplateOutlet]="leer" [ngTemplateOutletContext]="{ text: 'Keine offenen Posten.' }" />
+  } @else {
+    <dl class="ds-kpi">
+      <div class="ds-kpi__zelle">
+        <dt>Offen</dt>
+        <dd>{{ euro(op.summe_offen) }} <span class="ds-kpi__zusatz">({{ anzahlRechnungen(op.anzahl) }})</span></dd>
+      </div>
+      <div class="ds-kpi__zelle" [class.ds-kpi__zelle--warn]="op.anzahl_ueberfaellig > 0">
+        <dt>Davon überfällig</dt>
+        <dd>
+          {{ euro(op.summe_ueberfaellig) }}
+          <span class="ds-kpi__zusatz">({{ anzahlRechnungen(op.anzahl_ueberfaellig) }})</span>
+        </dd>
+      </div>
+    </dl>
+    <ul class="ds-liste">
+      @for (p of op.posten; track p.invoice_id) {
+        <li class="ds-zeile">
+          <div class="ds-zeile__haupt">
+            @if (darfBelege()) {
+              <a class="ds-zeile__titel" [routerLink]="['/rechnungen', p.invoice_id]">
+                {{ p.invoice_number ?? 'ohne Nummer' }}
+              </a>
+            } @else {
+              <span class="ds-zeile__titel">{{ p.invoice_number ?? 'ohne Nummer' }}</span>
+            }
+            <span class="stamp stamp--type">{{ belegArt(p.invoice_type) }}</span>
+            <span class="stamp {{ zahlStatusClass(p.payment_status) }}">{{ zahlStatus(p.payment_status) }}</span>
+            @if (p.is_overdue) {
+              <span class="stamp stamp--warn">Überfällig seit {{ tage(p.days_overdue) }}</span>
+            }
+            @if (p.dunning_level) {
+              <span class="stamp stamp--warn">Mahnstufe {{ p.dunning_level }}</span>
+            }
+          </div>
+          <p class="ds-zeile__meta">
+            Belegdatum {{ datum(p.invoice_date) }} · fällig {{ datum(p.due_date) }} ·
+            Brutto {{ euro(p.gross_total) }} · bezahlt {{ euro(p.paid_total) }} ·
+            <strong>offen {{ euro(p.open_amount) }}</strong>
+          </p>
+        </li>
+      }
+    </ul>
+  }
+</ng-template>
+
+<!-- Dokumente -->
+<ng-template #dokumenteBlock let-liste="liste">
+  @if (liste.length === 0) {
+    <ng-container [ngTemplateOutlet]="leer" [ngTemplateOutletContext]="{ text: 'Keine Dokumente hinterlegt.' }" />
+  } @else {
+    <ul class="ds-liste">
+      @for (d of liste; track d.link_id) {
+        <li class="ds-zeile">
+          <div class="ds-zeile__haupt">
+            <span class="ds-zeile__titel">{{ d.original_filename }}</span>
+            @if (d.link_category) {
+              <span class="stamp stamp--type">{{ d.link_category }}</span>
+            }
+          </div>
+          <p class="ds-zeile__meta">
+            {{ d.mime_type }} · {{ bytes(d.size_bytes) }} · hochgeladen {{ zeitpunkt(d.uploaded_at) }}
+            @if (d.uploaded_by) { von {{ d.uploaded_by }} }
+          </p>
+        </li>
+      }
+    </ul>
+  }
+</ng-template>
+
+<!-- Vorgänge -->
+<ng-template #vorgangsListe let-liste="liste">
+  @if (liste.length === 0) {
+    <ng-container [ngTemplateOutlet]="leer" [ngTemplateOutletContext]="{ text: 'Keine Vorgänge.' }" />
+  } @else {
+    <ul class="ds-liste">
+      @for (v of liste; track v.id) {
+        <li class="ds-zeile">
+          <div class="ds-zeile__haupt">
+            <a class="ds-zeile__titel" [routerLink]="['/vorgaenge', v.id]">
+              <span class="ds-kennung">{{ v.case_number }}</span> {{ v.subject }}
+            </a>
+            <span class="stamp">{{ vorgangStatus(v.status) }}</span>
+            <span class="stamp stamp--type">{{ prioritaet(v.priority) }}</span>
+            @if (v.is_offen) { <span class="stamp stamp--warn">Offen</span> }
+          </div>
+          <p class="ds-zeile__meta">Eingegangen {{ zeitpunkt(v.received_at) }}</p>
+        </li>
+      }
+    </ul>
+  }
+</ng-template>
+
+<!-- Aufträge -->
+<ng-template #auftragsListe let-liste="liste">
+  @if (liste.length === 0) {
+    <ng-container [ngTemplateOutlet]="leer" [ngTemplateOutletContext]="{ text: 'Keine Aufträge.' }" />
+  } @else {
+    <ul class="ds-liste">
+      @for (a of liste; track a.id) {
+        <li class="ds-zeile">
+          <div class="ds-zeile__haupt">
+            <a class="ds-zeile__titel" [routerLink]="['/auftraege', a.id]">
+              <span class="ds-kennung">{{ a.order_number }}</span> {{ a.title }}
+            </a>
+            <span class="stamp {{ auftragStatusClass(a.status) }}">{{ auftragStatus(a.status) }}</span>
+            <span class="stamp stamp--type">{{ abrechnungsart(a.billing_mode) }}</span>
+            @if (a.is_offen) { <span class="stamp stamp--warn">Offen</span> }
+          </div>
+          <p class="ds-zeile__meta">
+            Priorität {{ prioritaet(a.priority) }} · Wunschtermin {{ datum(a.desired_date) }} ·
+            <a class="ds-mini" [routerLink]="['/dossier/auftrag', a.id]">Dossier</a>
+          </p>
+        </li>
+      }
+    </ul>
+  }
+</ng-template>
+
+<!-- Aufgaben -->
+<ng-template #aufgabenListe let-liste="liste">
+  @if (liste.length === 0) {
+    <ng-container [ngTemplateOutlet]="leer" [ngTemplateOutletContext]="{ text: 'Keine Aufgaben.' }" />
+  } @else {
+    <ul class="ds-liste">
+      @for (t of liste; track t.id) {
+        <li class="ds-zeile">
+          <div class="ds-zeile__haupt">
+            <span class="ds-zeile__titel">{{ t.title }}</span>
+            <span class="stamp">{{ aufgabeStatus(t.status) }}</span>
+          </div>
+          <p class="ds-zeile__meta">
+            Fällig {{ datum(t.due_date) }} · zugewiesen an {{ text(t.assigned_to) }}
+          </p>
+        </li>
+      }
+    </ul>
+  }
+</ng-template>
+
+<!-- Einsätze -->
+<ng-template #einsatzListe let-liste="liste">
+  @if (liste.length === 0) {
+    <ng-container [ngTemplateOutlet]="leer" [ngTemplateOutletContext]="{ text: 'Keine Einsätze/Termine.' }" />
+  } @else {
+    <ul class="ds-liste">
+      @for (e of liste; track e.id) {
+        <li class="ds-zeile">
+          <div class="ds-zeile__haupt">
+            <a class="ds-zeile__titel" [routerLink]="['/planung', e.id]">
+              <span class="ds-kennung">{{ e.job_number }}</span> {{ text(e.title) }}
+            </a>
+            <span class="stamp {{ einsatzStatusClass(e.status) }}">{{ einsatzStatus(e.status) }}</span>
+            @if (!e.work_order_id) { <span class="stamp stamp--type">Freier Termin</span> }
+          </div>
+          <p class="ds-zeile__meta">
+            {{ zeitpunkt(e.scheduled_start) }} – {{ zeitpunkt(e.scheduled_end) }} ·
+            @if (e.zugewiesen.length) { Zugewiesen: {{ e.zugewiesen.join(', ') }} } @else { niemand zugewiesen }
+          </p>
+        </li>
+      }
+    </ul>
+  }
+</ng-template>
+
+<!-- Angebote + Rechnungen (gemeinsamer Beleg-Baustein) -->
+<ng-template #belegBlock let-angebote="angebote" let-rechnungen="rechnungen">
+  <h3 class="ds-unter">Angebote</h3>
+  @if (angebote.length === 0) {
+    <ng-container [ngTemplateOutlet]="leer" [ngTemplateOutletContext]="{ text: 'Keine Angebote.' }" />
+  } @else {
+    <ul class="ds-liste">
+      @for (q of angebote; track q.id) {
+        <li class="ds-zeile">
+          <div class="ds-zeile__haupt">
+            <a class="ds-zeile__titel" [routerLink]="['/dokumente', q.id]">
+              <span class="ds-kennung">{{ q.quote_number ?? 'Entwurf' }}</span> {{ q.title }}
+            </a>
+            <span class="stamp">{{ belegStatus(q.status) }}</span>
+          </div>
+          <p class="ds-zeile__meta">
+            {{ datum(q.quote_date) }} · Netto {{ euro(q.net_total) }} · Brutto {{ euro(q.gross_total) }}
+          </p>
+        </li>
+      }
+    </ul>
+  }
+
+  <h3 class="ds-unter">Rechnungen</h3>
+  @if (rechnungen.length === 0) {
+    <ng-container [ngTemplateOutlet]="leer" [ngTemplateOutletContext]="{ text: 'Keine Rechnungen.' }" />
+  } @else {
+    <ul class="ds-liste">
+      @for (r of rechnungen; track r.id) {
+        <li class="ds-zeile">
+          <div class="ds-zeile__haupt">
+            <a class="ds-zeile__titel" [routerLink]="['/rechnungen', r.id]">
+              <span class="ds-kennung">{{ r.invoice_number ?? 'Entwurf' }}</span>
+              {{ belegArt(r.invoice_type) }}
+            </a>
+            <span class="stamp">{{ belegStatus(r.status) }}</span>
+          </div>
+          <p class="ds-zeile__meta">
+            {{ datum(r.invoice_date) }} · Netto {{ euro(r.net_total) }} · Brutto {{ euro(r.gross_total) }}
+          </p>
+        </li>
+      }
+    </ul>
+  }
+</ng-template>
+
+<!-- Seite ----------------------------------------------------------------- -->
+
+@switch (state().kind) {
+  @case ('loading') {
+    <p class="lade-hinweis" role="status">Dossier wird zusammengetragen …</p>
+  }
+
+  @case ('forbidden') {
+    <app-kein-zugriff [detail]="verboten()" />
+  }
+
+  @case ('error') {
+    <div class="note note--error" role="alert">
+      <h2 class="note__titel">Dossier nicht verfügbar</h2>
+      <p class="note__text">{{ fehlerText() }}</p>
+      <div class="note__aktionen">
+        <button type="button" class="btn btn--primary" (click)="laden()">Erneut versuchen</button>
+        <a class="btn" routerLink="/uebersicht">Zur Übersicht</a>
+      </div>
+    </div>
+  }
+
+  @case ('ready') {
+    <article class="ds">
+      <header class="ds__kopf">
+        <a class="ds__back" [routerLink]="backLink()">
+          <span aria-hidden="true">←</span> {{ backLabel() }}
+        </a>
+        <p class="ds__kicker">
+          <span class="ds__scale" aria-hidden="true"></span>
+          {{ kicker() }}
+        </p>
+        <div class="ds__titelzeile">
+          <h1 class="ds__titel">{{ titel() }}</h1>
+          <div class="ds__stempel">
+            @if (kontakt(); as k) {
+              <span class="stamp stamp--type">{{ k.kontakt.party_type === 'PERSON' ? 'Person' : 'Organisation' }}</span>
+              <span class="stamp {{ stammStatusClass(k.kontakt.status) }}">{{ stammStatus(k.kontakt.status) }}</span>
+            }
+            @if (liegenschaft(); as l) {
+              <span class="stamp stamp--type">{{ liegenschaftTyp(l.liegenschaft.property_type) }}</span>
+              <span class="stamp {{ stammStatusClass(l.liegenschaft.status) }}">{{ stammStatus(l.liegenschaft.status) }}</span>
+            }
+            @if (projekt(); as p) {
+              <span class="stamp">{{ projektStatus(p.projekt.status) }}</span>
+            }
+            @if (auftrag(); as a) {
+              @if (a.auftrag.is_emergency) { <span class="stamp stamp--warn">Notfall</span> }
+              <span class="stamp stamp--type">{{ abrechnungsart(a.auftrag.billing_mode) }}</span>
+              <span class="stamp {{ auftragStatusClass(a.auftrag.status) }}">{{ auftragStatus(a.auftrag.status) }}</span>
+            }
+          </div>
+        </div>
+        <p class="ds__lead">
+          Alles, was das System zu diesem Objekt weiß — in <strong>einem</strong> Aufruf
+          zusammengetragen. Bausteine, für die Ihnen das Recht fehlt, sind ausdrücklich
+          als solche gekennzeichnet: Sie erscheinen nie als leer und nie als 0.
+        </p>
+      </header>
+
+      <nav class="ds__index" aria-label="Abschnitte des Dossiers">
+        <ul class="ds__index-liste">
+          @for (a of abschnitte(); track a.id) {
+            <li>
+              <a class="ds__index-link" href="#ds-{{ a.id }}" (click)="springe($event, a.id)">
+                {{ a.label }}
+              </a>
+            </li>
+          }
+        </ul>
+      </nav>
+
+      <div class="ds__inhalt">
+        <!-- ============================ KONTAKT ============================ -->
+        @if (kontakt(); as k) {
+          <section class="ds-abschnitt" id="ds-stamm" tabindex="-1" aria-labelledby="ds-stamm-t">
+            <h2 class="ds-abschnitt__titel" id="ds-stamm-t">Stammdaten</h2>
+            <dl class="feld-raster">
+              <div class="feld"><dt class="feld__label">Anzeigename</dt><dd class="feld__wert">{{ k.kontakt.display_name }}</dd></div>
+              <div class="feld"><dt class="feld__label">Art</dt><dd class="feld__wert">{{ k.kontakt.party_type === 'PERSON' ? 'Person' : 'Organisation' }}</dd></div>
+              @if (k.kontakt.party_type === 'PERSON') {
+                <div class="feld"><dt class="feld__label">Anrede</dt><dd class="feld__wert">{{ text(k.kontakt.salutation) }}</dd></div>
+                <div class="feld"><dt class="feld__label">Vorname</dt><dd class="feld__wert">{{ text(k.kontakt.first_name) }}</dd></div>
+                <div class="feld"><dt class="feld__label">Nachname</dt><dd class="feld__wert">{{ text(k.kontakt.last_name) }}</dd></div>
+              } @else {
+                <div class="feld"><dt class="feld__label">Firmenname</dt><dd class="feld__wert">{{ text(k.kontakt.legal_name) }}</dd></div>
+                <div class="feld"><dt class="feld__label">Rechtsform</dt><dd class="feld__wert">{{ text(k.kontakt.organization_type) }}</dd></div>
+                <div class="feld"><dt class="feld__label">USt-IdNr.</dt><dd class="feld__wert">{{ text(k.kontakt.vat_id) }}</dd></div>
+              }
+              <div class="feld"><dt class="feld__label">Status</dt><dd class="feld__wert">{{ stammStatus(k.kontakt.status) }}</dd></div>
+              <div class="feld"><dt class="feld__label">Akquisekanal</dt><dd class="feld__wert">{{ text(k.kontakt.acquisition_source) }}</dd></div>
+            </dl>
+          </section>
+
+          <section class="ds-abschnitt" id="ds-adressen" tabindex="-1" aria-labelledby="ds-adressen-t">
+            <h2 class="ds-abschnitt__titel" id="ds-adressen-t">Adressen &amp; Kontaktwege</h2>
+            <h3 class="ds-unter">Adressen</h3>
+            @if (k.adressen.length === 0) {
+              <ng-container [ngTemplateOutlet]="leer" [ngTemplateOutletContext]="{ text: 'Keine Adresse hinterlegt.' }" />
+            } @else {
+              <ul class="ds-liste">
+                @for (a of k.adressen; track a.address_type + a.street + a.postal_code) {
+                  <li class="ds-zeile">
+                    <div class="ds-zeile__haupt">
+                      <span class="ds-zeile__titel">{{ a.street }} {{ a.house_number }}</span>
+                      <span class="stamp stamp--type">{{ adressart(a.address_type) }}</span>
+                      @if (a.is_primary) { <span class="stamp stamp--positive">Primär</span> }
+                    </div>
+                    <p class="ds-zeile__meta">{{ a.postal_code }} {{ a.city }} · {{ a.country_code }}</p>
+                  </li>
+                }
+              </ul>
+            }
+            <h3 class="ds-unter">Kontaktwege</h3>
+            @if (k.kontaktwege.length === 0) {
+              <ng-container [ngTemplateOutlet]="leer" [ngTemplateOutletContext]="{ text: 'Kein Kontaktweg hinterlegt.' }" />
+            } @else {
+              <ul class="ds-liste">
+                @for (c of k.kontaktwege; track c.contact_type + c.value) {
+                  <li class="ds-zeile">
+                    <div class="ds-zeile__haupt">
+                      <span class="ds-zeile__titel">{{ c.value }}</span>
+                      <span class="stamp stamp--type">{{ kontaktart(c.contact_type) }}</span>
+                      @if (c.is_primary) { <span class="stamp stamp--positive">Primär</span> }
+                    </div>
+                    @if (c.label) { <p class="ds-zeile__meta">{{ c.label }}</p> }
+                  </li>
+                }
+              </ul>
+            }
+          </section>
+
+          <section class="ds-abschnitt" id="ds-ansprech" tabindex="-1" aria-labelledby="ds-ansprech-t">
+            <h2 class="ds-abschnitt__titel" id="ds-ansprech-t">Ansprechpartner</h2>
+            @if (k.ansprechpartner.length === 0) {
+              <ng-container [ngTemplateOutlet]="leer" [ngTemplateOutletContext]="{ text: 'Keine Ansprechpartner zugeordnet.' }" />
+            } @else {
+              <ul class="ds-liste">
+                @for (p of k.ansprechpartner; track p.person_party_id) {
+                  <li class="ds-zeile">
+                    <div class="ds-zeile__haupt">
+                      @if (darfIdentity()) {
+                        <a class="ds-zeile__titel" [routerLink]="['/kontakte', p.person_party_id]">{{ p.display_name }}</a>
+                      } @else {
+                        <span class="ds-zeile__titel">{{ p.display_name }}</span>
+                      }
+                    </div>
+                    <p class="ds-zeile__meta">Seit {{ datum(p.valid_from) }}</p>
+                  </li>
+                }
+              </ul>
+            }
+          </section>
+
+          <section class="ds-abschnitt" id="ds-liegenschaften" tabindex="-1" aria-labelledby="ds-lg-t">
+            <h2 class="ds-abschnitt__titel" id="ds-lg-t">Liegenschaften</h2>
+            @if (!k.liegenschaften_sichtbar) {
+              <ng-container [ngTemplateOutlet]="gesperrt" [ngTemplateOutletContext]="{ recht: 'property/LESEN', was: 'Liegenschaften' }" />
+            } @else if (k.liegenschaften!.length === 0) {
+              <ng-container [ngTemplateOutlet]="leer" [ngTemplateOutletContext]="{ text: 'Dieser Kontakt hat keine Rolle an einer Liegenschaft.' }" />
+            } @else {
+              <ul class="ds-liste">
+                @for (l of k.liegenschaften!; track l.property_id + l.role + l.valid_from) {
+                  <li class="ds-zeile">
+                    <div class="ds-zeile__haupt">
+                      <a class="ds-zeile__titel" [routerLink]="['/liegenschaften', l.property_id]">
+                        <span class="ds-kennung">{{ l.property_number }}</span> {{ l.name }}
+                      </a>
+                      <span class="stamp stamp--type">{{ rolle(l.role) }}</span>
+                      @if (l.is_current) {
+                        <span class="stamp stamp--positive">Aktuell</span>
+                      } @else {
+                        <span class="stamp">Beendet</span>
+                      }
+                    </div>
+                    <p class="ds-zeile__meta">
+                      {{ l.city }} · von {{ datum(l.valid_from) }} bis
+                      {{ l.valid_until ? datum(l.valid_until) : 'unbefristet' }} ·
+                      <a class="ds-mini" [routerLink]="['/dossier/liegenschaft', l.property_id]">Dossier</a>
+                    </p>
+                  </li>
+                }
+              </ul>
+            }
+          </section>
+
+          <section class="ds-abschnitt" id="ds-workflow" tabindex="-1" aria-labelledby="ds-wf-t">
+            <h2 class="ds-abschnitt__titel" id="ds-wf-t">Vorgänge &amp; Aufträge</h2>
+            @if (!k.vorgaenge_sichtbar) {
+              <ng-container [ngTemplateOutlet]="gesperrt" [ngTemplateOutletContext]="{ recht: 'workflow/LESEN', was: 'Vorgänge und Aufträge' }" />
+            } @else {
+              <h3 class="ds-unter">Vorgänge</h3>
+              <ng-container [ngTemplateOutlet]="vorgangsListe" [ngTemplateOutletContext]="{ liste: k.vorgaenge! }" />
+              <h3 class="ds-unter">Aufträge</h3>
+              <ng-container [ngTemplateOutlet]="auftragsListe" [ngTemplateOutletContext]="{ liste: k.auftraege! }" />
+            }
+          </section>
+
+          <section class="ds-abschnitt" id="ds-aufgaben" tabindex="-1" aria-labelledby="ds-ag-t">
+            <h2 class="ds-abschnitt__titel" id="ds-ag-t">Aufgaben</h2>
+            @if (!k.aufgaben_sichtbar) {
+              <ng-container [ngTemplateOutlet]="gesperrt" [ngTemplateOutletContext]="{ recht: 'workflow/LESEN', was: 'Vorgänge und Aufträge' }" />
+            } @else {
+              <ng-container [ngTemplateOutlet]="aufgabenListe" [ngTemplateOutletContext]="{ liste: k.aufgaben! }" />
+            }
+          </section>
+
+          <section class="ds-abschnitt" id="ds-posten" tabindex="-1" aria-labelledby="ds-op-t">
+            <h2 class="ds-abschnitt__titel" id="ds-op-t">Offene Posten</h2>
+            @if (!k.offene_posten_sichtbar) {
+              <ng-container [ngTemplateOutlet]="gesperrt" [ngTemplateOutletContext]="{ recht: 'invoicing/LESEN', was: 'Belege und Buchhaltung' }" />
+            } @else {
+              <ng-container [ngTemplateOutlet]="postenBlock" [ngTemplateOutletContext]="{ op: k.offene_posten! }" />
+            }
+          </section>
+
+          <section class="ds-abschnitt" id="ds-zahlung" tabindex="-1" aria-labelledby="ds-zv-t">
+            <h2 class="ds-abschnitt__titel" id="ds-zv-t">Zahlungsverhalten</h2>
+            @if (!k.zahlungsverhalten_sichtbar) {
+              <ng-container [ngTemplateOutlet]="gesperrt" [ngTemplateOutletContext]="{ recht: 'invoicing/LESEN', was: 'Belege und Buchhaltung' }" />
+            } @else if (k.zahlungsverhalten!.rechnungen_gesamt === 0) {
+              <ng-container [ngTemplateOutlet]="leer" [ngTemplateOutletContext]="{ text: 'Diesem Kunden wurde noch keine Rechnung gestellt — über sein Zahlungsverhalten ist nichts bekannt.' }" />
+            } @else {
+              <dl class="ds-kpi">
+                <div class="ds-kpi__zelle">
+                  <dt>Rechnungen</dt>
+                  <dd>{{ k.zahlungsverhalten!.rechnungen_gesamt }}
+                    <span class="ds-kpi__zusatz">
+                      {{ k.zahlungsverhalten!.bezahlt_anzahl }} bezahlt ·
+                      {{ k.zahlungsverhalten!.offen_anzahl }} offen ·
+                      {{ k.zahlungsverhalten!.ueberfaellig_anzahl }} überfällig
+                    </span>
+                  </dd>
+                </div>
+                <div class="ds-kpi__zelle">
+                  <dt>Mittlerer Zahlungsverzug</dt>
+                  <dd>
+                    <span [class.ds-unbekannt]="k.zahlungsverhalten!.durchschnittliche_verzoegerung_tage === null">
+                      {{ tage(k.zahlungsverhalten!.durchschnittliche_verzoegerung_tage) }}
+                    </span>
+                    <span class="ds-kpi__zusatz">
+                      @if (k.zahlungsverhalten!.bewertete_rechnungen > 0) {
+                        auf {{ k.zahlungsverhalten!.bewertete_rechnungen }} bezahlten Rechnungen
+                      } @else {
+                        keine bezahlte Rechnung — kein Urteil möglich (nicht „pünktlich")
+                      }
+                    </span>
+                  </dd>
+                </div>
+                <div class="ds-kpi__zelle">
+                  <dt>Größter Verzug</dt>
+                  <dd>
+                    <span [class.ds-unbekannt]="k.zahlungsverhalten!.groesste_verzoegerung_tage === null">
+                      {{ tage(k.zahlungsverhalten!.groesste_verzoegerung_tage) }}
+                    </span>
+                  </dd>
+                </div>
+                <div class="ds-kpi__zelle" [class.ds-kpi__zelle--warn]="k.zahlungsverhalten!.ueberfaellig_anzahl > 0">
+                  <dt>Offen / überfällig</dt>
+                  <dd>{{ euro(k.zahlungsverhalten!.summe_offen) }}
+                    <span class="ds-kpi__zusatz">davon überfällig {{ euro(k.zahlungsverhalten!.summe_ueberfaellig) }}</span>
+                  </dd>
+                </div>
+              </dl>
+            }
+          </section>
+
+          <section class="ds-abschnitt" id="ds-kommunikation" tabindex="-1" aria-labelledby="ds-km-t">
+            <h2 class="ds-abschnitt__titel" id="ds-km-t">Kommunikation</h2>
+            @if (!k.kommunikation_sichtbar) {
+              <ng-container [ngTemplateOutlet]="gesperrt" [ngTemplateOutletContext]="{ recht: 'content/LESEN', was: 'Dokumente und Kommunikation' }" />
+            } @else if (k.kommunikation!.length === 0) {
+              <ng-container [ngTemplateOutlet]="leer" [ngTemplateOutletContext]="{ text: 'Keine Kommunikation erfasst.' }" />
+            } @else {
+              <ul class="ds-liste">
+                @for (c of k.kommunikation!; track c.id) {
+                  <li class="ds-zeile">
+                    <div class="ds-zeile__haupt">
+                      <span class="ds-zeile__titel">{{ text(c.subject) }}</span>
+                      <span class="stamp stamp--type">{{ kanal(c.channel) }}</span>
+                      <span class="stamp">{{ richtung(c.direction) }}</span>
+                    </div>
+                    <p class="ds-zeile__meta">
+                      {{ zeitpunkt(c.occurred_at) }} · Gegenüber: {{ text(c.counterpart) }}
+                    </p>
+                  </li>
+                }
+              </ul>
+            }
+          </section>
+
+          <section class="ds-abschnitt" id="ds-dokumente" tabindex="-1" aria-labelledby="ds-dk-t">
+            <h2 class="ds-abschnitt__titel" id="ds-dk-t">Dokumente</h2>
+            @if (!k.dokumente_sichtbar) {
+              <ng-container [ngTemplateOutlet]="gesperrt" [ngTemplateOutletContext]="{ recht: 'content/LESEN', was: 'Dokumente und Kommunikation' }" />
+            } @else {
+              <ng-container [ngTemplateOutlet]="dokumenteBlock" [ngTemplateOutletContext]="{ liste: k.dokumente! }" />
+            }
+          </section>
+        }
+
+        <!-- ========================== LIEGENSCHAFT ========================= -->
+        @if (liegenschaft(); as l) {
+          <section class="ds-abschnitt" id="ds-stamm" tabindex="-1" aria-labelledby="ds-stamm-t">
+            <h2 class="ds-abschnitt__titel" id="ds-stamm-t">Stammdaten</h2>
+            <dl class="feld-raster">
+              <div class="feld"><dt class="feld__label">Nummer</dt><dd class="feld__wert">{{ l.liegenschaft.property_number }}</dd></div>
+              <div class="feld"><dt class="feld__label">Name</dt><dd class="feld__wert">{{ l.liegenschaft.name }}</dd></div>
+              <div class="feld"><dt class="feld__label">Art</dt><dd class="feld__wert">{{ liegenschaftTyp(l.liegenschaft.property_type) }}</dd></div>
+              <div class="feld"><dt class="feld__label">Status</dt><dd class="feld__wert">{{ stammStatus(l.liegenschaft.status) }}</dd></div>
+              <div class="feld"><dt class="feld__label">Anschrift</dt><dd class="feld__wert">{{ l.liegenschaft.street }} {{ l.liegenschaft.house_number }}</dd></div>
+              <div class="feld"><dt class="feld__label">Ort</dt><dd class="feld__wert">{{ l.liegenschaft.postal_code }} {{ l.liegenschaft.city }}</dd></div>
+            </dl>
+          </section>
+
+          <section class="ds-abschnitt" id="ds-struktur" tabindex="-1" aria-labelledby="ds-st-t">
+            <h2 class="ds-abschnitt__titel" id="ds-st-t">Gebäude &amp; Einheiten</h2>
+            @if (l.gebaeude.length === 0) {
+              <ng-container [ngTemplateOutlet]="leer" [ngTemplateOutletContext]="{ text: 'Keine Gebäude erfasst.' }" />
+            } @else {
+              <ul class="ds-liste">
+                @for (g of l.gebaeude; track g.building_id) {
+                  <li class="ds-zeile">
+                    <div class="ds-zeile__haupt">
+                      <span class="ds-zeile__titel">
+                        <span class="ds-kennung">{{ g.building_number }}</span> {{ text(g.name) }}
+                      </span>
+                      <span class="stamp stamp--type">{{ g.units.length }} Einheiten</span>
+                    </div>
+                    @if (g.units.length) {
+                      <p class="ds-zeile__meta">
+                        @for (u of g.units; track u.unit_id) {
+                          <span class="ds-chip">{{ u.unit_number }} · {{ einheitTyp(u.unit_type) }}</span>
+                        }
+                      </p>
+                    }
+                  </li>
+                }
+              </ul>
+            }
+          </section>
+
+          <section class="ds-abschnitt" id="ds-anlagen" tabindex="-1" aria-labelledby="ds-an-t">
+            <h2 class="ds-abschnitt__titel" id="ds-an-t">Anlagen</h2>
+            @if (l.anlagen.length === 0) {
+              <ng-container [ngTemplateOutlet]="leer" [ngTemplateOutletContext]="{ text: 'Keine technischen Anlagen erfasst.' }" />
+            } @else {
+              <ul class="ds-liste">
+                @for (a of l.anlagen; track a.id) {
+                  <li class="ds-zeile">
+                    <div class="ds-zeile__haupt">
+                      <span class="ds-zeile__titel">{{ a.name }}</span>
+                      @if (a.asset_type) { <span class="stamp stamp--type">{{ a.asset_type }}</span> }
+                    </div>
+                  </li>
+                }
+              </ul>
+            }
+          </section>
+
+          <section class="ds-abschnitt" id="ds-beteiligte" tabindex="-1" aria-labelledby="ds-bt-t">
+            <h2 class="ds-abschnitt__titel" id="ds-bt-t">Beteiligte</h2>
+            @if (l.beteiligte.length === 0) {
+              <ng-container [ngTemplateOutlet]="leer" [ngTemplateOutletContext]="{ text: 'Keine Beteiligten erfasst.' }" />
+            } @else {
+              <ul class="ds-liste">
+                @for (b of l.beteiligte; track b.party_id + b.role + b.valid_from) {
+                  <li class="ds-zeile">
+                    <div class="ds-zeile__haupt">
+                      @if (darfIdentity()) {
+                        <a class="ds-zeile__titel" [routerLink]="['/kontakte', b.party_id]">{{ b.display_name }}</a>
+                      } @else {
+                        <span class="ds-zeile__titel">{{ b.display_name }}</span>
+                      }
+                      <span class="stamp stamp--type">{{ rolle(b.role) }}</span>
+                      @if (b.is_current) {
+                        <span class="stamp stamp--positive">Aktuell</span>
+                      } @else {
+                        <span class="stamp">Beendet</span>
+                      }
+                    </div>
+                    <p class="ds-zeile__meta">
+                      von {{ datum(b.valid_from) }} bis {{ b.valid_until ? datum(b.valid_until) : 'unbefristet' }}
+                      @if (darfIdentity()) {
+                        · <a class="ds-mini" [routerLink]="['/dossier/kontakt', b.party_id]">Dossier</a>
+                      }
+                    </p>
+                  </li>
+                }
+              </ul>
+            }
+          </section>
+
+          <section class="ds-abschnitt" id="ds-workflow" tabindex="-1" aria-labelledby="ds-wf-t">
+            <h2 class="ds-abschnitt__titel" id="ds-wf-t">Vorgänge, Aufträge &amp; Einsätze</h2>
+            @if (!l.vorgaenge_sichtbar) {
+              <ng-container [ngTemplateOutlet]="gesperrt" [ngTemplateOutletContext]="{ recht: 'workflow/LESEN', was: 'Vorgänge und Aufträge' }" />
+            } @else {
+              <h3 class="ds-unter">Vorgänge</h3>
+              <ng-container [ngTemplateOutlet]="vorgangsListe" [ngTemplateOutletContext]="{ liste: l.vorgaenge! }" />
+              <h3 class="ds-unter">Aufträge</h3>
+              <ng-container [ngTemplateOutlet]="auftragsListe" [ngTemplateOutletContext]="{ liste: l.auftraege! }" />
+              <h3 class="ds-unter">Einsätze</h3>
+              <ng-container [ngTemplateOutlet]="einsatzListe" [ngTemplateOutletContext]="{ liste: l.einsaetze! }" />
+            }
+          </section>
+
+          <section class="ds-abschnitt" id="ds-zutritt" tabindex="-1" aria-labelledby="ds-zt-t">
+            <h2 class="ds-abschnitt__titel" id="ds-zt-t">Zutrittshinweise</h2>
+            <p class="ds-abschnitt__hinweis">
+              Es gibt kein Zutrittsfeld an der Liegenschaft. Jeder Hinweis stammt von einem
+              <strong>Einsatz</strong> und wird deshalb mit seiner Herkunft und seinem Termin
+              gezeigt — Sie sehen, woher die Angabe kommt und wie alt sie ist.
+            </p>
+            @if (!l.vorgaenge_sichtbar) {
+              <ng-container [ngTemplateOutlet]="gesperrt" [ngTemplateOutletContext]="{ recht: 'workflow/LESEN', was: 'Vorgänge und Aufträge' }" />
+            } @else if (l.zutrittshinweise!.length === 0) {
+              <ng-container [ngTemplateOutlet]="leer" [ngTemplateOutletContext]="{ text: 'Kein Einsatz an dieser Liegenschaft trägt einen Zutrittshinweis.' }" />
+            } @else {
+              <ul class="ds-liste">
+                @for (z of l.zutrittshinweise!; track z.service_job_id) {
+                  <li class="ds-zeile">
+                    <div class="ds-zeile__haupt">
+                      <span class="ds-zeile__titel">{{ z.hinweis }}</span>
+                    </div>
+                    <p class="ds-zeile__meta">
+                      Quelle:
+                      <a class="ds-mini" [routerLink]="['/planung', z.service_job_id]">Einsatz {{ z.job_number }}</a>
+                      vom {{ zeitpunkt(z.scheduled_start) }}
+                      @if (z.work_order_number) { · Auftrag {{ z.work_order_number }} }
+                    </p>
+                  </li>
+                }
+              </ul>
+            }
+          </section>
+
+          <section class="ds-abschnitt" id="ds-wartung" tabindex="-1" aria-labelledby="ds-wt-t">
+            <h2 class="ds-abschnitt__titel" id="ds-wt-t">Wartung &amp; Fristen</h2>
+            @if (!l.wartung_sichtbar) {
+              <ng-container [ngTemplateOutlet]="gesperrt" [ngTemplateOutletContext]="{ recht: 'maintenance/LESEN', was: 'Wartung' }" />
+            } @else {
+              <h3 class="ds-unter">Offene Fälligkeiten (Wartung · Prüffristen · Gewährleistung)</h3>
+              @if (l.faelligkeiten!.length === 0) {
+                <ng-container [ngTemplateOutlet]="leer" [ngTemplateOutletContext]="{ text: 'Keine offenen Fälligkeiten.' }" />
+              } @else {
+                <ul class="ds-liste">
+                  @for (f of l.faelligkeiten!; track f.id) {
+                    <li class="ds-zeile">
+                      <div class="ds-zeile__haupt">
+                        <span class="ds-zeile__titel">{{ f.title }}</span>
+                        <span class="stamp stamp--type">{{ fristArt(f.kind) }}</span>
+                        <span class="stamp">{{ fristStatus(f.status) }}</span>
+                        @if (f.is_ueberfaellig) { <span class="stamp stamp--warn">Überfällig</span> }
+                      </div>
+                      <p class="ds-zeile__meta">Fällig am {{ datum(f.due_date) }}</p>
+                    </li>
+                  }
+                </ul>
+              }
+              <h3 class="ds-unter">Wartungsverträge</h3>
+              @if (l.wartungsvertraege!.length === 0) {
+                <ng-container [ngTemplateOutlet]="leer" [ngTemplateOutletContext]="{ text: 'Kein Wartungsvertrag an dieser Liegenschaft.' }" />
+              } @else {
+                <ul class="ds-liste">
+                  @for (w of l.wartungsvertraege!; track w.id) {
+                    <li class="ds-zeile">
+                      <div class="ds-zeile__haupt">
+                        <a class="ds-zeile__titel" [routerLink]="['/wartung', w.id]">
+                          <span class="ds-kennung">{{ w.contract_number }}</span> {{ w.name }}
+                        </a>
+                        <span class="stamp {{ vertragStatusClass(w.status) }}">{{ vertragStatus(w.status) }}</span>
+                      </div>
+                      <p class="ds-zeile__meta">
+                        {{ intervall(w.interval_kind) }} · nächste Fälligkeit {{ datum(w.next_due_date) }} ·
+                        Folgeaktion: {{ folgeaktion(w.due_action) }}
+                      </p>
+                    </li>
+                  }
+                </ul>
+              }
+            }
+          </section>
+
+          <section class="ds-abschnitt" id="ds-posten" tabindex="-1" aria-labelledby="ds-op-t">
+            <h2 class="ds-abschnitt__titel" id="ds-op-t">Offene Posten</h2>
+            @if (!l.offene_posten_sichtbar) {
+              <ng-container [ngTemplateOutlet]="gesperrt" [ngTemplateOutletContext]="{ recht: 'invoicing/LESEN', was: 'Belege und Buchhaltung' }" />
+            } @else {
+              <ng-container [ngTemplateOutlet]="postenBlock" [ngTemplateOutletContext]="{ op: l.offene_posten! }" />
+            }
+          </section>
+
+          <section class="ds-abschnitt" id="ds-dokumente" tabindex="-1" aria-labelledby="ds-dk-t">
+            <h2 class="ds-abschnitt__titel" id="ds-dk-t">Dokumente</h2>
+            @if (!l.dokumente_sichtbar) {
+              <ng-container [ngTemplateOutlet]="gesperrt" [ngTemplateOutletContext]="{ recht: 'content/LESEN', was: 'Dokumente und Kommunikation' }" />
+            } @else {
+              <ng-container [ngTemplateOutlet]="dokumenteBlock" [ngTemplateOutletContext]="{ liste: l.dokumente! }" />
+            }
+          </section>
+        }
+
+        <!-- ============================ PROJEKT ============================ -->
+        @if (projekt(); as p) {
+          <section class="ds-abschnitt" id="ds-stamm" tabindex="-1" aria-labelledby="ds-stamm-t">
+            <h2 class="ds-abschnitt__titel" id="ds-stamm-t">Stammdaten</h2>
+            <dl class="feld-raster">
+              <div class="feld"><dt class="feld__label">Nummer</dt><dd class="feld__wert">{{ p.projekt.project_number }}</dd></div>
+              <div class="feld"><dt class="feld__label">Name</dt><dd class="feld__wert">{{ p.projekt.name }}</dd></div>
+              <div class="feld"><dt class="feld__label">Status</dt><dd class="feld__wert">{{ projektStatus(p.projekt.status) }}</dd></div>
+              <div class="feld"><dt class="feld__label">Gewerk</dt><dd class="feld__wert">{{ text(p.projekt.category) }}</dd></div>
+              <div class="feld"><dt class="feld__label">Start</dt><dd class="feld__wert">{{ datum(p.projekt.start_date) }}</dd></div>
+              <div class="feld"><dt class="feld__label">Zieltermin</dt><dd class="feld__wert">{{ datum(p.projekt.target_end_date) }}</dd></div>
+            </dl>
+          </section>
+
+          <section class="ds-abschnitt" id="ds-liegenschaften" tabindex="-1" aria-labelledby="ds-lg-t">
+            <h2 class="ds-abschnitt__titel" id="ds-lg-t">Liegenschaften</h2>
+            @if (p.liegenschaften.length === 0) {
+              <ng-container [ngTemplateOutlet]="leer" [ngTemplateOutletContext]="{ text: 'Diesem Projekt ist keine Liegenschaft zugeordnet.' }" />
+            } @else {
+              <ul class="ds-liste">
+                @for (o of p.liegenschaften; track o.property_id) {
+                  <li class="ds-zeile">
+                    <div class="ds-zeile__haupt">
+                      @if (darfProperty()) {
+                        <a class="ds-zeile__titel" [routerLink]="['/liegenschaften', o.property_id]">
+                          <span class="ds-kennung">{{ o.property_number }}</span> {{ o.name }}
+                        </a>
+                      } @else {
+                        <span class="ds-zeile__titel">
+                          <span class="ds-kennung">{{ o.property_number }}</span> {{ o.name }}
+                        </span>
+                      }
+                    </div>
+                    <p class="ds-zeile__meta">
+                      {{ o.city }}
+                      @if (darfProperty()) {
+                        · <a class="ds-mini" [routerLink]="['/dossier/liegenschaft', o.property_id]">Dossier</a>
+                      }
+                    </p>
+                  </li>
+                }
+              </ul>
+            }
+          </section>
+
+          <section class="ds-abschnitt" id="ds-workflow" tabindex="-1" aria-labelledby="ds-wf-t">
+            <h2 class="ds-abschnitt__titel" id="ds-wf-t">Vorgänge &amp; Aufträge</h2>
+            <h3 class="ds-unter">Vorgänge</h3>
+            <ng-container [ngTemplateOutlet]="vorgangsListe" [ngTemplateOutletContext]="{ liste: p.vorgaenge }" />
+            <h3 class="ds-unter">Aufträge</h3>
+            <ng-container [ngTemplateOutlet]="auftragsListe" [ngTemplateOutletContext]="{ liste: p.auftraege }" />
+          </section>
+
+          <section class="ds-abschnitt" id="ds-aufgaben" tabindex="-1" aria-labelledby="ds-ag-t">
+            <h2 class="ds-abschnitt__titel" id="ds-ag-t">Aufgaben</h2>
+            <ng-container [ngTemplateOutlet]="aufgabenListe" [ngTemplateOutletContext]="{ liste: p.aufgaben }" />
+          </section>
+
+          <section class="ds-abschnitt" id="ds-checklisten" tabindex="-1" aria-labelledby="ds-cl-t">
+            <h2 class="ds-abschnitt__titel" id="ds-cl-t">Checklisten</h2>
+            @if (p.checklisten.length === 0) {
+              <ng-container [ngTemplateOutlet]="leer" [ngTemplateOutletContext]="{ text: 'Keine Checkliste angelegt.' }" />
+            } @else {
+              @for (c of p.checklisten; track c.id) {
+                <h3 class="ds-unter">{{ c.name }}</h3>
+                <ul class="ds-liste">
+                  @for (i of c.items; track i.id) {
+                    <li class="ds-zeile">
+                      <div class="ds-zeile__haupt">
+                        <span class="ds-zeile__titel">
+                          <span class="ds-haken" aria-hidden="true">{{ i.is_done ? '✓' : '○' }}</span>
+                          {{ i.label }}
+                        </span>
+                        @if (i.is_done) {
+                          <span class="stamp stamp--positive">Erledigt</span>
+                        } @else {
+                          <span class="stamp">Offen</span>
+                        }
+                      </div>
+                      @if (i.done_at) {
+                        <p class="ds-zeile__meta">Erledigt am {{ zeitpunkt(i.done_at) }}</p>
+                      }
+                    </li>
+                  }
+                </ul>
+              }
+            }
+          </section>
+
+          <section class="ds-abschnitt" id="ds-logbuch" tabindex="-1" aria-labelledby="ds-lb-t">
+            <h2 class="ds-abschnitt__titel" id="ds-lb-t">Logbuch</h2>
+            @if (p.logbuch.length === 0) {
+              <ng-container [ngTemplateOutlet]="leer" [ngTemplateOutletContext]="{ text: 'Kein Logbucheintrag.' }" />
+            } @else {
+              <ul class="ds-liste">
+                @for (e of p.logbuch; track e.id) {
+                  <li class="ds-zeile">
+                    <div class="ds-zeile__haupt">
+                      <span class="ds-zeile__titel">{{ e.entry }}</span>
+                      <span class="stamp stamp--type">{{ e.category }}</span>
+                    </div>
+                    <p class="ds-zeile__meta">{{ zeitpunkt(e.created_at) }} · {{ text(e.author) }}</p>
+                  </li>
+                }
+              </ul>
+            }
+          </section>
+
+          <section class="ds-abschnitt" id="ds-belege" tabindex="-1" aria-labelledby="ds-bl-t">
+            <h2 class="ds-abschnitt__titel" id="ds-bl-t">Angebote &amp; Rechnungen</h2>
+            @if (!p.belege_sichtbar) {
+              <ng-container [ngTemplateOutlet]="gesperrt" [ngTemplateOutletContext]="{ recht: 'invoicing/LESEN', was: 'Belege und Buchhaltung' }" />
+            } @else {
+              <ng-container
+                [ngTemplateOutlet]="belegBlock"
+                [ngTemplateOutletContext]="{ angebote: p.angebote!, rechnungen: p.rechnungen! }"
+              />
+              <h3 class="ds-unter">Anrechenbare Abschläge</h3>
+              @if (p.anrechenbare_abschlaege!.length === 0) {
+                <ng-container [ngTemplateOutlet]="leer" [ngTemplateOutletContext]="{ text: 'Kein anrechenbarer Abschlag offen.' }" />
+              } @else {
+                <ul class="ds-liste">
+                  @for (a of p.anrechenbare_abschlaege!; track a.invoice_id) {
+                    <li class="ds-zeile">
+                      <div class="ds-zeile__haupt">
+                        <a class="ds-zeile__titel" [routerLink]="['/rechnungen', a.invoice_id]">
+                          <span class="ds-kennung">{{ a.invoice_number ?? 'ohne Nummer' }}</span>
+                          {{ belegArt(a.invoice_type) }}
+                        </a>
+                        @if (a.vorgemerkt) {
+                          <span class="stamp stamp--warn">Bereits vorgemerkt</span>
+                        } @else {
+                          <span class="stamp stamp--positive">Anrechenbar</span>
+                        }
+                      </div>
+                      <p class="ds-zeile__meta">
+                        {{ datum(a.invoice_date) }} · Netto {{ euro(a.net_total) }} · Brutto {{ euro(a.gross_total) }}
+                      </p>
+                    </li>
+                  }
+                </ul>
+              }
+            }
+          </section>
+
+          <section class="ds-abschnitt" id="ds-posten" tabindex="-1" aria-labelledby="ds-op-t">
+            <h2 class="ds-abschnitt__titel" id="ds-op-t">Offene Posten</h2>
+            @if (!p.offene_posten_sichtbar) {
+              <ng-container [ngTemplateOutlet]="gesperrt" [ngTemplateOutletContext]="{ recht: 'invoicing/LESEN', was: 'Belege und Buchhaltung' }" />
+            } @else {
+              <ng-container [ngTemplateOutlet]="postenBlock" [ngTemplateOutletContext]="{ op: p.offene_posten! }" />
+            }
+          </section>
+
+          <section class="ds-abschnitt" id="ds-marge" tabindex="-1" aria-labelledby="ds-mg-t">
+            <h2 class="ds-abschnitt__titel" id="ds-mg-t">Deckungsbeitrag</h2>
+            @if (!p.marge_sichtbar) {
+              <ng-container
+                [ngTemplateOutlet]="gesperrt"
+                [ngTemplateOutletContext]="{
+                  recht: 'invoicing/LESEN + pricing/LESEN',
+                  was: 'Belege und Einkaufspreise — die Marge ist Umsatz minus Einkauf, ohne beides gibt es sie nicht'
+                }"
+              />
+            } @else {
+              <div class="ds-marge">
+                @if (p.marge) {
+                  <app-marge-block [marge]="p.marge" label="Realisiert (veröffentlichte Rechnungen)" />
+                } @else {
+                  <p class="note">
+                    Realisiert: <span class="ds-unbekannt">unbekannt</span> — zu diesem Projekt ist noch keine Rechnungsposition
+                    veröffentlicht. Das ist kein Deckungsbeitrag von 0 €.
+                  </p>
+                }
+                @if (p.geplante_marge) {
+                  <app-marge-block [marge]="p.geplante_marge" label="Geplant (aktive Angebote)" />
+                } @else {
+                  <p class="note">
+                    Geplant: <span class="ds-unbekannt">unbekannt</span> — es gibt keine summenwirksame Position in einem aktiven
+                    Angebot. Das ist kein Deckungsbeitrag von 0 €.
+                  </p>
+                }
+              </div>
+            }
+          </section>
+
+          <section class="ds-abschnitt" id="ds-dokumente" tabindex="-1" aria-labelledby="ds-dk-t">
+            <h2 class="ds-abschnitt__titel" id="ds-dk-t">Dokumente</h2>
+            @if (!p.dokumente_sichtbar) {
+              <ng-container [ngTemplateOutlet]="gesperrt" [ngTemplateOutletContext]="{ recht: 'content/LESEN', was: 'Dokumente und Kommunikation' }" />
+            } @else {
+              <ng-container [ngTemplateOutlet]="dokumenteBlock" [ngTemplateOutletContext]="{ liste: p.dokumente! }" />
+            }
+          </section>
+        }
+
+        <!-- ============================ AUFTRAG ============================ -->
+        @if (auftrag(); as a) {
+          <section class="ds-abschnitt" id="ds-stamm" tabindex="-1" aria-labelledby="ds-stamm-t">
+            <h2 class="ds-abschnitt__titel" id="ds-stamm-t">Stammdaten &amp; Status</h2>
+            <dl class="feld-raster">
+              <div class="feld"><dt class="feld__label">Nummer</dt><dd class="feld__wert">{{ a.auftrag.order_number }}</dd></div>
+              <div class="feld"><dt class="feld__label">Status</dt><dd class="feld__wert">{{ auftragStatus(a.auftrag.status) }}</dd></div>
+              <div class="feld"><dt class="feld__label">Priorität</dt><dd class="feld__wert">{{ prioritaet(a.auftrag.priority) }}</dd></div>
+              <div class="feld"><dt class="feld__label">Abrechnungsart</dt><dd class="feld__wert">{{ abrechnungsart(a.auftrag.billing_mode) }}</dd></div>
+              <div class="feld"><dt class="feld__label">Wunschtermin</dt><dd class="feld__wert">{{ datum(a.auftrag.desired_date) }}</dd></div>
+              <div class="feld"><dt class="feld__label">Verantwortungsbereich</dt><dd class="feld__wert">{{ verantwortung(a.auftrag.responsibility_scope) }}</dd></div>
+              <div class="feld">
+                <dt class="feld__label">Verantwortung bestätigt</dt>
+                <dd class="feld__wert">
+                  {{ a.auftrag.responsibility_confirmed_at ? zeitpunkt(a.auftrag.responsibility_confirmed_at) : 'nicht bestätigt' }}
+                </dd>
+              </div>
+              <div class="feld"><dt class="feld__label">Beauftragungsnachweis</dt><dd class="feld__wert">{{ text(a.auftrag.order_evidence_reference) }}</dd></div>
+              <div class="feld">
+                <dt class="feld__label">Liegenschaft</dt>
+                <dd class="feld__wert">
+                  @if (darfProperty()) {
+                    <a [routerLink]="['/liegenschaften', a.auftrag.property_id]">{{ a.auftrag.property_name }}</a>
+                  } @else {
+                    {{ a.auftrag.property_name }}
+                  }
+                  · {{ a.auftrag.property_city }}
+                </dd>
+              </div>
+              <div class="feld">
+                <dt class="feld__label">Projekt</dt>
+                <dd class="feld__wert">
+                  @if (a.auftrag.project_id) {
+                    <a [routerLink]="['/projekte', a.auftrag.project_id]">{{ a.auftrag.project_name }}</a>
+                  } @else {
+                    kein Projekt
+                  }
+                </dd>
+              </div>
+              <div class="feld"><dt class="feld__label">Vorgang</dt><dd class="feld__wert">{{ text(a.auftrag.service_case_number) }}</dd></div>
+            </dl>
+            @if (a.auftrag.description) {
+              <p class="ds-beschreibung">{{ a.auftrag.description }}</p>
+            }
+
+            <h3 class="ds-unter">Mögliche Statusübergänge</h3>
+            <p class="ds-abschnitt__hinweis">
+              <strong>Möglich heißt nicht erlaubt und nicht zulässig.</strong> Das ist die Liste,
+              die der Statusautomat vom aktuellen Status aus kennt. Ob Sie den Übergang gehen
+              dürfen, entscheidet die Rechtematrix; ob er fachlich durchgeht, entscheiden die
+              Tore der Datenbank.
+            </p>
+            @if (a.moegliche_uebergaenge.length === 0) {
+              <ng-container [ngTemplateOutlet]="leer" [ngTemplateOutletContext]="{ text: 'Endstatus — von hier führt kein Übergang weiter.' }" />
+            } @else {
+              <ul class="ds-chips">
+                @for (u of a.moegliche_uebergaenge; track u.to_status) {
+                  <li class="ds-chip ds-chip--gross">
+                    {{ auftragStatus(u.to_status) }}
+                    @if (u.begruendung_pflicht) {
+                      <span class="ds-chip__zusatz">Begründung nötig</span>
+                    }
+                  </li>
+                }
+              </ul>
+            }
+          </section>
+
+          <section class="ds-abschnitt" id="ds-beteiligte" tabindex="-1" aria-labelledby="ds-bt-t">
+            <h2 class="ds-abschnitt__titel" id="ds-bt-t">Beteiligte</h2>
+            @if (a.beteiligte.length === 0) {
+              <ng-container [ngTemplateOutlet]="leer" [ngTemplateOutletContext]="{ text: 'Keine Beteiligten am Auftrag.' }" />
+            } @else {
+              <ul class="ds-liste">
+                @for (b of a.beteiligte; track b.party_id + b.role) {
+                  <li class="ds-zeile">
+                    <div class="ds-zeile__haupt">
+                      @if (darfIdentity()) {
+                        <a class="ds-zeile__titel" [routerLink]="['/kontakte', b.party_id]">{{ b.display_name }}</a>
+                      } @else {
+                        <span class="ds-zeile__titel">{{ b.display_name }}</span>
+                      }
+                      <span class="stamp stamp--type">{{ rolle(b.role) }}</span>
+                      @if (b.is_primary) { <span class="stamp stamp--positive">Hauptbeteiligter</span> }
+                    </div>
+                  </li>
+                }
+              </ul>
+            }
+          </section>
+
+          <section class="ds-abschnitt" id="ds-einsaetze" tabindex="-1" aria-labelledby="ds-es-t">
+            <h2 class="ds-abschnitt__titel" id="ds-es-t">Einsätze</h2>
+            <ng-container [ngTemplateOutlet]="einsatzListe" [ngTemplateOutletContext]="{ liste: a.einsaetze }" />
+          </section>
+
+          <section class="ds-abschnitt" id="ds-zeiten" tabindex="-1" aria-labelledby="ds-zt-t">
+            <h2 class="ds-abschnitt__titel" id="ds-zt-t">Zeiten</h2>
+            <dl class="ds-kpi">
+              <div class="ds-kpi__zelle">
+                <dt>Arbeitsstunden (abgeschlossen)</dt>
+                <dd>
+                  <span [class.ds-unbekannt]="a.zeiten.summe_arbeitsstunden === null">
+                    {{ stunden(a.zeiten.summe_arbeitsstunden) }}
+                  </span>
+                  @if (a.zeiten.summe_arbeitsstunden === null) {
+                    <span class="ds-kpi__zusatz">keine abgeschlossene Buchung — nicht „0 Stunden"</span>
+                  }
+                </dd>
+              </div>
+              <div class="ds-kpi__zelle" [class.ds-kpi__zelle--warn]="a.zeiten.laufende > 0">
+                <dt>Laufende Buchungen</dt>
+                <dd>{{ a.zeiten.laufende }}
+                  @if (a.zeiten.laufende > 0) {
+                    <span class="ds-kpi__zusatz">deren Dauer ist noch unbekannt</span>
+                  }
+                </dd>
+              </div>
+            </dl>
+            @if (a.zeiten.eintraege.length === 0) {
+              <ng-container [ngTemplateOutlet]="leer" [ngTemplateOutletContext]="{ text: 'Keine Zeitbuchung an diesem Auftrag.' }" />
+            } @else {
+              <ul class="ds-liste">
+                @for (z of a.zeiten.eintraege; track z.id) {
+                  <li class="ds-zeile">
+                    <div class="ds-zeile__haupt">
+                      <span class="ds-zeile__titel">{{ z.mitarbeiter }}</span>
+                      <span class="stamp stamp--type">{{ z.kategorie }}</span>
+                      @if (!z.ended_at) { <span class="stamp stamp--warn">Läuft noch</span> }
+                      @if (!z.is_work_time) { <span class="stamp">Keine Arbeitszeit</span> }
+                    </div>
+                    <p class="ds-zeile__meta">
+                      {{ zeitpunkt(z.started_at) }} – {{ z.ended_at ? zeitpunkt(z.ended_at) : 'offen' }} ·
+                      <span [class.ds-unbekannt]="z.stunden === null">{{ stunden(z.stunden) }}</span>
+                      @if (z.note) { · {{ z.note }} }
+                    </p>
+                  </li>
+                }
+              </ul>
+            }
+          </section>
+
+          <section class="ds-abschnitt" id="ds-material" tabindex="-1" aria-labelledby="ds-mt-t">
+            <h2 class="ds-abschnitt__titel" id="ds-mt-t">Material</h2>
+            @if (a.material.length === 0) {
+              <ng-container [ngTemplateOutlet]="leer" [ngTemplateOutletContext]="{ text: 'Kein Materialverbrauch erfasst.' }" />
+            } @else {
+              <ul class="ds-liste">
+                @for (m of a.material; track m.id) {
+                  <li class="ds-zeile">
+                    <div class="ds-zeile__haupt">
+                      <span class="ds-zeile__titel">{{ m.description }}</span>
+                      <span class="stamp stamp--type">{{ menge(m.quantity) }} {{ m.unit }}</span>
+                    </div>
+                    @if (m.note) { <p class="ds-zeile__meta">{{ m.note }}</p> }
+                  </li>
+                }
+              </ul>
+            }
+          </section>
+
+          <section class="ds-abschnitt" id="ds-berichte" tabindex="-1" aria-labelledby="ds-br-t">
+            <h2 class="ds-abschnitt__titel" id="ds-br-t">Baustellenberichte</h2>
+            @if (a.berichte.length === 0) {
+              <ng-container [ngTemplateOutlet]="leer" [ngTemplateOutletContext]="{ text: 'Kein Baustellenbericht.' }" />
+            } @else {
+              <ul class="ds-liste">
+                @for (b of a.berichte; track b.id) {
+                  <li class="ds-zeile">
+                    <div class="ds-zeile__haupt">
+                      <span class="ds-zeile__titel">Bericht vom {{ datum(b.report_date) }}</span>
+                      <span class="stamp {{ berichtStatusClass(b.status) }}">{{ berichtStatus(b.status) }}</span>
+                    </div>
+                    <p class="ds-zeile__text">{{ b.activity_text }}</p>
+                    <p class="ds-zeile__meta">
+                      Stunden: <span [class.ds-unbekannt]="b.hours_worked === null">{{ stunden(b.hours_worked) }}</span> ·
+                      Verfasser {{ text(b.author) }}
+                      @if (b.signed_at) {
+                        · unterzeichnet {{ zeitpunkt(b.signed_at) }} von {{ text(b.signed_by_name) }}
+                      } @else {
+                        · nicht unterzeichnet
+                      }
+                    </p>
+                  </li>
+                }
+              </ul>
+            }
+          </section>
+
+          <section class="ds-abschnitt" id="ds-sollist" tabindex="-1" aria-labelledby="ds-si-t">
+            <h2 class="ds-abschnitt__titel" id="ds-si-t">Soll-Ist</h2>
+            <p class="ds-abschnitt__hinweis">
+              Angebots-<strong>Soll</strong> gegen Berichts-<strong>Ist</strong>. Ohne Preise —
+              der Baustellenbericht führt keine Beträge, also kann es der Abgleich auch nicht.
+            </p>
+            @if (a.soll_ist.angebote.length === 0) {
+              <p class="ds-warnung" role="note">
+                <span aria-hidden="true">!</span>
+                Diesem Auftrag ist <strong>kein Angebot zugeordnet</strong> — es gibt kein Soll.
+                Alles, was im Bericht steht, erscheint deshalb als „Zusatz".
+              </p>
+            } @else {
+              <p class="ds-zeile__meta">
+                Soll aus:
+                @for (q of a.soll_ist.angebote; track q.id) {
+                  <span class="ds-chip">{{ q.quote_number ?? 'Entwurf' }} · {{ q.title }} ({{ belegStatus(q.status) }})</span>
+                }
+              </p>
+            }
+            @if (a.soll_ist.enthaelt_entwuerfe) {
+              <p class="ds-warnung" role="note">
+                <span aria-hidden="true">!</span>
+                Es sind <strong>nicht unterzeichnete</strong> Berichte eingeflossen. Der Abgleich
+                ist damit <strong>vorläufig</strong>.
+              </p>
+            }
+            @if (a.soll_ist.positionen.length === 0) {
+              <ng-container [ngTemplateOutlet]="leer" [ngTemplateOutletContext]="{ text: 'Keine Positionen — weder im Soll noch im Ist.' }" />
+            } @else {
+              <ul class="ds-liste">
+                @for (s of a.soll_ist.positionen; track s.schluessel) {
+                  <li class="ds-zeile">
+                    <div class="ds-zeile__haupt">
+                      <span class="ds-zeile__titel">{{ s.bezeichnung }}</span>
+                      <span class="stamp {{ sollIstClass(s.art) }}">
+                        <span aria-hidden="true">{{ sollIstSymbol(s.art) }}</span> {{ sollIstLabel(s.art) }}
+                      </span>
+                    </div>
+                    <p class="ds-zeile__meta">
+                      Soll {{ menge(s.soll) }} · Ist {{ menge(s.ist) }} ·
+                      Differenz {{ menge(s.differenz) }} {{ text(s.einheit) }}
+                    </p>
+                  </li>
+                }
+              </ul>
+            }
+          </section>
+
+          <section class="ds-abschnitt" id="ds-abrechnung" tabindex="-1" aria-labelledby="ds-ab-t">
+            <h2 class="ds-abschnitt__titel" id="ds-ab-t">Abrechnungsstand</h2>
+            @if (!a.abrechnung_sichtbar) {
+              <ng-container [ngTemplateOutlet]="gesperrt" [ngTemplateOutletContext]="{ recht: 'invoicing/LESEN', was: 'Belege und Buchhaltung — der Abrechnungsstand führt Einzelpreise' }" />
+            } @else {
+              <p class="ds-abschnitt__hinweis">{{ a.abrechnung!.hinweis }}</p>
+              @if (a.abrechnung!.nicht_unterzeichnete_berichte.length > 0) {
+                <p class="ds-warnung" role="note">
+                  <span aria-hidden="true">!</span>
+                  {{ a.abrechnung!.nicht_unterzeichnete_berichte.length }} Bericht(e) sind
+                  <strong>nicht unterzeichnet</strong> — ihre Positionen sind noch änderbar.
+                </p>
+              }
+
+              <h3 class="ds-unter">Berichtspositionen ohne Abrechnung</h3>
+              @if (a.abrechnung!.berichtspositionen.length === 0) {
+                <ng-container [ngTemplateOutlet]="leer" [ngTemplateOutletContext]="{ text: 'Keine offene Berichtsposition.' }" />
+              } @else {
+                <ul class="ds-liste">
+                  @for (b of a.abrechnung!.berichtspositionen; track b.site_report_line_id) {
+                    <li class="ds-zeile">
+                      <div class="ds-zeile__haupt">
+                        <span class="ds-zeile__titel">{{ b.description }}</span>
+                        <span class="stamp stamp--type">{{ menge(b.quantity) }} {{ text(b.unit) }}</span>
+                        @if (b.preis_status === 'UNBEKANNT') {
+                          <span class="stamp stamp--warn">Preis unbekannt</span>
+                        }
+                      </div>
+                      <p class="ds-zeile__meta">
+                        Bericht vom {{ datum(b.report_date) }} · Einzelpreis
+                        <span [class.ds-unbekannt]="b.einzelpreis === null">{{ euro(b.einzelpreis) }}</span>
+                        @if (b.grund_text) { · {{ b.grund_text }} }
+                      </p>
+                    </li>
+                  }
+                </ul>
+              }
+
+              <h3 class="ds-unter">Zeiten ohne Abrechnung</h3>
+              @if (a.abrechnung!.zeitgruppen.length === 0) {
+                <ng-container [ngTemplateOutlet]="leer" [ngTemplateOutletContext]="{ text: 'Keine offene Zeitbuchung.' }" />
+              } @else {
+                <ul class="ds-liste">
+                  @for (z of a.abrechnung!.zeitgruppen; track z.quelle_id) {
+                    <li class="ds-zeile">
+                      <div class="ds-zeile__haupt">
+                        <span class="ds-zeile__titel">{{ z.bezeichnung }}</span>
+                        <span class="stamp stamp--type">{{ stunden(z.stunden) }}</span>
+                        @if (z.preis_status === 'UNBEKANNT') {
+                          <span class="stamp stamp--warn">Stundensatz unbekannt</span>
+                        }
+                      </div>
+                      <p class="ds-zeile__meta">
+                        Stundensatz
+                        <span [class.ds-unbekannt]="z.einzelpreis === null">{{ euro(z.einzelpreis) }}</span>
+                        @if (z.grund_text) { · {{ z.grund_text }} }
+                      </p>
+                    </li>
+                  }
+                </ul>
+              }
+            }
+          </section>
+
+          <section class="ds-abschnitt" id="ds-belege" tabindex="-1" aria-labelledby="ds-bl-t">
+            <h2 class="ds-abschnitt__titel" id="ds-bl-t">Angebote &amp; Rechnungen</h2>
+            @if (!a.belege_sichtbar) {
+              <ng-container [ngTemplateOutlet]="gesperrt" [ngTemplateOutletContext]="{ recht: 'invoicing/LESEN', was: 'Belege und Buchhaltung' }" />
+            } @else {
+              <ng-container
+                [ngTemplateOutlet]="belegBlock"
+                [ngTemplateOutletContext]="{ angebote: a.angebote!, rechnungen: a.rechnungen! }"
+              />
+            }
+          </section>
+
+          <section class="ds-abschnitt" id="ds-posten" tabindex="-1" aria-labelledby="ds-op-t">
+            <h2 class="ds-abschnitt__titel" id="ds-op-t">Offene Posten</h2>
+            @if (!a.offene_posten_sichtbar) {
+              <ng-container [ngTemplateOutlet]="gesperrt" [ngTemplateOutletContext]="{ recht: 'invoicing/LESEN', was: 'Belege und Buchhaltung' }" />
+            } @else {
+              <ng-container [ngTemplateOutlet]="postenBlock" [ngTemplateOutletContext]="{ op: a.offene_posten! }" />
+            }
+          </section>
+
+          <section class="ds-abschnitt" id="ds-dokumente" tabindex="-1" aria-labelledby="ds-dk-t">
+            <h2 class="ds-abschnitt__titel" id="ds-dk-t">Dokumente</h2>
+            @if (!a.dokumente_sichtbar) {
+              <ng-container [ngTemplateOutlet]="gesperrt" [ngTemplateOutletContext]="{ recht: 'content/LESEN', was: 'Dokumente und Kommunikation' }" />
+            } @else {
+              <ng-container [ngTemplateOutlet]="dokumenteBlock" [ngTemplateOutletContext]="{ liste: a.dokumente! }" />
+            }
+          </section>
+        }
+      </div>
+    </article>
+  }
+}

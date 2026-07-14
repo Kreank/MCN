@@ -42,9 +42,15 @@ from db_core.models import (
     TimeEntry,
     VacationBudget,
 )
+from db_core.services import beleg as beleg_service
 
 # Korrekturbelege mindern den Umsatz (kein eigener Status "storniert" im Schema).
-CREDIT_TYPES = ("GUTSCHRIFT", "STORNO")
+# EINE Liste im Repo — sie wohnt im Belegmodul (`beleg.CREDIT_TYPES`); hier steht
+# nur der gewohnte Name. **Umsatz und Forderung sind zwei Fragen:** Der Umsatz
+# summiert über ALLE Belege (der Kreditbeleg mindert ihn über sein Vorzeichen);
+# die Forderung (`buchhaltung.forderungen`) lässt ihn ganz weg. Das ist kein
+# Widerspruch — und diese Datei bleibt davon unberührt.
+CREDIT_TYPES = beleg_service.CREDIT_TYPES
 
 # Positionsarten ohne Betrag (reine Gliederung) — für die Artikelauswertung
 # irrelevant (kein net_amount, keine Menge).
@@ -422,12 +428,21 @@ def _filter_kv(date_from, date_to):
 _AKTIVE_ANGEBOT_STATUS = ("INTERN_GEPRUEFT", "FREIGEGEBEN", "VERSENDET", "ANGENOMMEN")
 
 
-def _marge_by_project(date_from, date_to):
-    """Realisierte Marge je Projekt (aus Rechnungszeilen), keyed nach project_id."""
+def _marge_by_project(date_from, date_to, *, project_id=None):
+    """Realisierte Marge je Projekt (aus Rechnungszeilen), keyed nach project_id.
+
+    `project_id` grenzt die Datenquelle auf **ein** Projekt ein. Das Dashboard
+    ruft weiterhin ohne diesen Filter (es braucht alle Projekte); das
+    Projekt-Dossier setzt ihn — sonst iterierte ein Einzel-Dossier über sämtliche
+    Belegzeilen des Betriebs und skalierte mit der Firmengröße. Der Rechenweg ist
+    in beiden Fällen **derselbe** (`_marge_add`/`_marge_finalize`): das Dossier
+    zeigt exakt die Zahl, die auch im Dashboard steht.
+    """
     buckets = {}
-    rows = _non_credit_published_lines(date_from, date_to).values(
-        "invoice__project_id", *_MARGE_COLS
-    )
+    qs = _non_credit_published_lines(date_from, date_to)
+    if project_id is not None:
+        qs = qs.filter(invoice__project_id=project_id)
+    rows = qs.values("invoice__project_id", *_MARGE_COLS)
     for row in rows:
         pid = row["invoice__project_id"]
         if pid is None:
@@ -436,17 +451,31 @@ def _marge_by_project(date_from, date_to):
     return {pid: _marge_finalize(block) for pid, block in buckets.items()}
 
 
-def _geplante_marge(date_from, date_to):
+def marge_je_projekt(project_id):
+    """Realisierte Marge EINES Projekts — oder None, wenn es keine Belegzeile gibt.
+
+    None heißt **unbekannt**, nicht 0: Ein Projekt ohne veröffentlichte Rechnung
+    hat keine realisierte Marge (weder 0 % noch 100 %). Dieselbe Rechenstelle wie
+    das Auswertungs-Dashboard (`_marge_by_project`).
+    """
+    return _marge_by_project(None, None, project_id=project_id).get(project_id)
+
+
+def _geplante_marge(date_from, date_to, *, project_id=None):
     """Geplante Marge aus den Angebotszeilen der noch aktiven, nicht ersetzten
     Angebote (Angebots-Snapshot: quote_line trägt dieselbe eingefrorene EK-Basis).
 
     Datumsfilter über das Angebotsdatum (quote_date). Ableitbar, weil quote_line
     `unit_cost` beim Einfügen einfriert — dieselbe Logik wie bei den Rechnungen.
+    `project_id` grenzt auf ein Projekt ein (Dossier); ohne ihn bleibt es die
+    betriebsweite Sicht des Dashboards.
     """
     qs = QuoteLine.objects.filter(
         quote__status__in=_AKTIVE_ANGEBOT_STATUS,
         quote__replaced_by_quote_id__isnull=True,
     )
+    if project_id is not None:
+        qs = qs.filter(quote__project_id=project_id)
     if date_from:
         qs = qs.filter(quote__quote_date__gte=date_from)
     if date_to:
@@ -455,6 +484,16 @@ def _geplante_marge(date_from, date_to):
     for row in qs.values(*_MARGE_COLS):
         _marge_add(block, row)
     return _marge_finalize(block)
+
+
+def geplante_marge_je_projekt(project_id):
+    """Geplante Marge EINES Projekts (aus seinen aktiven Angeboten).
+
+    Gibt None zurück, wenn das Projekt keine summenwirksame Angebotsposition
+    trägt — geplant ist dann **nichts bekannt**, nicht null Euro.
+    """
+    block = _geplante_marge(None, None, project_id=project_id)
+    return block if block["positionen"] > 0 else None
 
 
 def projekte_summary(*, date_from=None, date_to=None, limit=10, ek_allowed=False):

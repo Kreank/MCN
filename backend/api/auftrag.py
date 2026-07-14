@@ -463,8 +463,15 @@ def offene_abrechnung(request, work_order_id: UUID):
 
     Das ist eine Auftragssicht über die ganze Baustelle; sie lässt sich nicht auf
     eigene Zeilen begrenzen. `require` ist fail-closed: Scope EIGENE → **403**.
+
+    **Zwei Rechte, nicht eines: Geld hängt an `invoicing`.** Die Antwort führt
+    Einzelpreise und Preisvorschläge — mit `workflow/LESEN` allein läse die
+    Disposition die Preise der ganzen Baustelle mit. Das Entitäts-Dossier zieht
+    dieselbe Grenze; die beiden dürfen nicht auseinanderlaufen. Wer abrechnen
+    darf, hat `invoicing` ohnehin.
     """
     require(request, "workflow", "LESEN")
+    require(request, "invoicing", "LESEN")
     try:
         return abrechnung_service.offene_abrechnung(work_order_id)
     except ValueError as exc:
