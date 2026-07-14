@@ -3,6 +3,7 @@ import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } fro
 import { filter } from 'rxjs';
 import { ThemeService } from './core/theme';
 import { AuthService } from './core/auth.service';
+import { Kommandopalette } from './shared/kommandopalette/kommandopalette';
 
 const NAV_SPEICHER = 'mcn.nav.schmal';
 
@@ -25,7 +26,7 @@ interface NavItem {
 
 @Component({
   selector: 'app-root',
-  imports: [RouterOutlet, RouterLink, RouterLinkActive],
+  imports: [RouterOutlet, RouterLink, RouterLinkActive, Kommandopalette],
   templateUrl: './app.html',
   styleUrl: './app.scss',
 })

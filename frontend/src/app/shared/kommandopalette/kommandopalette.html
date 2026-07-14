@@ -1,0 +1,221 @@
+<!-- Such-Trigger in der Kopfzeile: sieht aus wie ein Feld, ist aber ein Knopf
+     (er oeffnet einen Dialog — ein echtes Feld wuerde Tastaturnutzer taeuschen). -->
+<button
+  type="button"
+  class="kp-trigger"
+  aria-haspopup="dialog"
+  [attr.aria-expanded]="offen()"
+  (click)="oeffnen()"
+>
+  <span class="kp-trigger__lupe" aria-hidden="true">⌕</span>
+  <span class="kp-trigger__text">Suchen …</span>
+  <kbd class="kp-trigger__kbd">{{ kuerzel }}</kbd>
+</button>
+
+<dialog
+  #dlg
+  class="kp"
+  aria-label="Globale Suche"
+  (cancel)="onCancel($event)"
+  (click)="onKlick($event)"
+>
+  <div class="kp__panel">
+    <!-- Kopf: Navy-Kommandostreifen wie die Kopfzeile, aus der die Palette kommt. -->
+    <div class="kp__kopf">
+      <span class="kp__lupe" aria-hidden="true">⌕</span>
+      <input
+        #feld
+        class="kp__feld"
+        type="text"
+        role="combobox"
+        autocomplete="off"
+        spellcheck="false"
+        aria-label="Suchbegriff"
+        [attr.aria-expanded]="zustand() === 'treffer'"
+        [attr.aria-controls]="listboxId"
+        [attr.aria-activedescendant]="aktivOptionId()"
+        placeholder="Name, Adresse, Belegnummer, Telefon, Artikelnummer …"
+        [value]="begriff()"
+        (input)="onEingabe($any($event.target).value)"
+        (keydown)="onTaste($event)"
+      />
+      @if (ladeAnzeige()) {
+        <span class="kp__laden">
+          <span class="kp__laden-punkt" aria-hidden="true"></span>
+          Suche läuft
+        </span>
+      }
+      <button type="button" class="kp__esc" (click)="schliessen()">
+        <span aria-hidden="true">Esc</span>
+        <span class="sr-only">Suche schließen</span>
+      </button>
+    </div>
+
+    <div class="kp__body">
+      <!-- Der Artikelstamm wird erst ab drei Zeichen durchsucht (Trigramm-Index).
+           Das steht NEBEN der Trefferliste, nicht statt ihr: die anderen
+           Kategorien liefern ja. Wer „ZR" tippt, soll nicht glauben, die Suche
+           sei kaputt. `role="status"` — der Hinweis kommt auch am Screenreader an. -->
+      @if (ohneArtikel() && zustand() !== 'hinweis') {
+        <p class="kp__grenze" role="status">
+          <span class="kp__grenze-mark" aria-hidden="true">◔</span>
+          <span>
+            Der <b>Artikelstamm</b> wird erst ab {{ trigrammMin }} Zeichen durchsucht.
+            Eine exakte Artikelnummer findet die Suche trotzdem.
+          </span>
+        </p>
+      }
+
+      @switch (zustand()) {
+        @case ('hinweis') {
+          <!-- Ehrlicher Leerzustand: was hier ueberhaupt gefunden werden kann. -->
+          <div class="kp__leer">
+            <p class="kp__leer-titel">Wonach suchen Sie?</p>
+            <ul class="kp__leer-liste">
+              <li><b>Name</b> einer Person, Firma oder Liegenschaft</li>
+              <li><b>Adresse</b> — Straße, Hausnummer, Ort</li>
+              <li><b>Belegnummer</b> — Angebot, Rechnung, Auftrag</li>
+              <li><b>Telefonnummer</b> eines Kontakts</li>
+              <li><b>Artikelnummer</b> oder Artikelbezeichnung</li>
+            </ul>
+            <p class="kp__leer-fuss">
+              Eine exakte Kennung führt direkt zum Beleg — ohne Trefferliste.
+            </p>
+          </div>
+        }
+        @case ('wartet') {
+          @if (ladeAnzeige()) {
+            <p class="kp__meldung">Suche läuft …</p>
+          }
+        }
+        @case ('zu_kurz') {
+          <!-- Der Server sucht hier gar nicht (MIN_LAENGE). „Keine Treffer" waere
+               eine Luege — es wurde nichts gesucht. -->
+          <p class="kp__meldung">
+            Bitte mindestens {{ minLaenge }} Zeichen eingeben — ein einzelnes Zeichen
+            trifft nahezu jede Zeile.
+          </p>
+        }
+        @case ('fehler') {
+          <p class="kp__meldung kp__meldung--fehler">
+            <span class="kp__meldung-mark" aria-hidden="true">▲</span>
+            Die Suche ist fehlgeschlagen. Bitte erneut versuchen.
+          </p>
+        }
+        @case ('leer') {
+          <p class="kp__meldung">
+            Keine Treffer für „{{ begriff().trim() }}".
+          </p>
+        }
+        @case ('treffer') {
+          <!-- role="group" statt Ueberschriften IM Listbox-Baum: das ARIA-Modell
+               laesst unter listbox nur option/group zu. Die Kategorie steht als
+               aria-label am group, sichtbar als (aria-hidden) Ueberschrift. -->
+          <div
+            class="kp__liste"
+            role="listbox"
+            [id]="listboxId"
+            aria-label="Suchergebnisse"
+          >
+            @if (ansicht().direkt; as d) {
+              <div class="kp__gruppe kp__gruppe--direkt" role="group" aria-label="Direkttreffer">
+                <p class="kp__kat" aria-hidden="true">
+                  <span class="kp__kat-mark">→</span>
+                  <span class="kp__kat-text">Direkttreffer</span>
+                </p>
+                <div
+                  class="kp__opt kp__opt--direkt"
+                  role="option"
+                  [id]="optionId(d.idx)"
+                  [class.is-aktiv]="aktivIndex() === d.idx"
+                  [attr.aria-selected]="aktivIndex() === d.idx"
+                  (mousedown)="$event.preventDefault()"
+                  (click)="springen(d.treffer)"
+                  (mousemove)="aktivIndex.set(d.idx)"
+                >
+                  <span class="kp__marke">Direkttreffer</span>
+                  <span class="kp__opt-text">
+                    <span class="kp__opt-titel">{{ d.treffer.titel }}</span>
+                    <span class="kp__opt-sub">{{ d.treffer.untertitel }}</span>
+                    <span class="kp__grund">{{ d.treffer.grund }}</span>
+                  </span>
+                  @if (d.treffer.status) {
+                    <span class="kp__status">{{ d.treffer.status }}</span>
+                  }
+                  <span class="kp__enter" aria-hidden="true">⏎</span>
+                </div>
+              </div>
+            }
+
+            @for (g of ansicht().gruppen; track g.typ) {
+              <div class="kp__gruppe" role="group" [attr.aria-label]="gruppeAria(g)">
+                <!-- „5 von mehr": Der Server hat gekuerzt — das wird gesagt, nicht
+                     verschwiegen. Die Gruppe traegt den Zusatz auch im
+                     zugaenglichen Namen (aria-label), nicht nur im Bild. -->
+                <p class="kp__kat" aria-hidden="true">
+                  <span class="kp__kat-mark">{{ g.mark }}</span>
+                  <span class="kp__kat-text">{{ g.label }}</span>
+                  @if (g.mehr) {
+                    <span class="kp__kat-mehr">{{ g.zeilen.length }} von mehr</span>
+                  } @else {
+                    <span class="kp__kat-zahl">{{ g.zeilen.length }}</span>
+                  }
+                </p>
+
+                @for (z of g.zeilen; track z.treffer.id) {
+                  <div
+                    class="kp__opt"
+                    role="option"
+                    [id]="optionId(z.idx)"
+                    [class.is-aktiv]="aktivIndex() === z.idx"
+                    [attr.aria-selected]="aktivIndex() === z.idx"
+                    (mousedown)="$event.preventDefault()"
+                    (click)="springen(z.treffer)"
+                    (mousemove)="aktivIndex.set(z.idx)"
+                  >
+                    <!-- Sind ZWEI exakte Kennungen im Spiel (Artikelnummer = GTIN
+                         eines anderen Artikels), setzt der Server `direkttreffer`
+                         auf null, markiert aber beide Zeilen. Genau dann braucht
+                         der Nutzer die Marke am dringendsten — sie haengt deshalb
+                         an `ist_direkttreffer`, nicht an der Kopfzeile. -->
+                    @if (z.treffer.ist_direkttreffer) {
+                      <span class="kp__marke">Direkttreffer</span>
+                    }
+                    <span class="kp__opt-text">
+                      <span class="kp__opt-titel">{{ z.treffer.titel }}</span>
+                      <span class="kp__opt-sub">{{ z.treffer.untertitel }}</span>
+                      <span class="kp__grund">{{ z.treffer.grund }}</span>
+                    </span>
+                    @if (z.treffer.status) {
+                      <span class="kp__status">{{ z.treffer.status }}</span>
+                    }
+                  </div>
+                }
+              </div>
+            }
+          </div>
+
+          <!-- Kategorien, aus denen keine einzige Zeile mehr in die Liste passte.
+               Sie werden benannt — stilles Abschneiden waere von „nichts
+               gefunden" nicht zu unterscheiden. Steht AUSSERHALB der Listbox:
+               unter `listbox` sind nur option/group erlaubt. -->
+          @if (ansicht().gekuerzt.length) {
+            <p class="kp__gekuerzt">
+              <span class="kp__gekuerzt-mark" aria-hidden="true">⋯</span>
+              Nicht mehr angezeigt: {{ ansicht().gekuerzt.join(', ') }}. Der Begriff
+              trifft dort mehr, als in die Liste passt — bitte genauer eingrenzen.
+            </p>
+          }
+        }
+      }
+    </div>
+
+    <div class="kp__fuss">
+      <!-- Sichtbare Trefferzahl UND Live-Region in einem: kein doppelter Text. -->
+      <p class="kp__zahl" role="status">{{ statusText() }}</p>
+      <p class="kp__tasten" aria-hidden="true">
+        <kbd>↑</kbd><kbd>↓</kbd> wählen · <kbd>⏎</kbd> öffnen · <kbd>Esc</kbd> schließen
+      </p>
+    </div>
+  </div>
+</dialog>

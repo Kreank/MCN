@@ -18,6 +18,26 @@ let dialogSeq = 0;
 let offeneDialoge = 0;
 
 /**
+ * Body-Scroll sperren. Referenzgezaehlt: Wer sperrt, muss genau einmal
+ * `scrollFreigeben()` aufrufen.
+ *
+ * Exportiert, damit ALLE modalen Schichten (dieser Dialog, die Kommandopalette
+ * mit ihrem eigenen `<dialog>`-Kern) denselben Zaehler teilen. Mit zwei
+ * getrennten Zaehlern wuerde die zuerst geschlossene Schicht den Scroll wieder
+ * freigeben, obwohl die andere noch offen ist.
+ */
+export function scrollSperren(): void {
+  offeneDialoge += 1;
+  document.body.style.overflow = 'hidden';
+}
+
+/** Gegenstueck zu `scrollSperren()`; loest erst beim letzten Halter. */
+export function scrollFreigeben(): void {
+  offeneDialoge = Math.max(0, offeneDialoge - 1);
+  if (offeneDialoge === 0) document.body.style.overflow = '';
+}
+
+/**
  * Generische, barrierefreie Dialog-Huelle auf Basis des nativen
  * `<dialog>`-Elements (kein Angular Material, keine Fremd-Abhaengigkeit).
  *
@@ -87,8 +107,7 @@ export class Dialog implements OnDestroy {
   private oeffnen(el: HTMLDialogElement): void {
     if (typeof el.showModal === 'function') el.showModal();
     else el.setAttribute('open', ''); // Fallback (z. B. Test-DOM)
-    offeneDialoge += 1;
-    document.body.style.overflow = 'hidden';
+    scrollSperren();
     // Startfokus nach dem Rendern setzen: erstes Feld im Inhalt (nicht der
     // Schliessen-Knopf) bzw. ein explizit markiertes Element, sonst der Titel.
     queueMicrotask(() => this.startfokus(el));
@@ -97,8 +116,7 @@ export class Dialog implements OnDestroy {
   private schliessenIntern(el: HTMLDialogElement): void {
     if (typeof el.close === 'function') el.close();
     else el.removeAttribute('open');
-    offeneDialoge = Math.max(0, offeneDialoge - 1);
-    if (offeneDialoge === 0) document.body.style.overflow = '';
+    scrollFreigeben();
   }
 
   private startfokus(el: HTMLDialogElement): void {

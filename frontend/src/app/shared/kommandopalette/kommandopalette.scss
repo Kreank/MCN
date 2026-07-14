@@ -1,0 +1,515 @@
+// =============================================================================
+// Kommandopalette (globale Suche) — eigenes Stylesheet, eigenes Budget.
+// app.scss ist am 8-kB-Budget ausgereizt; der Trigger bringt deshalb seinen
+// eigenen Stil mit, statt die Kopfzeile weiter zu belasten.
+//
+// Formensprache: Navy-Kommandostreifen (wie Kopfzeile/Sidebar), Mono-Kennungen,
+// orange Bemaszungsmarke an der aktiven Zeile — dieselbe „Messkante" wie in der
+// Navigation. Orange traegt NIE Text auf hellem Grund (--accent-ink dafuer).
+// =============================================================================
+
+:host {
+  display: contents; // Der Trigger sitzt direkt im Flexfluss der Kopfzeile.
+}
+
+// ------------------------------- Trigger ------------------------------------
+.kp-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 44px;
+  min-width: 13rem;
+  padding: 0 var(--space-2) 0 var(--space-3);
+  border: 1.5px solid var(--command-line);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--command-2) 70%, transparent);
+  color: var(--on-command-muted);
+  font: inherit;
+  font-size: var(--step--1);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+
+  &:hover {
+    background: var(--command-2);
+    border-color: var(--accent);
+    color: var(--on-command);
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring-on-command);
+    outline-offset: 2px;
+  }
+}
+.kp-trigger__lupe {
+  font-size: 1.05rem;
+  line-height: 1;
+  color: var(--accent);
+}
+.kp-trigger__text {
+  flex: 1;
+}
+.kp-trigger__kbd {
+  flex: none;
+  padding: 0.15rem 0.4rem;
+  border: 1px solid var(--command-line);
+  border-radius: var(--radius-sm);
+  background: var(--command);
+  color: var(--on-command-muted);
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+@media (max-width: 860px) {
+  // Schmale Kopfzeile: nur die Lupe. Der zugaengliche Name bleibt vollstaendig
+  // („Suchen … Strg K"), der Text wird nur optisch abgeraeumt.
+  .kp-trigger {
+    min-width: 0;
+    padding: 0 var(--space-3);
+  }
+  .kp-trigger__text,
+  .kp-trigger__kbd {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+// ------------------------------- Dialogkern ----------------------------------
+// Wie shared/dialog: der <dialog> ist der vollflaechige, abdunkelnde Container.
+.kp {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  width: 100%;
+  height: 100%;
+  max-width: 100vw;
+  max-height: 100dvh;
+  background: transparent;
+  color: var(--ink);
+  overflow: visible;
+}
+.kp:not([open]) {
+  display: none;
+}
+.kp[open] {
+  display: flex;
+  align-items: flex-start; // Palette sitzt oben, nicht in der Mitte.
+  justify-content: center;
+  padding: clamp(var(--space-4), 9vh, 7rem) var(--space-4) var(--space-4);
+  background: var(--overlay);
+}
+.kp::backdrop {
+  background: transparent;
+}
+
+.kp__panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 46rem;
+  max-height: min(32rem, 78dvh);
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .kp[open] .kp__panel {
+    animation: kp-auf 0.16s ease-out;
+  }
+}
+@keyframes kp-auf {
+  from {
+    opacity: 0;
+    transform: translateY(-0.6rem) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+// --------------------------------- Kopf --------------------------------------
+.kp__kopf {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
+  background: var(--command);
+  color: var(--on-command);
+  // 3 px, damit die Fokusmarke keinen Sprung im Layout erzeugt.
+  border-bottom: 3px solid var(--command-line);
+  transition: border-color 0.15s ease;
+
+  // Fokusmarke: liegt das Feld im Fokus, traegt der Kopfstreifen eine orange
+  // Unterkante (--accent auf Navy = 4,95:1, deutlich ueber der 3:1-Schwelle fuer
+  // UI-Komponenten). `:has()` haelt den Zustand dort, wo er sichtbar wird.
+  &:has(.kp__feld:focus-visible),
+  &:has(.kp__feld:focus) {
+    border-bottom-color: var(--accent);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .kp__kopf {
+    transition: none;
+  }
+}
+.kp__lupe {
+  flex: none;
+  font-size: 1.25rem;
+  line-height: 1;
+  color: var(--accent);
+}
+.kp__feld {
+  flex: 1;
+  min-width: 0;
+  height: 2.25rem;
+  border: 0;
+  background: transparent;
+  color: var(--on-command);
+  font-family: var(--font-body);
+  font-size: var(--step-1);
+  caret-color: var(--accent);
+
+  &::placeholder {
+    color: var(--on-command-muted);
+    opacity: 1;
+  }
+  // Sichtbarer Fokus ist Pflicht (WCAG 2.4.7) — der Caret allein genuegt NICHT.
+  // Er sitzt hier nicht als Rechteck um das Feld, sondern als orange Unterkante
+  // unter dem ganzen Kopfstreifen (siehe .kp__kopf) — eigenstaendig, aber
+  // eindeutig. Deshalb bleibt am Feld selbst kein zweiter Ring stehen.
+  &:focus,
+  &:focus-visible {
+    outline: none;
+  }
+}
+.kp__laden {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--on-command-muted);
+}
+.kp__laden-punkt {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--accent);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .kp__laden-punkt {
+    animation: kp-puls 1s ease-in-out infinite;
+  }
+}
+@keyframes kp-puls {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.kp__esc {
+  flex: none;
+  min-height: 2rem;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--command-line);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--on-command-muted);
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--on-command);
+    border-color: var(--accent);
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring-on-command);
+    outline-offset: 2px;
+  }
+}
+
+// -------------------------------- Ergebnisse ----------------------------------
+.kp__body {
+  flex: 1;
+  // Untergrenze, damit die Palette zwischen zwei Zustaenden (Hinweis -> Suche
+  // laeuft -> Treffer) nicht in sich zusammenfaellt und wieder aufspringt.
+  min-height: 6rem;
+  overflow-y: auto;
+  background: var(--paper);
+}
+
+.kp__gruppe {
+  padding-bottom: var(--space-2);
+}
+.kp__kat {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-3) var(--space-4) var(--space-1);
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-hint);
+}
+.kp__kat-mark {
+  color: var(--accent-ink);
+}
+.kp__kat-text {
+  flex: 1;
+}
+.kp__kat-zahl {
+  padding: 0.05rem 0.35rem;
+  border-radius: var(--radius-sm);
+  background: var(--neutral-tint);
+  color: var(--ink-muted);
+}
+// „5 von mehr" — der Server hat gekuerzt. Amber-Tint mit dunklem Text (AA), und
+// die Aussage steht im TEXT, nicht in der Farbe.
+.kp__kat-mehr {
+  padding: 0.05rem 0.35rem;
+  border-radius: var(--radius-sm);
+  background: var(--warn-tint);
+  color: var(--warn-ink);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+// Grenzhinweis (Artikelstamm erst ab drei Zeichen). Sitzt UEBER der Liste, weil
+// er erklaert, was in ihr fehlt. Amber-Tint mit --warn-ink (AA), Aussage im Text.
+.kp__grenze {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  background: var(--warn-tint);
+  border-bottom: 1px solid var(--line);
+  font-size: var(--step--1);
+  color: var(--warn-ink);
+
+  b {
+    font-weight: 700;
+  }
+}
+.kp__grenze-mark {
+  flex: none;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.kp__gekuerzt {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px dashed var(--line-strong);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+.kp__gekuerzt-mark {
+  flex: none;
+  font-family: var(--font-mono);
+  color: var(--warn-ink);
+}
+
+.kp__opt {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  cursor: pointer;
+  border-left: 3px solid transparent; // Platz fuer die Bemaszungsmarke.
+
+  // Aktive Zeile: Flaeche UND orange Marke UND aria-selected — nie nur Farbe.
+  &.is-aktiv {
+    background: var(--surface-sunken);
+    border-left-color: var(--accent);
+  }
+}
+.kp__opt-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+.kp__opt-titel {
+  font-weight: 600;
+  font-size: var(--step-0);
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kp__opt-sub {
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kp__grund {
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.04em;
+  color: var(--ink-hint);
+}
+.kp__status {
+  flex: none;
+  padding: 0.15rem 0.45rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+// Direkttreffer: die Antwort auf „exakte Nummer eingegeben, endlose Liste
+// bekommen". Er steht oben, traegt eine Textmarke und liegt vorausgewaehlt.
+.kp__gruppe--direkt {
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.kp__opt--direkt {
+  padding-top: var(--space-3);
+  padding-bottom: var(--space-3);
+  border-left-color: var(--accent);
+}
+.kp__marke {
+  flex: none;
+  align-self: flex-start;
+  padding: 0.2rem 0.45rem;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--navy); // Navy auf Orange = 4,75:1 (Orange auf hell waere 2,7:1).
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.kp__enter {
+  flex: none;
+  color: var(--accent-ink);
+  font-size: 1rem;
+}
+
+// ------------------------------ Leerzustaende ---------------------------------
+.kp__leer {
+  padding: var(--space-5) var(--space-4);
+}
+.kp__leer-titel {
+  margin: 0 0 var(--space-3);
+  font-family: var(--font-display);
+  font-size: var(--step-1);
+  font-weight: 700;
+  color: var(--ink);
+}
+.kp__leer-liste {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--space-2);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+
+  li {
+    padding-left: var(--space-4);
+    border-left: 2px solid var(--line);
+  }
+  b {
+    color: var(--ink);
+  }
+}
+.kp__leer-fuss {
+  margin: var(--space-4) 0 0;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.04em;
+  color: var(--ink-hint);
+}
+
+.kp__meldung {
+  margin: 0;
+  padding: var(--space-5) var(--space-4);
+  font-size: var(--step-0);
+  color: var(--ink-muted);
+}
+.kp__meldung--fehler {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--warn-ink); // Text + Dreiecksmarke — Status nie nur ueber Farbe.
+}
+.kp__meldung-mark {
+  font-size: 0.8rem;
+}
+
+// --------------------------------- Fuss ---------------------------------------
+.kp__fuss {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.06em;
+  color: var(--ink-hint);
+}
+.kp__zahl,
+.kp__tasten {
+  margin: 0;
+}
+.kp__tasten {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.kp__fuss kbd {
+  padding: 0.1rem 0.3rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+}
+
+@media (max-width: 560px) {
+  .kp__tasten {
+    display: none; // Ohne Tastatur kein Nutzen; die Trefferzahl bleibt.
+  }
+}

@@ -39,6 +39,7 @@ from api.qualifikation import router as qualifikation_router
 from api.raum import router as raum_router
 from api.security import router as security_router
 from api.site_report import router as site_report_router
+from api.suche import router as suche_router
 from api.zeiterfassung import hr_router as zeit_stammdaten_router
 from api.zeiterfassung import router as zeiterfassung_router
 
@@ -87,3 +88,6 @@ api.add_router("/content", dateien_router, tags=["content"])
 # mehrere Module — der KERN hängt am Modul der Entität, jeder weitere Baustein an
 # seinem eigenen (siehe api/dossier.py).
 api.add_router("/dossier", dossier_router, tags=["dossier"])
+# Globale Suche: EIN Endpunkt über alle Entitäten, jede Kategorie an ihrem eigenen
+# Modul getort (kein eigenes Recht — siehe api/suche.py).
+api.add_router("/suche", suche_router, tags=["suche"])
