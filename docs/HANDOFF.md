@@ -106,28 +106,81 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 
 ## 0. Nächste Session — Stand & offene Entscheidungen (ZUERST LESEN)
 
-### ⭐ HIER ANFANGEN (Stand 2026-07-14)
+### ⭐ HIER ANFANGEN (Stand 2026-07-15)
 
-**`a3af19c` — Entitäts-Dossiers, Forderungsgrenze, Erstattung am Kreditbeleg.**
-Damit ist **Slice 3 aus `docs/ki-first-konzept.html`** (Abschnitt 9) erledigt.
-**3061 Tests grün** (vorher 2929), Migrationskopf **0097** (einziges Leaf),
+**Branches & Betrieb — DAS ZUERST:**
+- **`main` ist der eingefrorene DEMO-Stand und läuft auf dem Server des Users.**
+  Nicht direkt darauf entwickeln. Ein neuer Stand für den Server entsteht nur
+  bewusst: `develop` → `main` mergen, dann auf dem Server pullen + `docker compose`.
+- **`develop` ist der Arbeitsbranch — hier wird entwickelt.** (Beim Start prüfen:
+  `git branch --show-current` sollte `develop` sein.)
+- **GitHub-Remote `origin` = `github.com/Kreank/MCN`, PRIVAT.** Details/Konvention
+  stehen jetzt in `CLAUDE.md` (Abschnitt „Betrieb, Branches & Deployment").
+- **Deployment ist gebaut** (`deploy/`, Anleitung `docs/deployment.md`): vier
+  Container (nginx, backend/gunicorn, postgres, minio) + Scheduler. Auf der
+  Demo-Instanz ist **Mailversand totgelegt** und **`/admin/` gesperrt** (Abschnitt 10).
+  **Offen:** Let's-Encrypt-Ausstellung nur mit selbstsigniertem Cert getestet
+  (braucht die echte Domain — beim ersten echten Deploy prüfen); **Backup weiter
+  bewusst offen** (Abschnitt 10, Invarianten stehen bereit).
+
+**Was seit dem letzten Handoff dazukam (Commits `858ca85`, `ff711b9`, `4cd52e6`,
+`e41c36d`; alles auf `main`, deployed):**
+- **Globale Suche + Kommandopalette** (`6e6e4ee` bzw. im Block): ein Feld,
+  Beziehungstreffer (Adresse der Liegenschaft findet das Projekt), exakte
+  Belegnummer = Direkttreffer Platz 1. Trigram-Index (Migration 0098) gegen den
+  800k-Artikel-Seq-Scan.
+- **Der Monteur sieht sein ganzes Objekt** (0099/0100/0102): eine Heimat der Regel
+  `db_core/services/objektsicht.py`. Straße, Mieter mit Telefon, Aufträge/Berichte
+  der Kollegen am selben Objekt, Wartung/Prüffristen/Gewährleistung. Fremdes Objekt
+  → 404 auf jedem Weg. Rechnungen nie; Angebote nur **preisfrei** (eigenes Schema,
+  EK/Marge strukturell ausgeschlossen, Test scannt die serialisierte Antwort).
+- **Technische Anlagen** (0101): Tabelle lag seit 0004 tot in der DB — jetzt API +
+  UI, **echte Stammdaten-Spalten** (Hersteller/Modell/Baujahr/`supply_type`
+  ZENTRAL|DEZENTRAL, Index für die spätere Ersatzteilsuche), Schutzstandard
+  nachgezogen, `work_order.asset_id` verdrahtet. **Damit ist die frühere Backlog-
+  Notiz „Anlagen-Stammdaten als echte Spalten" ERLEDIGT.**
+- **Mieter & Verwaltung** (0103/0104): `tenure.occupancy_party` (gab es seit 0005,
+  ungenutzt) + `management.*` verdrahtet. Mieter = normaler Kontakt mit
+  Wähl-Link an der Wohnung; Verwaltung über ein **Mandat**, nicht als Rolle.
+  **KEINE** `occupancy.party_id`-Spalte gebaut (wäre zweite Wahrheit).
+- **Nachtrag aus Soll-Ist + Angebotsausgang**: „Nachtrag abrechnen" holt den
+  Mehrverbrauch als Rechnung aus den Abweichungen; Angebot annehmen/ablehnen
+  (Wiring fehlte seit 0018). **DREI Review-Runden**, drei Doppelabrechnungswege +
+  Nebenläufigkeit geschlossen: Sperre hängt an der **fakturierten Menge je
+  Artikel-IDENTITÄT** (`_billed_je_identitaet`), quellenunabhängig; divergente
+  Einheit (Monteur „Stk", Angebot „Stück") → **fail-closed `EinheitUneindeutig`**;
+  `SELECT FOR UPDATE` auf `work_order` mit Zwei-Sitzungs-Test bewiesen.
+- **Monteurs-Startseite** (Einsätze heute, Adresse, Wähl-Link, Stempeluhr) statt
+  Büro-Dashboard; 14 tote Knöpfe entfernt; **Kontrast-Fix zentral in den Tokens**
+  (Bedienelement-Rand trägt jetzt WCAG 1.4.11, beide Themes).
+- **`seed_szenario`** = der freigegebene Demo-Datenbestand (WEG Badensche 53 mit
+  Stegos + 6 Mietern, EFH Peter Borm, Zentralheizung, 6 SHK-Szenarien). Erfundene
+  Daten. `seed_demo` bleibt Entwicklerfutter daneben.
+
+**Stand: 3345 Tests grün** (14 Skips Bestand), Migrationskopf **0104**,
 `makemigrations --check` sauber, Frontend-Build ohne Budget-Warnung.
-Vier Review-Runden, Browser-Durchlauf inkl. rechtearmem Login.
 
-**→ Der nächste Slice ist `docs/ki-first-konzept.html`, Abschnitt 9, Zeile 4:
-das KI-Fundament verdrahten** — Models für `ai.*` (die vier Tabellen aus
-`0027_ki_grundlagen.sql` sind gebaut und werden von **null** Backend-Zeilen
-benutzt), Executor, Hash-/Version-Verifizierer, `EXPIRED`-Job, Router,
-Vorschlags-Kachel. Erst danach kommt die Auskunft per Tool-Calling (Slice 5).
+**→ Der nächste große Slice bleibt das KI-Fundament** (`docs/ki-first-konzept.html`,
+Abschnitt 9, Zeile 4): Models für `ai.*` (die vier Tabellen aus
+`0027_ki_grundlagen.sql` sind gebaut, **null** Backend-Zeilen benutzen sie),
+Executor, Hash-/Version-Verifizierer, `EXPIRED`-Job, Router, Vorschlags-Kachel
+(die Übersicht zeigt schon den Platzhalter „Anbindung folgt"). Danach die Auskunft
+per Tool-Calling (Slice 5) — die dafür nötigen **Dossiers** (`a3af19c`) und die
+**globale Suche** (KI-Auflösung „welche Entität ist gemeint?") stehen bereits.
 
-**⚠️ Der Arbeitsbaum ist NICHT sauber.** Darin liegt die uncommittete Arbeit eines
-**Parallel-Agenten**: eine **globale Suche + Kommandopalette**
-(`api/suche.py`, `db_core/services/suche.py` + Tests, `shared/kommandopalette/`,
-`core/suche.service.ts`, Änderungen an `app.html`/`app.ts`/`shared/dialog`,
-`docs/demo-szenario.md`). **Sie ist von niemandem reviewt** und war beim Commit von
-`a3af19c` noch in Bearbeitung. `api/api.py` und dieses Dokument sind **geteilte
-Dateien** — beim Einchecken selektiv stagen (die Suche-Registrierung in `api.py`
-gehört zu diesem fremden Slice, nicht zu `a3af19c`).
+**Kleinere offene Enden** (aus den Slice-Berichten, ehrlich):
+- **Alte Artikel-Server-DB des Users** (Bär&Ollenroth-Stamm + Junkers/Vaillant-
+  Ersatzteile): Klärung mit dem Server-Agenten offen — was steckt drin (Gerät→
+  Ersatzteil-Zuordnung?), erst dann Import-Weg. **Löschregel: erst löschen, wenn
+  der Import in MCN nachweislich steht.** Details `docs/demo-szenario.md` Abschnitt 4.
+- **`management.party_authority`** (Wertgrenzen „wer darf bis 5.000 € beauftragen")
+  ist Model-frei/API-frei — eigener Slice, wenn gebraucht.
+- **`tenure.ownership_period`/`ownership_interest`** (Reiter „Eigentum") noch Platzhalter.
+- Kundenhistorie am Auftrag schluckt für den Monteur still einen 403 (Rauschen).
+
+---
+
+#### Vorgeschichte: `a3af19c` — Entitäts-Dossiers (Stand 2026-07-14)
 
 #### Was `a3af19c` enthält
 

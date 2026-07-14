@@ -19,7 +19,7 @@ IDS-Connect-Anbindung.
 |---|---|---|
 | Datenbank | PostgreSQL 16, database-first, Regeln in Triggern/Constraints | `db/migrations/*.sql` (Quelle der Wahrheit) |
 | Backend | Django 5 + django-ninja (OpenAPI), psycopg3, uv | `backend/` |
-| Frontend | Angular (geplant), Client aus `/api/openapi.json` generiert | noch nicht angelegt |
+| Frontend | Angular „Leitstand" (standalone, Signals, kein zone.js) | `frontend/` |
 | Mobile | Native Android-App (später), Kotlin-Client aus OpenAPI | — |
 | Storage | MinIO (Object Storage, Container `mitra-crm-minio`) | — |
 
@@ -37,6 +37,28 @@ Eiserne Regeln daraus:
 - Neue Fachtabellen erben den Schutzstandard (No-Delete/Audit/No-Truncate).
 - Dev-DB: Container `mitra-crm-test`, Port 55432; Zugang über `MCN_DB_*`-Env-Vars.
   Zugangsdaten niemals aus Container-Umgebungen auslesen.
+
+## Betrieb, Branches & Deployment
+
+- **Git-Remote:** `origin` = `github.com/Kreank/MCN`, **privat**. War kurz öffentlich
+  für den ersten Server-Pull, danach auf privat gesetzt.
+- **`main` = eingefrorener Demo-Stand, läuft auf dem Server des Users.** NICHT
+  direkt darauf entwickeln. Ein neuer Server-Stand entsteht bewusst: `develop` →
+  `main` mergen, dann auf dem Server `git pull` + `docker compose`.
+- **`develop` = Arbeitsbranch.** Hier wird entwickelt. Beim Session-Start prüfen,
+  dass man dort steht.
+- **Deployment liegt in `deploy/`**, Anleitung `docs/deployment.md`. Vier Container
+  (nginx, backend/gunicorn, postgres, minio) + Scheduler; das Angular-Frontend wird
+  statisch ins nginx-Image gebaut (kein Laufzeit-Container). Härtung: `/admin/`
+  gesperrt, Postgres/MinIO ohne Port nach außen, `MCN_SECRET_KEY` fail-closed
+  (Start bricht ohne echten Schlüssel ab), auf der **Demo-Instanz Mailversand
+  totgelegt** (kein `MCN_MAIL_KEY`, `EMAIL_BACKEND=console`).
+- **Push-Gotcha:** Der Auto-Mode-Sicherheitsfilter blockiert `git push` zu einem
+  **öffentlichen** Remote (Datenabfluss-Schutz). Bei einem privaten Remote sollte
+  es durchlaufen; sonst pusht der User selbst via `!`-Terminal.
+- **Noch KEIN Backup, keine CI** — bewusst (siehe `docs/HANDOFF.md` Abschnitt 10:
+  Backup wird Pflicht, bevor die erste echte Rechnung im System steht; die
+  Invarianten dafür stehen dort bereit).
 
 ## Design & Marke
 
