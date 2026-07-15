@@ -732,6 +732,133 @@ def test_quick_intake_leerer_name_422_statt_500(admin_client, db):
     assert Party.objects.count() == parties_vorher
 
 
+@pytest.mark.django_db
+def test_quick_intake_bestehende_liegenschaft_dedup(admin_client, db):
+    """Dedup: existing_property_id referenziert ein bereits erfasstes Objekt — es
+    entsteht KEINE zweite Liegenschaft/Adresse, der neue Vorgang hängt am selben
+    Objekt, und der zweite Anrufer wird NICHT als Eigentümer eingetragen (er ist
+    Melder, nicht zwingend Eigentümer)."""
+    from db_core.models import Property, PropertyPartyRole, ServiceCase
+
+    # 1. Objekt regulär anlegen.
+    r1 = admin_client.post(
+        "/api/workflow/quick-intake",
+        data=_quick_intake_payload(),
+        content_type="application/json",
+    )
+    assert r1.status_code == 201, r1.content
+    prop_id = r1.json()["property_id"]
+    erster_melder = r1.json()["party_id"]
+
+    props_vorher = Property.objects.count()
+
+    # 2. Zweite Meldung: anderer Anrufer, SELBE (bestehende) Liegenschaft.
+    payload = _quick_intake_payload(
+        person={"first_name": "Erika", "last_name": "Musterfrau"},
+        contact=None,
+        property={"existing_property_id": prop_id},
+    )
+    r2 = admin_client.post(
+        "/api/workflow/quick-intake", data=payload, content_type="application/json"
+    )
+    assert r2.status_code == 201, r2.content
+    body = r2.json()
+
+    # Keine neue Liegenschaft entstanden.
+    assert Property.objects.count() == props_vorher
+    assert body["property_id"] == prop_id
+
+    # Neuer Vorgang hängt an der bestehenden Liegenschaft, neuer Melder.
+    case = ServiceCase.objects.get(id=body["service_case"]["id"])
+    assert str(case.property_id) == prop_id
+    assert str(case.reported_by_party_id) == body["party_id"]
+    assert body["party_id"] != erster_melder
+
+    # Der zweite Anrufer ist NICHT Eigentümer; der erste Melder bleibt es.
+    assert not PropertyPartyRole.objects.filter(
+        property_id=prop_id, party_id=body["party_id"], role="PROPERTY_OWNER"
+    ).exists()
+    assert PropertyPartyRole.objects.filter(
+        property_id=prop_id, party_id=erster_melder, role="PROPERTY_OWNER"
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_quick_intake_bestehender_kontakt_dedup(admin_client, db):
+    """Dedup Person: existing_party_id setzt einen bereits erfassten Kontakt als
+    Melder — es entsteht KEIN zweiter Kontakt; der Vorgang trägt den bestehenden
+    als reported_by."""
+    from db_core.models import Party, ServiceCase
+
+    # 1. Kontakt regulär anlegen.
+    r1 = admin_client.post(
+        "/api/workflow/quick-intake",
+        data=_quick_intake_payload(),
+        content_type="application/json",
+    )
+    assert r1.status_code == 201, r1.content
+    erster_party = r1.json()["party_id"]
+
+    parties_vorher = Party.objects.count()
+
+    # 2. Zweite Meldung: bestehender Kontakt als Melder, neue Liegenschaft.
+    payload = _quick_intake_payload(
+        person={"existing_party_id": erster_party},
+        contact=None,
+    )
+    r2 = admin_client.post(
+        "/api/workflow/quick-intake", data=payload, content_type="application/json"
+    )
+    assert r2.status_code == 201, r2.content
+    body = r2.json()
+
+    # Kein neuer Kontakt entstanden; Melder ist der bestehende.
+    assert Party.objects.count() == parties_vorher
+    assert body["party_id"] == erster_party
+    case = ServiceCase.objects.get(id=body["service_case"]["id"])
+    assert str(case.reported_by_party_id) == erster_party
+
+
+@pytest.mark.django_db
+def test_quick_intake_bestehender_kontakt_unbekannt_422(admin_client, db):
+    """Eine nicht existierende existing_party_id ist ein Fachfehler → 422 ohne
+    Waisen (die neue Liegenschaft wird zurückgerollt)."""
+    import uuid
+
+    from db_core.models import Property
+
+    props_vorher = Property.objects.count()
+    payload = _quick_intake_payload(
+        person={"existing_party_id": str(uuid.uuid4())},
+        contact=None,
+    )
+    r = admin_client.post(
+        "/api/workflow/quick-intake", data=payload, content_type="application/json"
+    )
+    assert r.status_code == 422, r.content
+    assert Property.objects.count() == props_vorher
+
+
+@pytest.mark.django_db
+def test_quick_intake_bestehende_liegenschaft_unbekannt_422(admin_client, db):
+    """Eine nicht existierende existing_property_id ist ein Fachfehler → 422
+    (keine Waisen), nicht 500."""
+    import uuid
+
+    from db_core.models import Party
+
+    parties_vorher = Party.objects.count()
+    payload = _quick_intake_payload(
+        contact=None,
+        property={"existing_property_id": str(uuid.uuid4())},
+    )
+    r = admin_client.post(
+        "/api/workflow/quick-intake", data=payload, content_type="application/json"
+    )
+    assert r.status_code == 422, r.content
+    assert Party.objects.count() == parties_vorher
+
+
 # --- Zum Projekt hochstufen: POST .../service_cases/{id}/promote-to-project -
 
 @pytest.mark.django_db

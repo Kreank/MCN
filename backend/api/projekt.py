@@ -869,9 +869,13 @@ def create_service_case_standalone(request, payload: ServiceCaseIn):
 
 
 class QuickIntakePersonIn(Schema):
+    # Dedup: Ist der Anrufer schon als Kontakt erfasst, wird er hier referenziert
+    # und NICHT neu angelegt. Dann sind Vor-/Nachname unnötig; ohne
+    # existing_party_id bleiben sie Pflicht (im Endpunkt geprüft).
+    existing_party_id: UUID | None = None
     salutation: str | None = None
-    first_name: str
-    last_name: str
+    first_name: str | None = None
+    last_name: str | None = None
 
 
 class QuickIntakeContactIn(Schema):
@@ -880,12 +884,17 @@ class QuickIntakeContactIn(Schema):
 
 
 class QuickIntakePropertyIn(Schema):
+    # Dedup: Ist die Liegenschaft schon im System, wird sie hier referenziert und
+    # NICHT neu angelegt (kein Duplikat, keine zweite Adresse). Dann sind die
+    # Adressfelder unnötig; ohne existing_property_id bleiben sie Pflicht (im
+    # Endpunkt geprüft).
+    existing_property_id: UUID | None = None
     property_type: str = "EINFAMILIENHAUS"
     name: str | None = None
-    street: str
+    street: str | None = None
     house_number: str | None = None
-    postal_code: str
-    city: str
+    postal_code: str | None = None
+    city: str | None = None
 
 
 class QuickIntakeMeldungIn(Schema):
@@ -935,78 +944,129 @@ def quick_intake(request, payload: QuickIntakeIn):
     Waisen (Person/Liegenschaft ohne Vorgang), die der No-Delete-Schutz nicht mehr
     entfernen könnte.
 
-    Vier fail-closed Tore, weil der Durchstich vier Module schreibt (identity,
-    property ×2, workflow) und eine GoBD-Belegnummer verbraucht. Alle Rechte
-    werden VOR der Transaktion geprüft.
+    Fail-closed Tore, VOR der Transaktion geprüft. Sie richten sich nach dem, was
+    tatsächlich geschrieben wird (least privilege): identity.ANLEGEN für einen
+    neuen Kontakt bzw. nur identity.LESEN, wenn ein bestehender referenziert wird
+    (existing_party_id); property.ANLEGEN+AENDERN für eine neue Liegenschaft bzw.
+    nur property.LESEN bei Referenz (existing_property_id); immer workflow.ANLEGEN
+    (der Vorgang verbraucht eine GoBD-Belegnummer). Dedup verhindert Duplikate von
+    Person/Liegenschaft. Bei Referenz einer BESTEHENDEN Liegenschaft wird der
+    Melder nicht als Eigentümer eingetragen (er ist nur Melder); bei einer NEUEN
+    Liegenschaft wird der Melder — ob neu oder referenziert — deren Eigentümer.
     """
-    actor, _ = require(request, "identity", "ANLEGEN")
-    require(request, "property", "ANLEGEN")
-    require(request, "property", "AENDERN")
+    existing_party_id = payload.person.existing_party_id
+    if existing_party_id is None:
+        # Neuer Kontakt: identity-Schreibrecht nötig, Name Pflicht.
+        actor, _ = require(request, "identity", "ANLEGEN")
+        if not (
+            payload.person.first_name
+            and payload.person.first_name.strip()
+            and payload.person.last_name
+            and payload.person.last_name.strip()
+        ):
+            raise HttpError(422, "Für einen neuen Kontakt sind Vor- und Nachname Pflicht.")
+    else:
+        # Bestehenden Kontakt nur als Melder referenzieren → Lese-Recht genügt.
+        actor, _ = require(request, "identity", "LESEN")
     require(request, "workflow", "ANLEGEN")
 
-    prop_name = _ableiten_liegenschaftsname(payload.property)
+    existing_property_id = payload.property.existing_property_id
+    if existing_property_id is None:
+        # Neue Liegenschaft: property-Schreibrechte nötig, Adresse Pflicht.
+        require(request, "property", "ANLEGEN")
+        require(request, "property", "AENDERN")
+        if not (
+            payload.property.street
+            and payload.property.street.strip()
+            and payload.property.postal_code
+            and payload.property.postal_code.strip()
+            and payload.property.city
+            and payload.property.city.strip()
+        ):
+            raise HttpError(
+                422,
+                "Für eine neue Liegenschaft sind Straße, PLZ und Ort Pflicht.",
+            )
+        prop_name = _ableiten_liegenschaftsname(payload.property)
+    else:
+        # Bestehende Liegenschaft nur referenzieren → Lese-Recht genügt; der
+        # Anrufer wird NICHT als Eigentümer eingetragen (er ist Melder, nicht
+        # zwingend Eigentümer eines bereits erfassten Objekts).
+        require(request, "property", "LESEN")
 
     def _durchstich():
-        party = identity_service.create_person(
-            actor,
-            payload.person.first_name,
-            payload.person.last_name,
-            salutation=payload.person.salutation,
-        )
-        if payload.contact:
-            if payload.contact.phone and payload.contact.phone.strip():
-                identity_service.add_contact_point(
-                    actor,
-                    party.id,
-                    contact_type="PHONE",
-                    value=payload.contact.phone,
-                    is_primary=True,
-                )
-            if payload.contact.email and payload.contact.email.strip():
-                identity_service.add_contact_point(
-                    actor,
-                    party.id,
-                    contact_type="EMAIL",
-                    value=payload.contact.email,
-                    is_primary=True,
-                )
-        prop = property_service.create_property(
-            actor,
-            name=prop_name,
-            property_type=payload.property.property_type,
-            street=payload.property.street,
-            house_number=payload.property.house_number,
-            postal_code=payload.property.postal_code,
-            city=payload.property.city,
-        )
-        property_service.add_party_role(
-            actor,
-            property_id=prop.id,
-            party_id=party.id,
-            role="PROPERTY_OWNER",
-            valid_from=date.today(),
-        )
+        if existing_party_id is None:
+            party = identity_service.create_person(
+                actor,
+                payload.person.first_name,
+                payload.person.last_name,
+                salutation=payload.person.salutation,
+            )
+            if payload.contact:
+                if payload.contact.phone and payload.contact.phone.strip():
+                    identity_service.add_contact_point(
+                        actor,
+                        party.id,
+                        contact_type="PHONE",
+                        value=payload.contact.phone,
+                        is_primary=True,
+                    )
+                if payload.contact.email and payload.contact.email.strip():
+                    identity_service.add_contact_point(
+                        actor,
+                        party.id,
+                        contact_type="EMAIL",
+                        value=payload.contact.email,
+                        is_primary=True,
+                    )
+            party_id = party.id
+        else:
+            # Bestehender Melder: Existenz/Verwendbarkeit prüft
+            # create_service_case (ensure_party_usable → 422). Keine neuen
+            # Kontaktwege am fremden Kontakt.
+            party_id = existing_party_id
+        if existing_property_id is None:
+            prop = property_service.create_property(
+                actor,
+                name=prop_name,
+                property_type=payload.property.property_type,
+                street=payload.property.street,
+                house_number=payload.property.house_number,
+                postal_code=payload.property.postal_code,
+                city=payload.property.city,
+            )
+            property_service.add_party_role(
+                actor,
+                property_id=prop.id,
+                party_id=party_id,
+                role="PROPERTY_OWNER",
+                valid_from=date.today(),
+            )
+            property_id = prop.id
+        else:
+            # Existenz prüft create_service_case selbst (ensure_exists → 422).
+            property_id = existing_property_id
         case = projekt_service.create_service_case(
             actor,
-            property_id=prop.id,
+            property_id=property_id,
             subject=payload.meldung.subject,
             project_id=None,
             description=payload.meldung.description,
-            reported_by_party_id=party.id,
+            reported_by_party_id=party_id,
             priority=payload.meldung.priority,
         )
-        return party, prop, case
+        return party_id, property_id, case
 
     try:
-        party, prop, case = run_business_transaction(actor, _durchstich)
+        party_id, property_id, case = run_business_transaction(actor, _durchstich)
     except ValueError as exc:
         raise HttpError(422, str(exc))
 
     return Status(
         201,
         QuickIntakeOut(
-            party_id=party.id,
-            property_id=prop.id,
+            party_id=party_id,
+            property_id=property_id,
             service_case=ServiceCaseOut(
                 id=case.id,
                 case_number=case.case_number,

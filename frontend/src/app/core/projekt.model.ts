@@ -40,6 +40,12 @@ export interface PropertyRef {
   property_number: string;
   name: string;
   city: string;
+  // Optionale Adressteile — nur manche Endpunkte liefern sie mit (z. B. der
+  // Einsatz/Termin, damit die Zieladresse angezeigt werden kann). Wo nicht
+  // gesetzt, bleibt es bei Name · Stadt.
+  street?: string | null;
+  house_number?: string | null;
+  postal_code?: string | null;
 }
 
 export type ServiceCaseStatus =
@@ -223,9 +229,11 @@ export interface ServiceCaseCreate {
 // POST /api/workflow/quick-intake — legt Person + Liegenschaft + Vorgang in
 // EINEM atomaren Aufruf an (EFH-Eigentümer meldet einen Defekt am Telefon).
 export interface QuickIntakePerson {
+  // Dedup: Ist der Anrufer schon Kontakt, wird er referenziert statt neu angelegt.
+  existing_party_id?: string | null;
   salutation: string | null;
-  first_name: string;
-  last_name: string;
+  first_name: string | null;
+  last_name: string | null;
 }
 
 export interface QuickIntakeContact {
@@ -234,13 +242,16 @@ export interface QuickIntakeContact {
 }
 
 export interface QuickIntakeProperty {
+  // Dedup: Ist die Liegenschaft schon erfasst, wird sie referenziert statt neu
+  // angelegt. Dann sind die Adressfelder überflüssig (Server ignoriert sie).
+  existing_property_id?: string | null;
   property_type: PropertyType;
   // Der Liegenschaftsname wird serverseitig abgeleitet — Frontend sendet null.
   name: string | null;
-  street: string;
+  street: string | null;
   house_number: string | null;
-  postal_code: string;
-  city: string;
+  postal_code: string | null;
+  city: string | null;
 }
 
 export interface QuickIntakeMeldung {

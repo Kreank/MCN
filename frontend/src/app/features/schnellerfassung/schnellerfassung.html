@@ -24,84 +24,121 @@
     <!-- ------------------------------- Person ------------------------------- -->
     <fieldset class="schnell-abschnitt">
       <legend class="legende">Person</legend>
-      <div class="schnell-grid">
-        <app-feld
-          [control]="form.controls.salutation"
-          label="Anrede"
-          hinweis="Optional, z. B. Herr, Frau."
-          autocomplete="honorific-prefix"
-        />
-        <app-feld
-          [control]="form.controls.first_name"
-          label="Vorname"
-          [pflicht]="true"
-          autocomplete="given-name"
-        />
-        <app-feld
-          [control]="form.controls.last_name"
-          label="Nachname"
-          [pflicht]="true"
-          autocomplete="family-name"
-        />
-      </div>
+
+      <!-- Dedup: zuerst prüfen, ob der Anrufer schon Kontakt ist. -->
+      <app-referenz-wahl
+        [control]="form.controls.existing_party_id"
+        label="Schon Kontakt?"
+        hinweis="Anrufer suchen — ist er schon erfasst, hier wählen (kein Duplikat). Neu? Feld leer lassen."
+        platzhalter="Kontakt suchen (Name)"
+        [suche]="kontaktSuche"
+      />
+
+      @if (bestehenderKontaktId()) {
+        <p class="note">
+          <strong>Bestehender Kontakt gewählt.</strong> Er wird als Melder gesetzt.
+          Zum Neuanlegen die Auswahl oben leeren.
+        </p>
+      } @else {
+        <div class="schnell-grid">
+          <app-feld
+            [control]="form.controls.salutation"
+            label="Anrede"
+            hinweis="Optional, z. B. Herr, Frau."
+            autocomplete="honorific-prefix"
+          />
+          <app-feld
+            [control]="form.controls.first_name"
+            label="Vorname"
+            [pflicht]="true"
+            autocomplete="given-name"
+          />
+          <app-feld
+            [control]="form.controls.last_name"
+            label="Nachname"
+            [pflicht]="true"
+            autocomplete="family-name"
+          />
+        </div>
+      }
     </fieldset>
 
     <!-- ------------------------------ Kontakt ------------------------------- -->
-    <fieldset class="schnell-abschnitt">
-      <legend class="legende">Kontakt</legend>
-      <div class="schnell-grid">
-        <app-feld
-          [control]="form.controls.phone"
-          label="Telefon"
-          typ="tel"
-          hinweis="Optional."
-          autocomplete="tel"
-        />
-        <app-feld
-          [control]="form.controls.email"
-          label="E-Mail"
-          typ="email"
-          hinweis="Optional."
-          autocomplete="email"
-        />
-      </div>
-    </fieldset>
+    @if (!bestehenderKontaktId()) {
+      <fieldset class="schnell-abschnitt">
+        <legend class="legende">Kontakt</legend>
+        <div class="schnell-grid">
+          <app-feld
+            [control]="form.controls.phone"
+            label="Telefon"
+            typ="tel"
+            hinweis="Optional."
+            autocomplete="tel"
+          />
+          <app-feld
+            [control]="form.controls.email"
+            label="E-Mail"
+            typ="email"
+            hinweis="Optional."
+            autocomplete="email"
+          />
+        </div>
+      </fieldset>
+    }
 
     <!-- ---------------------------- Liegenschaft ---------------------------- -->
     <fieldset class="schnell-abschnitt">
       <legend class="legende">Liegenschaft</legend>
-      <div class="schnell-grid">
-        <app-feld
-          [control]="form.controls.property_type"
-          label="Liegenschaftstyp"
-          typ="select"
-          [pflicht]="true"
-          [optionen]="typOptionen"
-        />
-        <app-feld
-          [control]="form.controls.street"
-          label="Straße"
-          [pflicht]="true"
-          autocomplete="address-line1"
-        />
-        <app-feld
-          [control]="form.controls.house_number"
-          label="Hausnummer"
-          hinweis="Optional."
-        />
-        <app-feld
-          [control]="form.controls.postal_code"
-          label="PLZ"
-          [pflicht]="true"
-          autocomplete="postal-code"
-        />
-        <app-feld
-          [control]="form.controls.city"
-          label="Ort"
-          [pflicht]="true"
-          autocomplete="address-level2"
-        />
-      </div>
+
+      <!-- Dedup: zuerst prüfen, ob das Objekt schon erfasst ist. Wird eins
+           gewählt, entfallen die Adressfelder — es entsteht kein Duplikat. -->
+      <app-referenz-wahl
+        [control]="form.controls.existing_property_id"
+        label="Schon erfasst?"
+        hinweis="Objekt suchen — ist es schon im System, hier wählen (verhindert Duplikate). Neu? Feld leer lassen und unten anlegen."
+        platzhalter="Liegenschaft suchen (Name, Nummer, Ort)"
+        [suche]="liegenschaftSuche"
+      />
+
+      @if (bestehendeId()) {
+        <p class="note">
+          <strong>Bestehende Liegenschaft gewählt.</strong> Die Meldung wird an dieses
+          Objekt gehängt — Adresse wird übernommen. Zum Neuanlegen die Auswahl oben leeren.
+        </p>
+      } @else {
+        <div class="schnell-grid">
+          <app-feld
+            [control]="form.controls.property_type"
+            label="Liegenschaftstyp"
+            typ="select"
+            [pflicht]="true"
+            [optionen]="typOptionen"
+          />
+          <app-feld
+            [control]="form.controls.street"
+            label="Straße"
+            [pflicht]="true"
+            autocomplete="address-line1"
+          />
+          <app-feld
+            [control]="form.controls.house_number"
+            label="Hausnummer"
+            hinweis="Optional."
+          />
+          <app-feld
+            [control]="form.controls.postal_code"
+            label="PLZ"
+            [pflicht]="true"
+            autocomplete="postal-code"
+          />
+          <app-feld
+            [control]="form.controls.city"
+            label="Ort"
+            [pflicht]="true"
+            autocomplete="address-level2"
+          />
+        </div>
+      }
     </fieldset>
 
     <!-- ------------------------------ Meldung ------------------------------- -->
