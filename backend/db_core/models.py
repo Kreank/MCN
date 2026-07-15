@@ -9,6 +9,7 @@ Neue Fachtabellen: SQL-Migration schreiben (siehe README), dann hier das
 Model nachziehen. `python manage.py inspectdb --database default <tabelle>`
 liefert einen Startpunkt.
 """
+from django.contrib.postgres.fields import ArrayField
 from django.db import models
 from django.db.models import Func
 from django.db.models.functions import Now
@@ -4440,3 +4441,169 @@ class ManagementResponsibility(models.Model):
 
     def __str__(self):
         return f"{self.responsibility_type} ({self.priority})"
+
+
+# ---------------------------------------------------------------------------
+# Schema ai — KI-Grundlagen (Migration 0027): abgeleitete Inhalte, Embeddings,
+# Läufe, Vorschläge. Die KI schreibt NIE direkt: sie erzeugt einen ai_proposal
+# ohne fachliche Wirkung, ausgeführt wird der ausschließlich über die Fach-API
+# (dieselben Tore wie beim Menschen). Alle hier gespeicherten Inhalte sind DATEN,
+# niemals Anweisungen (Prompt-Injection); is_untrusted kennzeichnet externe Quellen.
+# ---------------------------------------------------------------------------
+
+
+class ContentItem(models.Model):
+    """ai.content_item — extrahierter Text als abgeleitete Kopie (Migration 0027).
+
+    Die Fachwahrheit bleibt im Quellmodul; hier liegt nur eine für Retrieval/KI
+    aufbereitete Kopie. Genau EINE Quelle ist gesetzt (DB-CHECK
+    num_nonnulls(communication_id, document_id, file_id) = 1). `content.document`
+    ist nicht als Model abgebildet — `document_id` bleibt ein rohes UUID-Feld, die
+    DB prüft den Fremdschlüssel trotzdem.
+
+    `is_untrusted` (Default true) kennzeichnet Inhalte aus externen Quellen (E-Mail,
+    fremdes PDF, Foto-/OCR-Text): Sie sind DATEN, nie Anweisung — der Prompt-
+    Injection-Schutz der ganzen Kette hängt daran.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    # EMAIL | PDF | EINSATZBERICHT | FOTO_BESCHREIBUNG | PROTOKOLL | SONSTIGES
+    source_type = models.TextField()
+    communication = models.ForeignKey(
+        Communication, models.DO_NOTHING, db_column="communication_id",
+        null=True, blank=True, related_name="content_items",
+    )
+    document_id = models.UUIDField(null=True, blank=True)
+    file = models.ForeignKey(
+        File, models.DO_NOTHING, db_column="file_id",
+        null=True, blank=True, related_name="content_items",
+    )
+    extracted_text = models.TextField()
+    language = models.TextField(null=True, blank=True)
+    content_hash = models.TextField()
+    is_untrusted = models.BooleanField(db_default=models.Value(True))
+    created_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'ai"."content_item'
+
+    def __str__(self):
+        return f"{self.source_type} ({self.id})"
+
+
+class Embedding(models.Model):
+    """ai.embedding — Vektor eines Textabschnitts, abgeleitete Daten (Migration 0027).
+
+    Modellagnostisch als `real[]` gespeichert; die pgvector-Einführung mit fester
+    Dimension folgt erst nach der Modellauswahl per eigener Migration. Als abgeleitete
+    Daten lösch- und neu aufbaubar — hängt per ON DELETE CASCADE am content_item
+    (die DB räumt auf, kein Löschverbot). Eindeutig je (content_item, chunk_index,
+    embedding_model, embedding_version): dasselbe Modell erzeugt denselben Abschnitt
+    nur einmal, verschiedene Modelle koexistieren.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    content_item = models.ForeignKey(
+        ContentItem, models.DO_NOTHING, db_column="content_item_id",
+        related_name="embeddings",
+    )
+    chunk_index = models.IntegerField()
+    chunk_text = models.TextField()
+    embedding_model = models.TextField()
+    embedding_version = models.TextField()
+    vector = ArrayField(models.FloatField())
+    content_hash = models.TextField()
+    created_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'ai"."embedding'
+        ordering = ["chunk_index"]
+
+    def __str__(self):
+        return f"{self.embedding_model}/{self.embedding_version} #{self.chunk_index}"
+
+
+class AiRun(models.Model):
+    """ai.ai_run — Protokoll eines KI-Laufs (Migration 0027). Append-only.
+
+    Hält fest, WELCHES Modell in welcher Version über welchen Workflow/Prompt
+    entschieden hat, wer den Lauf auslöste, mit welchem Rechtekontext, aus welchen
+    Quellen und mit welchen Werkzeugen. Zugleich die Grundlage des Modellvergleichs
+    (gleicher Input, zwei Modelle → `model_name`/`model_version` unterscheiden die Läufe).
+
+    Ein Lauf wird genau EINMAL abgeschlossen (Trigger `guard_ai_run_update`); danach
+    unveränderlich, kein Löschen/Truncate (Schutzstandard).
+    """
+
+    id = models.UUIDField(primary_key=True)
+    model_name = models.TextField()
+    model_version = models.TextField()
+    workflow_name = models.TextField()
+    workflow_version = models.TextField()
+    prompt_version = models.TextField()
+    triggered_by_user = models.ForeignKey(
+        AppUser, models.DO_NOTHING, db_column="triggered_by_user_id",
+        related_name="ai_runs",
+    )
+    permission_context = models.JSONField(default=dict)
+    sources = models.JSONField(default=list)
+    tools_used = models.JSONField(default=list)
+    started_at = models.DateTimeField(db_default=Now())
+    finished_at = models.DateTimeField(null=True, blank=True)
+    # OK | FEHLER | ABBRUCH — gesetzt genau beim Abschluss (zusammen mit finished_at)
+    result_status = models.TextField(null=True, blank=True)
+    error_message = models.TextField(null=True, blank=True)
+    resource_usage = models.JSONField(default=dict)
+
+    class Meta:
+        managed = False
+        db_table = 'ai"."ai_run'
+
+    def __str__(self):
+        return f"{self.workflow_name} [{self.model_name}] {self.result_status or 'läuft'}"
+
+
+class AiProposal(models.Model):
+    """ai.ai_proposal — KI-Vorschlag OHNE fachliche Wirkung (Migration 0027).
+
+    Der Kern der Vision: Die KI schreibt nie selbst. Sie legt einen Vorschlag ab;
+    ausgeführt wird er ausschließlich durch die App-Schicht über die Fach-API — durch
+    dieselben Statusautomaten, Freigaben und DB-Trigger wie beim Menschen.
+
+    Die Freigabe ist an `payload_hash`, `target_type`/`target_id`, `target_version`,
+    den freigebenden Benutzer und `expires_at` gebunden (Trigger `guard_ai_proposal`;
+    Freigabe nach Ablauf ist unzulässig, die Freigabezeit setzt die Serverzeit — nicht
+    fälschbar). Inhalt (Payload, Hash, Ziel) ist nach Anlage unveränderlich; Status nur
+    PENDING → APPROVED/REJECTED/EXPIRED. Kein Löschen/Truncate.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    ai_run = models.ForeignKey(
+        AiRun, models.DO_NOTHING, db_column="ai_run_id", related_name="proposals",
+    )
+    proposal_type = models.TextField()
+    target_type = models.TextField()
+    target_id = models.UUIDField()
+    target_version = models.IntegerField(null=True, blank=True)
+    proposed_payload = models.JSONField(default=dict)
+    payload_hash = models.TextField()
+    # PENDING | APPROVED | REJECTED | EXPIRED
+    status = models.TextField(db_default="PENDING")
+    expires_at = models.DateTimeField()
+    approved_by_user = models.ForeignKey(
+        AppUser, models.DO_NOTHING, db_column="approved_by_user_id",
+        null=True, blank=True, related_name="approved_ai_proposals",
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'ai"."ai_proposal'
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.proposal_type} → {self.target_type} ({self.status})"
