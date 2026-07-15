@@ -67,7 +67,8 @@ RUN rm -rf /app/backend/.venv /app/backend/staticfiles \
 
 COPY deploy/backend-entrypoint.sh /usr/local/bin/backend-entrypoint.sh
 COPY deploy/scheduler-entrypoint.sh /usr/local/bin/scheduler-entrypoint.sh
-RUN chmod +x /usr/local/bin/backend-entrypoint.sh /usr/local/bin/scheduler-entrypoint.sh
+COPY deploy/queue-worker-entrypoint.sh /usr/local/bin/queue-worker-entrypoint.sh
+RUN chmod +x /usr/local/bin/backend-entrypoint.sh /usr/local/bin/scheduler-entrypoint.sh /usr/local/bin/queue-worker-entrypoint.sh
 
 # Kein root. /srv/static ist das Ziel von collectstatic (MCN_STATIC_ROOT) und
 # wird als Volume auch von nginx gelesen; das Verzeichnis muss dem App-Benutzer

@@ -23,6 +23,7 @@ import random
 import uuid
 from datetime import timedelta
 
+from django.db.models import Q
 from django.utils import timezone
 
 from db_core import storage as storage_module
@@ -56,6 +57,11 @@ def run_tool_call(tool_call_id, *, actor_id, client=None, storage=None) -> str:
     if call.deadline_at and timezone.now() > call.deadline_at:
         _to_terminal(actor_id, call, "EXPIRED", "TIMEOUT", "Deadline überschritten.")
         return "EXPIRED"
+
+    # Lease auf den ARBEITSBEGINN ausrichten (nicht auf den evtl. viel früheren
+    # Batch-Claim): sonst könnte reap_stale eines zweiten Workers den Call greifen,
+    # während dieser hier noch dispatcht (Doppel-Dispatch bei > 1 Instanz).
+    _renew_lease(actor_id, call, tool)
 
     # Aufbau-Fehler differenziert klassifizieren: eine fehlende Datei-ZEILE ist
     # permanent, ein wegge­brochener Objektspeicher oder ein Schlüssel-Rotations­
@@ -192,3 +198,164 @@ def _to_terminal(actor_id, call, status, error_code, error_message) -> None:
         call.error_code = error_code
         call.error_message = error_message
         call.save(update_fields=["status", "error_code", "error_message"])
+
+
+def _renew_lease(actor_id, call, tool) -> None:
+    """Setzt die Lease auf JETZT + timeout + Puffer — beim Arbeitsbeginn, damit sie
+    die tatsächliche Bearbeitungszeit deckt und nicht den evtl. viel früheren
+    Batch-Claim (F1: sonst reap-Fenster mitten im Dispatch)."""
+    with business_transaction(actor_id):
+        call.leased_until = timezone.now() + timedelta(seconds=tool.timeout_seconds + CLAIM_LEASE_BUFFER)
+        call.save(update_fields=["leased_until"])
+
+
+# ===========================================================================
+# Queue-Mechanik (Stufe 4b) — Claiming, Reaping, Polling, Tick
+# ===========================================================================
+#
+# Idempotenz gegen zwei gleichzeitige Ticks: `SELECT … FOR UPDATE SKIP LOCKED` +
+# Lease (leased_until). SKIP LOCKED macht den CLAIM disjunkt (Beweis:
+# db/tests/nebenlaeufigkeitstest_tool_queue.sh). leased_until hat eine Doppelrolle als
+# „nicht anfassen vor": bei RUNNING die Bearbeitungs-Lease, bei QUEUED der
+# Backoff-Fence nach einem Retry. Jeder Call erneuert seine Lease beim ARBEITSBEGINN
+# (`_renew_lease`), damit sie die Bearbeitung deckt, nicht den früheren Batch-Claim.
+#
+# Grenze (F1): Der Batch wird nach dem Claim SERIELL abgearbeitet. Läuft mehr als EIN
+# queue-worker, muss `claim_limit` klein gegenüber der Tool-Timeout bleiben, sonst
+# könnte die Batch-Lease eines späten Calls ablaufen, bevor er drankommt. Die
+# ausgelieferte Config fährt genau EINE Instanz (Ticks überlappen nie) — dort ist das
+# kein Thema. Ein Doppel-Dispatch wäre zudem nicht katastrophal: der UNIQUE
+# `content_item.source_tool_call_id` und die Fehlerkapselung im Tick fangen ihn ab.
+
+# Puffer, damit die (per-Call erneuerte) Lease nicht MITTEN im langsamen Dispatch abläuft.
+CLAIM_LEASE_BUFFER = 30
+
+
+def claim_batch(actor_id, *, limit=10):
+    """Claimt bis zu `limit` fällige QUEUED-Calls per SKIP LOCKED → RUNNING + Lease.
+    Fällig = leased_until NULL/vergangen (Backoff-Fence). Überfällige Deadline →
+    direkt EXPIRED (über RUNNING, wie der Trigger es verlangt)."""
+    claimed = []
+    with business_transaction(actor_id):
+        rows = list(
+            ToolCall.objects.select_for_update(skip_locked=True)
+            .select_related("tool")
+            .filter(status="QUEUED")
+            .filter(Q(leased_until__isnull=True) | Q(leased_until__lte=timezone.now()))
+            .order_by("created_at")[:limit]
+        )
+        now = timezone.now()
+        for call in rows:
+            call.status = "RUNNING"
+            call.leased_until = now + timedelta(seconds=call.tool.timeout_seconds + CLAIM_LEASE_BUFFER)
+            call.save(update_fields=["status", "leased_until"])
+            if call.deadline_at and now > call.deadline_at:
+                call.status = "EXPIRED"
+                call.error_code = "TIMEOUT"
+                call.error_message = "Deadline überschritten."
+                call.save(update_fields=["status", "error_code", "error_message"])
+            else:
+                claimed.append(call.id)
+    return claimed
+
+
+def reap_stale(actor_id, *, limit=50):
+    """RUNNING mit abgelaufener Lease und OHNE pending-job_id (ein Worker starb
+    mitten im Dispatch) → zurück auf QUEUED (Retry) oder FAILED. Pending-Calls
+    (mit job_id) werden NICHT gereapt — die pollt `poll_pending`."""
+    reaped = []
+    with business_transaction(actor_id):
+        rows = list(
+            ToolCall.objects.select_for_update(skip_locked=True)
+            .select_related("tool")
+            .filter(status="RUNNING", leased_until__lt=timezone.now())
+            .exclude(output_ref__has_key="job_id")[:limit]
+        )
+        for call in rows:
+            _reap_one(call)
+            reaped.append(call.id)
+    return reaped
+
+
+def _reap_one(call):
+    tool = call.tool
+    if (call.attempt + 1) < tool.max_attempts:
+        call.status = "QUEUED"
+        call.attempt = call.attempt + 1
+        backoff = float(tool.backoff_seconds) * (2 ** call.attempt) + random.uniform(0, float(tool.backoff_seconds))
+        call.leased_until = timezone.now() + timedelta(seconds=backoff)
+        call.error_code = "TIMEOUT"
+        call.error_message = "Lease abgelaufen (Worker-Abbruch)."
+        call.save(update_fields=["status", "attempt", "leased_until", "error_code", "error_message"])
+    else:
+        call.status = "FAILED"
+        call.error_code = "TIMEOUT"
+        call.error_message = "Lease abgelaufen, Versuche erschöpft."
+        call.save(update_fields=["status", "error_code", "error_message"])
+
+
+def poll_pending(actor_id, *, client=None, storage=None, limit=10):
+    """Pollt fällige pending-Calls (RUNNING mit job_id, Lease abgelaufen = Zeit für
+    den nächsten Poll). Erst unter Lock die Lease erneuern (kein zweiter Worker
+    pollt denselben), DANN außerhalb der Transaktion pollen + Ergebnis anwenden."""
+    client = client or ToolClient()
+    faellig = []
+    with business_transaction(actor_id):
+        rows = list(
+            ToolCall.objects.select_for_update(skip_locked=True)
+            .select_related("tool")
+            .filter(status="RUNNING", leased_until__lte=timezone.now(), output_ref__has_key="job_id")[:limit]
+        )
+        now = timezone.now()
+        for call in rows:
+            call.leased_until = now + timedelta(seconds=call.tool.timeout_seconds + CLAIM_LEASE_BUFFER)
+            call.save(update_fields=["leased_until"])
+            faellig.append((call.id, call.output_ref.get("job_id")))
+    for call_id, job_id in faellig:
+        try:
+            _poll_and_apply(actor_id, call_id, job_id, client)
+        except Exception:
+            # Ein Fehler bei EINEM Poll (z. B. Guard-/Unique-Kollision) darf den Rest
+            # nicht abbrechen — die Wiederaufnahme erfolgt im nächsten Tick.
+            logger.exception("queue: Poll fehlgeschlagen für tool_call %s", call_id)
+    return [cid for cid, _ in faellig]
+
+
+def _poll_and_apply(actor_id, call_id, job_id, client) -> str:
+    call = ToolCall.objects.select_related("tool").get(id=call_id)
+    if call.status != "RUNNING":
+        return call.status
+    tool = call.tool
+    if call.deadline_at and timezone.now() > call.deadline_at:
+        _to_terminal(actor_id, call, "EXPIRED", "TIMEOUT", "Deadline überschritten.")
+        return "EXPIRED"
+    try:
+        bearer = registry.get_bearer(tool.id)
+        result = client.poll(tool, job_id, bearer=bearer)
+    except ToolError as exc:
+        return _handle_failure(actor_id, call, tool, exc)
+    except ValueError:
+        return _handle_failure(actor_id, call, tool, ToolError("UNREACHABLE", "Bearer/Schlüssel nicht verfügbar."))
+    if result.status == "pending":
+        return "RUNNING"   # noch nicht fertig; die Lease steht schon (vor dem Poll erneuert)
+    if result.status == "error":
+        code = result.error_code if result.error_code in PERMANENT else "TOOL_ERROR"
+        return _handle_failure(actor_id, call, tool, ToolError(code, "Gerät meldete einen Fehler."))
+    return _finish_success(actor_id, call, tool, result)
+
+
+def tick(actor_id, *, client=None, storage=None, claim_limit=10) -> dict:
+    """Ein Durchlauf: Stale reapen → fällige pending pollen → neue QUEUED claimen +
+    dispatchen. Vom queue-worker-Dienst im schnellen Loop aufgerufen."""
+    client = client or ToolClient()
+    reaped = reap_stale(actor_id)
+    polled = poll_pending(actor_id, client=client, storage=storage)
+    claimed = claim_batch(actor_id, limit=claim_limit)
+    for cid in claimed:
+        try:
+            run_tool_call(cid, actor_id=actor_id, client=client, storage=storage)
+        except Exception:
+            # Ein Fehler bei EINEM Dispatch (z. B. Guard-/Unique-Kollision bei einem
+            # Race) darf den Rest des Ticks nicht abbrechen — Recovery im nächsten Tick.
+            logger.exception("queue: Dispatch fehlgeschlagen für tool_call %s", cid)
+    return {"reaped": len(reaped), "polled": len(polled), "dispatched": len(claimed)}

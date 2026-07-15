@@ -145,6 +145,30 @@ services:
     networks: [mcn]
 
   # -------------------------------------------------------------------------
+  # KI-Werkzeug-Queue: treibt die Tool-Call-Queue in einem schnellen Loop
+  # (ASR/Vision/OCR-Dispatch + Poll passiver Geräte). Ohne ihn bleiben
+  # KI-Werkzeug-Aufrufe in QUEUED liegen. Bewusst getrennt vom täglichen
+  # scheduler, weil die Queue Sekunden braucht, keinen Tagesrhythmus.
+  # Ausgelegt auf GENAU EINE Instanz (Ticks überlappen nie). Der Claim ist per
+  # SKIP LOCKED disjunkt; für >1 Replica siehe runtime.py (F1: claim_limit klein
+  # gegenüber der Tool-Timeout halten).
+  queue-worker:
+    image: mcn-backend:latest
+    restart: unless-stopped
+    entrypoint: ["/usr/local/bin/queue-worker-entrypoint.sh"]
+    env_file: [.env]
+    environment:
+      MCN_DB_HOST: postgres
+      MCN_DB_PORT: "5432"
+      MCN_MINIO_ENDPOINT: http://minio:9000
+      MCN_SEED: "0"
+      MCN_DEMO_PASSWORD: ""
+    depends_on:
+      backend:
+        condition: service_healthy      # erst wenn migrate durch ist
+    networks: [mcn]
+
+  # -------------------------------------------------------------------------
   nginx:
     build:
       context: ..
