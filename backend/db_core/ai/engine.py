@@ -90,7 +90,15 @@ def start_workflow(actor_id, *, workflow_name, workflow_version, triggered_by_us
     with business_transaction(actor_id):
         wf.status = "RUNNING"
         wf.save(update_fields=["status"])
-    _run_handler(actor_id, wf, workflows)
+    try:
+        _run_handler(actor_id, wf, workflows)
+    except Exception:
+        # Der erste Schritt ist gescheitert (z. B. Werkzeug fehlt) → den Lauf
+        # terminalisieren statt RUNNING hängen zu lassen; der Fehler geht an den
+        # Aufrufer (der Endpoint macht daraus eine 422).
+        if wf.status not in ("DONE", "FAILED", "CANCELLED"):
+            finish_workflow(actor_id, wf, "FAILED", error="Start fehlgeschlagen.")
+        raise
     return wf
 
 

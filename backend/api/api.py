@@ -29,6 +29,7 @@ from api.dossier import router as dossier_router
 from api.buchhaltung import router as buchhaltung_router
 from api.firma import router as firma_router
 from api.identity import router as identity_router
+from api.ki import router as ki_router
 from api.lieferant import router as lieferant_router
 from api.lohngruppe import router as lohngruppe_router
 from api.mail import router as mail_router
@@ -100,6 +101,7 @@ api.add_router("/content", dateien_router, tags=["content"])
 # mehrere Module — der KERN hängt am Modul der Entität, jeder weitere Baustein an
 # seinem eigenen (siehe api/dossier.py).
 api.add_router("/dossier", dossier_router, tags=["dossier"])
+api.add_router("/ai", ki_router, tags=["ai"])
 # Globale Suche: EIN Endpunkt über alle Entitäten, jede Kategorie an ihrem eigenen
 # Modul getort (kein eigenes Recht — siehe api/suche.py).
 api.add_router("/suche", suche_router, tags=["suche"])

@@ -68,6 +68,12 @@ ERLAUBTE_TYPEN = {
     ".ifc": "application/x-step",
     ".mp4": "video/mp4",
     ".mov": "video/quicktime",
+    # Sprachmemos (KI-Transkription)
+    ".m4a": "audio/mp4",
+    ".mp3": "audio/mpeg",
+    ".wav": "audio/wav",
+    ".ogg": "audio/ogg",
+    ".aac": "audio/aac",
 }
 
 # Zielspalten von content.file_link. Genau eine darf gesetzt sein.
