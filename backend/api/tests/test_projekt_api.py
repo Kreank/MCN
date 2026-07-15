@@ -1059,3 +1059,140 @@ def test_primary_contact_none_ohne_eigentuemer(admin_client, seeded):
     r = admin_client.get(f"/api/workflow/projects/{seeded['p1'].id}")
     assert r.status_code == 200, r.content
     assert r.json()["primary_contact"] is None
+
+
+# --- Ort in der Liste (Projekte-8) + Verantwortlicher (Projekte-4) ----------
+
+@pytest.mark.django_db
+def test_liste_zeigt_ort_und_verantwortlichen(admin_client, app_user):
+    """Die Projektliste (ProjectOut) gibt den Ort der ersten Liegenschaft und den
+    Verantwortlichen (abgeleitet über AppUser) additiv aus."""
+    obj = property_service.create_property(
+        app_user.id, name="Haus West", property_type="WEG",
+        street="Weststr", house_number="7", postal_code="20095", city="Hamburg",
+    )
+    p = projekt_service.create_project(
+        app_user.id, name="Ortprojekt", property_ids=[obj.id],
+        responsible_user_id=app_user.id,
+    )
+    r = admin_client.get("/api/workflow/projects?q=Ortprojekt")
+    assert r.status_code == 200, r.content
+    item = next(i for i in r.json()["items"] if i["id"] == str(p.id))
+    assert item["primary_city"] == "Hamburg"
+    assert item["responsible_user"]["id"] == str(app_user.id)
+    assert item["responsible_user"]["display_name"] == app_user.display_name
+
+
+@pytest.mark.django_db
+def test_liste_ohne_liegenschaft_und_ohne_verantwortlichen(admin_client, seeded):
+    """p2 (Kellerentwässerung) hat weder Liegenschaft noch Verantwortlichen →
+    primary_city und responsible_user bleiben null."""
+    r = admin_client.get("/api/workflow/projects?q=Kellerentwässerung")
+    item = next(i for i in r.json()["items"] if i["id"] == str(seeded["p2"].id))
+    assert item["primary_city"] is None
+    assert item["responsible_user"] is None
+
+
+@pytest.mark.django_db
+def test_liste_keine_n_plus_1(admin_client, app_user):
+    """Die Query-Zahl der Liste ist unabhängig von der Zeilenzahl
+    (select_related('category','responsible_user') + ein Prefetch der Liegenschaften)."""
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    for i in range(5):
+        obj = property_service.create_property(
+            app_user.id, name=f"NP-Objekt {i}", property_type="WEG",
+            street="S", postal_code="1", city="Berlin",
+        )
+        projekt_service.create_project(
+            app_user.id, name=f"NP-Projekt {i}", property_ids=[obj.id],
+            responsible_user_id=app_user.id,
+        )
+
+    def _queries(url):
+        with CaptureQueriesContext(connection) as ctx:
+            resp = admin_client.get(url)
+            assert resp.status_code == 200
+        return len(ctx.captured_queries)
+
+    q_eine = _queries("/api/workflow/projects?page_size=1")
+    q_alle = _queries("/api/workflow/projects?page_size=50")
+    assert q_eine == q_alle, (
+        f"N+1: {q_eine} Queries bei 1 Zeile vs. {q_alle} bei vielen Zeilen"
+    )
+
+
+# --- Verantwortlichen zuweisen: POST .../projects/{id}/responsible ----------
+
+@pytest.mark.django_db
+def test_set_responsible_happy(admin_client, app_user):
+    p = projekt_service.create_project(app_user.id, name="Zuweisung")
+    r = admin_client.post(
+        f"/api/workflow/projects/{p.id}/responsible",
+        data={"responsible_user_id": str(app_user.id)},
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    body = r.json()
+    assert body["responsible_user"]["id"] == str(app_user.id)
+    assert body["responsible_user"]["display_name"] == app_user.display_name
+
+
+@pytest.mark.django_db
+def test_set_responsible_entfernen(admin_client, app_user):
+    """responsible_user_id=None entfernt die Zuweisung."""
+    p = projekt_service.create_project(
+        app_user.id, name="Zuweisung entfernen", responsible_user_id=app_user.id
+    )
+    r = admin_client.post(
+        f"/api/workflow/projects/{p.id}/responsible",
+        data={"responsible_user_id": None},
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    assert r.json()["responsible_user"] is None
+
+
+@pytest.mark.django_db
+def test_set_responsible_unbekannter_user_422(admin_client, app_user):
+    p = projekt_service.create_project(app_user.id, name="Zuweisung fremd")
+    r = admin_client.post(
+        f"/api/workflow/projects/{p.id}/responsible",
+        data={"responsible_user_id": str(uuid.uuid4())},
+        content_type="application/json",
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.django_db
+def test_set_responsible_unbekanntes_projekt_404(admin_client, app_user):
+    r = admin_client.post(
+        f"/api/workflow/projects/{uuid.uuid4()}/responsible",
+        data={"responsible_user_id": str(app_user.id)},
+        content_type="application/json",
+    )
+    assert r.status_code == 404
+
+
+@pytest.mark.django_db
+def test_set_responsible_monteur_403_fail_closed(client_with_role, seeded):
+    """set_project_responsible nutzt `require` (AENDERN): der Monteur hat nur Scope
+    'EIGENE', der Endpunkt wertet ihn nicht aus → fail-closed 403."""
+    c = client_with_role("MONTEUR")
+    r = c.post(
+        f"/api/workflow/projects/{seeded['p1'].id}/responsible",
+        data={"responsible_user_id": str(seeded['app_user'].id)},
+        content_type="application/json",
+    )
+    assert r.status_code == 403
+
+
+@pytest.mark.django_db
+def test_set_responsible_ohne_login_401(anonymous_client, seeded):
+    r = anonymous_client.post(
+        f"/api/workflow/projects/{seeded['p1'].id}/responsible",
+        data={"responsible_user_id": str(seeded['app_user'].id)},
+        content_type="application/json",
+    )
+    assert r.status_code in (401, 403)

@@ -111,7 +111,7 @@
       } @else {
         <ul class="rows">
           @for (p of $any(state()).data.items; track p.id) {
-            <li>
+            <li class="row-item">
               <a class="row" [routerLink]="[p.id]">
                 <span class="row__avatar" aria-hidden="true">{{ monogram(p) }}</span>
                 <span class="row__body">
@@ -123,6 +123,22 @@
                         [style.--kat]="p.category.color_hex || 'var(--line-strong)'"
                         >{{ p.category.name }}</span
                       >
+                    }
+                    @if (p.primary_city) {
+                      <span class="row__ort">
+                        <span class="row__ort-icon" aria-hidden="true">◍</span>
+                        {{ p.primary_city }}
+                      </span>
+                    }
+                    @if (p.responsible_user; as ru) {
+                      <span class="row__verantwortlich" [title]="'Verantwortlich: ' + ru.display_name">
+                        <span class="row__verantwortlich-label">Verantwortlich</span>
+                        {{ ru.display_name }}
+                      </span>
+                    } @else {
+                      <span class="row__verantwortlich row__verantwortlich--leer">
+                        Ohne Verantwortliche·n
+                      </span>
                     }
                     <span class="row__stamps">
                       <span class="stamp {{ statusClass(p.status) }}">{{
@@ -136,6 +152,18 @@
                   {{ p.project_number }}
                 </span>
               </a>
+              @if (darfAendern()) {
+                <button
+                  type="button"
+                  class="btn btn--klein row-item__assign"
+                  (click)="zuweisenOeffnen(p)"
+                  [attr.aria-label]="
+                    (p.responsible_user ? 'Verantwortliche·n ändern für ' : 'Verantwortliche·n zuweisen für ') + p.name
+                  "
+                >
+                  {{ p.responsible_user ? 'Ändern' : 'Zuweisen' }}
+                </button>
+              }
             </li>
           }
         </ul>
@@ -201,6 +229,62 @@
         [attr.aria-busy]="neuLaedt()"
       >
         {{ neuLaedt() ? 'Wird angelegt …' : 'Projekt anlegen' }}
+      </button>
+    </div>
+  </app-dialog>
+
+  <!-- ---------------------- Verantwortlichen zuweisen --------------------- -->
+  <app-dialog
+    [offen]="zuweisenOffen()"
+    titel="Verantwortliche·n zuweisen"
+    (schliessen)="zuweisenSchliessen()"
+  >
+    <form
+      id="zuweisen-form"
+      class="dialog-form"
+      (submit)="$event.preventDefault(); zuweisenAbsenden()"
+      novalidate
+    >
+      @if (zuweisenMeldung(); as fm) {
+        <div class="melde melde--fehler" role="alert">
+          <span class="melde__mark" aria-hidden="true">!</span>
+          <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+        </div>
+      }
+
+      @if (zuweisenProjekt(); as zp) {
+        <p class="dialog-hinweis">
+          Projekt <strong>{{ zp.name }}</strong> ·
+          @if (zp.responsible_user; as ru) {
+            aktuell <strong>{{ ru.display_name }}</strong>
+          } @else {
+            aktuell ohne Verantwortliche·n
+          }
+        </p>
+      }
+
+      <app-referenz-wahl
+        [control]="zuweisenForm.controls.responsible_user_id"
+        label="Verantwortliche·r"
+        hinweis="Person suchen. Leer lassen entfernt die Zuweisung."
+        platzhalter="Name suchen"
+        leerText="Keine Benutzer gefunden."
+        [suche]="userSuche"
+      />
+    </form>
+
+    <div dialog-aktionen class="dialog__aktionen">
+      <button type="button" class="btn" [disabled]="zuweisenLaedt()" (click)="zuweisenSchliessen()">
+        Abbrechen
+      </button>
+      <button
+        type="submit"
+        form="zuweisen-form"
+        class="btn btn--primary"
+        [disabled]="zuweisenLaedt()"
+        [attr.aria-busy]="zuweisenLaedt()"
+      >
+        {{ zuweisenLaedt() ? 'Wird gespeichert …' : 'Speichern' }}
       </button>
     </div>
   </app-dialog>

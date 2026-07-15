@@ -116,6 +116,7 @@
           <div class="feld"><dt class="feld__label">Projektnummer</dt><dd class="feld__wert">{{ daten()!.project_number }}</dd></div>
           <div class="feld"><dt class="feld__label">Status</dt><dd class="feld__wert">{{ statusLabel(daten()!.status) }}</dd></div>
           <div class="feld"><dt class="feld__label">Kategorie</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.category">{{ daten()!.category?.name || '—' }}</dd></div>
+          <div class="feld"><dt class="feld__label">Verantwortlich</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.responsible_user">{{ daten()!.responsible_user?.display_name || '—' }}</dd></div>
           <div class="feld"><dt class="feld__label">Beginn</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.start_date">{{ daten()!.start_date || '—' }}</dd></div>
           <div class="feld"><dt class="feld__label">Zieltermin</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.target_end_date">{{ daten()!.target_end_date || '—' }}</dd></div>
           <div class="feld"><dt class="feld__label">Liegenschaften / Vorgänge</dt><dd class="feld__wert">{{ daten()!.properties.length }} / {{ daten()!.service_cases.length }}</dd></div>

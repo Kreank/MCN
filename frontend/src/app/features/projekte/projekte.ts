@@ -6,7 +6,12 @@ import { Subject, debounceTime, distinctUntilChanged, map } from 'rxjs';
 import { ProjektService } from '../../core/projekt.service';
 import { PropertyService } from '../../core/property.service';
 import { AuthService } from '../../core/auth.service';
-import { Project, ProjectCreate, ProjectPage, ProjectStatus } from '../../core/projekt.model';
+import {
+  Project,
+  ProjectCreate,
+  ProjectPage,
+  ProjectStatus,
+} from '../../core/projekt.model';
 import { ProjekteNav } from '../projekte-nav/projekte-nav';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { VerbotenState, fehlerState } from '../../shared/http-fehler';
@@ -63,6 +68,14 @@ export class Projekte {
    */
   protected readonly darfAnlegen = computed(() => this.auth.darfAlle('workflow', 'ANLEGEN'));
 
+  /**
+   * `darfAlle`, nicht `darf`: `POST /api/workflow/projects/{id}/responsible` ist
+   * fail-closed (`permissions.require`). Ein Konto mit row_scope EIGENE (Monteur)
+   * bekommt dort 403 — und die Benutzer-Auswahlliste (/api/planung/users) verweigert
+   * ihm ohnehin. Der Zuweisungsknopf wird deshalb nur bei Scope ALLE angeboten.
+   */
+  protected readonly darfAendern = computed(() => this.auth.darfAlle('workflow', 'AENDERN'));
+
   // --- Anlage-Dialog ------------------------------------------------------
   protected readonly meldung = signal<Meldung | null>(null);
   protected readonly neuOffen = signal(false);
@@ -93,6 +106,21 @@ export class Projekte {
         p.items.map((o) => ({ id: o.id, label: o.name, sub: `${o.property_number} · ${o.city}` })),
       ),
     );
+
+  /** Benutzersuche für den Verantwortlichen (aktive AppUser, /api/planung/users). */
+  protected readonly userSuche: RefSuche = (q) =>
+    this.svc.listAssignableUsers(q).pipe(
+      map((us) => us.map((u) => ({ id: u.id, label: u.display_name }))),
+    );
+
+  // --- Verantwortlichen-Zuweisung (Projekte-4) ----------------------------
+  protected readonly zuweisenOffen = signal(false);
+  protected readonly zuweisenLaedt = signal(false);
+  protected readonly zuweisenProjekt = signal<Project | null>(null);
+  protected readonly zuweisenMeldung = signal<string | null>(null);
+  protected readonly zuweisenForm = this.fb.group({
+    responsible_user_id: this.fb.control('', { nonNullable: true }),
+  });
 
   private readonly searchInput$ = new Subject<string>();
   private reqId = 0;
@@ -236,6 +264,52 @@ export class Projekte {
 
   meldungSchliessen(): void {
     this.meldung.set(null);
+  }
+
+  // ---- Verantwortlichen zuweisen ------------------------------------------
+  zuweisenOeffnen(p: Project): void {
+    this.zuweisenProjekt.set(p);
+    // Vorbelegung leer: die Referenz-Wahl beginnt ohne Auswahl; der aktuelle
+    // Verantwortliche steht als Hinweis im Dialog. Leer absenden = entfernen.
+    this.zuweisenForm.reset({ responsible_user_id: '' });
+    this.zuweisenMeldung.set(null);
+    this.zuweisenOffen.set(true);
+  }
+
+  zuweisenSchliessen(): void {
+    if (this.zuweisenLaedt()) return;
+    this.zuweisenOffen.set(false);
+  }
+
+  zuweisenAbsenden(): void {
+    const p = this.zuweisenProjekt();
+    if (!p || this.zuweisenLaedt()) return;
+    serverFehlerZuruecksetzen(this.zuweisenForm);
+    this.zuweisenMeldung.set(null);
+    const v = this.zuweisenForm.getRawValue();
+    this.zuweisenLaedt.set(true);
+    this.svc
+      .setResponsible(p.id, { responsible_user_id: v.responsible_user_id || null })
+      .subscribe({
+        next: () => {
+          this.zuweisenLaedt.set(false);
+          this.zuweisenOffen.set(false);
+          this.meldung.set({
+            art: 'erfolg',
+            text: v.responsible_user_id
+              ? `Verantwortliche·r für „${p.name}“ zugewiesen.`
+              : `Verantwortliche·r für „${p.name}“ entfernt.`,
+          });
+          this.fetch();
+        },
+        error: (err) => {
+          this.zuweisenLaedt.set(false);
+          this.zuweisenMeldung.set(
+            apiFehlerZuweisen(err, this.zuweisenForm).formular ??
+              'Zuweisung fehlgeschlagen.',
+          );
+        },
+      });
   }
 
   // ---- Darstellungshelfer -------------------------------------------------

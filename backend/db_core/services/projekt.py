@@ -108,6 +108,27 @@ def create_project(
     return project
 
 
+def set_project_responsible(actor_app_user_id, *, project_id, responsible_user_id):
+    """Setzt (oder entfernt) den Verantwortlichen eines Projekts.
+
+    `responsible_user_id=None` entfernt die Zuweisung. **Kein Schemawechsel** — die
+    Spalte workflow.project.responsible_user_id existiert seit der Projekt-Baseline
+    und wurde beim Anlegen schon unterstützt; hier wird sie nur additiv über einen
+    eigenen Pfad beschreibbar. Das UPDATE ist erlaubt (kein No-Update-Trigger auf
+    der Spalte; Updates werden auditiert). Gibt das frisch geladene Projekt zurück.
+    """
+    ensure_exists(Project, project_id, "Projekt")
+    ensure_exists(AppUser, responsible_user_id, "Benutzer")
+    with business_transaction(actor_app_user_id):
+        Project.objects.filter(id=project_id).update(
+            responsible_user_id=responsible_user_id
+        )
+    return (
+        Project.objects.select_related("responsible_user", "category")
+        .get(id=project_id)
+    )
+
+
 def promote_service_case_to_project(actor_app_user_id, *, service_case_id, name=None):
     """Stuft einen Vorgang zum Projekt hoch: legt ein neues Projekt an und hängt
     den Vorgang UND alle seine Aufträge darunter (project_id setzen).

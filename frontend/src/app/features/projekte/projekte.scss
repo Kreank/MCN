@@ -152,6 +152,24 @@
   flex-direction: column;
   gap: var(--space-2);
 }
+// Zeilencontainer: die anklickbare Karte (Anchor) plus die separate
+// Zuweisungs-Aktion. Ein Button DARF nicht in einem Anchor stehen (verschachtelte
+// Interaktion) — daher stehen sie als Geschwister nebeneinander.
+.row-item {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-2);
+}
+.row-item > .row {
+  flex: 1;
+  min-width: 0;
+}
+.row-item__assign {
+  flex: none;
+  align-self: center;
+  white-space: nowrap;
+}
+
 .row {
   display: flex;
   align-items: center;
@@ -174,6 +192,46 @@
     outline: 2.5px solid var(--focus-ring);
     outline-offset: 2px;
   }
+}
+
+// Ort der ersten Liegenschaft (Projekte-8) — dezent, mit Ortsmarke.
+.row__ort {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+.row__ort-icon {
+  color: var(--ink-faint);
+  font-size: 0.9em;
+}
+
+// Verantwortlicher (Projekte-4) — Label + Name, nie nur Farbe.
+.row__verantwortlich {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4em;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+.row__verantwortlich-label {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.row__verantwortlich--leer {
+  font-style: italic;
+  color: var(--ink-faint);
+}
+
+// Kontextzeile im Zuweisungs-Dialog.
+.dialog-hinweis {
+  margin: 0 0 var(--space-4);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
 }
 .row__avatar {
   flex: none;
@@ -326,5 +384,12 @@
   .row__id {
     width: 100%;
     padding-left: calc(2.75rem + var(--space-4));
+  }
+  // Auf schmalen Schirmen die Zuweisungsaktion unter die Karte setzen.
+  .row-item {
+    flex-direction: column;
+  }
+  .row-item__assign {
+    align-self: flex-end;
   }
 }

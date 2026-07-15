@@ -11,6 +11,7 @@ import {
   ProjectDetail,
   ProjectPage,
   ProjectQuery,
+  ProjectResponsibleInput,
   QuickIntakeIn,
   QuickIntakeOut,
   ServiceCaseBoard,
@@ -20,6 +21,7 @@ import {
   ServiceCaseRef,
   ServiceCaseStatusInput,
   ServiceCaseTransition,
+  UserRef,
 } from './projekt.model';
 
 /** Typisierter Zugriff auf die Projekt-API (dev-Proxy: /api -> :8000). */
@@ -46,6 +48,18 @@ export class ProjektService {
   /** Aktive Projektkategorien (Gewerk/Ordner) für den Anlagedialog (Recht workflow.LESEN). */
   listCategories(): Observable<ProjectCategory[]> {
     return this.http.get<ProjectCategory[]>('/api/workflow/project-categories');
+  }
+
+  /**
+   * Aktive Benutzer als schlanke Zuweisungs-Auswahlliste (id + Name) für den
+   * Verantwortlichen. Recht workflow.LESEN mit Scope ALLE — ein Monteur (EIGENE)
+   * bekommt bewusst 403 und sieht die Auswahl im UI gar nicht erst.
+   */
+  listAssignableUsers(q?: string): Observable<UserRef[]> {
+    let params = new HttpParams();
+    const needle = q?.trim();
+    if (needle) params = params.set('q', needle);
+    return this.http.get<UserRef[]>('/api/planung/users', { params });
   }
 
   /**
@@ -105,6 +119,14 @@ export class ProjektService {
   /** Neues Projekt anlegen (Recht workflow.ANLEGEN). */
   create(payload: ProjectCreate): Observable<ProjectDetail> {
     return this.http.post<ProjectDetail>(this.base, payload);
+  }
+
+  /**
+   * Verantwortlichen setzen/entfernen (Recht workflow.AENDERN). `responsible_user_id
+   * = null` entfernt die Zuweisung. Liefert das aktualisierte Projektdetail.
+   */
+  setResponsible(id: string, payload: ProjectResponsibleInput): Observable<ProjectDetail> {
+    return this.http.post<ProjectDetail>(`${this.base}/${id}/responsible`, payload);
   }
 
   /** Logbuch-Eintrag anlegen (Recht workflow.AENDERN). */

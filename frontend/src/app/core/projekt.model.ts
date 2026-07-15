@@ -9,6 +9,13 @@ export interface ProjectCategory {
   color_hex: string | null;
 }
 
+// Schlanke Benutzerreferenz (id + Anzeigename), abgeleitet über AppUser — gleiche
+// Form wie /api/planung/users (AssignableUser). Verantwortlicher eines Projekts.
+export interface UserRef {
+  id: string;
+  display_name: string;
+}
+
 export interface Project {
   id: string;
   project_number: string;
@@ -17,6 +24,10 @@ export interface Project {
   start_date: string | null;
   target_end_date: string | null;
   category: ProjectCategory | null;
+  // Additiv (Projekte-4/8): Verantwortlicher und Ort der ersten Liegenschaft.
+  // Beide null, wenn nicht gesetzt bzw. keine (sichtbare) Liegenschaft vorhanden.
+  responsible_user: UserRef | null;
+  primary_city: string | null;
 }
 
 export interface ProjectPage {
@@ -215,6 +226,12 @@ export interface ProjectCreate {
   property_ids?: string[];
   start_date?: string | null;
   target_end_date?: string | null;
+}
+
+// POST /api/workflow/projects/{id}/responsible — Verantwortlichen setzen/entfernen.
+// responsible_user_id = null entfernt die Zuweisung.
+export interface ProjectResponsibleInput {
+  responsible_user_id: string | null;
 }
 
 // POST /api/workflow/projects/{id}/log

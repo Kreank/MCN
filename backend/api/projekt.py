@@ -50,6 +50,16 @@ class CategoryOut(Schema):
     color_hex: str | None = None
 
 
+class UserRefOut(Schema):
+    """Schlanke Benutzerreferenz (id + Anzeigename), abgeleitet über AppUser.
+
+    Datenminimierung wie bei der Zuweisungs-Auswahlliste (planung/users): nur id
+    und display_name, keine weiteren Personendaten.
+    """
+    id: UUID
+    display_name: str
+
+
 class ProjectOut(Schema):
     id: UUID
     project_number: str
@@ -58,6 +68,11 @@ class ProjectOut(Schema):
     start_date: date | None = None
     target_end_date: date | None = None
     category: CategoryOut | None = None
+    # Additiv (Projekte-4/8): Verantwortlicher (abgeleitet über AppUser) und Ort
+    # der ERSTEN sichtbaren Liegenschaft. Beide optional/None — Default gesetzt,
+    # damit auch ProjectDetailOut (erbt) sie ohne Pflichtbindung mitführt.
+    responsible_user: UserRefOut | None = None
+    primary_city: str | None = None
 
 
 class ProjectListOut(Schema):
@@ -170,7 +185,14 @@ def list_projects(
     zählte es doppelt.
     """
     actor, scope = require_scoped(request, "workflow", "LESEN")
-    qs = Project.objects.select_related("category")
+    eigene = _eigene_objekte(scope, actor)
+    # select_related: Kategorie + Verantwortlicher (kein N+1 je Zeile für den
+    # abgeleiteten Anzeigenamen). prefetch_related: die Liegenschafts-Links samt
+    # Adresse für den Ort der ersten Liegenschaft — EIN Prefetch-Query, unabhängig
+    # von der Zeilenzahl (siehe _primary_city).
+    qs = Project.objects.select_related("category", "responsible_user").prefetch_related(
+        "property_links__property__address"
+    )
     if scope == "EIGENE":
         qs = objektsicht.begrenzen(
             qs, scope, actor, "property_links__property_id"
@@ -188,7 +210,7 @@ def list_projects(
 
     total = qs.count()
     start = (page - 1) * page_size
-    items = [_project_out(p) for p in qs[start:start + page_size]]
+    items = [_project_out(p, eigene_objekte=eigene) for p in qs[start:start + page_size]]
     return ProjectListOut(items=items, total=total, page=page, page_size=page_size)
 
 
@@ -215,7 +237,31 @@ def _category_out(project):
     return CategoryOut(id=cat.id, name=cat.name, color_hex=cat.color_hex)
 
 
-def _project_out(project):
+def _user_ref(user):
+    if user is None:
+        return None
+    return UserRefOut(id=user.id, display_name=user.display_name)
+
+
+def _primary_city(project, eigene_objekte=None):
+    """Ort der ERSTEN (nach property_number) sichtbaren Liegenschaft, oder None.
+
+    Läuft rein auf den vorgeladenen `property_links` (Prefetch in list_projects) —
+    kein N+1 pro Zeile. Bei Scope 'EIGENE' zählen nur meine Objekte
+    (`eigene_objekte`), damit der Ort eines fremden Objekts nicht über die Liste
+    durchsickert (dieselbe Begründung wie im Detail).
+    """
+    links = sorted(
+        project.property_links.all(), key=lambda l: l.property.property_number
+    )
+    if eigene_objekte is not None:
+        links = [l for l in links if l.property_id in eigene_objekte]
+    if not links:
+        return None
+    return links[0].property.address.city
+
+
+def _project_out(project, *, eigene_objekte=None):
     return ProjectOut(
         id=project.id,
         project_number=project.project_number,
@@ -224,6 +270,8 @@ def _project_out(project):
         start_date=project.start_date,
         target_end_date=project.target_end_date,
         category=_category_out(project),
+        responsible_user=_user_ref(project.responsible_user),
+        primary_city=_primary_city(project, eigene_objekte),
     )
 
 
@@ -238,7 +286,7 @@ def _project_detail(project_id, *, eigene_objekte=None):
     """
     project = (
         Project.objects.filter(id=project_id)
-        .select_related("category")
+        .select_related("category", "responsible_user")
         .prefetch_related(
             "property_links__property__address",
             # Für die abgeleitete Kontaktkarte: Eigentümerrolle der Liegenschaft
@@ -290,6 +338,10 @@ def _project_detail(project_id, *, eigene_objekte=None):
         start_date=project.start_date,
         target_end_date=project.target_end_date,
         category=_category_out(project),
+        # Verantwortlicher + Ort der ersten (bereits scope-gefilterten, nach
+        # property_number sortierten) Liegenschaft — konsistent zur Liste.
+        responsible_user=_user_ref(project.responsible_user),
+        primary_city=(links[0].property.address.city if links else None),
         version=project.version,
         created_at=project.created_at,
         updated_at=project.updated_at,
@@ -393,6 +445,42 @@ def get_project(request, project_id: UUID):
     actor, scope = require_scoped(request, "workflow", "LESEN")
     guard_projekt(scope, actor, project_id)
     return _project_detail(project_id, eigene_objekte=_eigene_objekte(scope, actor))
+
+
+class ResponsibleIn(Schema):
+    # None entfernt die Zuweisung (Verantwortlichen abwählen).
+    responsible_user_id: UUID | None = None
+
+
+@router.post(
+    "/projects/{project_id}/responsible",
+    response=ProjectDetailOut,
+    auth=django_auth,
+)
+def set_project_responsible(request, project_id: UUID, payload: ResponsibleIn):
+    """Verantwortlichen eines Projekts setzen/entfernen
+    (workflow.project.responsible_user_id).
+
+    **Kein Schemawechsel** — die Spalte existiert seit der Projekt-Baseline; hier
+    wird sie nur additiv über die API beschreibbar. Die Nutzer-Auswahlliste liefert
+    `/api/planung/users` (AssignableUser).
+
+    Torfunktion `require` (AENDERN, fail-closed), nicht `require_scoped`: Das Projekt
+    kann über Objekte laufen, die der Akteur nicht sehen darf, und diese Ansicht
+    wertet den row_scope nicht aus. Ein Konto mit Scope 'EIGENE' (Monteur) erhält
+    403 — analog zum Logbuch-Eintrag. Unbekanntes Projekt → 404 (vor dem Service
+    geprüft, damit es nicht als 422 durchschlägt); unbekannter Benutzer → 422."""
+    actor, _ = require(request, "workflow", "AENDERN")
+    _require_project(project_id)
+    try:
+        projekt_service.set_project_responsible(
+            actor,
+            project_id=project_id,
+            responsible_user_id=payload.responsible_user_id,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _project_detail(project_id)
 
 
 # --- Vorgangs-Board: Vorgänge über alle Projekte ---------------------------
