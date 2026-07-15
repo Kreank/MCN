@@ -227,6 +227,22 @@ def test_punchout_ohne_shop_url_scheitert(app_user):
         anbindung_service.build_punchout(conn.id, hook_url="https://x/hook")
 
 
+@override_settings(MCN_MAIL_KEY="")
+@pytest.mark.django_db
+def test_credentials_ohne_schluessel_nennt_mcn_mail_key(app_user):
+    """Fehlt MCN_MAIL_KEY, nennt der Fehler DAS (nicht SMTP) und kein Passwort —
+    der reale Demo-Fall, wo der Schlüssel bewusst weggelassen ist."""
+    conn = _ids_conn(app_user)
+    with pytest.raises(ValueError) as ei:
+        anbindung_service.set_credentials(
+            app_user.id, connection_id=conn.id, username="u", password="geheim"
+        )
+    msg = str(ei.value)
+    assert "MCN_MAIL_KEY" in msg
+    assert "Zugangsdaten" in msg      # im IDS-Kontext formuliert, nicht als SMTP-Fehler
+    assert "geheim" not in msg        # das Passwort taucht nie in der Meldung auf
+
+
 @override_settings(MCN_MAIL_KEY=TEST_KEY)
 @pytest.mark.django_db
 def test_punchout_nur_fuer_ids(app_user):

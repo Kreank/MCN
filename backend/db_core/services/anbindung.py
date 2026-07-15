@@ -200,8 +200,9 @@ def set_credentials(actor_app_user_id, *, connection_id, **fields):
     `exclude_unset`): wer nur das Passwort setzt, verliert nicht den Benutzernamen.
     Felder: `username`, `customer_number` (Klartext), `password`. Für das Passwort
     gilt: **nicht übergeben** = unverändert, leer (""/None) = löschen (NULL), sonst
-    Fernet-verschlüsselt speichern (`mail_crypto`/`MCN_MAIL_KEY`, fail-closed). Gibt
-    den Status (ohne Passwort) zurück.
+    Fernet-verschlüsselt speichern (`mail_crypto`/`MCN_MAIL_KEY` — der app-weite
+    Secret-at-rest-Schlüssel, nicht nur Mail; fail-closed). Gibt den Status (ohne
+    Passwort) zurück.
     """
     allowed = {"username", "customer_number", "password"}
     unknown = set(fields) - allowed
@@ -220,7 +221,15 @@ def set_credentials(actor_app_user_id, *, connection_id, **fields):
         try:
             cipher = mail_crypto.encrypt(fields["password"])
         except mail_crypto.MailKeyError as exc:
-            raise ValueError(str(exc))
+            # MCN_MAIL_KEY ist der app-weite Secret-at-rest-Schlüssel (Fernet) —
+            # er sichert auch diese IDS-Passwörter. mail_crypto meldet aber „SMTP"; hier
+            # in den IDS-Kontext übersetzen, secret-frei (nie Passwort/Chiffre ausgeben).
+            raise ValueError(
+                "Zugangsdaten können nicht verschlüsselt gespeichert werden: der "
+                "Anwendungs-Schlüssel MCN_MAIL_KEY ist nicht gesetzt oder ungültig "
+                "(fail-closed). Er sichert alle Passwörter at rest, nicht nur SMTP. "
+                "Den Schlüssel in der Umgebung setzen."
+            ) from exc
 
     cred = get_credential(connection_id)
     with business_transaction(actor_app_user_id):
@@ -286,7 +295,10 @@ def build_punchout(connection_id, *, hook_url, action="WKE", target=None,
     try:
         passwort = mail_crypto.decrypt(cred.password_encrypted)
     except mail_crypto.MailKeyError as exc:
-        raise ValueError(str(exc))
+        raise ValueError(
+            "Die gespeicherten Zugangsdaten konnten nicht entschlüsselt werden: der "
+            "Anwendungs-Schlüssel MCN_MAIL_KEY fehlt oder passt nicht zur Chiffre."
+        ) from exc
 
     # IDS-2.5-Formularfelder (verbatim; nur gesetzte optionale Felder aufnehmen).
     fields = {
