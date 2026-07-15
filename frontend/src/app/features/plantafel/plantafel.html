@@ -260,6 +260,9 @@
                       @if (job.property_name) {
                         <span class="pkarte__ort">{{ job.property_name }}</span>
                       }
+                      @if (job.property_address) {
+                        <span class="pkarte__adresse">{{ job.property_address }}</span>
+                      }
                       @if (job.category) {
                         <span class="kat-chip {{ categoryClass(job.category) }}">
                           <span class="kat-dot" aria-hidden="true"></span>
@@ -586,6 +589,9 @@
                           <span class="tile__title">{{ b.job.title }}</span>
                           @if (b.job.property_name) {
                             <span class="tile__ort">{{ b.job.property_name }}</span>
+                          }
+                          @if (b.job.property_address) {
+                            <span class="tile__adresse">{{ b.job.property_address }}</span>
                           }
                           @if (b.job.is_free) {
                             <span class="tile__frei">Freier Termin</span>

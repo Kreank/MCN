@@ -447,6 +447,13 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.tile__adresse {
+  font-size: 0.62rem;
+  color: var(--ink-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 // Kachel-Aktionen bauen ebenfalls auf `.minibtn` auf.
 .tile__griff {
   flex: 1 1 auto;

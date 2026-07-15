@@ -48,6 +48,45 @@
       <span mappe-kopf class="stamp {{ statusClass(daten()!.status) }}">{{ statusLabel(daten()!.status) }}</span>
 
       @if (tab() === 'uebersicht') {
+        <!-- Auf einen Blick: WOHIN muss der Monteur, WANN, mit WEM. Das Wichtigste
+             zuerst und groß — nicht in der Feldwüste weiter unten vergraben. -->
+        <div class="einsatz-hero">
+          <div class="einsatz-hero__block einsatz-hero__block--ort">
+            <p class="einsatz-hero__label">Einsatzort</p>
+            @if (daten()!.property; as p) {
+              <p class="einsatz-hero__wert"><strong>{{ p.name }}</strong></p>
+              <p class="einsatz-hero__sub">{{ adresseZeile(p) }}</p>
+              <div class="einsatz-hero__aktionen">
+                @if (mapsUrl(p); as url) {
+                  <a class="btn btn--primary" [href]="url" target="_blank" rel="noopener">Route <span aria-hidden="true">↗</span></a>
+                }
+                <a class="btn" [routerLink]="['/liegenschaften', p.id]">Objekt öffnen</a>
+              </div>
+            } @else {
+              <p class="einsatz-hero__wert einsatz-hero__wert--leer">Keine Liegenschaft hinterlegt</p>
+            }
+          </div>
+          <div class="einsatz-hero__block">
+            <p class="einsatz-hero__label">Wann</p>
+            @if (daten()!.scheduled_start) {
+              <p class="einsatz-hero__wert">{{ dt(daten()!.scheduled_start) }}</p>
+              @if (daten()!.scheduled_end) {
+                <p class="einsatz-hero__sub">bis {{ dt(daten()!.scheduled_end) }}</p>
+              }
+            } @else {
+              <p class="einsatz-hero__wert einsatz-hero__wert--leer">Noch nicht terminiert</p>
+            }
+          </div>
+          <div class="einsatz-hero__block">
+            <p class="einsatz-hero__label">Wer</p>
+            @if (daten()!.assignments.length > 0) {
+              <p class="einsatz-hero__wert">{{ zugewieseneNamen() }}</p>
+            } @else {
+              <p class="einsatz-hero__wert einsatz-hero__wert--leer">Niemand zugewiesen</p>
+            }
+          </div>
+        </div>
+
         <div class="tab-toolbar">
           @if (darfDispo()) {
             <button type="button" class="btn" (click)="dialogOeffnen('termin')">Termin setzen</button>
@@ -85,10 +124,6 @@
               }
             </dd>
           </div>
-          <div class="feld"><dt class="feld__label">Einsatznummer</dt><dd class="feld__wert">{{ daten()!.job_number }}</dd></div>
-          <div class="feld"><dt class="feld__label">Status</dt><dd class="feld__wert">{{ statusLabel(daten()!.status) }}</dd></div>
-          <div class="feld"><dt class="feld__label">Planbeginn</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.scheduled_start">{{ dt(daten()!.scheduled_start) }}</dd></div>
-          <div class="feld"><dt class="feld__label">Planende</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.scheduled_end">{{ dt(daten()!.scheduled_end) }}</dd></div>
           <div class="feld"><dt class="feld__label">Ist-Beginn</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.actual_start">{{ dt(daten()!.actual_start) }}</dd></div>
           <div class="feld"><dt class="feld__label">Ist-Ende</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.actual_end">{{ dt(daten()!.actual_end) }}</dd></div>
           <div class="feld"><dt class="feld__label">Ansprechpartner vor Ort</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.on_site_contact">{{ daten()!.on_site_contact || '—' }}</dd></div>
@@ -113,17 +148,8 @@
               <span class="bezug__wert">Kein Auftrag (freier Termin)</span>
             </div>
           }
-          @if (daten()!.property; as p) {
-            <a class="bezug__item" [routerLink]="['/liegenschaften', p.id]">
-              <span class="bezug__label">Liegenschaft</span>
-              <span class="bezug__wert">{{ p.name }} · {{ p.city }}</span>
-            </a>
-          } @else if (daten()!.is_free) {
-            <div class="bezug__item bezug__item--leer">
-              <span class="bezug__label">Liegenschaft</span>
-              <span class="bezug__wert">Keine Liegenschaft hinterlegt</span>
-            </div>
-          }
+          <!-- Die Liegenschaft steht prominent im „Einsatzort"-Block oben; hier
+               nicht doppeln (weniger ist mehr). -->
         </div>
       }
 

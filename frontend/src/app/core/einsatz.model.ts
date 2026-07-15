@@ -248,6 +248,8 @@ export interface BoardJob {
   scheduled_start: string;
   scheduled_end: string | null;
   property_name: string | null;
+  /** Kompakte Zieladresse (Straße, Stadt) — „wo ist der Einsatz" auf der Kachel. */
+  property_address: string | null;
   category: CategoryRef | null;
   assignee_ids: string[];
   resource_ids: string[];
@@ -268,6 +270,7 @@ export interface BacklogJob {
   status: ServiceJobStatus;
   is_free: boolean;
   property_name: string | null;
+  property_address: string | null;
   category: CategoryRef | null;
   order_number: string | null;
 }

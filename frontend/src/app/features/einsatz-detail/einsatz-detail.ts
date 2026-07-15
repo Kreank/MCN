@@ -30,6 +30,7 @@ import {
   workOrderStatusLabel,
 } from '../../core/einsatz.model';
 import { ResourceType } from '../../core/einsatz.model';
+import { PropertyRef } from '../../core/projekt.model';
 import { WorkOrderStatus } from '../../core/auftrag.model';
 import { Dialog } from '../../shared/dialog/dialog';
 import { Feld, FeldOption } from '../../shared/formular/feld';
@@ -607,5 +608,26 @@ export class EinsatzDetail {
   dt(iso: string | null): string {
     if (!iso) return '—';
     return this.dateFmt.format(new Date(iso));
+  }
+
+  /** Zieladresse als eine Zeile: „Straße Hausnr, PLZ Stadt". Fällt auf die Stadt
+   *  zurück, wenn (bei älteren Referenzen) keine Adressteile mitgeliefert wurden. */
+  adresseZeile(p: PropertyRef): string {
+    const strasse = [p.street, p.house_number].filter((t) => !!t && t.trim()).join(' ');
+    const ort = [p.postal_code, p.city].filter((t) => !!t && t.trim()).join(' ');
+    return [strasse, ort].filter((t) => t).join(', ') || p.city;
+  }
+
+  /** Karten-Link für die Navigation zum Einsatzort (öffnet in neuem Tab). Null,
+   *  wenn keine brauchbare Adresse vorliegt. */
+  mapsUrl(p: PropertyRef): string | null {
+    const q = this.adresseZeile(p).trim();
+    if (!q) return null;
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
+  }
+
+  /** Zugewiesene Mitarbeiter als Namensliste (für die „Wer"-Kachel oben). */
+  zugewieseneNamen(): string {
+    return (this.daten()?.assignments ?? []).map((a) => a.display_name).join(', ');
   }
 }

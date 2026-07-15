@@ -1287,6 +1287,13 @@ button {
   font-size: 0.7rem;
   color: var(--ink-muted);
 }
+.pkarte__adresse {
+  font-size: 0.66rem;
+  color: var(--ink-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .pkarte__aktionen {
   display: flex;
   flex-wrap: wrap;

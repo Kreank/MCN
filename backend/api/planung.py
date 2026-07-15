@@ -67,6 +67,12 @@ class PropertyRefOut(Schema):
     id: UUID
     property_number: str
     name: str
+    # Volle Zieladresse — der Monteur muss am Termin sehen, WOHIN er fahren muss
+    # (HERO zeigt die Adresse fest auf jeder Terminkarte). street/postal_code sind
+    # in property.address Pflicht; house_number ist optional.
+    street: str | None = None
+    house_number: str | None = None
+    postal_code: str | None = None
     city: str
 
 
@@ -276,8 +282,15 @@ def _property_ref(job):
     p = _job_property(job)
     if p is None:
         return None
+    a = p.address
     return PropertyRefOut(
-        id=p.id, property_number=p.property_number, name=p.name, city=p.address.city
+        id=p.id,
+        property_number=p.property_number,
+        name=p.name,
+        street=a.street,
+        house_number=a.house_number,
+        postal_code=a.postal_code,
+        city=a.city,
     )
 
 
@@ -908,6 +921,18 @@ class KonfliktOut(Schema):
     text: str
 
 
+def _property_adresse_kurz(p):
+    """Kompakte Zieladresse für die Board-/Rückstands-Kachel: „Straße Hausnr,
+    Stadt" (ohne PLZ, damit die Kachel schmal bleibt). HERO zeigt die Adresse fest
+    auf der Terminkachel — der Disponent sieht so ohne Klick, wo der Einsatz ist."""
+    if p is None:
+        return None
+    a = p.address
+    strasse = " ".join(t for t in (a.street, a.house_number) if t and t.strip())
+    teile = [t for t in (strasse, a.city) if t and t.strip()]
+    return ", ".join(teile) or a.city
+
+
 class BoardJobOut(Schema):
     id: UUID
     job_number: str
@@ -918,6 +943,8 @@ class BoardJobOut(Schema):
     scheduled_start: datetime
     scheduled_end: datetime | None = None
     property_name: str | None = None
+    # Kompakte Zieladresse (Straße, Stadt) — „wo ist der Einsatz" auf der Kachel.
+    property_address: str | None = None
     category: CategoryRefOut | None = None
     assignee_ids: list[UUID]
     resource_ids: list[UUID]
@@ -939,6 +966,7 @@ def _board_job_out(j, *, konflikte=()):
         scheduled_start=j.scheduled_start,
         scheduled_end=j.scheduled_end,
         property_name=p.name if p else None,
+        property_address=_property_adresse_kurz(p),
         category=_category_ref(j),
         assignee_ids=[a.assignee_id for a in j.assignments.all()],
         resource_ids=[link.resource_id for link in j.resource_links.all()],
@@ -956,6 +984,7 @@ class BacklogJobOut(Schema):
     status: str
     is_free: bool = False
     property_name: str | None = None
+    property_address: str | None = None
     category: CategoryRefOut | None = None
     order_number: str | None = None
 
@@ -1052,6 +1081,7 @@ def plantafel(
                 status=j.status,
                 is_free=j.work_order_id is None,
                 property_name=p.name if p else None,
+                property_address=_property_adresse_kurz(p),
                 category=_category_ref(j),
                 order_number=(
                     j.work_order.order_number if j.work_order_id else None
