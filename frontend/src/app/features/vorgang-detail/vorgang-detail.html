@@ -45,6 +45,42 @@
       <span mappe-kopf class="stamp {{ statusClass(daten()!.status) }}">{{ statusLabel(daten()!.status) }}</span>
 
       @if (tab() === 'uebersicht') {
+        @if (darfAnlegen() || darfAngebot()) {
+          <div class="naechster-schritt" role="group" aria-label="Nächster Schritt">
+            <p class="naechster-schritt__titel">Nächster Schritt</p>
+            <div class="naechster-schritt__aktionen">
+              @if (darfAnlegen()) {
+                <button type="button" class="btn btn--primary" (click)="dialogOeffnen('auftrag')">
+                  <span aria-hidden="true">→</span> Auftrag anlegen
+                </button>
+                <button type="button" class="btn" (click)="dialogOeffnen('termin')">
+                  <span aria-hidden="true">→</span> Termin planen
+                </button>
+              }
+              @if (darfAngebot()) {
+                <!-- Angebot mit geerbter Liegenschaft/Projekt anlegen und direkt in
+                     den Editor springen (dort Titel + Positionen). -->
+                <button
+                  type="button"
+                  class="btn"
+                  [disabled]="angebotLaedt()"
+                  [attr.aria-busy]="angebotLaedt()"
+                  (click)="angebotAnlegen()"
+                >
+                  <span aria-hidden="true">＋</span>
+                  {{ angebotLaedt() ? 'Angebot wird angelegt …' : 'Angebot' }}
+                </button>
+              }
+            </div>
+            @if (darfAnlegen()) {
+              <p class="naechster-schritt__hint">
+                Der Auftrag bündelt die Leistung und wird danach terminiert — kein Projekt nötig.
+                Für eine reine Begehung/Besichtigung genügt der freie Termin.
+              </p>
+            }
+          </div>
+        }
+
         @if (erlaubteUebergaenge().length > 0 || kannHochstufen()) {
           <div class="tab-toolbar" role="group" aria-label="Vorgangsaktionen">
             @for (t of erlaubteUebergaenge(); track t.to_status) {
@@ -55,7 +91,7 @@
             @if (kannHochstufen()) {
               <button
                 type="button"
-                class="btn btn--primary"
+                class="btn"
                 [disabled]="hochstufenOffen()"
                 (click)="hochstufenFragen()"
               >
@@ -178,5 +214,134 @@
         (abbrechen)="statusAbbrechen()"
       />
     }
+
+    <!-- ---------------------------- Auftrag-Dialog ------------------------ -->
+    <app-dialog
+      [offen]="dialogOffen() === 'auftrag'"
+      titel="Auftrag zum Vorgang anlegen"
+      (schliessen)="dialogSchliessen()"
+    >
+      <form id="vorgang-auftrag-form" class="dialog-form" (submit)="$event.preventDefault(); auftragAbsenden()" novalidate>
+        @if (formularMeldung(); as fm) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+          </div>
+        }
+        <p class="dialog-erbe">
+          Liegenschaft <strong>{{ daten()!.property.name }}</strong> wird vom Vorgang übernommen.
+        </p>
+        <app-feld
+          [control]="auftragForm.controls.title"
+          label="Titel"
+          [pflicht]="true"
+          hinweis="Vorbelegt mit dem Vorgangsbetreff — anpassbar."
+        />
+        <app-feld
+          [control]="auftragForm.controls.priority"
+          label="Priorität"
+          typ="select"
+          [pflicht]="true"
+          [optionen]="prioOptionen"
+        />
+        <div class="feld-gruppe">
+          <label class="feld-gruppe__label" for="vorgang-auftrag-datum">Wunschtermin</label>
+          <input
+            id="vorgang-auftrag-datum"
+            class="feld-gruppe__input"
+            type="date"
+            [formControl]="auftragForm.controls.desired_date"
+          />
+          <p class="feld-gruppe__hinweis">Optional.</p>
+        </div>
+        <app-feld
+          [control]="auftragForm.controls.customer_reference"
+          label="Kundenreferenz"
+          hinweis="Optional — z. B. Bestell- oder Aktenzeichen des Auftraggebers."
+        />
+        <app-feld
+          [control]="auftragForm.controls.description"
+          label="Beschreibung"
+          typ="textarea"
+          hinweis="Optional."
+        />
+        <app-feld
+          [control]="auftragForm.controls.is_emergency"
+          label="Notfall"
+          typ="checkbox"
+        />
+      </form>
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="dialogLaedt()" (click)="dialogSchliessen()">Abbrechen</button>
+        <button type="submit" form="vorgang-auftrag-form" class="btn btn--primary" [disabled]="dialogLaedt()" [attr.aria-busy]="dialogLaedt()">
+          {{ dialogLaedt() ? 'Wird angelegt …' : 'Auftrag anlegen' }}
+        </button>
+      </div>
+    </app-dialog>
+
+    <!-- ---------------------------- Termin-Dialog (freier Termin) --------- -->
+    <app-dialog
+      [offen]="dialogOffen() === 'termin'"
+      titel="Termin zum Vorgang planen"
+      (schliessen)="dialogSchliessen()"
+    >
+      <form id="vorgang-termin-form" class="dialog-form" (submit)="$event.preventDefault(); terminAbsenden()" novalidate>
+        @if (formularMeldung(); as fm) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+          </div>
+        }
+        <p class="dialog-erbe">
+          Freier Termin (Begehung/Besichtigung) an <strong>{{ daten()!.property.name }}</strong> —
+          noch ohne Auftrag.
+        </p>
+        <app-feld
+          [control]="terminForm.controls.title"
+          label="Titel"
+          [pflicht]="true"
+          hinweis="Vorbelegt mit dem Vorgangsbetreff — z. B. „Begehung“."
+        />
+        <div class="feld-gruppe">
+          <label class="feld-gruppe__label" for="vorgang-termin-start">Planbeginn</label>
+          <input
+            id="vorgang-termin-start"
+            class="feld-gruppe__input"
+            type="datetime-local"
+            [formControl]="terminForm.controls.scheduled_start"
+          />
+          <p class="feld-gruppe__hinweis">Optional — ohne Zeit landet der Termin im Rückstand.</p>
+        </div>
+        <div class="feld-gruppe">
+          <label class="feld-gruppe__label" for="vorgang-termin-ende">Planende</label>
+          <input
+            id="vorgang-termin-ende"
+            class="feld-gruppe__input"
+            type="datetime-local"
+            [formControl]="terminForm.controls.scheduled_end"
+          />
+          <p class="feld-gruppe__hinweis">Optional — muss nach dem Planbeginn liegen.</p>
+        </div>
+        <app-referenz-wahl
+          [control]="terminForm.controls.on_site_contact_party_id"
+          label="Ansprechpartner vor Ort"
+          hinweis="Optional — lässt sich später am Einsatz nachtragen."
+          platzhalter="Kontakt suchen"
+          [suche]="partySuche"
+        />
+        <app-feld
+          [control]="terminForm.controls.access_instructions"
+          label="Zutritt"
+          typ="textarea"
+          hinweis="Optional — Hinweise zum Zutritt."
+        />
+      </form>
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="dialogLaedt()" (click)="dialogSchliessen()">Abbrechen</button>
+        <button type="submit" form="vorgang-termin-form" class="btn btn--primary" [disabled]="dialogLaedt()" [attr.aria-busy]="dialogLaedt()">
+          {{ dialogLaedt() ? 'Wird angelegt …' : 'Termin planen' }}
+        </button>
+      </div>
+    </app-dialog>
   }
 }

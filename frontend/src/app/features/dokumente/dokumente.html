@@ -229,15 +229,17 @@
         hinweis="Optional."
         [suche]="projektSuche"
       />
-      @if (neuArt() === 'rechnung') {
-        <app-referenz-wahl
-          [control]="neuForm.controls.work_order_id"
-          label="Auftrag"
-          platzhalter="Auftrag suchen"
-          hinweis="Optional beim Anlegen; für die Veröffentlichung nötig."
-          [suche]="auftragSuche"
-        />
-      }
+      <app-referenz-wahl
+        [control]="neuForm.controls.work_order_id"
+        label="Auftrag"
+        platzhalter="Auftrag suchen"
+        [hinweis]="
+          neuArt() === 'angebot'
+            ? 'Optional — verankert das Angebot als Soll dieses Auftrags.'
+            : 'Optional beim Anlegen; für die Veröffentlichung nötig.'
+        "
+        [suche]="auftragSuche"
+      />
 
       <!-- Anrechnung der Abschläge (nur Schlussrechnung) -->
       @if (istSchlussrechnung()) {

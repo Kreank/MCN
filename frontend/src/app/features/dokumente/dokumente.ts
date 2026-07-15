@@ -433,6 +433,9 @@ export class Dokumente {
         property_id: v.property_id,
         title: v.title.trim(),
         project_id: v.project_id || null,
+        // Auftragsbezug (= Soll dieser Baustelle). Der Server akzeptiert ihn seit
+        // jeher; er wurde hier nur nie mitgesendet. Ohne Wahl bleibt er null.
+        work_order_id: v.work_order_id || null,
         quote_date: v.quote_date || null,
         valid_until_date: v.valid_until_date || null,
         lines,

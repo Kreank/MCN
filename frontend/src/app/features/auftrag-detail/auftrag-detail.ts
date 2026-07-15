@@ -1,13 +1,15 @@
 import { Component, computed, effect, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { ActivatedRoute, RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { map } from 'rxjs';
 import { Mappe, MappeTab } from '../../shared/mappe/mappe';
 import { AuftragService } from '../../core/auftrag.service';
 import { EinsatzService } from '../../core/einsatz.service';
+import { BelegService } from '../../core/beleg.service';
 import { PartyService } from '../../core/party.service';
 import { AuthService } from '../../core/auth.service';
+import { QuoteCreate } from '../../core/beleg.model';
 import {
   Kundenhistorie,
   OrderPriority,
@@ -17,7 +19,12 @@ import {
   workOrderStatusClass,
   workOrderStatusLabel,
 } from '../../core/auftrag.model';
-import { ServiceJob, ServiceJobStatus, serviceJobStatusLabel } from '../../core/einsatz.model';
+import {
+  ServiceJob,
+  ServiceJobCreate,
+  ServiceJobStatus,
+  serviceJobStatusLabel,
+} from '../../core/einsatz.model';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { Dateien } from '../../shared/dateien/dateien';
 import { Berichte } from '../../shared/berichte/berichte';
@@ -25,7 +32,7 @@ import { SollIstAbgleich } from '../../shared/soll-ist/soll-ist';
 import { Abrechnung } from './abrechnung';
 import { Nachtrag } from './nachtrag';
 import { ZielFilter } from '../../core/datei.model';
-import { VerbotenState, fehlerState } from '../../shared/http-fehler';
+import { VerbotenState, fehlerDetail, fehlerState } from '../../shared/http-fehler';
 import { Dialog } from '../../shared/dialog/dialog';
 import { Bestaetigung } from '../../shared/bestaetigung/bestaetigung';
 import { Feld, FeldOption } from '../../shared/formular/feld';
@@ -44,7 +51,7 @@ type ViewState =
   | { kind: 'error' };
 
 type Meldung = { art: 'erfolg' | 'fehler'; text: string };
-type DialogArt = 'beteiligter' | 'status' | 'nachweis' | 'verantwortung';
+type DialogArt = 'beteiligter' | 'status' | 'nachweis' | 'verantwortung' | 'termin';
 
 // Kandidaten für den allgemeinen Statuswechsel (FREIGEGEBEN läuft über die
 // gesonderte Freigabe mit Bestätigung und eigenem Recht).
@@ -80,8 +87,10 @@ const STATUS_KANDIDATEN: WorkOrderStatus[] = [
 })
 export class AuftragDetail {
   private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
   private readonly svc = inject(AuftragService);
   private readonly einsatzSvc = inject(EinsatzService);
+  private readonly belegSvc = inject(BelegService);
   private readonly partySvc = inject(PartyService);
   private readonly auth = inject(AuthService);
   private readonly fb = inject(FormBuilder);
@@ -94,6 +103,31 @@ export class AuftragDetail {
    */
   protected readonly darfAendern = computed(() => this.auth.darfAlle('workflow', 'AENDERN'));
   protected readonly darfFreigeben = computed(() => this.auth.darf('workflow', 'FREIGEBEN'));
+
+  /**
+   * Termin direkt am Auftrag anlegen ist Dispositionssache: `workflow/ANLEGEN`
+   * mit Scope ALLE (fail-closed, wie in der Einsätze-Liste). Ein Monteur (EIGENE)
+   * bekommt den „+ Termin"-Knopf nicht; der Server lehnt ihn ohnehin ab.
+   */
+  protected readonly darfAnlegen = computed(() => this.auth.darfAlle('workflow', 'ANLEGEN'));
+
+  /**
+   * „+ Angebot" direkt aus dem Auftrag. `POST /invoicing/quotes` (Anlegen) und der
+   * Angebots-Editor (Ändern/Speichern) sind beide fail-closed (`require`) — ein
+   * Konto mit row_scope EIGENE bekommt dort 403. Beide Tore mit Scope ALLE prüfen,
+   * damit der Knopf nur erscheint, wenn die ganze Kette (anlegen → im Editor
+   * bearbeiten) durchläuft.
+   */
+  // Volle Kette abbilden: anlegen (POST) → im Editor laden (GET → invoicing/LESEN)
+  // → speichern (AENDERN). Rechte sind nicht hierarchisch (AENDERN impliziert kein
+  // LESEN) — ohne LESEN landete der Nutzer nach der Anlage im Editor auf 403.
+  protected readonly darfAngebot = computed(
+    () =>
+      this.auth.darfAlle('invoicing', 'LESEN') &&
+      this.auth.darfAlle('invoicing', 'ANLEGEN') &&
+      this.auth.darfAlle('invoicing', 'AENDERN'),
+  );
+  protected readonly angebotLaedt = signal(false);
 
   protected readonly tab = signal('uebersicht');
   protected readonly state = signal<ViewState>({ kind: 'loading' });
@@ -216,6 +250,15 @@ export class AuftragDetail {
   protected readonly verantwortungForm = this.fb.group({
     scope: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
   });
+  // Termin direkt zum Auftrag: work_order_id ist gesetzt, daher ist der Titel
+  // optional (Fallback: Auftragstitel) und die Liegenschaft kommt vom Auftrag.
+  protected readonly terminForm = this.fb.group({
+    title: this.fb.control('', { nonNullable: true }),
+    scheduled_start: this.fb.control('', { nonNullable: true }),
+    scheduled_end: this.fb.control('', { nonNullable: true }),
+    on_site_contact_party_id: this.fb.control('', { nonNullable: true }),
+    access_instructions: this.fb.control('', { nonNullable: true }),
+  });
 
   constructor() {
     this.route.paramMap.pipe(takeUntilDestroyed()).subscribe((pm) => {
@@ -307,6 +350,15 @@ export class AuftragDetail {
         break;
       case 'verantwortung':
         this.verantwortungForm.reset({ scope: this.daten()?.responsibility_scope ?? '' });
+        break;
+      case 'termin':
+        this.terminForm.reset({
+          title: '',
+          scheduled_start: '',
+          scheduled_end: '',
+          on_site_contact_party_id: '',
+          access_instructions: '',
+        });
         break;
     }
     this.dialogOffen.set(art);
@@ -420,6 +472,72 @@ export class AuftragDetail {
       error: (err) => {
         this.dialogLaedt.set(false);
         this.formularMeldung.set(apiFehlerZuweisen(err, this.verantwortungForm).formular);
+      },
+    });
+  }
+
+  // --- Termin direkt am Auftrag anlegen ------------------------------------
+  // Behebt den Bruch „Auftrag → Plantafel → Auftrag erneut suchen": der Einsatz
+  // entsteht hier mit gesetztem work_order_id; Titel/Liegenschaft erbt er vom
+  // Auftrag. Terminieren (Startzeit) geht direkt mit; die Antwort erscheint in
+  // der Termine-Liste.
+  terminAbsenden(): void {
+    const d = this.daten();
+    if (!d || this.nichtBereit(this.terminForm)) return;
+    const v = this.terminForm.getRawValue();
+    const payload: ServiceJobCreate = {
+      work_order_id: d.id,
+      title: v.title.trim() || null,
+      property_id: null,
+      scheduled_start: v.scheduled_start || null,
+      scheduled_end: v.scheduled_end || null,
+      on_site_contact_party_id: v.on_site_contact_party_id || null,
+      access_instructions: v.access_instructions.trim() || null,
+    };
+    this.dialogLaedt.set(true);
+    this.einsatzSvc.create(payload).subscribe({
+      next: () => {
+        this.dialogLaedt.set(false);
+        this.dialogOffen.set(null);
+        this.meldung.set({ art: 'erfolg', text: 'Termin angelegt.' });
+        this.ladeTermine(d.id);
+      },
+      error: (err) => {
+        this.dialogLaedt.set(false);
+        this.formularMeldung.set(apiFehlerZuweisen(err, this.terminForm).formular);
+      },
+    });
+  }
+
+  // --- Angebot direkt aus dem Auftrag --------------------------------------
+  // Kein Umweg über die kontextlose /dokumente-Liste: das Angebot entsteht mit
+  // vorbelegter Liegenschaft, Auftrag (= Soll dieser Baustelle) und — falls
+  // vorhanden — Projekt. Ohne Zwischendialog, weil der einzige Pflichtwert (Titel)
+  // sinnvoll vom Auftrag geerbt und im Editor ohnehin änderbar ist. Die Positionen
+  // erfasst der Nutzer direkt im Angebots-Editor, in den wir weiterleiten.
+  angebotAnlegen(): void {
+    const d = this.daten();
+    if (!d || this.angebotLaedt()) return;
+    this.meldung.set(null);
+    const payload: QuoteCreate = {
+      property_id: d.property.id,
+      title: d.title,
+      work_order_id: d.id,
+      project_id: d.project?.id ?? null,
+      lines: [],
+    };
+    this.angebotLaedt.set(true);
+    this.belegSvc.createQuote(payload).subscribe({
+      next: (q) => {
+        this.angebotLaedt.set(false);
+        this.router.navigate(['/dokumente/angebot', q.id]);
+      },
+      error: (err) => {
+        this.angebotLaedt.set(false);
+        this.meldung.set({
+          art: 'fehler',
+          text: fehlerDetail(err) ?? 'Das Angebot konnte nicht angelegt werden.',
+        });
       },
     });
   }

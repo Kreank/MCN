@@ -52,7 +52,7 @@
       </a>
 
       @if (tab() === 'uebersicht') {
-        @if (darfAendern() || (darfFreigeben() && freigabeMoeglich())) {
+        @if (darfAendern() || (darfFreigeben() && freigabeMoeglich()) || darfAngebot()) {
           <div class="tab-toolbar">
             @if (darfFreigeben() && freigabeMoeglich()) {
               <button type="button" class="btn btn--primary" (click)="freigabeFragen()">Freigeben</button>
@@ -61,6 +61,20 @@
               <button type="button" class="btn" (click)="dialogOeffnen('status')">Status ändern</button>
               <button type="button" class="btn" (click)="dialogOeffnen('verantwortung')">Verantwortung bestätigen</button>
               <button type="button" class="btn" (click)="dialogOeffnen('nachweis')">Nachweis setzen</button>
+            }
+            @if (darfAngebot()) {
+              <!-- Angebot mit geerbter Liegenschaft/Auftrag/Projekt anlegen und
+                   direkt in den Editor springen (dort Titel + Positionen). -->
+              <button
+                type="button"
+                class="btn"
+                [disabled]="angebotLaedt()"
+                [attr.aria-busy]="angebotLaedt()"
+                (click)="angebotAnlegen()"
+              >
+                <span aria-hidden="true">＋</span>
+                {{ angebotLaedt() ? 'Angebot wird angelegt …' : 'Angebot' }}
+              </button>
             }
           </div>
         }
@@ -126,6 +140,13 @@
       }
 
       @if (tab() === 'termine') {
+        @if (darfAnlegen()) {
+          <div class="tab-toolbar">
+            <button type="button" class="btn btn--primary" (click)="dialogOeffnen('termin')">
+              + Termin
+            </button>
+          </div>
+        }
         @if (historie(); as h) {
           <div class="kundenhistorie">
             <span class="kundenhistorie__wert">{{ h.termine_gesamt }}</span>
@@ -145,7 +166,14 @@
           <p class="note note--error" role="alert">Die Termine konnten nicht geladen werden.</p>
         } @else if (termine().length === 0) {
           <div class="tab-platzhalter">
-            <p>Für diesen Auftrag ist noch kein Termin geplant. Termine setzt du in der Plantafel.</p>
+            <p>
+              Für diesen Auftrag ist noch kein Termin geplant.
+              @if (darfAnlegen()) {
+                Mit „+ Termin“ legst du einen an — Titel und Liegenschaft erbt er vom Auftrag.
+              } @else {
+                Termine setzt die Disposition in der Plantafel.
+              }
+            </p>
           </div>
         } @else {
           <ul class="termine" role="list">
@@ -348,6 +376,67 @@
         <button type="button" class="btn" [disabled]="dialogLaedt()" (click)="dialogSchliessen()">Abbrechen</button>
         <button type="submit" form="verantwortung-form" class="btn btn--primary" [disabled]="dialogLaedt()" [attr.aria-busy]="dialogLaedt()">
           {{ dialogLaedt() ? 'Wird bestätigt …' : 'Bestätigen' }}
+        </button>
+      </div>
+    </app-dialog>
+
+    <!-- ---------------------------- Termin-Dialog ------------------------- -->
+    <app-dialog
+      [offen]="dialogOffen() === 'termin'"
+      titel="Termin zum Auftrag anlegen"
+      (schliessen)="dialogSchliessen()"
+    >
+      <form id="termin-form" class="dialog-form" (submit)="$event.preventDefault(); terminAbsenden()" novalidate>
+        @if (formularMeldung(); as fm) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+          </div>
+        }
+        <app-feld
+          [control]="terminForm.controls.title"
+          label="Titel"
+          hinweis="Optional — ohne Angabe erbt der Termin den Auftragstitel."
+        />
+        <!-- Hinweis steht UNTER dem Feld (Feldflucht) — wie in der Einsätze-Liste. -->
+        <div class="feld-gruppe">
+          <label class="feld-gruppe__label" for="termin-start">Planbeginn</label>
+          <input
+            id="termin-start"
+            class="feld-gruppe__input"
+            type="datetime-local"
+            [formControl]="terminForm.controls.scheduled_start"
+          />
+          <p class="feld-gruppe__hinweis">Optional — ohne Zeit landet der Termin im Rückstand.</p>
+        </div>
+        <div class="feld-gruppe">
+          <label class="feld-gruppe__label" for="termin-ende">Planende</label>
+          <input
+            id="termin-ende"
+            class="feld-gruppe__input"
+            type="datetime-local"
+            [formControl]="terminForm.controls.scheduled_end"
+          />
+          <p class="feld-gruppe__hinweis">Optional — muss nach dem Planbeginn liegen.</p>
+        </div>
+        <app-referenz-wahl
+          [control]="terminForm.controls.on_site_contact_party_id"
+          label="Ansprechpartner vor Ort"
+          hinweis="Optional — lässt sich später am Einsatz nachtragen."
+          platzhalter="Kontakt suchen"
+          [suche]="partySuche"
+        />
+        <app-feld
+          [control]="terminForm.controls.access_instructions"
+          label="Zutritt"
+          typ="textarea"
+          hinweis="Optional — Hinweise zum Zutritt."
+        />
+      </form>
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="dialogLaedt()" (click)="dialogSchliessen()">Abbrechen</button>
+        <button type="submit" form="termin-form" class="btn btn--primary" [disabled]="dialogLaedt()" [attr.aria-busy]="dialogLaedt()">
+          {{ dialogLaedt() ? 'Wird angelegt …' : 'Termin anlegen' }}
         </button>
       </div>
     </app-dialog>
