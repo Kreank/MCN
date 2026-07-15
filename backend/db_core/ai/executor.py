@@ -60,6 +60,7 @@ def ai_run(
     permission_context: dict | None = None,
     sources: list | None = None,
     tools_used: list | None = None,
+    workflow_run_id: uuid.UUID | None = None,
 ):
     """Kontextmanager um einen KI-Lauf.
 
@@ -82,6 +83,7 @@ def ai_run(
             permission_context=permission_context or {},
             sources=sources or [],
             tools_used=tools_used or [],
+            workflow_run_id=workflow_run_id,
         )
 
     handle = RunHandle(run_id, backend)

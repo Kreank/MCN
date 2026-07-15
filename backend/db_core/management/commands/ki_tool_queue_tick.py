@@ -11,7 +11,8 @@ Tick nicht ab (die Fehlerklassifikation der Runtime fängt ihn).
 """
 from django.core.management.base import BaseCommand, CommandError
 
-from db_core.ai import runtime
+from db_core.ai import engine, runtime
+from db_core.ai import workflow_sprachmemo  # noqa: F401 — registriert den v1-Workflow
 from db_core.models import AppUser
 
 
@@ -30,11 +31,14 @@ class Command(BaseCommand):
 
     def handle(self, *args, **opts):
         actor = self._actor(opts.get("actor"))
+        # Ein Tick treibt beides: die Werkzeug-Queue UND die Wiederaufnahme wartender
+        # Workflows (deren Schritt-Call gerade terminal wurde).
         summary = runtime.tick(actor.id, claim_limit=opts["limit"])
-        if summary["reaped"] or summary["polled"] or summary["dispatched"]:
+        resumed = engine.resume_ready(actor.id)
+        if summary["reaped"] or summary["polled"] or summary["dispatched"] or resumed:
             self.stdout.write(
-                f"Tick: {summary['dispatched']} dispatcht, "
-                f"{summary['polled']} gepollt, {summary['reaped']} reaped."
+                f"Tick: {summary['dispatched']} dispatcht, {summary['polled']} gepollt, "
+                f"{summary['reaped']} reaped, {len(resumed)} Workflow(s) fortgesetzt."
             )
 
     def _actor(self, roh):
