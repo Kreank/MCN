@@ -531,8 +531,22 @@ export interface QuoteUpdate {
    *  umfasst die Zuordnung nicht. Ausnahme: Sie ist gesperrt, sobald ein
    *  Baustellenbericht eine Position dieses Angebots als Soll führt (422). */
   work_order_id?: string | null;
+  /** Projektzuordnung setzen (Verschieben) oder mit `null` lösen. Weggelassen =
+   *  unverändert. Nur im Entwurf möglich (GoBD); ab VERSENDET friert die DB alle
+   *  Spalten außer dem Status ein. Passt der hängende Auftrag nicht zum neuen
+   *  Projekt → 422. */
+  project_id?: string | null;
   rubriken?: RubrikInput[];
   lines?: QuoteLineInput[];
+}
+
+/**
+ * Ziel einer Angebotskopie. Weggelassene Felder erben Liegenschaft/Projekt der
+ * Quelle; `project_id: null` erzeugt eine projektlose Kopie.
+ */
+export interface QuoteCopy {
+  property_id?: string | null;
+  project_id?: string | null;
 }
 
 export interface InvoiceCreate {

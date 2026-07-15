@@ -7,6 +7,7 @@ from django.contrib.auth import get_user_model
 
 from db_core.models import AppUser, Quote
 from db_core.services import beleg as beleg_service
+from db_core.services import projekt as projekt_service
 from db_core.services import property as property_service
 
 User = get_user_model()
@@ -140,6 +141,74 @@ def test_create_ohne_login_abgelehnt(anonymous_client, db, app_user):
         content_type="application/json",
     )
     assert r.status_code in (401, 403)
+
+
+@pytest.mark.django_db
+def test_kopie_dupliziert_kopf_und_positionen(client, db, app_user, seeded):
+    """POST /quotes/{id}/kopie erzeugt einen NEUEN Entwurf mit „(Kopie)"-Titel und
+    wertgleich kopierten Positionen — die Quelle bleibt unberührt."""
+    c = _logged_in_client(client, with_app_user=True)
+    quelle = seeded["quote"]
+    r = c.post(
+        f"/api/invoicing/quotes/{quelle.id}/kopie",
+        data={}, content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    body = r.json()
+    assert body["id"] != str(quelle.id)
+    assert body["title"] == "Dachreparatur (Kopie)"
+    assert body["status"] == "ENTWURF"
+    assert body["quote_number"] is None
+    assert len(body["lines"]) == 2
+    assert body["net_total"] == "120.00"
+    # Quelle unverändert (kein zweiter Titel, kein Statuswechsel).
+    quelle.refresh_from_db()
+    assert quelle.title == "Dachreparatur"
+    assert Quote.objects.count() == 2
+
+
+@pytest.mark.django_db
+def test_kopie_in_anderes_projekt(client, db, app_user, seeded):
+    """Zielprojekt der Kopie ist wählbar (Default sonst = Quelle)."""
+    c = _logged_in_client(client, with_app_user=True)
+    projekt = projekt_service.create_project(
+        app_user.id, name="Zielprojekt", property_ids=[seeded["obj"].id]
+    )
+    r = c.post(
+        f"/api/invoicing/quotes/{seeded['quote'].id}/kopie",
+        data={"project_id": str(projekt.id)},
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    assert r.json()["project"]["id"] == str(projekt.id)
+
+
+@pytest.mark.django_db
+def test_kopie_404_unbekannt(client, db, app_user):
+    c = _logged_in_client(client, with_app_user=True)
+    r = c.post(
+        f"/api/invoicing/quotes/{uuid.uuid4()}/kopie",
+        data={}, content_type="application/json",
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.django_db
+def test_verschieben_setzt_projekt(client, db, app_user, seeded):
+    """PUT /quotes/{id} mit project_id verschiebt einen Entwurf in ein Projekt."""
+    c = _logged_in_client(client, with_app_user=True)
+    projekt = projekt_service.create_project(
+        app_user.id, name="Neues Projekt", property_ids=[seeded["obj"].id]
+    )
+    r = c.put(
+        f"/api/invoicing/quotes/{seeded['quote'].id}",
+        data={"project_id": str(projekt.id)},
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    assert r.json()["project"]["id"] == str(projekt.id)
+    seeded["quote"].refresh_from_db()
+    assert str(seeded["quote"].project_id) == str(projekt.id)
 
 
 @pytest.mark.django_db

@@ -641,6 +641,7 @@ def update_quote(
     quote_date=...,
     valid_until_date=...,
     work_order_id=...,
+    project_id=...,
     lines=None,
     rubriken=None,
 ):
@@ -650,8 +651,14 @@ def update_quote(
     übergeben wird — der Editor schickt immer den ganzen Beleg. Ein Teil-Update
     einzelner Positionen wäre bei umsortierten Positionsnummern nicht eindeutig.
 
-    `quote_date`/`valid_until_date`/`work_order_id` nutzen den Sentinel `...`, damit
-    ein bewusstes Leeren (None) von „nicht ändern" unterscheidbar bleibt.
+    `quote_date`/`valid_until_date`/`work_order_id`/`project_id` nutzen den Sentinel
+    `...`, damit ein bewusstes Leeren (None) von „nicht ändern" unterscheidbar bleibt.
+
+    **`project_id` (Verschieben in ein anderes Projekt)** ist — anders als
+    `work_order_id` — nur im editierbaren Angebot (Entwurfsphase) setzbar: ab
+    VERSENDET friert die DB ohnehin alle Spalten außer dem Status ein (B-30). Wird
+    das Projekt gewechselt, während ein Auftrag hängt, muss dieser Auftrag zum neuen
+    Projekt passen (der zusammengesetzte FK sichert nur die Liegenschaft) — sonst 422.
 
     **`work_order_id` ist in JEDEM Status setz- und lösbar** (Migration 0082). Der
     reale Ablauf ist „Angebot versenden → Kunde nimmt an → *dann* Auftrag anlegen";
@@ -696,15 +703,37 @@ def update_quote(
         kopf["quote_date"] = quote_date
     if valid_until_date is not ...:
         kopf["valid_until_date"] = valid_until_date
+    # Zielprojekt zuerst bestimmen: die Auftragsprüfung darunter muss gegen das
+    # NEUE Projekt laufen, nicht gegen das alte.
+    ziel_project = quote.project_id
+    if project_id is not ...:
+        if quote.status not in QUOTE_EDITIERBAR:
+            raise ValueError(
+                f"Angebot im Status {quote.status} lässt sich keinem anderen Projekt "
+                "mehr zuordnen (versendet); nur vor dem Versand verschiebbar "
+                "(Entwurf/intern geprüft/freigegeben)."
+            )
+        ensure_exists(Project, project_id, "Projekt")
+        kopf["project_id"] = project_id
+        ziel_project = project_id
+
     zuordnung_geaendert = False
     if work_order_id is not ...:
         neu = _work_order_pruefen(
             work_order_id,
             property_id=quote.property_id,
-            project_id=quote.project_id,
+            project_id=ziel_project,
         )
         kopf["work_order_id"] = neu
         zuordnung_geaendert = str(neu or "") != str(quote.work_order_id or "")
+    elif project_id is not ... and quote.work_order_id is not None:
+        # Projekt gewechselt, Auftrag bleibt: der hängende Auftrag muss zum neuen
+        # Projekt passen — sonst stünde ein fremdes Soll an der Baustelle (422).
+        _work_order_pruefen(
+            quote.work_order_id,
+            property_id=quote.property_id,
+            project_id=ziel_project,
+        )
 
     prepared = rubriken_norm = None
     if lines is not None:
@@ -741,6 +770,83 @@ def update_quote(
                 _write_lines(prepared, rubrik_ids, model=QuoteLine, quote_id=quote.id)
     quote.refresh_from_db()
     return quote
+
+
+def _angebot_vorlage_zeilen(quote):
+    """Positionen und Abschnitte eines Angebots als create_quote-Eingabe.
+
+    Eine **wertgleiche Vorlagenkopie**: Preis, Rabatt, EK/Aufschlag und der
+    § 35a-Anteil werden 1:1 übernommen (kein Neuberechnen aus dem Stamm). Anders
+    als die Rechnungs-Angebotskopie (`abrechnung._quote_zeilen_kopieren`) bleiben
+    **ALTERNATIV- und BEDARF-Positionen erhalten**: die Kopie ist eine Arbeits-
+    vorlage, kein Vertragsdokument — was am Ende beauftragt wird, entscheidet der
+    Bearbeiter im neuen Entwurf.
+    """
+    rubriken = sorted(quote.rubriken.all(), key=lambda r: r.position_number)
+    rubrik_nummer = {r.id: idx for idx, r in enumerate(rubriken, start=1)}
+    lines = []
+    for ql in sorted(quote.lines.all(), key=lambda l: l.position_number):
+        row = {
+            "line_type": ql.line_type,
+            "line_kind": ql.line_kind,
+            "description": ql.description,
+            "rubrik": rubrik_nummer.get(ql.rubrik_id),
+        }
+        if ql.line_type not in TEXT_TYPES:
+            row.update(
+                quantity=ql.quantity,
+                unit=ql.unit,
+                unit_price=ql.unit_price,
+                discount_percent=ql.discount_percent,
+                tax_code=ql.tax_code_id,
+                # None bleibt None — eine Kopie erfindet keine § 35a-Bestimmtheit.
+                labour_net_amount=ql.labour_net_amount,
+                unit_cost=ql.unit_cost,
+                markup_percent=ql.markup_percent,
+                sale_price_group_id=ql.sale_price_group_id,
+                source_article_id=ql.source_article_id,
+                source_assembly_id=ql.source_assembly_id,
+            )
+        lines.append(row)
+    rubriken_out = [{"title": r.title, "description": r.description} for r in rubriken]
+    return lines, rubriken_out
+
+
+def kopiere_angebot(actor_app_user_id, *, quote_id, property_id=..., project_id=...):
+    """Dupliziert ein Angebot als **neuen Entwurf** (Titel „… (Kopie)").
+
+    Kopf, Abschnitte und Positionen werden wertgleich übernommen; das Ergebnis ist
+    ein frischer ENTWURF **ohne Snapshot/Hash** (GoBD: eine Kopie ist ein neuer
+    Beleg mit eigener Nummer beim Versand, kein Duplikat des festgeschriebenen
+    Originals). Der **Auftragsbezug wird nicht mitkopiert** — das Soll gehört genau
+    einer Baustelle und darf nicht doppelt hängen; der Bearbeiter ordnet neu zu.
+    Belegdatum und Gültigkeit bleiben leer.
+
+    Ziel-Liegenschaft/-Projekt sind wählbar; der Sentinel `...` erbt den Wert der
+    Quelle. Aus jedem Status kopierbar (auch aus einem versendeten Angebot heraus) —
+    die Quelle wird nur gelesen.
+    """
+    quote = (
+        Quote.objects.filter(id=quote_id)
+        .prefetch_related("lines", "rubriken")
+        .first()
+    )
+    if quote is None:
+        raise ValueError("Angebot nicht gefunden.")
+    ziel_property = quote.property_id if property_id is ... else property_id
+    ziel_project = quote.project_id if project_id is ... else project_id
+    lines, rubriken = _angebot_vorlage_zeilen(quote)
+    return create_quote(
+        actor_app_user_id,
+        property_id=ziel_property,
+        title=f"{quote.title} (Kopie)",
+        project_id=ziel_project,
+        work_order_id=None,
+        quote_date=None,
+        valid_until_date=None,
+        lines=lines,
+        rubriken=rubriken,
+    )
 
 
 # Eine Rechnung ist nur im Entwurf editierbar; ab VEROEFFENTLICHT eingefroren (B-30).

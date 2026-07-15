@@ -1,16 +1,20 @@
 import { Component, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { ActivatedRoute, RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
+import { map } from 'rxjs';
 import { Mappe, MappeTab } from '../../shared/mappe/mappe';
 import { BelegService } from '../../core/beleg.service';
 import { MailService } from '../../core/mail.service';
+import { PropertyService } from '../../core/property.service';
+import { ProjektService } from '../../core/projekt.service';
 import { AuthService } from '../../core/auth.service';
 import {
   LINE_TYPE_LABEL,
   LineType,
   QUOTE_STATUS_LABEL,
   QuoteAusgang,
+  QuoteCopy,
   QuoteDetail,
   QuoteStatus,
 } from '../../core/beleg.model';
@@ -21,6 +25,7 @@ import { Dateien } from '../../shared/dateien/dateien';
 import { ZielFilter } from '../../core/datei.model';
 import { Dialog } from '../../shared/dialog/dialog';
 import { Feld } from '../../shared/formular/feld';
+import { ReferenzWahl, RefSuche } from '../../shared/formular/referenz-wahl';
 import { apiFehlerZuweisen } from '../../shared/formular/api-fehler';
 import {
   felderAlsBeruehrtMarkieren,
@@ -87,6 +92,7 @@ const AUSGANG_ERFOLG: Record<QuoteAusgang, string> = {
     ReactiveFormsModule,
     Dialog,
     Feld,
+    ReferenzWahl,
     AngebotMengen,
   ],
   templateUrl: './beleg-detail.html',
@@ -94,10 +100,26 @@ const AUSGANG_ERFOLG: Record<QuoteAusgang, string> = {
 })
 export class BelegDetail {
   private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
   private readonly svc = inject(BelegService);
   private readonly mailSvc = inject(MailService);
+  private readonly propertySvc = inject(PropertyService);
+  private readonly projektSvc = inject(ProjektService);
   private readonly auth = inject(AuthService);
   private readonly fb = inject(FormBuilder);
+
+  /** Liegenschaftssuche für den Kopie-Dialog (leer = Liegenschaft der Quelle). */
+  protected readonly liegenschaftSuche: RefSuche = (q) =>
+    this.propertySvc.list({ page: 1, page_size: 20, q }).pipe(
+      map((p) =>
+        p.items.map((o) => ({ id: o.id, label: o.name, sub: `${o.property_number} · ${o.city}` })),
+      ),
+    );
+  /** Projektsuche für Kopieren (Zielprojekt) und Verschieben. */
+  protected readonly projektSuche: RefSuche = (q) =>
+    this.projektSvc.list({ page: 1, page_size: 20, q }).pipe(
+      map((p) => p.items.map((o) => ({ id: o.id, label: o.name, sub: o.project_number }))),
+    );
 
   /**
    * row_scope EIGENE auf `invoicing` (Monteur, Migration 0102) → **die Mengensicht**.
@@ -326,6 +348,110 @@ export class BelegDetail {
 
   meldungSchliessen(): void {
     this.meldung.set(null);
+  }
+
+  // ---- Kopieren: neuer Entwurf aus diesem Angebot ------------------------
+  //
+  // Erzeugt serverseitig einen frischen ENTWURF mit eigener Nummer (GoBD: eine
+  // Kopie ist ein neuer Beleg, kein Duplikat des festgeschriebenen Originals).
+  // Aus JEDEM Status kopierbar — die Quelle wird nur gelesen. Recht ANLEGEN.
+  protected readonly darfKopieren = computed(() => this.auth.darf('invoicing', 'ANLEGEN'));
+  protected readonly kopierenOffen = signal(false);
+  protected readonly kopierenLaedt = signal(false);
+  protected readonly kopierenMeldung = signal<string | null>(null);
+  /** Ziel-Liegenschaft/-Projekt: leer = wie Quelle (Server-Default). */
+  protected readonly kopierenForm = this.fb.group({
+    property_id: this.fb.control('', { nonNullable: true }),
+    project_id: this.fb.control('', { nonNullable: true }),
+  });
+
+  kopierenOeffnen(): void {
+    this.meldung.set(null);
+    this.kopierenMeldung.set(null);
+    this.kopierenForm.reset({ property_id: '', project_id: '' });
+    this.kopierenOffen.set(true);
+  }
+
+  kopierenSchliessen(): void {
+    if (!this.kopierenLaedt()) this.kopierenOffen.set(false);
+  }
+
+  kopierenAbsenden(): void {
+    const d = this.daten();
+    if (!d || this.kopierenLaedt()) return;
+    this.kopierenMeldung.set(null);
+    // Nur aktiv gewählte Ziele überschreiben die Quelle; leer bleibt weggelassen.
+    const ziel: QuoteCopy = {};
+    const prop = this.kopierenForm.controls.property_id.value.trim();
+    const proj = this.kopierenForm.controls.project_id.value.trim();
+    if (prop) ziel.property_id = prop;
+    if (proj) ziel.project_id = proj;
+    this.kopierenLaedt.set(true);
+    this.svc.copyQuote(d.id, ziel).subscribe({
+      next: (neu) => {
+        this.kopierenLaedt.set(false);
+        this.kopierenOffen.set(false);
+        // In den neuen Entwurf navigieren (Editor).
+        this.router.navigate(['/dokumente/angebot', neu.id]);
+      },
+      error: (err) => {
+        this.kopierenLaedt.set(false);
+        this.kopierenMeldung.set(this.fehlerText(err));
+      },
+    });
+  }
+
+  // ---- Verschieben: Angebotsentwurf einem anderen Projekt zuordnen -------
+  //
+  // Nur solange der Beleg nicht festgeschrieben ist (Entwurfsphase) — ab VERSENDET
+  // friert die DB alle Spalten außer dem Status ein (B-30). Recht AENDERN. Passt
+  // ein hängender Auftrag nicht zum neuen Projekt, antwortet der Server mit 422.
+  protected readonly darfVerschieben = computed(() => {
+    const d = this.daten();
+    if (!d || !this.auth.darf('invoicing', 'AENDERN')) return false;
+    return d.status === 'ENTWURF' || d.status === 'INTERN_GEPRUEFT' || d.status === 'FREIGEGEBEN';
+  });
+  protected readonly verschiebenOffen = signal(false);
+  protected readonly verschiebenLaedt = signal(false);
+  protected readonly verschiebenMeldung = signal<string | null>(null);
+  protected readonly verschiebenForm = this.fb.group({
+    project_id: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
+  });
+
+  verschiebenOeffnen(): void {
+    this.meldung.set(null);
+    this.verschiebenMeldung.set(null);
+    this.verschiebenForm.reset({ project_id: '' });
+    this.verschiebenOffen.set(true);
+  }
+
+  verschiebenSchliessen(): void {
+    if (!this.verschiebenLaedt()) this.verschiebenOffen.set(false);
+  }
+
+  verschiebenAbsenden(): void {
+    const d = this.daten();
+    if (!d || this.verschiebenLaedt()) return;
+    this.verschiebenMeldung.set(null);
+    felderAlsBeruehrtMarkieren(this.verschiebenForm);
+    if (this.verschiebenForm.invalid) return;
+    const proj = this.verschiebenForm.controls.project_id.value.trim();
+    this.verschiebenLaedt.set(true);
+    this.svc.updateQuote(d.id, { project_id: proj }).subscribe({
+      next: (aktualisiert) => {
+        this.verschiebenLaedt.set(false);
+        this.verschiebenOffen.set(false);
+        this.state.set({ kind: 'ready', data: aktualisiert });
+        this.meldung.set({
+          art: 'erfolg',
+          text: `Angebot wurde dem Projekt „${aktualisiert.project?.name ?? '—'}" zugeordnet.`,
+        });
+      },
+      error: (err) => {
+        this.verschiebenLaedt.set(false);
+        this.verschiebenMeldung.set(apiFehlerZuweisen(err, this.verschiebenForm).formular);
+      },
+    });
   }
 
   // ---- Per E-Mail senden --------------------------------------------------

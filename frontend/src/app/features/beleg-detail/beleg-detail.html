@@ -43,6 +43,16 @@
           Bearbeiten
         </a>
       }
+      @if (darfKopieren()) {
+        <button mappe-kopf type="button" class="btn" (click)="kopierenOeffnen()">
+          Kopieren
+        </button>
+      }
+      @if (darfVerschieben()) {
+        <button mappe-kopf type="button" class="btn" (click)="verschiebenOeffnen()">
+          Verschieben
+        </button>
+      }
       @if (darfVersenden() && kannPerMailSenden()) {
         @if (mailKontoVorhanden()) {
           <button mappe-kopf type="button" class="btn btn--primary" (click)="versandOeffnen()">
@@ -234,6 +244,73 @@
         <button type="button" class="btn" [disabled]="versandLaedt()" (click)="versandSchliessen()">Abbrechen</button>
         <button type="submit" form="angebot-versand-form" class="btn btn--primary" [disabled]="versandLaedt()" [attr.aria-busy]="versandLaedt()">
           {{ versandLaedt() ? 'Wird gesendet …' : 'Senden' }}
+        </button>
+      </div>
+    </app-dialog>
+
+    <!-- ---------------------------- Kopieren ----------------------------- -->
+    <app-dialog [offen]="kopierenOffen()" titel="Angebot kopieren" (schliessen)="kopierenSchliessen()">
+      <form id="angebot-kopie-form" class="dialog-form" (submit)="$event.preventDefault(); kopierenAbsenden()" novalidate>
+        @if (kopierenMeldung(); as fm) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+          </div>
+        }
+        <p class="dialog-hinweis">
+          Es entsteht ein neuer Entwurf „{{ daten()!.title }} (Kopie)" mit allen
+          Abschnitten und Positionen. Ziel-Liegenschaft und -Projekt sind wählbar;
+          leer gelassen wird die Zuordnung der Quelle übernommen.
+        </p>
+        <app-referenz-wahl
+          [control]="kopierenForm.controls.property_id"
+          label="Ziel-Liegenschaft"
+          platzhalter="Liegenschaft suchen (optional)"
+          [hinweis]="'Standard: ' + daten()!.property.name + ' · ' + daten()!.property.city"
+          [suche]="liegenschaftSuche"
+        />
+        <app-referenz-wahl
+          [control]="kopierenForm.controls.project_id"
+          label="Ziel-Projekt"
+          platzhalter="Projekt suchen (optional)"
+          [hinweis]="daten()!.project ? ('Standard: ' + daten()!.project!.name) : 'Standard: wie Quelle (kein Projekt).'"
+          [suche]="projektSuche"
+        />
+      </form>
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="kopierenLaedt()" (click)="kopierenSchliessen()">Abbrechen</button>
+        <button type="submit" form="angebot-kopie-form" class="btn btn--primary" [disabled]="kopierenLaedt()" [attr.aria-busy]="kopierenLaedt()">
+          {{ kopierenLaedt() ? 'Wird kopiert …' : 'Kopie anlegen' }}
+        </button>
+      </div>
+    </app-dialog>
+
+    <!-- --------------------------- Verschieben --------------------------- -->
+    <app-dialog [offen]="verschiebenOffen()" titel="In anderes Projekt verschieben" (schliessen)="verschiebenSchliessen()">
+      <form id="angebot-verschieben-form" class="dialog-form" (submit)="$event.preventDefault(); verschiebenAbsenden()" novalidate>
+        @if (verschiebenMeldung(); as fm) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+          </div>
+        }
+        <p class="dialog-hinweis">
+          Nur im Entwurf möglich. Die Liegenschaft bleibt unverändert; ein
+          zugeordneter Auftrag muss zum neuen Projekt passen.
+        </p>
+        <app-referenz-wahl
+          [control]="verschiebenForm.controls.project_id"
+          label="Zielprojekt"
+          [pflicht]="true"
+          platzhalter="Projekt suchen"
+          [hinweis]="daten()!.project ? ('Aktuell: ' + daten()!.project!.name) : 'Aktuell keinem Projekt zugeordnet.'"
+          [suche]="projektSuche"
+        />
+      </form>
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="verschiebenLaedt()" (click)="verschiebenSchliessen()">Abbrechen</button>
+        <button type="submit" form="angebot-verschieben-form" class="btn btn--primary" [disabled]="verschiebenLaedt()" [attr.aria-busy]="verschiebenLaedt()">
+          {{ verschiebenLaedt() ? 'Wird verschoben …' : 'Verschieben' }}
         </button>
       </div>
     </app-dialog>

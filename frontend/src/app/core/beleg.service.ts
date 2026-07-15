@@ -12,6 +12,7 @@ import {
   InvoiceQuery,
   Kalkulation,
   QuoteAusgang,
+  QuoteCopy,
   QuoteCreate,
   QuoteDetail,
   QuoteEmailResult,
@@ -120,6 +121,16 @@ export class BelegService {
   /** Angebot versenden — unumkehrbar: DB vergibt die AN-Nummer und friert ein. */
   sendQuote(id: string): Observable<QuoteDetail> {
     return this.http.post<QuoteDetail>(`${this.base}/${id}/send`, {});
+  }
+
+  /**
+   * Angebot als **neuen Entwurf** duplizieren (Kopf „… (Kopie)", Abschnitte,
+   * Positionen wertgleich). Ziel-Liegenschaft/-Projekt optional (Default: wie
+   * Quelle). Aus jedem Status kopierbar; das Ergebnis ist ein frischer ENTWURF
+   * ohne Snapshot (GoBD). Der Auftragsbezug wird nicht mitkopiert.
+   */
+  copyQuote(id: string, ziel: QuoteCopy = {}): Observable<QuoteDetail> {
+    return this.http.post<QuoteDetail>(`${this.base}/${id}/kopie`, ziel);
   }
 
   /**

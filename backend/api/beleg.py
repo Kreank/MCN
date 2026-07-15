@@ -617,6 +617,9 @@ class QuoteUpdateIn(Schema):
     # Annahme des Angebots. Interner Verweis, kein Beleginhalt — B-30 gilt weiter
     # für alles andere.
     work_order_id: UUID | None = None
+    # Projektzuordnung setzen (oder mit `null` lösen). Weggelassen = unverändert.
+    # Nur im Entwurf möglich (Verschieben) — ab VERSENDET friert die DB alles ein.
+    project_id: UUID | None = None
     rubriken: list[RubrikIn] | None = None
     lines: list[QuoteLineIn] | None = None
 
@@ -627,7 +630,9 @@ def update_quote(request, quote_id: UUID, payload: QuoteUpdateIn):
 
     Ab VERSENDET friert die DB den **Beleginhalt** ein (422): Titel, Daten,
     Positionen, Abschnitte. Die **Auftragszuordnung** (`work_order_id`) bleibt
-    dagegen in jedem Status setz- und lösbar (Migration 0082).
+    dagegen in jedem Status setz- und lösbar (Migration 0082). Die
+    **Projektzuordnung** (`project_id`, „Verschieben") ist nur im Entwurf änderbar
+    und wird serverseitig gegen einen hängenden Auftrag geprüft (422 bei Konflikt).
     """
     actor, _ = require(request, "invoicing", "AENDERN")
     gesetzt = payload.model_dump(exclude_unset=True)
@@ -644,6 +649,7 @@ def update_quote(request, quote_id: UUID, payload: QuoteUpdateIn):
             work_order_id=(
                 payload.work_order_id if "work_order_id" in gesetzt else ...
             ),
+            project_id=payload.project_id if "project_id" in gesetzt else ...,
             rubriken=[r.dict() for r in payload.rubriken or []],
             lines=(
                 [line.dict() for line in payload.lines]
@@ -718,6 +724,39 @@ def set_quote_status(request, quote_id: UUID, payload: QuoteStatusIn):
     except ValueError as exc:
         raise HttpError(422, str(exc))
     return _quote_detail(quote_id)
+
+
+class QuoteCopyIn(Schema):
+    """Ziel der Kopie. Weggelassene Felder erben Liegenschaft/Projekt der Quelle;
+    `project_id: null` erzeugt eine projektlose Kopie."""
+    property_id: UUID | None = None
+    project_id: UUID | None = None
+
+
+@router.post(
+    "/quotes/{quote_id}/kopie", response={201: QuoteDetailOut}, auth=django_auth
+)
+def copy_quote(request, quote_id: UUID, payload: QuoteCopyIn):
+    """Dupliziert ein Angebot als neuen Entwurf (Kopf „… (Kopie)", Abschnitte,
+    Positionen wertgleich). Ziel-Liegenschaft/-Projekt wählbar (Default: wie Quelle).
+
+    Recht ANLEGEN — es entsteht ein neuer Beleg (Scope EIGENE → 403, fail-closed).
+    GoBD: das Ergebnis ist ein frischer ENTWURF ohne Snapshot; der Auftragsbezug
+    wird bewusst nicht mitkopiert. Aus jedem Status kopierbar (die Quelle wird nur
+    gelesen).
+    """
+    actor, _ = require(request, "invoicing", "ANLEGEN")
+    gesetzt = payload.model_dump(exclude_unset=True)
+    try:
+        quote = beleg_service.kopiere_angebot(
+            actor,
+            quote_id=quote_id,
+            property_id=payload.property_id if "property_id" in gesetzt else ...,
+            project_id=payload.project_id if "project_id" in gesetzt else ...,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return Status(201, _quote_detail(quote.id))
 
 
 @router.get("/quotes/{quote_id}/pdf")
