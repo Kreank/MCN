@@ -139,6 +139,10 @@ export interface ContactPerson {
   display_name: string;
   valid_from: string;
   valid_until: string | null;
+  // Anzahl der von dieser Person gemeldeten Vorgänge (Kontakte-8). Es gibt keine
+  // Person→Projekt-Kante im Schema; der Vorgang ist die einzige zählbare
+  // Fachkante. Anlegen/Entfernen liefern 0; die Liste lädt danach neu.
+  case_count: number;
 }
 
 export interface ContactPersonIn {

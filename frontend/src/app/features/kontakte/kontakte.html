@@ -31,6 +31,11 @@
       <span class="melde__text">
         <strong>{{ m.art === 'fehler' ? 'Fehler:' : 'Angelegt:' }}</strong> {{ m.text }}
       </span>
+      @if (m.folgeOrgId; as orgId) {
+        <button type="button" class="btn btn--klein kontakte__folge" (click)="zumAnsprechpartner(orgId)">
+          <span aria-hidden="true">＋</span> Ansprechpartner hinzufügen
+        </button>
+      }
       <button type="button" class="melde__zu" (click)="meldungSchliessen()" aria-label="Meldung schließen">
         <span aria-hidden="true">✕</span>
       </button>

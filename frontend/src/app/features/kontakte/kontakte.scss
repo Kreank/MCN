@@ -56,6 +56,12 @@
   margin-bottom: var(--space-5);
 }
 
+/* Kontakte-9: Überleitung „Ansprechpartner hinzufügen" in der Erfolgsmeldung. */
+.kontakte__folge {
+  flex: none;
+  align-self: center;
+}
+
 // ============================== Steuerung ===================================
 .controls {
   display: flex;

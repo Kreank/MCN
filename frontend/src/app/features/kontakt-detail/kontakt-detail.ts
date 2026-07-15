@@ -1,6 +1,6 @@
 import { Component, computed, effect, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { ActivatedRoute, RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { map } from 'rxjs';
 import { Mappe, MappeTab } from '../../shared/mappe/mappe';
@@ -72,6 +72,7 @@ type LazyState<T> =
 })
 export class KontaktDetail {
   private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
   private readonly svc = inject(PartyService);
   private readonly aufgabeSvc = inject(AufgabeService);
   private readonly firmaSvc = inject(FirmaService);
@@ -546,7 +547,25 @@ export class KontaktDetail {
     this.state.set({ kind: 'loading' });
     this.svc.get(id).subscribe({
       next: (data) => {
-        if (rid === this.reqId) this.state.set({ kind: 'ready', data });
+        if (rid !== this.reqId) return;
+        this.state.set({ kind: 'ready', data });
+        // Kontakte-9: Aus der Org-Anlage übergeleitet („… und Ansprechpartner
+        // hinzufügen") — direkt auf dem Ansprechpartner-Tab den Dialog öffnen.
+        // Nur bei Organisationen sinnvoll (Personen haben keinen AP-Tab).
+        if (
+          data.party_type === 'ORGANIZATION' &&
+          this.route.snapshot.queryParamMap.get('neu') === 'ansprechpartner'
+        ) {
+          this.tab.set('ansprechpartner');
+          this.dialogOeffnen('ansprechpartner');
+          // Query-Param entfernen, sonst öffnet sich der Dialog bei Reload/Zurück
+          // erneut. replaceUrl: kein zusätzlicher History-Eintrag.
+          this.router.navigate([], {
+            relativeTo: this.route,
+            queryParams: {},
+            replaceUrl: true,
+          });
+        }
       },
       error: (err) => {
         if (rid === this.reqId) this.state.set(fehlerState(err));
@@ -657,6 +676,18 @@ export class KontaktDetail {
       default:
         return null;
     }
+  }
+
+  /** Kompaktes Chip-Label „N Vorgänge" (Kontakte-8, korrekter Singular). */
+  vorgangLabel(n: number): string {
+    return `${n} ${n === 1 ? 'Vorgang' : 'Vorgänge'}`;
+  }
+
+  /** Ausführlicher Titel für den Chip (a11y: Text statt reiner Zahl/Farbe). */
+  vorgangTitel(n: number): string {
+    return n === 1
+      ? 'Diese Person hat 1 Vorgang gemeldet.'
+      : `Diese Person hat ${n} Vorgänge gemeldet.`;
   }
 
   // ---- Aufgaben-Darstellung ----------------------------------------------

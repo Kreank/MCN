@@ -245,8 +245,16 @@
                 <ul class="ref-liste">
                   @for (ap of $any(contactPersonsState()).items; track ap.relationship_id) {
                     <li class="ref">
+                      @if (ap.case_count > 0) {
+                        <span class="ref__stamps">
+                          <span
+                            class="stamp stamp--type"
+                            [attr.title]="vorgangTitel(ap.case_count)"
+                          >{{ vorgangLabel(ap.case_count) }}</span>
+                        </span>
+                      }
                       <a class="ref__name" [routerLink]="['/kontakte', ap.person_party_id]">{{ ap.display_name }}</a>
-                      <span class="ref__meta">seit {{ ap.valid_from }}</span>
+                      <span class="ref__meta">seit {{ datumDe(ap.valid_from) }}</span>
                       @if (darfAendern()) {
                         <button type="button" class="btn btn--klein" (click)="ansprechEntfernenFragen(ap)">
                           Entfernen

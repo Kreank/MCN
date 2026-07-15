@@ -167,6 +167,60 @@ def test_remove_contact_person_beendet_statt_loeschen(app_user):
     assert identity_service.list_contact_persons(org.id) == []
 
 
+# --- Vorgangszählung je Ansprechpartner (Kontakte-8) ------------------------
+
+@pytest.mark.django_db
+def test_contact_person_case_counts_zaehlt_gemeldete_vorgaenge(app_user):
+    """Die per-Person aggregierte Anzahl gemeldeter Vorgänge (Melderrolle).
+
+    Fachkante: service_case.reported_by_party_id. Zwei Vorgänge für Person A,
+    keiner für Person B → {A: 2}; B fehlt (der Aufrufer setzt 0).
+    """
+    from db_core.services import projekt as projekt_service
+    from db_core.services import property as property_service
+
+    obj = property_service.create_property(
+        app_user.id, name="Zählobjekt", property_type="WEG",
+        street="Weg", postal_code="10115", city="Berlin",
+    )
+    melder = identity_service.create_person(app_user.id, first_name="Melo", last_name="Melder")
+    ohne = identity_service.create_person(app_user.id, first_name="Ohne", last_name="Vorgang")
+    for betreff in ("Heizung", "Aufzug"):
+        projekt_service.create_service_case(
+            app_user.id, property_id=obj.id, subject=betreff,
+            reported_by_party_id=melder.id,
+        )
+
+    counts = identity_service.contact_person_case_counts([melder.id, ohne.id])
+    assert counts.get(melder.id) == 2
+    assert ohne.id not in counts
+
+
+@pytest.mark.django_db
+def test_contact_person_case_counts_leere_eingabe():
+    assert identity_service.contact_person_case_counts([]) == {}
+    assert identity_service.contact_person_case_counts([None]) == {}
+
+
+@pytest.mark.django_db
+def test_contact_person_case_counts_eigene_ohne_akteur_leer(app_user):
+    """Scope 'EIGENE' ohne Akteur → leer (fail-closed), auch bei echten Vorgängen."""
+    from db_core.services import projekt as projekt_service
+    from db_core.services import property as property_service
+
+    obj = property_service.create_property(
+        app_user.id, name="Objekt2", property_type="WEG",
+        street="Weg", postal_code="10115", city="Berlin",
+    )
+    melder = identity_service.create_person(app_user.id, first_name="M", last_name="M")
+    projekt_service.create_service_case(
+        app_user.id, property_id=obj.id, subject="X", reported_by_party_id=melder.id,
+    )
+    assert identity_service.contact_person_case_counts(
+        [melder.id], scope="EIGENE", actor_id=None
+    ) == {}
+
+
 # --- Adressen ---------------------------------------------------------------
 
 @pytest.mark.django_db

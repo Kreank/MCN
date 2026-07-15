@@ -18,6 +18,7 @@ import datetime
 import uuid
 
 from django.db import IntegrityError, transaction
+from django.db.models import Count
 
 from db_core.db_context import business_transaction
 from db_core.gate_errors import as_business_error
@@ -30,7 +31,9 @@ from db_core.models import (
     PartyAddress,
     PartyRelationship,
     Person,
+    ServiceCase,
 )
+from db_core.services import objektsicht
 from db_core.services._validation import ensure_party_usable
 
 # Beschlossene Codelisten (Migration 0003).
@@ -274,6 +277,40 @@ def remove_contact_person(actor_app_user_id, relationship_id):
         PartyRelationship.objects.filter(pk=rel.id).update(valid_until=ende)
     rel.valid_until = ende
     return rel
+
+
+def contact_person_case_counts(person_party_ids, *, scope="ALLE", actor_id=None):
+    """Anzahl der Vorgänge, die die jeweilige Person **gemeldet** hat.
+
+    `{person_party_id: anzahl}` — in **einer** Aggregat-Query für beliebig viele
+    Personen (N+1-frei). Personen ohne gemeldeten Vorgang fehlen im Ergebnis (der
+    Aufrufer setzt sie auf 0).
+
+    **Die fachliche Kante** ist `workflow.service_case.reported_by_party_id` (der
+    Melder eines Vorgangs). Eine direkte Person→**Projekt**-Kante gibt es im Schema
+    nicht: `workflow.project` trägt keinen Party-FK, Projekte hängen über
+    `project_property` an Liegenschaften. Deshalb wird hier bewusst die
+    Vorgangs-Melderrolle gezählt, nicht ein konstruierter Projektbezug. Die
+    Zuordnung trifft die Person als Party — unabhängig davon, ob sie zufällig
+    Ansprechpartner der Organisation ist, deren Mappe gerade offen ist; die
+    Beschriftung im Frontend spricht deshalb von „gemeldeten Vorgängen".
+
+    Scope 'EIGENE' (Objektsicht, Monteur): nur Vorgänge an **meinen** Objekten —
+    sonst verriete die bloße Zahl Aktivität an fremden Objekten (fail-closed: ohne
+    Akteur leere Menge).
+    """
+    ids = {p for p in (person_party_ids or []) if p is not None}
+    if not ids:
+        return {}
+    qs = ServiceCase.objects.filter(reported_by_party_id__in=ids)
+    if scope == "EIGENE":
+        if actor_id is None:
+            return {}
+        qs = qs.filter(property_id__in=objektsicht.eigene_property_ids(actor_id))
+    return {
+        row["reported_by_party_id"]: row["n"]
+        for row in qs.values("reported_by_party_id").annotate(n=Count("id"))
+    }
 
 
 # ---------------------------------------------------------------------------

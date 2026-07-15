@@ -1,6 +1,6 @@
 import { Component, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { RouterLink } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Subject, debounceTime, distinctUntilChanged } from 'rxjs';
 import { PartyService } from '../../core/party.service';
@@ -31,7 +31,10 @@ type ViewState =
   | { kind: 'error' };
 
 type Segment = { value: PartyType | null; label: string };
-type Meldung = { art: 'erfolg' | 'fehler'; text: string };
+// folgeOrgId: nach erfolgreicher Org-Anlage die neue Party-ID — die Meldung
+// bietet dann „… und Ansprechpartner hinzufügen" an (Kontakte-9). Nur bei
+// Organisationen gesetzt, nie bei Personen.
+type Meldung = { art: 'erfolg' | 'fehler'; text: string; folgeOrgId?: string };
 
 @Component({
   selector: 'app-kontakte',
@@ -43,6 +46,7 @@ export class Kontakte {
   private readonly svc = inject(PartyService);
   private readonly auth = inject(AuthService);
   private readonly fb = inject(FormBuilder);
+  private readonly router = inject(Router);
 
   protected readonly pageSize = 20;
   protected readonly segments: Segment[] = [
@@ -171,6 +175,19 @@ export class Kontakte {
     this.meldung.set(null);
   }
 
+  /**
+   * Kontakte-9: In die frisch angelegte Organisation navigieren und dort direkt
+   * den Ansprechpartner-Dialog öffnen (Query-Param wird in kontakt-detail
+   * ausgewertet). Der Anlageweg selbst lebt im kontakt-detail — kein neuer
+   * Endpunkt, kein zweiter Dialog hier.
+   */
+  zumAnsprechpartner(orgId: string): void {
+    this.meldung.set(null);
+    this.router.navigate(['/kontakte', orgId], {
+      queryParams: { neu: 'ansprechpartner' },
+    });
+  }
+
   private fetch(): void {
     const id = ++this.reqId;
     this.state.set({ kind: 'loading' });
@@ -290,6 +307,8 @@ export class Kontakte {
         this.meldung.set({
           art: 'erfolg',
           text: `Organisation „${party.display_name}“ wurde angelegt.`,
+          // Kontakte-9: Überleitung in den Ansprechpartner-Fluss anbieten.
+          folgeOrgId: party.id,
         });
         this.page.set(1);
         this.fetch();

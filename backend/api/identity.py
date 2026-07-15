@@ -192,6 +192,11 @@ class ContactPersonOut(Schema):
     display_name: str
     valid_from: date
     valid_until: date | None = None
+    # Anzahl der Vorgänge, die diese Person gemeldet hat (Melderrolle). Es gibt
+    # keine Person→Projekt-Kante im Schema; der Vorgang (service_case) ist die
+    # einzige per-Person zählbare Fachkante. Nur die Listen-Route füllt den Wert;
+    # Anlegen/Entfernen liefern 0, die Liste wird danach ohnehin neu geladen.
+    case_count: int = 0
 
 
 class ContactPersonIn(Schema):
@@ -436,9 +441,18 @@ def create_address(request, party_id: UUID, payload: AddressIn):
 
 @router.get("/parties/{party_id}/contact-persons", response=list[ContactPersonOut])
 def list_contact_persons(request, party_id: UUID):
-    """Ansprechpartner (Personen) einer Organisation."""
-    _require_party(request, party_id, "LESEN")
-    return [_contact_person_out(r) for r in identity_service.list_contact_persons(party_id)]
+    """Ansprechpartner (Personen) einer Organisation.
+
+    Je Person die Anzahl der von ihr **gemeldeten Vorgänge** (Kontakte-8) — in
+    einer Aggregat-Query (N+1-frei). Scope 'EIGENE': nur Vorgänge an meinen
+    Objekten.
+    """
+    actor, scope = _require_party(request, party_id, "LESEN")
+    rels = identity_service.list_contact_persons(party_id)
+    counts = identity_service.contact_person_case_counts(
+        [r.from_party_id for r in rels], scope=scope, actor_id=actor
+    )
+    return [_contact_person_out(r, counts.get(r.from_party_id, 0)) for r in rels]
 
 
 @router.post(
@@ -513,11 +527,12 @@ def _address_link(link_id):
     )
 
 
-def _contact_person_out(rel):
+def _contact_person_out(rel, case_count=0):
     return ContactPersonOut(
         relationship_id=rel.id,
         person_party_id=rel.from_party_id,
         display_name=rel.from_party.display_name,
         valid_from=rel.valid_from,
         valid_until=rel.valid_until,
+        case_count=case_count,
     )
