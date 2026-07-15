@@ -11,7 +11,7 @@ import { ProjekteNav } from '../projekte-nav/projekte-nav';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 import { Dialog } from '../../shared/dialog/dialog';
-import { Feld } from '../../shared/formular/feld';
+import { Feld, FeldOption } from '../../shared/formular/feld';
 import { ReferenzWahl, RefSuche } from '../../shared/formular/referenz-wahl';
 import { apiFehlerZuweisen } from '../../shared/formular/api-fehler';
 import {
@@ -73,10 +73,18 @@ export class Projekte {
       nonNullable: true,
       validators: [Validators.required, Validators.maxLength(200)],
     }),
+    category_id: this.fb.control('', { nonNullable: true }),
     property_id: this.fb.control('', { nonNullable: true }),
     start_date: this.fb.control('', { nonNullable: true }),
     target_end_date: this.fb.control('', { nonNullable: true }),
   });
+
+  /**
+   * Projektkategorien (Gewerk/Ordner) als Select-Optionen. Optional — leer, wenn
+   * keine Stammdaten gepflegt sind oder der Read-Endpunkt 403 gibt (dann bleibt
+   * das Feld einfach ohne Auswahl, das Anlegen funktioniert trotzdem).
+   */
+  protected readonly kategorieOptionen = signal<FeldOption[]>([]);
 
   /** Liegenschaftssuche für den optionalen Objektbezug. */
   protected readonly liegenschaftSuche: RefSuche = (q) =>
@@ -114,6 +122,19 @@ export class Projekte {
         this.fetch();
       });
     this.fetch();
+    // Kategorien einmalig für den Anlagedialog laden (Stammdaten, best effort).
+    if (this.darfAnlegen()) {
+      this.svc
+        .listCategories()
+        .pipe(takeUntilDestroyed())
+        .subscribe({
+          next: (cats) =>
+            this.kategorieOptionen.set(
+              cats.map((c) => ({ wert: c.id, label: c.name })),
+            ),
+          error: () => this.kategorieOptionen.set([]),
+        });
+    }
   }
 
   onSearch(value: string): void {
@@ -165,7 +186,13 @@ export class Projekte {
 
   // ---- Anlegen ------------------------------------------------------------
   neuOeffnen(): void {
-    this.neuForm.reset({ name: '', property_id: '', start_date: '', target_end_date: '' });
+    this.neuForm.reset({
+      name: '',
+      category_id: '',
+      property_id: '',
+      start_date: '',
+      target_end_date: '',
+    });
     this.formularMeldung.set(null);
     this.neuOffen.set(true);
   }
@@ -185,6 +212,7 @@ export class Projekte {
     const v = this.neuForm.getRawValue();
     const payload: ProjectCreate = {
       name: v.name.trim(),
+      category_id: v.category_id || null,
       property_ids: v.property_id ? [v.property_id] : [],
       start_date: v.start_date || null,
       target_end_date: v.target_end_date || null,

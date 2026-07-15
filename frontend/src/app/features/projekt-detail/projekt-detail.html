@@ -52,6 +52,66 @@
 
       <!-- ------------------------------ Übersicht ------------------------- -->
       @if (tab() === 'uebersicht') {
+        <!-- Aktionspanel (Projekte-6): bündelt die vorhandenen Projekt-Aktionen
+             an einer sichtbaren Stelle. Rechte-Gates je Aktion (Anlegen/Ändern). -->
+        @if (darfAnlegen() || darfAendern()) {
+          <div class="aktionspanel" role="group" aria-label="Mögliche Aktionen">
+            <span class="aktionspanel__titel">Mögliche Aktionen</span>
+            <div class="aktionspanel__knoepfe">
+              @if (darfAnlegen()) {
+                <button type="button" class="btn btn--primary" (click)="dialogOeffnen('vorgang')">
+                  <span aria-hidden="true">＋</span> Vorgang
+                </button>
+                <button type="button" class="btn" (click)="dialogOeffnen('auftrag')">
+                  <span aria-hidden="true">＋</span> Auftrag
+                </button>
+                <button type="button" class="btn" (click)="dialogOeffnen('checkliste')">
+                  <span aria-hidden="true">＋</span> Checkliste
+                </button>
+              }
+              @if (darfAendern()) {
+                <button type="button" class="btn" (click)="dialogOeffnen('log')">
+                  <span aria-hidden="true">＋</span> Logbuch-Eintrag
+                </button>
+              }
+            </div>
+          </div>
+        }
+
+        <!-- Kontaktkarte (Projekte-1): Hauptkontakt (Eigentümer der ersten
+             Liegenschaft) direkt erreichbar, ohne Umweg über Liegenschaft. -->
+        @if (daten()!.primary_contact; as k) {
+          <section class="kontaktkarte" aria-label="Hauptkontakt">
+            <div class="kontaktkarte__kopf">
+              <span class="kontaktkarte__avatar" aria-hidden="true">{{ kontaktMonogram(k.display_name) }}</span>
+              <div class="kontaktkarte__ident">
+                <span class="kontaktkarte__name">{{ k.display_name }}</span>
+                <span class="kontaktkarte__rolle">
+                  {{ rolleLabel(k.role) }} ·
+                  <a class="kontaktkarte__objekt" [routerLink]="['/liegenschaften', k.property_id]">{{ k.property_name }}</a>
+                </span>
+              </div>
+            </div>
+            <div class="kontaktkarte__wege">
+              @if (k.email) {
+                <a class="kontaktkarte__weg" [href]="'mailto:' + k.email">
+                  <span class="kontaktkarte__weg-icon" aria-hidden="true">✉</span>
+                  <span class="kontaktkarte__weg-text">{{ k.email }}</span>
+                </a>
+              }
+              @if (k.phone) {
+                <a class="kontaktkarte__weg" [href]="'tel:' + k.phone">
+                  <span class="kontaktkarte__weg-icon" aria-hidden="true">☎</span>
+                  <span class="kontaktkarte__weg-text">{{ k.phone }}</span>
+                </a>
+              }
+              @if (!k.email && !k.phone) {
+                <span class="kontaktkarte__leer">Kein Kontaktweg hinterlegt.</span>
+              }
+            </div>
+          </section>
+        }
+
         <dl class="feld-raster">
           <div class="feld"><dt class="feld__label">Projektnummer</dt><dd class="feld__wert">{{ daten()!.project_number }}</dd></div>
           <div class="feld"><dt class="feld__label">Status</dt><dd class="feld__wert">{{ statusLabel(daten()!.status) }}</dd></div>

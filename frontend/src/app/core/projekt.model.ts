@@ -68,12 +68,25 @@ export interface ServiceCaseRef {
   received_at: string;
 }
 
+// Abgeleiteter Hauptkontakt eines Projekts (Eigentümer der ersten Liegenschaft).
+// email/phone optional — nur gesetzt, wenn ein Kontaktweg hinterlegt ist.
+export interface ContactCard {
+  party_id: string;
+  display_name: string;
+  property_id: string;
+  property_name: string;
+  role: string;
+  email: string | null;
+  phone: string | null;
+}
+
 export interface ProjectDetail extends Project {
   version: number;
   created_at: string;
   updated_at: string;
   properties: PropertyRef[];
   service_cases: ServiceCaseRef[];
+  primary_contact: ContactCard | null;
 }
 
 // --- Vorgang (service_case) Detail -----------------------------------------

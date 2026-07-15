@@ -408,6 +408,24 @@ export class ProjektDetail {
     return map[c] ?? c;
   }
 
+  // ---- Kontaktkarte -------------------------------------------------------
+  kontaktMonogram(name: string): string {
+    const parts = name.trim().split(/\s+/).filter(Boolean);
+    if (parts.length === 0) return '–';
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  }
+
+  rolleLabel(role: string): string {
+    const map: Record<string, string> = {
+      PROPERTY_OWNER: 'Eigentümer',
+      COMMUNITY_OF_OWNERS: 'Eigentümergemeinschaft',
+      OPERATOR: 'Betreiber',
+      CARETAKER: 'Hausmeister',
+    };
+    return map[role] ?? role;
+  }
+
   retry(): void {
     const id = this.route.snapshot.paramMap.get('id');
     if (id) this.load(id);

@@ -960,3 +960,102 @@ def test_promote_to_project_ohne_recht_403(client_with_role, app_user):
         content_type="application/json",
     )
     assert r.status_code == 403
+
+
+# --- Projektkategorien (Gewerk) ---------------------------------------------
+
+def _neue_kategorie(app_user, *, name, status="AKTIV", sort_order=1):
+    """Legt eine workflow.project_category direkt an (kein Service-Endpunkt)."""
+    from db_core.db_context import business_transaction
+    from db_core.models import ProjectCategory
+
+    with business_transaction(app_user.id):
+        return ProjectCategory.objects.create(
+            id=uuid.uuid4(),
+            name=name,
+            sort_order=sort_order,
+            status=status,
+            version=1,
+        )
+
+
+@pytest.mark.django_db
+def test_project_categories_nur_aktive(admin_client, app_user):
+    _neue_kategorie(app_user, name="Elektro", status="AKTIV", sort_order=2)
+    _neue_kategorie(app_user, name="Alt-Gewerk", status="INAKTIV", sort_order=1)
+    r = admin_client.get("/api/workflow/project-categories")
+    assert r.status_code == 200, r.content
+    namen = [c["name"] for c in r.json()]
+    assert "Elektro" in namen
+    assert "Alt-Gewerk" not in namen  # INAKTIV bleibt aus der Auswahl
+
+
+@pytest.mark.django_db
+def test_project_categories_ohne_login_401(anonymous_client, db):
+    r = anonymous_client.get("/api/workflow/project-categories")
+    assert r.status_code in (401, 403)
+
+
+@pytest.mark.django_db
+def test_create_projekt_mit_kategorie(admin_client, app_user):
+    cat = _neue_kategorie(app_user, name="Sanitär")
+    r = admin_client.post(
+        "/api/workflow/projects",
+        data={"name": "Bad-Sanierung", "category_id": str(cat.id)},
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    body = r.json()
+    assert body["category"]["name"] == "Sanitär"
+
+
+# --- Kontaktkarte (Hauptkontakt der ersten Liegenschaft) --------------------
+
+@pytest.mark.django_db
+def test_primary_contact_abgeleitet(admin_client, app_user):
+    """Detail leitet den Hauptkontakt aus dem PROPERTY_OWNER der ersten
+    Liegenschaft ab, inkl. primärer E-Mail/Telefonnummer."""
+    import datetime
+
+    from db_core.services import identity as identity_service
+
+    obj = property_service.create_property(
+        app_user.id, name="Villa Nord", property_type="EINFAMILIENHAUS",
+        street="Nordweg", house_number="1", postal_code="10115", city="Berlin",
+    )
+    party = identity_service.create_person(
+        app_user.id, first_name="Erika", last_name="Eigner"
+    )
+    property_service.add_party_role(
+        app_user.id, property_id=obj.id, party_id=party.id,
+        role="PROPERTY_OWNER", valid_from=datetime.date(2020, 1, 1),
+    )
+    identity_service.add_contact_point(
+        app_user.id, party.id, contact_type="EMAIL",
+        value="erika@example.de", is_primary=True,
+    )
+    identity_service.add_contact_point(
+        app_user.id, party.id, contact_type="PHONE",
+        value="+4930123456", is_primary=True,
+    )
+    proj = projekt_service.create_project(
+        app_user.id, name="Dachprojekt", property_ids=[obj.id]
+    )
+
+    r = admin_client.get(f"/api/workflow/projects/{proj.id}")
+    assert r.status_code == 200, r.content
+    pc = r.json()["primary_contact"]
+    assert pc is not None
+    assert pc["display_name"] == "Erika Eigner"
+    assert pc["role"] == "PROPERTY_OWNER"
+    assert pc["email"] == "erika@example.de"
+    assert pc["phone"] == "+4930123456"
+    assert pc["property_id"] == str(obj.id)
+
+
+@pytest.mark.django_db
+def test_primary_contact_none_ohne_eigentuemer(admin_client, seeded):
+    """Ohne PROPERTY_OWNER an einer Liegenschaft bleibt die Kontaktkarte leer."""
+    r = admin_client.get(f"/api/workflow/projects/{seeded['p1'].id}")
+    assert r.status_code == 200, r.content
+    assert r.json()["primary_contact"] is None

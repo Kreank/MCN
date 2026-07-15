@@ -165,6 +165,16 @@
         [pflicht]="true"
         platzhalter="z. B. Dachsanierung Musterstraße 1"
       />
+      @if (kategorieOptionen().length > 0) {
+        <app-feld
+          [control]="neuForm.controls.category_id"
+          label="Gewerk / Kategorie"
+          typ="select"
+          platzhalter="Keine — später zuordnen"
+          hinweis="Optional — gliedert und filtert das Projektregister."
+          [optionen]="kategorieOptionen()"
+        />
+      }
       <app-referenz-wahl
         [control]="neuForm.controls.property_id"
         label="Liegenschaft"

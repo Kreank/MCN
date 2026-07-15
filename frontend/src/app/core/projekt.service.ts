@@ -6,6 +6,7 @@ import {
   ChecklistCreate,
   LogEntry,
   LogEntryCreate,
+  ProjectCategory,
   ProjectCreate,
   ProjectDetail,
   ProjectPage,
@@ -40,6 +41,11 @@ export class ProjektService {
 
   get(id: string): Observable<ProjectDetail> {
     return this.http.get<ProjectDetail>(`${this.base}/${id}`);
+  }
+
+  /** Aktive Projektkategorien (Gewerk/Ordner) für den Anlagedialog (Recht workflow.LESEN). */
+  listCategories(): Observable<ProjectCategory[]> {
+    return this.http.get<ProjectCategory[]>('/api/workflow/project-categories');
   }
 
   /**

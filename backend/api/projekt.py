@@ -26,7 +26,14 @@ from ninja.security import django_auth
 from api.objektgrenze import guard_objekt, guard_projekt, verbiete_eigene
 from api.permissions import require, require_scoped
 from db_core.db_context import run_business_transaction
-from db_core.models import Checklist, Project, ProjectLog, ServiceCase, StatusChange
+from db_core.models import (
+    Checklist,
+    Project,
+    ProjectCategory,
+    ProjectLog,
+    ServiceCase,
+    StatusChange,
+)
 from db_core.services import identity as identity_service
 from db_core.services import objektsicht
 from db_core.services import projekt as projekt_service
@@ -76,12 +83,33 @@ class ServiceCaseOut(Schema):
     received_at: datetime
 
 
+class ContactCardOut(Schema):
+    """Kompakter Hauptkontakt eines Projekts (Eigentümer der ersten Liegenschaft).
+
+    Abgeleitet, keine eigene Entität: der aktuelle PROPERTY_OWNER der ersten
+    zugeordneten Liegenschaft plus seine primären Kontaktwege (E-Mail/Telefon)
+    für mailto:/tel:. `email`/`phone` bleiben null, wenn kein Kontaktweg hinterlegt
+    ist — die Karte zeigt dann nur Name und Objektbezug.
+    """
+    party_id: UUID
+    display_name: str
+    property_id: UUID
+    property_name: str
+    role: str
+    email: str | None = None
+    phone: str | None = None
+
+
 class ProjectDetailOut(ProjectOut):
     version: int
     created_at: datetime
     updated_at: datetime
     properties: list[PropertyRefOut]
     service_cases: list[ServiceCaseOut]
+    # Abgeleiteter Hauptkontakt (Eigentümer der ersten Liegenschaft), damit der
+    # Kunde von der Projektübersicht aus direkt erreichbar ist — ohne den Umweg
+    # Liegenschaft → Eigentümer. None, wenn keine Liegenschaft/kein Eigentümer.
+    primary_contact: ContactCardOut | None = None
 
 
 class ProjectIn(Schema):
@@ -164,6 +192,22 @@ def list_projects(
     return ProjectListOut(items=items, total=total, page=page, page_size=page_size)
 
 
+@router.get("/project-categories", response=list[CategoryOut])
+def list_project_categories(request):
+    """Aktive Projektkategorien (Gewerk/Ordner) für Auswahllisten im Anlagedialog.
+
+    Read-only Stammdaten ohne Zeilenbezug: `require_scoped` mit workflow.LESEN.
+    Auch ein Konto mit Scope 'EIGENE' (Monteur) darf beim Anlegen die Kategorie
+    wählen; die Liste trägt keine objektgebundenen Daten, es gibt nichts zu
+    begrenzen. Nur AKTIVe Kategorien, in Anzeigereihenfolge (sort_order).
+    """
+    require_scoped(request, "workflow", "LESEN")
+    rows = ProjectCategory.objects.filter(status="AKTIV").order_by("sort_order", "name")
+    return [
+        CategoryOut(id=c.id, name=c.name, color_hex=c.color_hex) for c in rows
+    ]
+
+
 def _category_out(project):
     cat = project.category
     if cat is None:
@@ -197,6 +241,9 @@ def _project_detail(project_id, *, eigene_objekte=None):
         .select_related("category")
         .prefetch_related(
             "property_links__property__address",
+            # Für die abgeleitete Kontaktkarte: Eigentümerrolle der Liegenschaft
+            # samt Partei und deren Kontaktwegen. Ein Prefetch, kein N+1 pro Objekt.
+            "property_links__property__party_roles__party__contact_points",
             "service_cases",
         )
         .first()
@@ -248,7 +295,71 @@ def _project_detail(project_id, *, eigene_objekte=None):
         updated_at=project.updated_at,
         properties=properties,
         service_cases=service_cases,
+        primary_contact=_primary_contact(links),
     )
+
+
+# Kontaktwege in Anzeigepriorität. Telefon vor Mobil, damit die Karte den
+# Festnetz-/Hauptanschluss bevorzugt; E-Mail getrennt davon.
+_PHONE_TYPES = ("PHONE", "MOBILE")
+_EMAIL_TYPES = ("EMAIL",)
+
+
+def _primary_contact(links):
+    """Leitet den Hauptkontakt eines Projekts aus den (bereits scope-gefilterten,
+    nach property_number sortierten) Liegenschafts-Links ab.
+
+    Nimmt die erste Liegenschaft, die einen **aktuell gültigen** PROPERTY_OWNER
+    trägt, und liefert Name + primäre E-Mail/Telefonnummer dieser Partei. Kein
+    Eigentümer an irgendeiner Liegenschaft → None (die Karte entfällt dann).
+
+    Läuft rein auf vorgeladenen Relationen (`links` stammt aus `_project_detail`
+    mit passendem prefetch), erzeugt also keine zusätzlichen Queries.
+    """
+    today = date.today()
+
+    def _is_current(valid_until):
+        # daterange [) — obere Grenze exklusiv (wie in property.py).
+        return valid_until is None or valid_until > today
+
+    def _pick(contact_points, types):
+        cands = [
+            c
+            for c in contact_points
+            if c.contact_type in types and _is_current(c.valid_until)
+        ]
+        if not cands:
+            return None
+        # Primär zuerst; unter gleichrangigen der zuletzt gültige. Innerhalb der
+        # Telefontypen greift zusätzlich die Reihenfolge in `types` (PHONE < MOBILE).
+        cands.sort(
+            key=lambda c: (c.is_primary, -types.index(c.contact_type), c.valid_from),
+            reverse=True,
+        )
+        return cands[0].value
+
+    for link in links:
+        prop = link.property
+        owners = [
+            r
+            for r in prop.party_roles.all()
+            if r.role == "PROPERTY_OWNER" and _is_current(r.valid_until)
+        ]
+        if not owners:
+            continue
+        owner = max(owners, key=lambda r: r.valid_from)
+        party = owner.party
+        contact_points = list(party.contact_points.all())
+        return ContactCardOut(
+            party_id=party.id,
+            display_name=party.display_name,
+            property_id=prop.id,
+            property_name=prop.name,
+            role=owner.role,
+            email=_pick(contact_points, _EMAIL_TYPES),
+            phone=_pick(contact_points, _PHONE_TYPES),
+        )
+    return None
 
 
 # --- Schreibender Endpoint (Session-Auth Pflicht) --------------------------
