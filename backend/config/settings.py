@@ -156,6 +156,11 @@ CSRF_TRUSTED_ORIGINS = os.environ.get(
 if os.environ.get("MCN_BEHIND_TLS_PROXY", "0") == "1":
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
+# Eigener Fernet-Schlüssel für die at-rest-Verschlüsselung der KI-Werkzeug-/Geräte-
+# Zugangsdaten (db_core/cred_crypto.py). BEWUSST getrennt von MCN_MAIL_KEY, damit
+# Geräteflotte und Mailversand nicht gekoppelt sind (Lehre aus dem IDS-Vorfall).
+MCN_CRED_KEY = os.environ.get("MCN_CRED_KEY", "")
+
 LANGUAGE_CODE = "de-de"
 TIME_ZONE = "UTC"          # Nummernkreis-Jahreszuordnung erfolgt in UTC (db/README.md)
 USE_I18N = True
