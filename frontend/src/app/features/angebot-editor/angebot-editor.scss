@@ -63,6 +63,28 @@
   color: var(--positive-ink);
 }
 
+// Ausgang eines versendeten Angebots (angenommen/abgelehnt/abgelaufen).
+.ed-ausgang {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-5);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.ed-ausgang__label {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  margin-right: var(--space-2);
+}
+
 .ed-melde {
   margin-bottom: var(--space-4);
 }
@@ -133,6 +155,89 @@
   .ed-kopf {
     grid-template-columns: 1fr;
     gap: var(--space-4);
+  }
+}
+
+// ============================== Auf einen Blick =============================
+// Kompakte Gliederungskachel: Kennzahlen nebeneinander, Zahlen prominent, aber
+// schlank. Nutzt dieselbe Kachel-Optik wie die Kopffelder (surface/line/radius).
+.ed-blick {
+  margin-bottom: var(--space-6);
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.ed-blick__titel {
+  margin: 0 0 var(--space-3);
+  font-size: var(--step--1);
+  font-family: var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+}
+.ed-blick__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: var(--space-4) var(--space-5);
+  align-items: start;
+}
+.blick-zelle {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  // Trennlinie zwischen den Kennzahlen (nicht vor der ersten).
+  padding-left: var(--space-4);
+  border-left: 1px solid var(--line);
+
+  &:first-child {
+    padding-left: 0;
+    border-left: 0;
+  }
+}
+.blick-zelle__k {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.blick-zelle__v {
+  font-family: var(--font-mono);
+  font-size: var(--step-2);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+// Beträge aus veraltetem Stand (ungespeicherte Änderungen): sichtbar
+// zurücknehmen — über den Muted-Token (AA-sicher), nicht über Farbe allein;
+// der Klartext-Hinweis unter der Kachel benennt den Zustand.
+.blick-zelle__v--alt {
+  color: var(--ink-muted);
+  font-weight: 600;
+}
+.blick-zelle__v--stamp {
+  font-size: var(--step-0);
+}
+.blick-zelle__sub {
+  font-size: var(--step--1);
+  color: var(--ink-faint);
+}
+.ed-blick__hinweis {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: var(--space-4) 0 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+  font-size: var(--step--1);
+  color: var(--warn-ink);
+}
+@media (max-width: 720px) {
+  .blick-zelle {
+    padding-left: 0;
+    border-left: 0;
   }
 }
 

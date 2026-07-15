@@ -16,6 +16,7 @@ import {
   Kalkulation,
   LineKind,
   LineType,
+  QuoteAusgang,
   QuoteDetail,
   QuoteLine,
   QuoteLineInput,
@@ -293,6 +294,61 @@ export class AngebotEditor {
     // VERSENDET/VEROEFFENTLICHT — passt für Angebot und Rechnung gleichermaßen.
     return !q || !(EDITIERBAR as readonly string[]).includes(q.status);
   });
+
+  // --- „Auf einen Blick" (Übersicht/Gliederung) ---------------------------
+  /**
+   * Gliederungszahlen des Belegs aus dem **live** Editier-Zustand (`lines()`) —
+   * anders als Netto/Brutto/Arbeitszeit, die vom Server stammen und erst beim
+   * Speichern neu kommen. Deshalb sind die Positionszahlen immer aktuell, die
+   * Geldwerte tragen bei ungespeicherten Änderungen den Stand vom letzten
+   * Speichern (Kachel weist das mit einem Hinweis aus).
+   *
+   * `artikel` = Materialpositionen; `leistung` = Arbeit/Fahrt/Pauschale/
+   * Fremdleistung/Zuschlag; `text` = Text-/Zwischensummenzeilen (ohne Betrag).
+   */
+  protected readonly blick = computed(() => {
+    let artikel = 0;
+    let leistung = 0;
+    let text = 0;
+    let sonstige = 0;
+    for (const l of this.lines()) {
+      if (TEXT_TYPES.includes(l.line_type)) {
+        text++;
+      } else if (l.line_type === 'MATERIAL') {
+        artikel++;
+      } else if (
+        l.line_type === 'ARBEITSZEIT' ||
+        l.line_type === 'FAHRT' ||
+        l.line_type === 'PAUSCHALE' ||
+        l.line_type === 'FREMDLEISTUNG' ||
+        l.line_type === 'ZUSCHLAG'
+      ) {
+        leistung++;
+      } else {
+        sonstige++;
+      }
+    }
+    return { betragstragend: artikel + leistung + sonstige, artikel, leistung, sonstige, text };
+  });
+
+  /**
+   * PDF-/Snapshot-Zeitstempel des festgeschriebenen Belegs (Angebot: `sent_at`,
+   * Rechnung: `published_at`), eingedeutscht. `null`, solange kein Snapshot
+   * existiert. Ein ISO-Zeitstempel wird in Datum + Uhrzeit zerlegt; ein reines
+   * Datum bleibt ohne Uhrzeit.
+   */
+  protected pdfStempel(): string | null {
+    const q = this.quote();
+    if (!q?.has_snapshot) return null;
+    const ts = this.istRechnung
+      ? (q as InvoiceDetail).published_at
+      : (q as QuoteDetail).sent_at;
+    if (!ts) return null;
+    const [datum, zeit] = ts.split('T');
+    const d = isoDatumDe(datum);
+    const uhr = zeit ? zeit.slice(0, 5) : '';
+    return uhr ? `${d}, ${uhr} Uhr` : d;
+  }
 
   // --- Kalkulation (Server) ------------------------------------------------
   protected readonly kalk = signal<Kalkulation | null>(null);
@@ -1671,6 +1727,109 @@ export class AngebotEditor {
 
   meldungSchliessen(): void {
     this.meldung.set(null);
+  }
+
+  // ======================= Ausgang (angenommen/abgelehnt/abgelaufen) =======
+  // Der Ausgang eines VERSENDETEN Angebots. Der Server (POST /quotes/{id}/status)
+  // ändert dabei ausschließlich die Statusspalte; Inhalt, Belegnummer, Snapshot
+  // und Hash des eingefrorenen Angebots bleiben unangetastet (B-30/GoBD). Nur
+  // diese eine Kante ist erlaubt: VERSENDET → ANGENOMMEN | ABGELEHNT | ABGELAUFEN.
+  protected readonly ausgangOffen = signal(false);
+  protected readonly ausgangLaedt = signal(false);
+  protected readonly ausgangZiel = signal<QuoteAusgang | null>(null);
+
+  /**
+   * Ob sich der Ausgang festhalten lässt: nur ein **versendetes Angebot** (keine
+   * Rechnung) und nur mit `invoicing/AENDERN` im Scope **ALLE**.
+   *
+   * Warum `darfAlle` (Scope ALLE) und nicht nur `darf`: Der Server geht über
+   * `require(invoicing, AENDERN)` — und `require` ist fail-closed und wirft bei
+   * Scope EIGENE 403 (der Endpunkt filtert nicht auf eigene Zeilen). Ein Konto
+   * mit AENDERN nur im Scope EIGENE dürfte den Ausgang also NICHT setzen; `darf`
+   * zeigte ihm den Knopf trotzdem und liefe in ein 403. `darfAlle` spiegelt das
+   * Server-Tor exakt. Ist der Beleg nicht VERSENDET, kennt der Statusautomat
+   * ohnehin keine erlaubte Kante.
+   */
+  protected readonly kannAusgangSetzen = computed(
+    () =>
+      !this.istRechnung &&
+      this.quote()?.status === 'VERSENDET' &&
+      this.auth.darfAlle('invoicing', 'AENDERN'),
+  );
+
+  /** Ablehnen nimmt das Angebot aus dem Soll-Ist — als folgenreich markieren. */
+  protected readonly ausgangGefahr = computed(() => this.ausgangZiel() === 'ABGELEHNT');
+
+  ausgangFragen(ziel: QuoteAusgang): void {
+    this.meldung.set(null);
+    this.ausgangZiel.set(ziel);
+    this.ausgangOffen.set(true);
+  }
+
+  ausgangAbbrechen(): void {
+    if (this.ausgangLaedt()) return;
+    this.ausgangOffen.set(false);
+    this.ausgangZiel.set(null);
+  }
+
+  /** Titel/Text der Bestätigung — je Ausgang, mit der jeweiligen Folge. */
+  ausgangTitel(): string {
+    const z = this.ausgangZiel();
+    return z ? `Angebot als „${this.statusLabel(z)}" festhalten?` : '';
+  }
+
+  ausgangText(): string {
+    switch (this.ausgangZiel()) {
+      case 'ANGENOMMEN':
+        return (
+          'Das Angebot wird als angenommen festgehalten. Inhalt und Belegnummer ' +
+          'bleiben unverändert (GoBD) — nur der Status ändert sich. Das Angebot ' +
+          'bleibt das Soll des zugehörigen Auftrags.'
+        );
+      case 'ABGELEHNT':
+        return (
+          'Das Angebot wird als abgelehnt festgehalten. Inhalt und Belegnummer ' +
+          'bleiben unverändert — nur der Status ändert sich. Ein abgelehntes ' +
+          'Angebot bildet KEIN Soll mehr: Der Soll-Ist-Abgleich am zugehörigen ' +
+          'Auftrag rechnet sich dadurch neu.'
+        );
+      case 'ABGELAUFEN':
+        return (
+          'Das Angebot wird als abgelaufen festgehalten (die Gültigkeit ist ' +
+          'verstrichen). Inhalt und Belegnummer bleiben unverändert — nur der ' +
+          'Status ändert sich.'
+        );
+      default:
+        return '';
+    }
+  }
+
+  ausgangBestaetigen(): void {
+    const ziel = this.ausgangZiel();
+    if (this.ausgangLaedt() || !ziel) return;
+    this.ausgangLaedt.set(true);
+    this.svc.setQuoteStatus(this.quoteId, ziel).subscribe({
+      next: (data) => {
+        this.ausgangLaedt.set(false);
+        this.ausgangOffen.set(false);
+        this.ausgangZiel.set(null);
+        // Status/Snapshot neu übernehmen (der Beleg bleibt read-only/eingefroren).
+        this.uebernehmen(data);
+        this.meldung.set({
+          art: 'erfolg',
+          text: `Angebot als „${this.statusLabel(data.status)}" festgehalten.`,
+        });
+      },
+      error: (err) => {
+        this.ausgangLaedt.set(false);
+        this.ausgangOffen.set(false);
+        this.ausgangZiel.set(null);
+        this.meldung.set({
+          art: 'fehler',
+          text: this.fehlerText(err, 'Der Ausgang konnte nicht festgehalten werden.'),
+        });
+      },
+    });
   }
 
   private fehlerText(err: unknown, fallback: string): string {

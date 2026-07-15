@@ -48,6 +48,27 @@
           </div>
         </header>
 
+        <!--
+          Ausgang eines versendeten Angebots festhalten (angenommen/abgelehnt/
+          abgelaufen). Nur bei VERSENDET und mit invoicing/AENDERN — sonst kennt
+          der Statusautomat keine Kante. Ändert ausschließlich den Status; der
+          eingefrorene Beleg bleibt unangetastet (GoBD).
+        -->
+        @if (kannAusgangSetzen()) {
+          <div class="ed-ausgang" role="group" aria-label="Ausgang des Angebots festhalten">
+            <span class="ed-ausgang__label">Ausgang festhalten:</span>
+            <button type="button" class="btn btn--klein btn--primary" (click)="ausgangFragen('ANGENOMMEN')">
+              Angenommen
+            </button>
+            <button type="button" class="btn btn--klein btn--gefahr" (click)="ausgangFragen('ABGELEHNT')">
+              Abgelehnt
+            </button>
+            <button type="button" class="btn btn--klein" (click)="ausgangFragen('ABGELAUFEN')">
+              Abgelaufen
+            </button>
+          </div>
+        }
+
         @if (meldung(); as m) {
           <div
             class="ed-melde melde"
@@ -170,6 +191,77 @@
               <app-feld [control]="kopfForm.controls.quote_date" label="Angebotsdatum" typ="datum" />
               <app-feld [control]="kopfForm.controls.valid_until_date" label="Gültig bis" typ="datum" />
             </div>
+          }
+        </section>
+
+        <!-- ===================== Auf einen Blick ===================== -->
+        <!--
+          Kompakte Gliederungsübersicht (HERO-Vorbild). Positionszahlen kommen
+          live aus dem Editor (`blick()`), die Geldwerte und die Arbeitszeit vom
+          Server (gespeicherter Stand). Bei ungespeicherten Änderungen wird der
+          Stand der Beträge benannt — nie still ein veralteter Wert gezeigt.
+        -->
+        <section class="ed-blick" aria-label="Auf einen Blick">
+          <h2 class="ed-blick__titel">Auf einen Blick</h2>
+          <div class="ed-blick__grid">
+            <div class="blick-zelle">
+              <span class="blick-zelle__k">Positionen</span>
+              <span class="blick-zelle__v">{{ blick().betragstragend }}</span>
+              <span class="blick-zelle__sub">
+                {{ blick().artikel }} Artikel · {{ blick().leistung }} Leistungen
+                @if (blick().sonstige > 0) {
+                  · {{ blick().sonstige }} weitere
+                }
+                @if (blick().text > 0) {
+                  <br />{{ blick().text }} Textzeile(n)
+                }
+              </span>
+            </div>
+
+            @if (!kalkVerborgen() && kalk(); as k) {
+              <div class="blick-zelle">
+                <span class="blick-zelle__k">Arbeitszeit</span>
+                <span class="blick-zelle__v">{{ stunden(k.gesamt.arbeitszeit) }}</span>
+                <span class="blick-zelle__sub">Summe kalkulierte Zeit</span>
+              </div>
+            }
+
+            <div class="blick-zelle">
+              <span class="blick-zelle__k">Netto</span>
+              <span class="blick-zelle__v" [class.blick-zelle__v--alt]="dirty()">{{ euro(q.net_total) }}</span>
+              <span class="blick-zelle__sub">
+                {{ dirty() ? 'Stand vom letzten Speichern' : 'Vom Server berechnet' }}
+              </span>
+            </div>
+
+            <div class="blick-zelle">
+              <span class="blick-zelle__k">Brutto</span>
+              <span class="blick-zelle__v" [class.blick-zelle__v--alt]="dirty()">{{ euro(q.gross_total) }}</span>
+              <span class="blick-zelle__sub">
+                {{ dirty() ? 'Stand vom letzten Speichern' : 'inkl. USt' }}
+              </span>
+            </div>
+
+            <div class="blick-zelle">
+              <span class="blick-zelle__k">{{ belegWort }}-PDF</span>
+              <span class="blick-zelle__v blick-zelle__v--stamp">
+                <span class="stamp" [class]="statusClass(q.status)">{{ statusLabel(q.status) }}</span>
+              </span>
+              <span class="blick-zelle__sub">
+                @if (pdfStempel(); as ts) {
+                  PDF erzeugt {{ ts }}
+                } @else {
+                  Noch kein PDF (erst beim {{ istRechnung ? 'Veröffentlichen' : 'Versenden' }})
+                }
+              </span>
+            </div>
+          </div>
+          @if (dirty()) {
+            <p class="ed-blick__hinweis" role="status">
+              <span aria-hidden="true">⟳</span>
+              Beträge und Arbeitszeit zeigen den zuletzt gespeicherten Stand — beim
+              Speichern rechnet der Server sie neu. Die Positionszahlen sind aktuell.
+            </p>
           }
         </section>
 
@@ -910,6 +1002,18 @@
   [laedt]="versendenLaedt()"
   (bestaetigen)="versendenBestaetigen()"
   (abbrechen)="versendenAbbrechen()"
+/>
+
+<!-- ===================== Ausgang festhalten (nur Status) ===================== -->
+<app-bestaetigung
+  [offen]="ausgangOffen()"
+  [titel]="ausgangTitel()"
+  [text]="ausgangText()"
+  [bestaetigenLabel]="ausgangZiel() ? statusLabel(ausgangZiel()!) : 'Bestätigen'"
+  [gefahr]="ausgangGefahr()"
+  [laedt]="ausgangLaedt()"
+  (bestaetigen)="ausgangBestaetigen()"
+  (abbrechen)="ausgangAbbrechen()"
 />
 
 <!-- ===================== IDS-Connect: Bei Händler bestellen ===================== -->
