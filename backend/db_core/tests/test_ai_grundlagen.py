@@ -173,3 +173,47 @@ def test_ai_proposal_keine_freigabe_nach_ablauf(app_user):
             prop.status = "APPROVED"
             prop.approved_by_user = app_user
             prop.save()
+
+
+# --- Löschbarkeit (DSGVO Art. 17, Migration 0110) --------------------------
+
+def test_ai_proposal_pending_nicht_loeschbar(app_user):
+    from db_core.ai import proposal as proposal_service
+
+    prop = _proposal(app_user, _ai_run(app_user))
+    with pytest.raises(Error):          # PENDING trägt PII, aber wartet auf Entscheidung
+        proposal_service.delete_proposal(app_user.id, proposal_id=prop.id)
+
+
+def test_ai_proposal_genehmigt_nicht_loeschbar(app_user):
+    from db_core.ai import proposal as proposal_service
+
+    prop = _proposal(app_user, _ai_run(app_user))
+    with business_transaction(app_user.id):
+        prop.status = "APPROVED"
+        prop.approved_by_user = app_user
+        prop.save()
+    with pytest.raises(Error):          # genehmigt → Belegvorstufe, GoBD-Aufbewahrung
+        proposal_service.delete_proposal(app_user.id, proposal_id=prop.id)
+
+
+def test_ai_proposal_abgelehnt_loeschbar(app_user):
+    from db_core.ai import proposal as proposal_service
+    from db_core.models import AiProposal
+
+    prop = _proposal(app_user, _ai_run(app_user))
+    proposal_service.reject(app_user.id, proposal_id=prop.id, reason="unbrauchbar")
+    proposal_service.delete_proposal(app_user.id, proposal_id=prop.id)
+    assert not AiProposal.objects.filter(id=prop.id).exists()
+
+
+def test_ai_proposal_abgelaufen_loeschbar(app_user):
+    from db_core.ai import proposal as proposal_service
+    from db_core.models import AiProposal
+
+    prop = _proposal(app_user, _ai_run(app_user))
+    with business_transaction(app_user.id):
+        prop.status = "EXPIRED"
+        prop.save()
+    proposal_service.delete_proposal(app_user.id, proposal_id=prop.id)
+    assert not AiProposal.objects.filter(id=prop.id).exists()
