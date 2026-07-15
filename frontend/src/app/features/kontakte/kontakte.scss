@@ -152,6 +152,67 @@
   }
 }
 
+// =========================== Auswahlleiste (Kontakte-7) =====================
+.listbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-3);
+  min-height: 44px;
+}
+
+// Checkbox mit sichtbarem/screenreader-Label. Kopf-Variante zeigt Text,
+// Zeilen-Variante nutzt ein sr-only-Label.
+.pick {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+}
+.pick__box {
+  width: 1.15rem;
+  height: 1.15rem;
+  flex: none;
+  accent-color: var(--command);
+  cursor: pointer;
+
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+.pick__label {
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+  font-weight: 600;
+}
+.pick--row {
+  flex: none;
+  // Gute Trefferfläche: Klick neben der Box zählt trotzdem.
+  padding: var(--space-2);
+  margin: calc(var(--space-2) * -1);
+}
+
+// Aktionsleiste — erscheint nur bei >= 1 Auswahl.
+.auswahl {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin-left: auto;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-sunken);
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius);
+}
+.auswahl__zahl {
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  font-weight: 600;
+  color: var(--ink);
+}
+
 // ============================ Ergebnisliste =================================
 .rows {
   list-style: none;
@@ -160,6 +221,23 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+}
+
+// Zeile = Auswahl-Checkbox + verlinkte Karte nebeneinander.
+.rowline {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.rowline > .row {
+  flex: 1;
+  min-width: 0;
+}
+// Ausgewählte Zeile deutlich markieren — nicht nur über Farbe: kräftigerer
+// Rahmen links plus getönte Fläche.
+.rowline--picked > .row {
+  border-left-color: var(--command);
+  background: color-mix(in srgb, var(--command) 7%, var(--surface));
 }
 
 .row {

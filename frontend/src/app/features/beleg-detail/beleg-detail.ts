@@ -81,6 +81,20 @@ const AUSGANG_ERFOLG: Record<QuoteAusgang, string> = {
   ABGELAUFEN: 'Angebot als abgelaufen festgehalten.',
 };
 
+/**
+ * Status, aus denen der Server eine Rechnung erzeugt (`abrechnung.rechnung_aus_angebot`):
+ * Das Angebot muss eine **Vereinbarung** sein — also NICHT in
+ * `site_report.SOLL_AUSGESCHLOSSENE_STATUS` (ENTWURF/INTERN_GEPRUEFT/ABGELEHNT/ERSETZT).
+ * Übrig bleiben genau diese vier. Ein Entwurf oder ein abgelehntes/ersetztes Angebot
+ * ist keine Vereinbarung — dafür bleibt die Aktion aus (der Server antwortete sonst 422).
+ */
+const RECHNUNG_AUS_ANGEBOT_STATUS: readonly QuoteStatus[] = [
+  'FREIGEGEBEN',
+  'VERSENDET',
+  'ANGENOMMEN',
+  'ABGELAUFEN',
+];
+
 @Component({
   selector: 'app-beleg-detail',
   imports: [
@@ -348,6 +362,57 @@ export class BelegDetail {
 
   meldungSchliessen(): void {
     this.meldung.set(null);
+  }
+
+  // ---- Rechnung aus diesem Angebot erzeugen (Dokumente-1) ----------------
+  //
+  // Der direkte, sichtbare Weg VOM Angebot: POST /invoicing/invoices/aus-angebot
+  // kopiert die Positionen wertgleich in einen Rechnungs-ENTWURF und bindet jede
+  // übernommene Betragsposition (ANGEBOTSPOSITION) — der Rückverweis. Bisher war
+  // dieser Weg nur über den Abrechnung-Tab der Auftragsmappe erreichbar.
+  //
+  // Server-Tore (`abrechnung.rechnung_aus_angebot`):
+  //  * Recht invoicing/ANLEGEN.
+  //  * Status ist eine Vereinbarung → `RECHNUNG_AUS_ANGEBOT_STATUS`. Das gaten wir
+  //    hier, damit die Aktion nur erscheint, wenn der Server sie annimmt.
+  //  * REGIE-Auftrag am Angebot → 422 (das Ist wird abgerechnet, nicht die Kopie).
+  //  * Schon abgerechnet (aktive Bindung) → 422, mit Nennung der Rechnung.
+  // Die letzten beiden kann das UI nicht vorab wissen — sie kommen als Fehler über
+  // die `meldung`-Leiste.
+  protected readonly kannRechnungErzeugen = computed(() => {
+    const d = this.daten();
+    if (!d || !this.auth.darf('invoicing', 'ANLEGEN')) return false;
+    return RECHNUNG_AUS_ANGEBOT_STATUS.includes(d.status);
+  });
+  protected readonly rechnungOffen = signal(false);
+  protected readonly rechnungLaedt = signal(false);
+
+  rechnungFragen(): void {
+    this.meldung.set(null);
+    this.rechnungOffen.set(true);
+  }
+
+  rechnungAbbrechen(): void {
+    if (!this.rechnungLaedt()) this.rechnungOffen.set(false);
+  }
+
+  rechnungBestaetigen(): void {
+    const d = this.daten();
+    if (!d || this.rechnungLaedt()) return;
+    this.rechnungLaedt.set(true);
+    this.svc.rechnungAusAngebot({ quote_id: d.id }).subscribe({
+      next: (rechnung) => {
+        this.rechnungLaedt.set(false);
+        this.rechnungOffen.set(false);
+        // In die neue Rechnung navigieren (Rechnungsmappe).
+        this.router.navigate(['/dokumente/rechnung', rechnung.id]);
+      },
+      error: (err) => {
+        this.rechnungLaedt.set(false);
+        this.rechnungOffen.set(false);
+        this.meldung.set({ art: 'fehler', text: this.fehlerText(err) });
+      },
+    });
   }
 
   // ---- Kopieren: neuer Entwurf aus diesem Angebot ------------------------

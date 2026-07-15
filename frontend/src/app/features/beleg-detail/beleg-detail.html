@@ -103,6 +103,15 @@
         </button>
       }
 
+      <!-- Dokumente-1: der direkte Weg vom Angebot zur Rechnung. Nur sichtbar, wenn
+           das Angebot eine Vereinbarung ist (RECHNUNG_AUS_ANGEBOT_STATUS) und die
+           Rolle Rechnungen anlegen darf — dieselben Tore wie serverseitig. -->
+      @if (kannRechnungErzeugen()) {
+        <button mappe-kopf type="button" class="btn btn--primary" (click)="rechnungFragen()">
+          Rechnung aus Angebot
+        </button>
+      }
+
       @if (meldung(); as m) {
         <div
           class="melde melde--{{ m.art }} detail-melde"
@@ -220,6 +229,19 @@
       [laedt]="ausgangLaedt()"
       (bestaetigen)="ausgangBestaetigen()"
       (abbrechen)="ausgangAbbrechen()"
+    />
+
+    <!-- Rechnung aus diesem Angebot (Dokumente-1). Erzeugt einen Rechnungs-ENTWURF
+         mit gebundenen Positionen; ein zweiter Lauf über dasselbe Angebot scheitert.
+         Der Entwurf ist noch nicht festgeschrieben — deshalb kein Gefahr-Stil. -->
+    <app-bestaetigung
+      [offen]="rechnungOffen()"
+      titel="Rechnung aus diesem Angebot erzeugen?"
+      text="Die Positionen des Angebots werden wertgleich in einen neuen Rechnungs-Entwurf kopiert (Alternativ- und Bedarfspositionen bleiben außen vor). Jede übernommene Position wird an dieses Angebot gebunden — ein zweiter Lauf über dasselbe Angebot ist danach nicht mehr möglich. Anschließend öffnet sich der neue Rechnungsentwurf."
+      bestaetigenLabel="Rechnung erzeugen"
+      [laedt]="rechnungLaedt()"
+      (bestaetigen)="rechnungBestaetigen()"
+      (abbrechen)="rechnungAbbrechen()"
     />
 
     <!-- ---------------------------- Per E-Mail senden --------------------- -->

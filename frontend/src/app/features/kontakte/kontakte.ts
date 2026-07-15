@@ -69,6 +69,19 @@ export class Kontakte {
   protected readonly page = signal(1);
   protected readonly state = signal<ViewState>({ kind: 'loading' });
 
+  // --- Mehrfachauswahl (Kontakte-7) ---------------------------------------
+  // Set der ausgewählten Party-IDs. Bewusste Entscheidung: Die Auswahl ist
+  // SEITEN-GEBUNDEN und wird bei jedem Laden (Suche, Filter, Blättern,
+  // Neuanlage) in fetch() zurückgesetzt. Grund: Die Liste ist serverseitig
+  // paginiert; wir haben nur die aktuell sichtbaren Zeilen im Speicher. Eine
+  // Auswahl über Seiten hinweg wäre unsichtbar, nicht mehr manuell auflösbar
+  // und der CSV-Export würde Zeilen mitnehmen, die niemand mehr sieht — ein
+  // A11y- und Vertrauensbruch. „Was du siehst, ist was du auswählst" hält die
+  // Kopf-Checkbox „alle auf dieser Seite" kohärent und ehrlich.
+  protected readonly selectedIds = signal<ReadonlySet<string>>(new Set());
+  // Kurze Bestätigung nach einer Gruppenaktion (aria-live).
+  protected readonly aktionMeldung = signal<string | null>(null);
+
   // Fuer das Laden-Skelett.
   protected readonly skeletons = Array.from({ length: 6 });
 
@@ -133,6 +146,31 @@ export class Kontakte {
     return `${t} ${t === 1 ? 'Kontakt' : 'Kontakte'} gefunden, Seite ${s.data.page} von ${this.totalPages()}.`;
   });
 
+  // Aktuell sichtbare Zeilen (leer, solange nicht „ready").
+  protected readonly pageItems = computed<Party[]>(() => {
+    const s = this.state();
+    return s.kind === 'ready' ? s.data.items : [];
+  });
+
+  protected readonly selectedCount = computed(() => this.selectedIds().size);
+
+  // Kopf-Checkbox „alle auf dieser Seite": angehakt, wenn jede sichtbare Zeile
+  // ausgewählt ist. Bei leerer Seite bleibt sie leer.
+  protected readonly allOnPageSelected = computed(() => {
+    const items = this.pageItems();
+    if (items.length === 0) return false;
+    const sel = this.selectedIds();
+    return items.every((p) => sel.has(p.id));
+  });
+
+  // Teilauswahl → indeterminate-Zustand der Kopf-Checkbox.
+  protected readonly someOnPageSelected = computed(() => {
+    const items = this.pageItems();
+    if (items.length === 0) return false;
+    const sel = this.selectedIds();
+    return items.some((p) => sel.has(p.id)) && !this.allOnPageSelected();
+  });
+
   constructor() {
     this.searchInput$
       .pipe(debounceTime(300), distinctUntilChanged(), takeUntilDestroyed())
@@ -188,8 +226,100 @@ export class Kontakte {
     });
   }
 
+  // ---- Mehrfachauswahl: Aktionen -----------------------------------------
+  isSelected(id: string): boolean {
+    return this.selectedIds().has(id);
+  }
+
+  toggle(id: string): void {
+    this.selectedIds.update((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+    this.aktionMeldung.set(null);
+  }
+
+  toggleAllOnPage(): void {
+    const items = this.pageItems();
+    if (items.length === 0) return;
+    const alleRaus = this.allOnPageSelected();
+    this.selectedIds.update((prev) => {
+      const next = new Set(prev);
+      for (const p of items) {
+        if (alleRaus) next.delete(p.id);
+        else next.add(p.id);
+      }
+      return next;
+    });
+    this.aktionMeldung.set(null);
+  }
+
+  auswahlAufheben(): void {
+    this.selectedIds.set(new Set());
+    this.aktionMeldung.set(null);
+  }
+
+  /**
+   * Kontakte-7: Die aktuell ausgewählten (sichtbaren) Kontakte clientseitig als
+   * CSV herunterladen. Kein Server-Call. Spalten sind genau die Felder, die die
+   * Listenzeile trägt — Kennung, Anzeigename, Typ, Status. Kein erfundenes Feld
+   * (Kontaktweg/Kundennummer liegen erst im Detail, nicht in der Liste).
+   * Trennzeichen „;" und UTF-8-BOM, damit deutsches Excel sauber öffnet.
+   */
+  alsCsvExportieren(): void {
+    const gewaehlt = this.pageItems().filter((p) => this.selectedIds().has(p.id));
+    if (gewaehlt.length === 0) return;
+
+    const kopf = ['Kennung', 'Anzeigename', 'Typ', 'Status'];
+    const zeilen = gewaehlt.map((p) => [
+      this.shortId(p),
+      p.display_name,
+      this.typeLabel(p.party_type),
+      this.statusLabel(p.status),
+    ]);
+    const csv = [kopf, ...zeilen]
+      .map((cols) => cols.map((c) => this.csvZelle(c)).join(';'))
+      .join('\r\n');
+
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `kontakte-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+
+    this.aktionMeldung.set(
+      `${gewaehlt.length} ${gewaehlt.length === 1 ? 'Kontakt' : 'Kontakte'} als CSV-Datei exportiert.`,
+    );
+  }
+
+  // CSV-Feld nach RFC 4180: bei ; " oder Zeilenumbruch in Anführungszeichen
+  // setzen und enthaltene " verdoppeln.
+  private csvZelle(wert: string): string {
+    // CSV-Formel-Injection entschärfen: Excel/LibreOffice werten eine Zelle, die
+    // mit = + - @ (auch Tab/CR) beginnt, als Formel aus — auch innerhalb von
+    // Anführungszeichen. Nutzerkontrollierte Werte (z. B. Kontaktname) könnten so
+    // zur lebenden Formel/DDE werden; führendes Apostroph neutralisiert das.
+    let z = wert;
+    if (/^[=+\-@\t\r]/.test(z)) {
+      z = "'" + z;
+    }
+    if (/[";\r\n]/.test(z)) {
+      return '"' + z.replace(/"/g, '""') + '"';
+    }
+    return z;
+  }
+
   private fetch(): void {
     const id = ++this.reqId;
+    // Seiten-gebundene Auswahl: bei jedem Laden zurücksetzen (siehe selectedIds).
+    this.selectedIds.set(new Set());
+    this.aktionMeldung.set(null);
     this.state.set({ kind: 'loading' });
     this.svc
       .list({

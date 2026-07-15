@@ -7,6 +7,31 @@ der HERO-Screenshots in `Hero Wissen/` gegen die MCN-Angular-Komponenten
 Dokumente → Kontakte. **Planung/Termine ist bereits umgesetzt** (Zieladresse auf
 Einsatz-Detail + Plantafel-Kachel, Drehscheibe, Auffindbarkeit, Dedup).
 
+## Umsetzungsstand (2026-07-15)
+
+**Erledigt (umgesetzt, getestet, reviewt, committet):**
+- Projekte: 1 (Kontaktkarte), 2 (Gewerk im Dialog), 4 (Verantwortlicher), 6 (Aktionspanel),
+  7 (internal_note), 8 (Ort in Liste).
+- Dokumente: 2 (Kopieren), 3 (Statuswechsel/Ausgang), 4 (Verschieben), 5 (Übersichtskachel),
+  9 (Anschreiben/cover_letter).
+- Kontakte: 1 (Dokumente-Tab konsolidiert), 2 (Kontaktkarte), 3 (Notizfeld),
+  6 (Objektadress-Label), 8 (Vorgangs-Chip Ansprechpartner), 9 (Anlage-Überleitung).
+- (In Arbeit derselbe Durchgang: Dokumente-1 „Rechnung aus Angebot"-Direktweg, Kontakte-7 Mehrfachauswahl.)
+
+**Verschoben — DB-Schema, KOLLISIONSRISIKO:** Kontakte-4 (customer_number, Sequence),
+Kontakte-5 (Geschäftsrollen Kunde/Lieferant/Partner), Dokumente-8 (Firmenvorgaben
+Zahlungsziel/Skonto) brauchen `models.py`- und Migrations-Änderungen. Im Repo lief
+zeitgleich eine **parallele KI-Schema-Arbeit** (neue ai/-Module + Migrationen); zwei
+Prozesse, die gleichzeitig `models.py` ändern und Migrationsnummern ziehen, kollidieren.
+Diese drei bewusst zurückgestellt, bis die Migrationskette wieder in einer Hand liegt —
+dann als eigene sequenzielle Migrationen (Muster: 0109_hero_notiz_label_felder.py).
+
+**Verschoben — Epics (kein Quick-Win, eigene Design-Runde nötig):** Projekte-5
+(Ablaufphasen/Stage-Automat), Projekte-9 (Soll/Ist-Kostenerfassung), Dokumente-6
+(neue Dokumenttypen/Baustellenbericht), Dokumente-7 (Dokumentvorlagen), Dokumente-10
+(Sammeldokument), Kontakte-4/5 (s. o.), Kontakte-10 (strukturierte Upload-Metadaten,
+braucht Schema), Projekte 3/10-12 (Logbuch-SYSTEM-Automatik + niedrigprioritär).
+
 ## Rubrik-übergreifende Muster (dreifach aufgefallen)
 - **Kontext-Karte fehlt überall:** weder Projekt noch Kontakt zeigen dauerhaft die
   Kernkontaktdaten (mailto:/tel:). Ein kleines Karten-Widget löst Projekte-1 + Kontakte-2.

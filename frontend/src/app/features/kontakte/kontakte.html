@@ -126,9 +126,50 @@
           </p>
         </div>
       } @else {
+        <!-- Auswahlleiste (Kontakte-7): Kopf-Checkbox + Gruppenaktionen -->
+        <div class="listbar">
+          <label class="pick pick--head">
+            <input
+              type="checkbox"
+              class="pick__box"
+              [checked]="allOnPageSelected()"
+              [indeterminate]="someOnPageSelected()"
+              (change)="toggleAllOnPage()"
+            />
+            <span class="pick__label">Alle auf dieser Seite auswählen</span>
+          </label>
+
+          @if (selectedCount() > 0) {
+            <div class="auswahl" role="group" aria-label="Aktionen für die Auswahl">
+              <span class="auswahl__zahl">
+                {{ selectedCount() }}
+                {{ selectedCount() === 1 ? 'Kontakt' : 'Kontakte' }} ausgewählt
+              </span>
+              <button type="button" class="btn btn--klein" (click)="alsCsvExportieren()">
+                <span aria-hidden="true">↓</span> Als CSV exportieren
+              </button>
+              <button type="button" class="btn btn--klein" (click)="auswahlAufheben()">
+                Auswahl aufheben
+              </button>
+            </div>
+          }
+        </div>
+
+        <!-- Ergebnis der Gruppenaktion; role="status" ist implizit aria-live=polite -->
+        <p class="sr-only" role="status">{{ aktionMeldung() }}</p>
+
         <ul class="rows">
           @for (p of $any(state()).data.items; track p.id) {
-            <li>
+            <li class="rowline" [class.rowline--picked]="isSelected(p.id)">
+              <label class="pick pick--row">
+                <input
+                  type="checkbox"
+                  class="pick__box"
+                  [checked]="isSelected(p.id)"
+                  (change)="toggle(p.id)"
+                />
+                <span class="sr-only">„{{ p.display_name }}“ auswählen</span>
+              </label>
               <a class="row" [routerLink]="[p.id]">
                 <span
                   class="row__avatar"
