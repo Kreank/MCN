@@ -152,6 +152,16 @@ export const routes: Routes = [
         loadComponent: () => import('./features/projekte/projekte').then((m) => m.Projekte),
       },
       {
+        // Flache Vorgangsliste (chronologisch, „zuletzt erfasst"). MUSS vor
+        // 'projekte/:id' stehen, sonst schluckt der Parameter das statische
+        // Segment 'vorgaenge'.
+        path: 'projekte/vorgaenge',
+        title: 'Vorgänge — MCN Leitstand',
+        canActivate: [darfGuard('workflow', 'LESEN')],
+        loadComponent: () =>
+          import('./features/vorgang-liste/vorgang-liste').then((m) => m.VorgangListe),
+      },
+      {
         // Vorgangs-Kanban. MUSS vor 'projekte/:id' stehen, sonst schluckt der
         // Parameter das statische Segment 'kanban'.
         path: 'projekte/kanban',

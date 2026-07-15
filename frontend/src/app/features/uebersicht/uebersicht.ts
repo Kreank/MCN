@@ -7,7 +7,7 @@ import { BelegService } from '../../core/beleg.service';
 import { FirmaService } from '../../core/firma.service';
 import { AuthService } from '../../core/auth.service';
 import { Task } from '../../core/aufgabe.model';
-import { Project } from '../../core/projekt.model';
+import { Project, ServiceCaseCard } from '../../core/projekt.model';
 import { Quote } from '../../core/beleg.model';
 import { Onboarding } from '../../core/firma.model';
 import { UebersichtMonteur } from '../uebersicht-monteur/uebersicht-monteur';
@@ -52,6 +52,7 @@ export class Uebersicht {
   private readonly auth = inject(AuthService);
 
   protected readonly tasks = signal<Tile<Task>>({ kind: 'loading' });
+  protected readonly serviceCases = signal<Tile<ServiceCaseCard>>({ kind: 'loading' });
   protected readonly projects = signal<Tile<Project>>({ kind: 'loading' });
   protected readonly quotes = signal<Tile<Quote>>({ kind: 'loading' });
   private readonly onboarding = signal<Onboarding | null>(null);
@@ -114,6 +115,14 @@ export class Uebersicht {
       next: (d) => this.tasks.set({ kind: 'ready', total: d.total, items: d.items }),
       error: (err) => this.tasks.set(fehlerState(err)),
     });
+    // Zuletzt erfasste Vorgänge (neueste zuerst, inkl. abgeschlossene): der frisch
+    // erfasste Vorgang soll sofort auf dem Leitstand auftauchen, nicht „im Nirvana".
+    this.projektSvc
+      .listServiceCases({ page: 1, page_size: 5, include_terminal: true })
+      .subscribe({
+        next: (d) => this.serviceCases.set({ kind: 'ready', total: d.total, items: d.items }),
+        error: (err) => this.serviceCases.set(fehlerState(err)),
+      });
     this.projektSvc.list({ page: 1, page_size: 5, status: 'OPEN' }).subscribe({
       next: (d) => this.projects.set({ kind: 'ready', total: d.total, items: d.items }),
       error: (err) => this.projects.set(fehlerState(err)),
@@ -124,6 +133,15 @@ export class Uebersicht {
         error: (err) => this.quotes.set(fehlerState(err)),
       });
     }
+  }
+
+  /** Kurzes Eingangsdatum (de-DE) für die Vorgangskachel. */
+  eingang(iso: string): string {
+    return new Intl.DateTimeFormat('de-DE', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+    }).format(new Date(iso));
   }
 
   euro(amount: string | null): string {

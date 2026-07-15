@@ -44,6 +44,40 @@
   }
 
   <div class="kacheln">
+    <!-- ---------------------- Zuletzt erfasste Vorgänge ----------------
+         Die Kern-Ansicht: der frisch erfasste Vorgang taucht hier sofort auf
+         (neueste zuerst, inkl. terminale). „Alle →" führt in die volle Liste. -->
+    <article class="kachel">
+      <header class="kachel__kopf">
+        <div>
+          <p class="kachel__kicker">Zuletzt erfasste Vorgänge</p>
+          @if (serviceCases().kind === 'ready') {
+            <p class="kachel__zahl">{{ $any(serviceCases()).total }}</p>
+          }
+        </div>
+        <a class="kachel__link" routerLink="/projekte/vorgaenge">Alle →</a>
+      </header>
+      @switch (serviceCases().kind) {
+        @case ('loading') { <p class="kachel__leer">Wird geladen …</p> }
+        @case ('forbidden') { <p class="kachel__leer">Keine Berechtigung.</p> }
+        @case ('error') { <p class="kachel__leer">Konnte nicht geladen werden.</p> }
+        @case ('ready') {
+          @if ($any(serviceCases()).items.length === 0) {
+            <p class="kachel__leer">Noch keine Vorgänge erfasst.</p>
+          } @else {
+            <ul class="kachel__liste">
+              @for (v of $any(serviceCases()).items; track v.id) {
+                <li class="zeile">
+                  <a class="zeile__link" [routerLink]="['/vorgaenge', v.id]">{{ v.subject }}</a>
+                  <span class="zeile__neben">{{ v.case_number }} · {{ eingang(v.received_at) }}</span>
+                </li>
+              }
+            </ul>
+          }
+        }
+      }
+    </article>
+
     <!-- ------------------------------ Aufgaben ------------------------- -->
     <article class="kachel">
       <header class="kachel__kopf">

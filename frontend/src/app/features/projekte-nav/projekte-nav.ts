@@ -1,7 +1,7 @@
 import { Component } from '@angular/core';
 import { RouterLink, RouterLinkActive } from '@angular/router';
 
-/** Unternavigation des Projekte-Bereichs (Register-Liste · Vorgangs-Board). */
+/** Unternavigation des Projekte-Bereichs (Register · Vorgänge · Vorgang-Board). */
 @Component({
   selector: 'app-projekte-nav',
   imports: [RouterLink, RouterLinkActive],
@@ -13,6 +13,7 @@ import { RouterLink, RouterLinkActive } from '@angular/router';
         [routerLinkActiveOptions]="{ exact: true }"
         >Register</a
       >
+      <a routerLink="/projekte/vorgaenge" routerLinkActive="is-active">Vorgänge</a>
       <a routerLink="/projekte/kanban" routerLinkActive="is-active">Vorgang-Board</a>
     </nav>
   `,

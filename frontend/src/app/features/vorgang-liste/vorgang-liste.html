@@ -1,0 +1,130 @@
+<section class="vorgaenge" aria-labelledby="vorgaenge-titel">
+  <header class="page-head">
+    <div class="page-head__text">
+      <p class="page-head__kicker">
+        <span class="page-head__scale" aria-hidden="true"></span>
+        Projektassistent
+      </p>
+      <h1 id="vorgaenge-titel" class="page-head__titel">Vorgänge</h1>
+      <p class="page-head__hint">
+        Alle Vorgänge über die Projekte hinweg — neueste zuerst. Nach Nummer oder
+        Betreff durchsuchbar und nach Status gefiltert.
+      </p>
+    </div>
+  </header>
+
+  <app-projekte-nav />
+
+  <div class="controls">
+    <div class="search">
+      <label class="search__label" for="vorgaenge-suche">Vorgänge durchsuchen</label>
+      <div class="search__field">
+        <span class="search__icon" aria-hidden="true">⌕</span>
+        <input
+          id="vorgaenge-suche"
+          class="search__input"
+          type="search"
+          inputmode="search"
+          autocomplete="off"
+          placeholder="Vorgangsnummer oder Betreff"
+          (input)="onSearch($any($event.target).value)"
+        />
+      </div>
+    </div>
+
+    <div class="segment" role="group" aria-label="Nach Status filtern">
+      @for (seg of segments; track seg.label) {
+        <button
+          type="button"
+          class="segment__btn"
+          [class.is-active]="status() === seg.value"
+          [attr.aria-pressed]="status() === seg.value"
+          (click)="selectSegment(seg.value)"
+        >
+          {{ seg.label }}
+        </button>
+      }
+    </div>
+
+    <label class="toggle">
+      <input type="checkbox" [checked]="includeTerminal()" (change)="terminalUmschalten()" />
+      <span>Abgeschlossene einschließen</span>
+    </label>
+  </div>
+
+  <p class="sr-only" role="status">{{ resultSummary() }}</p>
+
+  @switch (state().kind) {
+    @case ('loading') {
+      <ul class="rows" aria-hidden="true">
+        @for (s of skeletons; track $index) {
+          <li class="row row--skeleton">
+            <span class="sk-block">
+              <span class="sk sk--line"></span>
+              <span class="sk sk--chips"></span>
+            </span>
+            <span class="sk sk--box"></span>
+          </li>
+        }
+      </ul>
+    }
+
+    @case ('forbidden') {
+      <app-kein-zugriff [detail]="$any(state()).detail" />
+    }
+
+    @case ('error') {
+      <div class="note note--error" role="alert">
+        <h2 class="note__titel">Vorgänge nicht erreichbar</h2>
+        <p class="note__text">
+          Die Vorgangsliste ließ sich nicht laden. Prüfe die Verbindung und lade
+          den Bereich erneut.
+        </p>
+        <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
+      </div>
+    }
+
+    @case ('ready') {
+      @if ($any(state()).data.items.length === 0) {
+        <div class="note note--empty">
+          <h2 class="note__titel">Keine Vorgänge für diese Auswahl</h2>
+          <p class="note__text">
+            Passe Suche oder Statusfilter an. Neue Vorgänge entstehen über die
+            Meldungserfassung, die Projektakte oder die KI-gestützte Disposition.
+          </p>
+        </div>
+      } @else {
+        <ul class="rows">
+          @for (v of $any(state()).data.items; track v.id) {
+            <li class="row">
+              <a class="row__link" [routerLink]="['/vorgaenge', v.id]">
+                <span class="row__body">
+                  <span class="row__title">{{ v.subject }}</span>
+                  <span class="row__meta">
+                    <span class="row__num">{{ v.case_number }}</span>
+                    @if (v.project_name) {
+                      <span class="row__prop">▤ {{ v.project_name }}</span>
+                    } @else {
+                      <span class="row__ohne">ohne Projekt</span>
+                    }
+                    <span class="row__eingang">◷ {{ eingang(v.received_at) }}</span>
+                  </span>
+                </span>
+                <span class="row__stamps">
+                  <span class="stamp {{ priorityClass(v.priority) }}">{{ priorityLabel(v.priority) }}</span>
+                  <span class="stamp {{ statusClass(v.status) }}">{{ statusLabel(v.status) }}</span>
+                </span>
+              </a>
+            </li>
+          }
+        </ul>
+
+        <nav class="pager" aria-label="Blättern">
+          <button type="button" class="btn" (click)="prev()" [disabled]="page() <= 1">Zurück</button>
+          <span class="pager__pos" aria-hidden="true">Seite {{ page() }} von {{ totalPages() }}</span>
+          <button type="button" class="btn" (click)="next()" [disabled]="page() >= totalPages()">Weiter</button>
+        </nav>
+      }
+    }
+  }
+</section>
