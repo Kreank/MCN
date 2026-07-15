@@ -89,6 +89,12 @@ export class KontaktDetail {
   protected readonly tasksState = signal<LazyState<Task>>({ kind: 'idle' });
   private reqId = 0;
   private aufgabenReqId = 0;
+  // Generations-Guards: die Kontaktwege/Adressen speisen die dauersichtbare
+  // Kopf-Karte und werden bei jedem Kontaktwechsel eager geladen. Ohne Guard
+  // könnte eine verspätete Antwort des vorigen Kontakts die Karte mit den
+  // FALSCHEN Kontaktdaten stehen lassen (man riefe die falsche Person an).
+  private kontaktwegeReqId = 0;
+  private adressenReqId = 0;
 
   // Aufgaben-Tab: Segment-Filter wie die Hauptliste (Alle/Offen/Erledigt).
   protected readonly aufgabenSegmente: { value: TaskStatus | null; label: string }[] = [
@@ -137,8 +143,11 @@ export class KontaktDetail {
     }
     basis.push(
       { id: 'aufgaben', label: 'Aufgaben' },
-      { id: 'dokumente', label: 'Dokumente' },
-      { id: 'dateien', label: 'Dateien' },
+      // Kontakte-1: Der frühere „Dokumente"-Platzhalter ist entfernt. Ein zweiter
+      // Datei-Bereich am selben party_id waere reine Redundanz mit doppeltem
+      // Upload-Weg; der Dateien-Tab (app-dateien) ist die EINE Ablage — er zeigt
+      // jede Datei mit ihrem Kategorie-Stempel (Dokument/Vertrag/Beleg …).
+      { id: 'dateien', label: 'Dokumente & Dateien' },
       { id: 'logbuch', label: 'Logbuch' },
     );
     return basis;
@@ -148,6 +157,20 @@ export class KontaktDetail {
   protected readonly dateienZiel = computed<ZielFilter>(() => ({
     party_id: this.daten()?.id ?? '',
   }));
+
+  // --- Kontaktkarte (Kontakte-2): tab-unabhaengig im Mappen-Kopf -----------
+  /** Primaerer Kommunikationsweg fuer die Kopf-Karte (sonst der erste aktive). */
+  protected readonly kartenKontakt = computed<ContactPoint | null>(() => {
+    const s = this.contactPointsState();
+    if (s.kind !== 'ready') return null;
+    return s.items.find((c) => c.is_primary) ?? s.items[0] ?? null;
+  });
+  /** Primaere Adresse fuer die Kopf-Karte (sonst die erste vorhandene). */
+  protected readonly kartenAdresse = computed<PartyAddress | null>(() => {
+    const s = this.addressesState();
+    if (s.kind !== 'ready') return null;
+    return s.items.find((a) => a.is_primary) ?? s.items[0] ?? null;
+  });
 
   // --- Schreibaktionen (Dialoge) ------------------------------------------
   protected readonly meldung = signal<Meldung | null>(null);
@@ -236,15 +259,17 @@ export class KontaktDetail {
       this.load(id);
     });
 
-    // Lazy: Kontaktwege im Stammdaten-Tab, Adressen und Ansprechpartner je Tab.
+    // Kontaktwege und Adressen laden wir tab-unabhaengig, sobald der Kontakt da
+    // ist: der Stammdaten-/Objektadressen-Tab UND die Kopf-Karte (Kontakte-2)
+    // brauchen sie. Ansprechpartner und Aufgaben bleiben je Tab lazy.
     effect(() => {
       const d = this.daten();
       if (!d) return;
       const t = this.tab();
-      if (t === 'stammdaten' && this.contactPointsState().kind === 'idle') {
+      if (this.contactPointsState().kind === 'idle') {
         this.loadContactPoints(d.id);
       }
-      if (t === 'objektadressen' && this.addressesState().kind === 'idle') {
+      if (this.addressesState().kind === 'idle') {
         this.loadAddresses(d.id);
       }
       if (
@@ -288,18 +313,28 @@ export class KontaktDetail {
   }
 
   private loadContactPoints(partyId: string): void {
+    const rid = ++this.kontaktwegeReqId;
     this.contactPointsState.set({ kind: 'loading' });
     this.svc.listContactPoints(partyId).subscribe({
-      next: (items) => this.contactPointsState.set({ kind: 'ready', items }),
-      error: (err) => this.contactPointsState.set(fehlerState(err)),
+      next: (items) => {
+        if (rid === this.kontaktwegeReqId) this.contactPointsState.set({ kind: 'ready', items });
+      },
+      error: (err) => {
+        if (rid === this.kontaktwegeReqId) this.contactPointsState.set(fehlerState(err));
+      },
     });
   }
 
   private loadAddresses(partyId: string): void {
+    const rid = ++this.adressenReqId;
     this.addressesState.set({ kind: 'loading' });
     this.svc.listAddresses(partyId).subscribe({
-      next: (items) => this.addressesState.set({ kind: 'ready', items }),
-      error: (err) => this.addressesState.set(fehlerState(err)),
+      next: (items) => {
+        if (rid === this.adressenReqId) this.addressesState.set({ kind: 'ready', items });
+      },
+      error: (err) => {
+        if (rid === this.adressenReqId) this.addressesState.set(fehlerState(err));
+      },
     });
   }
 
@@ -602,6 +637,26 @@ export class KontaktDetail {
     const strasse = [a.street, a.house_number].filter(Boolean).join(' ');
     const ort = [a.postal_code, a.city].filter(Boolean).join(' ');
     return [strasse, a.address_addition, ort].filter(Boolean).join(', ');
+  }
+
+  /**
+   * `mailto:`/`tel:`-Ziel fuer die Kopf-Karte, oder null wenn der Typ nicht
+   * verlinkbar ist (PORTAL). Telefonnummern werden fuer das `tel:`-Schema auf
+   * Ziffern und ein fuehrendes „+" reduziert (Anzeige bleibt der Rohwert).
+   */
+  kontaktHref(cp: ContactPoint): string | null {
+    switch (cp.contact_type) {
+      case 'EMAIL':
+        return `mailto:${cp.value.trim()}`;
+      case 'PHONE':
+      case 'MOBILE':
+      case 'FAX': {
+        const tel = cp.value.replace(/[^\d+]/g, '');
+        return tel ? `tel:${tel}` : null;
+      }
+      default:
+        return null;
+    }
   }
 
   // ---- Aufgaben-Darstellung ----------------------------------------------

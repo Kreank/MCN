@@ -49,6 +49,52 @@
         Dossier — alles auf einen Blick
       </a>
 
+      <!-- ------------------------------ Kontaktkarte --------------------- -->
+      <!-- Kontakte-2: dauerhaft sichtbar, tab-unabhaengig (steht ausserhalb
+           jedes @if(tab()===…) und damit oben in jedem Tab). Speist sich aus
+           den ohnehin geladenen Kontaktwegen/Adressen — kein Extra-Overload. -->
+      <aside class="kontaktkarte" aria-labelledby="kk-titel">
+        <p id="kk-titel" class="kontaktkarte__kicker">Kontaktdaten</p>
+        <p class="kontaktkarte__name">{{ daten()!.display_name }}</p>
+        <dl class="kontaktkarte__liste">
+          <div class="kontaktkarte__zeile">
+            <dt class="kontaktkarte__dt">
+              <span class="kontaktkarte__icon" aria-hidden="true">✉</span>
+              Kontakt
+            </dt>
+            <dd class="kontaktkarte__dd">
+              @if (kartenKontakt(); as cp) {
+                @if (kontaktHref(cp); as href) {
+                  <a class="kontaktkarte__link" [href]="href">{{ cp.value }}</a>
+                } @else {
+                  <span>{{ cp.value }}</span>
+                }
+                <span class="kontaktkarte__typ">{{ contactTypeLabel(cp.contact_type) }}</span>
+              } @else if (contactPointsState().kind === 'loading') {
+                <span class="kontaktkarte__leer">wird geladen …</span>
+              } @else {
+                <span class="kontaktkarte__leer">kein Kontaktweg hinterlegt</span>
+              }
+            </dd>
+          </div>
+          <div class="kontaktkarte__zeile">
+            <dt class="kontaktkarte__dt">
+              <span class="kontaktkarte__icon" aria-hidden="true">⌂</span>
+              Adresse
+            </dt>
+            <dd class="kontaktkarte__dd">
+              @if (kartenAdresse(); as pa) {
+                <span>{{ adresseZeile(pa.address) }}</span>
+              } @else if (addressesState().kind === 'loading') {
+                <span class="kontaktkarte__leer">wird geladen …</span>
+              } @else {
+                <span class="kontaktkarte__leer">keine Adresse hinterlegt</span>
+              }
+            </dd>
+          </div>
+        </dl>
+      </aside>
+
       <!-- ------------------------------ Stammdaten ------------------------ -->
       @if (tab() === 'stammdaten') {
         @if (daten()!.person; as p) {
@@ -274,14 +320,8 @@
         </section>
       }
 
-      <!-- ------------------------------ Dokumente ------------------------- -->
-      @if (tab() === 'dokumente') {
-        <div class="tab-platzhalter">
-          <h2 class="tab-platzhalter__titel">Dokumente</h2>
-          <p>Angebote und Rechnungen dieses Kontakts werden hier gebündelt, sobald der Dokumentenbereich steht (Roadmap 05).</p>
-        </div>
-      }
-
+      <!-- Kontakte-1: Dokumente + Dateien in EINER Ablage (app-dateien), kein
+           doppelter Upload-Weg. Jede Datei traegt ihren Kategorie-Stempel. -->
       @if (tab() === 'dateien') {
         <app-dateien [ziel]="dateienZiel()" />
       }

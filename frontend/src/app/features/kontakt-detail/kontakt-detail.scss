@@ -138,6 +138,81 @@ a.ref__name:focus-visible {
   }
 }
 
+// ---- Kontaktkarte (Kontakte-2): tab-unabhaengig oben im Body --------------
+.kontaktkarte {
+  margin-bottom: var(--space-5);
+  padding: var(--space-4);
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+}
+.kontaktkarte__kicker {
+  margin: 0 0 var(--space-1);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+}
+.kontaktkarte__name {
+  margin: 0 0 var(--space-3);
+  font-weight: 600;
+  font-size: var(--step-1);
+  color: var(--ink);
+}
+.kontaktkarte__liste {
+  margin: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+.kontaktkarte__zeile {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-3);
+}
+.kontaktkarte__dt {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  min-width: 6rem;
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  letter-spacing: 0.04em;
+  color: var(--ink-muted);
+}
+.kontaktkarte__dd {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  color: var(--ink);
+}
+.kontaktkarte__link {
+  font-weight: 600;
+  color: var(--accent-ink);
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+}
+.kontaktkarte__typ {
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+.kontaktkarte__leer {
+  color: var(--ink-muted);
+  font-style: italic;
+}
+
 // Akquisekanal-Auswahl im Stammdaten-Tab
 .quelle-wahl select {
   min-height: 40px;
