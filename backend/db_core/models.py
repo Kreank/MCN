@@ -4674,6 +4674,9 @@ class Tool(models.Model):
     invocation_mode = models.TextField()     # SYNC|ASYNC|INTERNAL
     endpoint_url = models.TextField(null=True, blank=True)
     credential_reference = models.TextField(null=True, blank=True)
+    # Das Geräte-Bearer, Fernet-verschlüsselt (cred_crypto/MCN_CRED_KEY, Migration
+    # 0108). Nie Klartext; der Registry-Service ver-/entschlüsselt.
+    bearer_encrypted = models.BinaryField(null=True, blank=True)
     data_boundary = models.TextField(db_default="LOCAL_ONLY")
     timeout_seconds = models.IntegerField(db_default=models.Value(120))
     max_attempts = models.IntegerField(db_default=models.Value(3))
