@@ -4482,6 +4482,14 @@ class ContentItem(models.Model):
     language = models.TextField(null=True, blank=True)
     content_hash = models.TextField()
     is_untrusted = models.BooleanField(db_default=models.Value(True))
+    # Datenklasse für das Dispatcher-Tor (Migration 0106); vorerst einwertig.
+    data_class = models.TextField(db_default="LOCAL_ONLY")
+    # Der Werkzeug-Aufruf, der diesen Text erzeugt hat (UNIQUE in der DB → kein
+    # zweites Transkript bei doppeltem Ergebnis).
+    source_tool_call = models.ForeignKey(
+        "ToolCall", models.DO_NOTHING, db_column="source_tool_call_id",
+        null=True, blank=True, related_name="produced_content",
+    )
     created_at = models.DateTimeField(db_default=Now())
 
     class Meta:
@@ -4556,6 +4564,12 @@ class AiRun(models.Model):
     result_status = models.TextField(null=True, blank=True)
     error_message = models.TextField(null=True, blank=True)
     resource_usage = models.JSONField(default=dict)
+    # Ein Lauf ist der Protokolleintrag EINES Modell-Aufrufs; er hängt (nullbar für
+    # Alt-Läufe/Einzelaufrufe ohne Workflow) an einem durablen workflow_run (0106).
+    workflow_run = models.ForeignKey(
+        "WorkflowRun", models.DO_NOTHING, db_column="workflow_run_id",
+        null=True, blank=True, related_name="ai_runs",
+    )
 
     class Meta:
         managed = False
@@ -4607,3 +4621,127 @@ class AiProposal(models.Model):
 
     def __str__(self):
         return f"{self.proposal_type} → {self.target_type} ({self.status})"
+
+
+class WorkflowRun(models.Model):
+    """ai.workflow_run — durabler, wiederaufnehmbarer Workflow-Lauf (Migration 0106).
+
+    Der Anker eines KI-Workflows über Zeit: mehrere Modell-Aufrufe (`ai_run`) und
+    Werkzeug-Aufrufe (`tool_call`) hängen daran, und er darf **warten** (WAITING),
+    während ein passives Gerät gepollt wird. `context` trägt nur Referenzen/IDs,
+    **nie personenbezogenen Rohtext** (der lebt im löschbaren `content_item`).
+    Statusübergänge erzwingt der Trigger `guard_workflow_run`.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    workflow_name = models.TextField()
+    workflow_version = models.TextField()
+    triggered_by_user = models.ForeignKey(
+        AppUser, models.DO_NOTHING, db_column="triggered_by_user_id",
+        related_name="workflow_runs",
+    )
+    # QUEUED | RUNNING | WAITING | DONE | FAILED | CANCELLED
+    status = models.TextField(db_default="QUEUED")
+    current_step = models.TextField(null=True, blank=True)
+    context = models.JSONField(default=dict)
+    error_message = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        managed = False
+        db_table = 'ai"."workflow_run'
+
+    def __str__(self):
+        return f"{self.workflow_name} ({self.status})"
+
+
+class Tool(models.Model):
+    """ai.tool — Registry eines Werkzeugs (Migration 0106). Konfiguration, nicht Code.
+
+    Ein Werkzeug hat genau EINE Capability. `invocation_mode` unterscheidet externes
+    Gerät (SYNC/ASYNC — bei ASYNC pollt MCN) von in-process (INTERNAL: LLM über den
+    Adapter, DOMAIN_QUERY über die Lese-Services). Das Bearer-Secret liegt nie hier,
+    nur ein `credential_reference` (Fernet unter MCN_CRED_KEY). `tool_key`/`capability`
+    sind die unveränderliche Identität (Trigger `guard_tool`).
+    """
+
+    id = models.UUIDField(primary_key=True)
+    tool_key = models.TextField(unique=True)
+    label = models.TextField()
+    capability = models.TextField()          # ASR|VISION|OCR|LLM|DOMAIN_QUERY
+    invocation_mode = models.TextField()     # SYNC|ASYNC|INTERNAL
+    endpoint_url = models.TextField(null=True, blank=True)
+    credential_reference = models.TextField(null=True, blank=True)
+    data_boundary = models.TextField(db_default="LOCAL_ONLY")
+    timeout_seconds = models.IntegerField(db_default=models.Value(120))
+    max_attempts = models.IntegerField(db_default=models.Value(3))
+    backoff_seconds = models.DecimalField(
+        max_digits=8, decimal_places=2, db_default=models.Value(5)
+    )
+    capability_version = models.TextField(db_default="1")
+    contract_version = models.TextField(db_default="1")
+    status = models.TextField(db_default="ACTIVE")   # ACTIVE|INACTIVE
+    last_seen_at = models.DateTimeField(null=True, blank=True)
+    last_health = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'ai"."tool'
+
+    def __str__(self):
+        return f"{self.tool_key} [{self.capability}]"
+
+
+class ToolCall(models.Model):
+    """ai.tool_call — ein tatsächlicher Werkzeug-Aufruf (Migration 0106).
+
+    State-Machine + Queue-Zeile in einem. `(workflow_run, step_key)` ist der
+    Idempotenzschlüssel (UNIQUE): ein Schritt hat GENAU EINE Zeile, Retries
+    wiederholen sie (attempt++, Status zurück auf QUEUED). Trägt **nur Hashes/Refs**,
+    nie personenbezogenen Rohtext; der erzeugte Text landet im `content_item`
+    (`source_tool_call_id`). `capability`/`capability_version` sind bei Dispatch
+    eingefroren. Übergänge und Unveränderlichkeit erzwingt `guard_tool_call`.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    workflow_run = models.ForeignKey(
+        WorkflowRun, models.DO_NOTHING, db_column="workflow_run_id",
+        related_name="tool_calls",
+    )
+    tool = models.ForeignKey(
+        Tool, models.DO_NOTHING, db_column="tool_id", related_name="calls"
+    )
+    capability = models.TextField()
+    capability_version = models.TextField(db_default="1")
+    contract_version = models.TextField(db_default="1")
+    step_key = models.TextField()
+    # QUEUED | RUNNING | SUCCEEDED | FAILED | EXPIRED | CANCELLED
+    status = models.TextField(db_default="QUEUED")
+    attempt = models.IntegerField(db_default=models.Value(0))
+    leased_until = models.DateTimeField(null=True, blank=True)
+    deadline_at = models.DateTimeField(null=True, blank=True)
+    request_hash = models.TextField(null=True, blank=True)
+    input_ref = models.JSONField(default=dict)
+    output_ref = models.JSONField(null=True, blank=True)
+    output_hash = models.TextField(null=True, blank=True)
+    is_untrusted = models.BooleanField(db_default=models.Value(True))
+    error_code = models.TextField(null=True, blank=True)
+    error_message = models.TextField(null=True, blank=True)
+    metrics = models.JSONField(default=dict)
+    cost_units = models.DecimalField(
+        max_digits=14, decimal_places=4, null=True, blank=True
+    )
+    cost_currency = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'ai"."tool_call'
+
+    def __str__(self):
+        return f"{self.capability}/{self.step_key} ({self.status})"
