@@ -9,6 +9,7 @@ import {
   ProjectCategory,
   ProjectCreate,
   ProjectDetail,
+  ProjectInternalNoteInput,
   ProjectPage,
   ProjectQuery,
   ProjectResponsibleInput,
@@ -127,6 +128,15 @@ export class ProjektService {
    */
   setResponsible(id: string, payload: ProjectResponsibleInput): Observable<ProjectDetail> {
     return this.http.post<ProjectDetail>(`${this.base}/${id}/responsible`, payload);
+  }
+
+  /**
+   * Freies Notizfeld setzen/leeren (Recht workflow.AENDERN, Projekte-7).
+   * `internal_note = null`/leer entfernt die Notiz. Liefert das aktualisierte
+   * Projektdetail.
+   */
+  setInternalNote(id: string, payload: ProjectInternalNoteInput): Observable<ProjectDetail> {
+    return this.http.post<ProjectDetail>(`${this.base}/${id}/internal-note`, payload);
   }
 
   /** Logbuch-Eintrag anlegen (Recht workflow.AENDERN). */

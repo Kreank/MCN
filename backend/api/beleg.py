@@ -155,6 +155,9 @@ class QuoteDetailOut(QuoteOut):
     # Nur bei versendeten Angeboten aufgelöst; null, wenn kein Auftrag/kein
     # Kommunikationsweg hinterlegt ist (dann trägt der Nutzer sie manuell ein).
     recipient_email: str | None = None
+    # Anschreiben-Freitext im Belegkopf (Dokumente-9). Beleginhalt: ab VERSENDET
+    # eingefroren (B-30). null/leer = kein Anschreiben.
+    cover_letter: str | None = None
     rubriken: list[RubrikOut] = []
     lines: list[QuoteLineOut]
 
@@ -261,6 +264,8 @@ class QuoteIn(Schema):
     work_order_id: UUID | None = None
     quote_date: date | None = None
     valid_until_date: date | None = None
+    # Anschreiben-Freitext im Belegkopf (Dokumente-9), optional.
+    cover_letter: str | None = None
     rubriken: list[RubrikIn] = []
     lines: list[QuoteLineIn] = []
 
@@ -443,6 +448,7 @@ def _quote_detail(quote_id):
         has_snapshot=quote.billing_snapshot is not None,
         content_hash=quote.content_hash,
         recipient_email=recipient_email,
+        cover_letter=quote.cover_letter,
         rubriken=_rubriken_out(quote),
         lines=lines,
     )
@@ -598,6 +604,7 @@ def create_quote(request, payload: QuoteIn):
             work_order_id=payload.work_order_id,
             quote_date=payload.quote_date,
             valid_until_date=payload.valid_until_date,
+            cover_letter=payload.cover_letter,
             rubriken=[r.dict() for r in payload.rubriken],
             lines=[line.dict() for line in payload.lines],
         )
@@ -620,6 +627,10 @@ class QuoteUpdateIn(Schema):
     # Projektzuordnung setzen (oder mit `null` lösen). Weggelassen = unverändert.
     # Nur im Entwurf möglich (Verschieben) — ab VERSENDET friert die DB alles ein.
     project_id: UUID | None = None
+    # Anschreiben-Freitext (Dokumente-9). Beleginhalt: nur im editierbaren Status
+    # (ENTWURF/INTERN_GEPRUEFT/FREIGEGEBEN) änderbar, ab VERSENDET eingefroren.
+    # Weggelassen = unverändert, `null`/leer = löschen.
+    cover_letter: str | None = None
     rubriken: list[RubrikIn] | None = None
     lines: list[QuoteLineIn] | None = None
 
@@ -650,6 +661,7 @@ def update_quote(request, quote_id: UUID, payload: QuoteUpdateIn):
                 payload.work_order_id if "work_order_id" in gesetzt else ...
             ),
             project_id=payload.project_id if "project_id" in gesetzt else ...,
+            cover_letter=payload.cover_letter if "cover_letter" in gesetzt else ...,
             rubriken=[r.dict() for r in payload.rubriken or []],
             lines=(
                 [line.dict() for line in payload.lines]

@@ -247,6 +247,8 @@ export class AngebotEditor {
    * `deZuApiDezimal` in den Punkt-String gewandelt. */
   protected readonly kopfForm = this.fb.group({
     title: this.fb.control('', { nonNullable: true }),
+    // Anschreiben-Freitext (Dokumente-9). Nur Angebot; ab Versand eingefroren.
+    cover_letter: this.fb.control('', { nonNullable: true }),
     quote_date: this.fb.control('', { nonNullable: true }),
     valid_until_date: this.fb.control('', { nonNullable: true }),
     invoice_date: this.fb.control('', { nonNullable: true }),
@@ -672,6 +674,7 @@ export class AngebotEditor {
       const q = data as QuoteDetail;
       this.kopfForm.reset({
         title: q.title ?? '',
+        cover_letter: q.cover_letter ?? '',
         quote_date: q.quote_date ?? '',
         valid_until_date: q.valid_until_date ?? '',
         invoice_date: '',
@@ -1633,6 +1636,8 @@ export class AngebotEditor {
     }
     return {
       title: kopf.title.trim(),
+      // Anschreiben-Freitext (Dokumente-9): leer = null (löschen).
+      cover_letter: kopf.cover_letter.trim() || null,
       quote_date: kopf.quote_date || null,
       valid_until_date: kopf.valid_until_date || null,
       rubriken,

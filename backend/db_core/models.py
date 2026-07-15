@@ -145,6 +145,7 @@ class Party(models.Model):
         db_column="acquisition_source_id",
         related_name="parties",
     )
+    note = models.TextField(null=True, blank=True)
     version = models.IntegerField()
     created_at = models.DateTimeField(db_default=Now())
     updated_at = models.DateTimeField(db_default=Now())
@@ -256,6 +257,7 @@ class PartyAddress(models.Model):
     is_primary = models.BooleanField()
     valid_from = models.DateField()
     valid_until = models.DateField(null=True, blank=True)
+    label = models.TextField(null=True, blank=True)
     created_at = models.DateTimeField(db_default=Now())
 
     class Meta:
@@ -543,6 +545,7 @@ class Project(models.Model):
         blank=True,
         related_name="projects",
     )
+    internal_note = models.TextField(null=True, blank=True)
     version = models.IntegerField()
     created_at = models.DateTimeField(db_default=Now())
     updated_at = models.DateTimeField(db_default=Now())
@@ -921,6 +924,7 @@ class Quote(models.Model):
     content_hash = models.TextField(null=True, blank=True)
     sent_at = models.DateTimeField(null=True, blank=True)
     replaced_by_quote_id = models.UUIDField(null=True, blank=True)
+    cover_letter = models.TextField(null=True, blank=True)
     version = models.IntegerField()
     created_at = models.DateTimeField(db_default=Now())
     updated_at = models.DateTimeField(db_default=Now())

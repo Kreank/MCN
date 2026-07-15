@@ -58,6 +58,12 @@ export class PartyService {
     );
   }
 
+  /** Freies Notizfeld setzen/leeren (`note=null`/leer entfernt es). Recht
+   * identity.AENDERN. Liefert das aktualisierte Kontaktdetail (Kontakte-3). */
+  setNote(partyId: string, note: string | null): Observable<PartyDetail> {
+    return this.http.put<PartyDetail>(`${this.base}/${partyId}/note`, { note });
+  }
+
   // --- Kommunikationswege --------------------------------------------------
   listContactPoints(partyId: string): Observable<ContactPoint[]> {
     return this.http.get<ContactPoint[]>(`${this.base}/${partyId}/contact-points`);

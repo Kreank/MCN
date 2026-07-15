@@ -98,6 +98,8 @@ export interface ProjectDetail extends Project {
   properties: PropertyRef[];
   service_cases: ServiceCaseRef[];
   primary_contact: ContactCard | null;
+  // Freies Notizfeld getrennt vom Logbuch (Projekte-7). null = keine Notiz.
+  internal_note: string | null;
 }
 
 // --- Vorgang (service_case) Detail -----------------------------------------
@@ -232,6 +234,11 @@ export interface ProjectCreate {
 // responsible_user_id = null entfernt die Zuweisung.
 export interface ProjectResponsibleInput {
   responsible_user_id: string | null;
+}
+
+// POST /api/workflow/projects/{id}/internal-note — null/leer entfernt die Notiz.
+export interface ProjectInternalNoteInput {
+  internal_note: string | null;
 }
 
 // POST /api/workflow/projects/{id}/log

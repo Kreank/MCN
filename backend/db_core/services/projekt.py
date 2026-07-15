@@ -129,6 +129,24 @@ def set_project_responsible(actor_app_user_id, *, project_id, responsible_user_i
     )
 
 
+def set_project_internal_note(actor_app_user_id, *, project_id, internal_note):
+    """Setzt das freie Notizfeld eines Projekts (workflow.project.internal_note).
+
+    Freitext getrennt vom Logbuch (Hero-Angleichung Projekte-7). Leerer/blanker
+    Text wird zu NULL normalisiert, damit „gelöscht" und „nie gesetzt" gleich
+    aussehen. Additive Spalte, kein No-Update-Trigger; Updates werden auditiert.
+    Gibt das frisch geladene Projekt zurück.
+    """
+    ensure_exists(Project, project_id, "Projekt")
+    wert = internal_note.strip() if internal_note and internal_note.strip() else None
+    with business_transaction(actor_app_user_id):
+        Project.objects.filter(id=project_id).update(internal_note=wert)
+    return (
+        Project.objects.select_related("responsible_user", "category")
+        .get(id=project_id)
+    )
+
+
 def promote_service_case_to_project(actor_app_user_id, *, service_case_id, name=None):
     """Stuft einen Vorgang zum Projekt hoch: legt ein neues Projekt an und hängt
     den Vorgang UND alle seine Aufträge darunter (project_id setzen).

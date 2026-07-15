@@ -121,6 +121,9 @@ class ProjectDetailOut(ProjectOut):
     updated_at: datetime
     properties: list[PropertyRefOut]
     service_cases: list[ServiceCaseOut]
+    # Freies Notizfeld getrennt vom Logbuch (Projekte-7). Spalte am Projekt selbst,
+    # kein Zusatz-Query.
+    internal_note: str | None = None
     # Abgeleiteter Hauptkontakt (Eigentümer der ersten Liegenschaft), damit der
     # Kunde von der Projektübersicht aus direkt erreichbar ist — ohne den Umweg
     # Liegenschaft → Eigentümer. None, wenn keine Liegenschaft/kein Eigentümer.
@@ -347,6 +350,7 @@ def _project_detail(project_id, *, eigene_objekte=None):
         updated_at=project.updated_at,
         properties=properties,
         service_cases=service_cases,
+        internal_note=project.internal_note,
         primary_contact=_primary_contact(links),
     )
 
@@ -477,6 +481,38 @@ def set_project_responsible(request, project_id: UUID, payload: ResponsibleIn):
             actor,
             project_id=project_id,
             responsible_user_id=payload.responsible_user_id,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _project_detail(project_id)
+
+
+class InternalNoteIn(Schema):
+    # None/leer entfernt die Notiz.
+    internal_note: str | None = None
+
+
+@router.post(
+    "/projects/{project_id}/internal-note",
+    response=ProjectDetailOut,
+    auth=django_auth,
+)
+def set_project_internal_note(request, project_id: UUID, payload: InternalNoteIn):
+    """Freies Notizfeld eines Projekts setzen/leeren (workflow.project.internal_note).
+
+    Freitext getrennt vom Logbuch (Hero-Angleichung Projekte-7). Torfunktion
+    `require` (AENDERN, fail-closed) wie beim Verantwortlichen: das Projekt kann
+    über Objekte laufen, die der Akteur nicht sehen darf, und diese Ansicht wertet
+    den row_scope nicht aus — ein Konto mit Scope 'EIGENE' erhält 403. Unbekanntes
+    Projekt → 404 (vor dem Service, damit es nicht als 422 durchschlägt).
+    """
+    actor, _ = require(request, "workflow", "AENDERN")
+    _require_project(project_id)
+    try:
+        projekt_service.set_project_internal_note(
+            actor,
+            project_id=project_id,
+            internal_note=payload.internal_note,
         )
     except ValueError as exc:
         raise HttpError(422, str(exc))

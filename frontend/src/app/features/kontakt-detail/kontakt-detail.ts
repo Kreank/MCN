@@ -119,6 +119,19 @@ export class KontaktDetail {
   protected readonly darfQuelleAendern = computed(() => this.auth.darf('identity', 'AENDERN'));
   protected readonly quelleLaedt = signal(false);
 
+  // Freies Notizfeld (Kontakte-3): Inline-Editor im Stammdaten-Tab.
+  protected readonly notizForm = this.fb.group({
+    note: this.fb.control('', { nonNullable: true }),
+  });
+  protected readonly notizLaedt = signal(false);
+  private readonly notizEntwurf = signal('');
+  /** True, sobald der Textstand vom gespeicherten note abweicht. */
+  protected readonly notizGeaendert = computed(() => {
+    const d = this.daten();
+    if (!d) return false;
+    return this.notizEntwurf() !== (d.note ?? '');
+  });
+
   /** Auswahloptionen: aktive Kanäle plus der aktuell gesetzte, falls dieser
    * zwischenzeitlich deaktiviert wurde (sonst fiele er wortlos aus der Liste). */
   protected readonly quelleOptionen = computed<AcquisitionSource[]>(() => {
@@ -225,6 +238,8 @@ export class KontaktDetail {
     city: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
     address_addition: this.fb.control('', { nonNullable: true }),
     is_primary: this.fb.control(true, { nonNullable: true }),
+    // Freier Titel der Objektadresse (Kontakte-6), z. B. „Baustelle Nord".
+    label: this.fb.control('', { nonNullable: true }),
   });
   protected readonly ansprechForm = this.fb.group({
     quelle: this.fb.control('bestehend', { nonNullable: true, validators: [Validators.required] }),
@@ -238,6 +253,10 @@ export class KontaktDetail {
   protected readonly ansprechNeu = computed(() => this.ansprechForm.controls.quelle.value === 'neu');
 
   constructor() {
+    this.notizForm.controls.note.valueChanges
+      .pipe(takeUntilDestroyed())
+      .subscribe((v) => this.notizEntwurf.set(v));
+
     // Aktive Akquisekanäle einmal laden (für die Quelle-Auswahl im Stammdaten-Tab).
     this.firmaSvc.listAcquisitionSources(false).subscribe({
       next: (q) => this.akquiseQuellen.set(q),
@@ -358,6 +377,7 @@ export class KontaktDetail {
         this.adresseForm.reset({
           address_type: 'BUSINESS', street: '', house_number: '',
           postal_code: '', city: '', address_addition: '', is_primary: true,
+          label: '',
         });
         break;
       case 'ansprechpartner':
@@ -426,6 +446,7 @@ export class KontaktDetail {
       house_number: v.house_number.trim() || null,
       address_addition: v.address_addition.trim() || null,
       is_primary: v.is_primary,
+      label: v.label.trim() || null,
     };
     this.dialogLaedt.set(true);
     this.svc.createAddress(d.id, payload).subscribe({
@@ -549,6 +570,7 @@ export class KontaktDetail {
       next: (data) => {
         if (rid !== this.reqId) return;
         this.state.set({ kind: 'ready', data });
+        this.notizForm.reset({ note: data.note ?? '' });
         // Kontakte-9: Aus der Org-Anlage übergeleitet („… und Ansprechpartner
         // hinzufügen") — direkt auf dem Ansprechpartner-Tab den Dialog öffnen.
         // Nur bei Organisationen sinnvoll (Personen haben keinen AP-Tab).
@@ -588,6 +610,26 @@ export class KontaktDetail {
       error: (err) => {
         this.quelleLaedt.set(false);
         this.meldung.set({ art: 'fehler', text: fehlerDetail(err) ?? 'Der Akquisekanal konnte nicht gesetzt werden.' });
+      },
+    });
+  }
+
+  /** Freies Notizfeld setzen/leeren (Kontakte-3). */
+  notizSpeichern(): void {
+    const d = this.daten();
+    if (!d || this.notizLaedt() || !this.notizGeaendert()) return;
+    const roh = this.notizForm.getRawValue().note.trim();
+    this.notizLaedt.set(true);
+    this.svc.setNote(d.id, roh || null).subscribe({
+      next: (data) => {
+        this.notizLaedt.set(false);
+        if (this.state().kind === 'ready') this.state.set({ kind: 'ready', data });
+        this.notizForm.reset({ note: data.note ?? '' });
+        this.meldung.set({ art: 'erfolg', text: 'Notiz gespeichert.' });
+      },
+      error: (err) => {
+        this.notizLaedt.set(false);
+        this.meldung.set({ art: 'fehler', text: fehlerDetail(err) ?? 'Die Notiz konnte nicht gespeichert werden.' });
       },
     });
   }

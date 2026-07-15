@@ -117,6 +117,37 @@
           </dl>
         }
 
+        <!-- Freies Notizfeld (Kontakte-3): getrennt vom Logbuch -->
+        <section class="mappe-block" aria-labelledby="notiz-titel">
+          <div class="mappe-block__kopf">
+            <h2 id="notiz-titel" class="mappe-block__titel">Notiz</h2>
+          </div>
+          @if (darfAendern()) {
+            <form [formGroup]="notizForm" (ngSubmit)="notizSpeichern()">
+              <app-feld
+                [control]="notizForm.controls.note"
+                label="Interne Notiz"
+                typ="textarea"
+                hinweis="Frei, nur intern sichtbar. Getrennt vom Logbuch."
+                platzhalter="z. B. Besonderheiten, Absprachen, Erreichbarkeit …"
+              />
+              <div class="mappe-block__aktionen">
+                <button
+                  type="submit"
+                  class="btn btn--primary btn--klein"
+                  [disabled]="!notizGeaendert() || notizLaedt()"
+                >
+                  {{ notizLaedt() ? 'Speichert …' : 'Notiz speichern' }}
+                </button>
+              </div>
+            </form>
+          } @else if (daten()!.note) {
+            <p class="quelle-anzeige">{{ daten()!.note }}</p>
+          } @else {
+            <p class="mappe-block__leer">Keine Notiz hinterlegt.</p>
+          }
+        </section>
+
         <!-- Akquisekanal / Quelle -->
         <section class="mappe-block" aria-labelledby="quelle-titel">
           <div class="mappe-block__kopf">
@@ -211,6 +242,7 @@
                         @if (pa.is_primary) { <span class="stamp stamp--positive">Primär</span> }
                       </span>
                       <span class="ref__name">{{ adresseZeile(pa.address) }}</span>
+                      @if (pa.label) { <span class="ref__meta">{{ pa.label }}</span> }
                     </li>
                   }
                 </ul>
@@ -387,6 +419,7 @@
         <app-feld [control]="adresseForm.controls.postal_code" label="PLZ" [pflicht]="true" />
         <app-feld [control]="adresseForm.controls.city" label="Ort" [pflicht]="true" />
         <app-feld [control]="adresseForm.controls.address_addition" label="Adresszusatz" hinweis="Optional, z. B. „Hinterhaus“ oder „c/o“." />
+        <app-feld [control]="adresseForm.controls.label" label="Bezeichnung" hinweis="Optional, z. B. „Baustelle Nord“." />
         <app-feld [control]="adresseForm.controls.is_primary" label="Als primäre Adresse dieses Typs kennzeichnen" typ="checkbox" />
       </form>
       <div dialog-aktionen class="dialog__aktionen">

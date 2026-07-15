@@ -155,6 +155,24 @@ def set_party_acquisition_source(actor_app_user_id, *, party_id, source_id):
     return party
 
 
+def set_party_note(actor_app_user_id, *, party_id, note):
+    """Setzt/leert das freie Notizfeld eines Kontakts (identity.party.note).
+
+    Freitext im Stammdaten-Tab (Hero-Angleichung Kontakte-3). Leerer/blanker Text
+    wird zu NULL normalisiert, damit „gelöscht" und „nie gesetzt" gleich aussehen.
+    Additive Spalte, kein No-Update-Trigger; Updates werden auditiert. Gibt die
+    Party zurück.
+    """
+    party = Party.objects.filter(id=party_id).first()
+    if party is None:
+        raise ValueError("Kontakt nicht gefunden.")
+    party.note = note.strip() if note and note.strip() else None
+    with business_transaction(actor_app_user_id):
+        party.save(update_fields=["note", "updated_at"])
+    party.refresh_from_db()
+    return party
+
+
 # ---------------------------------------------------------------------------
 # Ansprechpartner — party_relationship (CONTACT_PERSON_FOR)
 # Konvention: from_party (Person) ist Ansprechpartner FÜR to_party (Organisation).
@@ -338,12 +356,15 @@ def add_address(
     country_code="DE",
     is_primary=True,
     valid_from=None,
+    label=None,
 ):
     """Legt eine Adresse an und ordnet sie dem Kontakt mit Typ zu.
 
     Die zeitliche Exklusivität je (Party, Typ) für primäre Adressen erzwingt der
     DB-Constraint excl_party_address_primary; seine Verletzung wird als
-    ValueError (→ 422) gemeldet. Gibt die angelegte party_address zurück.
+    ValueError (→ 422) gemeldet. `label` ist ein optionaler freier Titel der
+    Zuordnung (z. B. „Baustelle Nord", Hero-Angleichung Kontakte-6) — leer wird
+    zu NULL normalisiert. Gibt die angelegte party_address zurück.
     """
     if address_type not in ADDRESS_TYPES:
         raise ValueError(
@@ -371,6 +392,7 @@ def add_address(
                 address_type=address_type,
                 is_primary=is_primary,
                 valid_from=valid_from,
+                label=(label.strip() if label and label.strip() else None),
             )
     except IntegrityError as exc:
         if "excl_party_address_primary" in str(exc):

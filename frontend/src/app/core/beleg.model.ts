@@ -282,6 +282,9 @@ export interface QuoteDetail extends Quote {
    *  Auftrag abgeleiteten Empfängerpartei (nur bei versendeten Angeboten, sonst
    *  null — dann trägt der Nutzer die Adresse im Dialog manuell ein). */
   recipient_email: string | null;
+  /** Anschreiben-Freitext im Belegkopf (Dokumente-9). null = kein Anschreiben.
+   *  Beleginhalt: ab VERSENDET eingefroren (B-30). */
+  cover_letter: string | null;
   rubriken: Rubrik[];
   lines: QuoteLine[];
 }
@@ -512,6 +515,8 @@ export interface QuoteCreate {
   work_order_id?: string | null;
   quote_date?: string | null;
   valid_until_date?: string | null;
+  /** Anschreiben-Freitext im Belegkopf (Dokumente-9), optional. */
+  cover_letter?: string | null;
   rubriken?: RubrikInput[];
   lines: QuoteLineInput[];
 }
@@ -536,6 +541,10 @@ export interface QuoteUpdate {
    *  Spalten außer dem Status ein. Passt der hängende Auftrag nicht zum neuen
    *  Projekt → 422. */
   project_id?: string | null;
+  /** Anschreiben-Freitext (Dokumente-9). Beleginhalt: nur im editierbaren Status
+   *  änderbar, ab VERSENDET eingefroren (422). Weggelassen = unverändert,
+   *  `null`/leer = löschen. */
+  cover_letter?: string | null;
   rubriken?: RubrikInput[];
   lines?: QuoteLineInput[];
 }

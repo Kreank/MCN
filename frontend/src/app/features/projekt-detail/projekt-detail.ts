@@ -151,6 +151,21 @@ export class ProjektDetail {
       map((p) => p.items.map((x) => ({ id: x.id, label: x.display_name }))),
     );
 
+  // Freies Notizfeld (Projekte-7): Inline-Editor in der Übersicht, getrennt vom
+  // Logbuch. Wird bei jedem Projekt-Load frisch aus internal_note befüllt.
+  protected readonly notizForm = this.fb.group({
+    internal_note: this.fb.control('', { nonNullable: true }),
+  });
+  protected readonly notizLaedt = signal(false);
+  /** True, sobald der Textstand vom gespeicherten internal_note abweicht. */
+  protected readonly notizGeaendert = computed(() => {
+    const d = this.daten();
+    if (!d) return false;
+    return this.notizEntwurf() !== (d.internal_note ?? '');
+  });
+  // Reaktiver Spiegel des Formularwerts (für notizGeaendert), gepflegt über valueChanges.
+  private readonly notizEntwurf = signal('');
+
   protected readonly logForm = this.fb.group({
     entry: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
     category: this.fb.control('NOTIZ', { nonNullable: true, validators: [Validators.required] }),
@@ -183,6 +198,10 @@ export class ProjektDetail {
   });
 
   constructor() {
+    this.notizForm.controls.internal_note.valueChanges
+      .pipe(takeUntilDestroyed())
+      .subscribe((v) => this.notizEntwurf.set(v));
+
     this.route.paramMap.pipe(takeUntilDestroyed()).subscribe((pm) => {
       const id = pm.get('id');
       this.tab.set('uebersicht');
@@ -292,6 +311,29 @@ export class ProjektDetail {
     this.formularMeldung.set(null);
     felderAlsBeruehrtMarkieren(form);
     return form.invalid;
+  }
+
+  // --- Freies Notizfeld (Projekte-7) --------------------------------------
+  notizSpeichern(): void {
+    const d = this.daten();
+    if (!d || this.notizLaedt() || !this.notizGeaendert()) return;
+    const roh = this.notizForm.getRawValue().internal_note.trim();
+    this.notizLaedt.set(true);
+    this.svc.setInternalNote(d.id, { internal_note: roh || null }).subscribe({
+      next: (data) => {
+        this.notizLaedt.set(false);
+        this.state.set({ kind: 'ready', data });
+        this.notizForm.reset({ internal_note: data.internal_note ?? '' });
+        this.meldung.set({ art: 'erfolg', text: 'Notiz gespeichert.' });
+      },
+      error: (err) => {
+        this.notizLaedt.set(false);
+        this.meldung.set({
+          art: 'fehler',
+          text: apiFehlerZuweisen(err, this.notizForm).formular ?? 'Notiz konnte nicht gespeichert werden.',
+        });
+      },
+    });
   }
 
   // --- Logbuch-Eintrag -----------------------------------------------------
@@ -436,7 +478,10 @@ export class ProjektDetail {
     this.state.set({ kind: 'loading' });
     this.svc.get(id).subscribe({
       next: (data) => {
-        if (rid === this.reqId) this.state.set({ kind: 'ready', data });
+        if (rid === this.reqId) {
+          this.state.set({ kind: 'ready', data });
+          this.notizForm.reset({ internal_note: data.internal_note ?? '' });
+        }
       },
       error: (err) => {
         if (rid === this.reqId) this.state.set(fehlerState(err));

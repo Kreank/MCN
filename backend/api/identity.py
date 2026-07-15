@@ -105,11 +105,18 @@ class PartyDetailOut(PartyOut):
     person: PersonOut | None = None
     organization: OrganizationOut | None = None
     acquisition_source: AcquisitionSourceRef | None = None
+    # Freies Notizfeld im Stammdaten-Tab (Kontakte-3). Spalte an der Party selbst.
+    note: str | None = None
 
 
 class AcquisitionSourceIn(Schema):
     # None löst die Quelle wieder (Kontakt ohne Kanal).
     source_id: UUID | None = None
+
+
+class NoteIn(Schema):
+    # None/leer entfernt die Notiz.
+    note: str | None = None
 
 
 class PersonIn(Schema):
@@ -153,6 +160,8 @@ class PartyAddressOut(Schema):
     is_primary: bool
     valid_from: date
     valid_until: date | None = None
+    # Freier Titel der Objektadresse (z. B. „Baustelle Nord", Kontakte-6).
+    label: str | None = None
     address: AddressOut
 
 
@@ -166,6 +175,8 @@ class AddressIn(Schema):
     country_code: str = "DE"
     is_primary: bool = True
     valid_from: date | None = None
+    # Optionaler freier Titel/Beschreibung der Objektadresse (Kontakte-6).
+    label: str | None = None
 
 
 class ContactPointOut(Schema):
@@ -279,6 +290,7 @@ def _party_detail(party_id):
             AcquisitionSourceRef(id=src.id, code=src.code, label=src.label)
             if src else None
         ),
+        note=party.note,
     )
 
 
@@ -344,6 +356,19 @@ def set_acquisition_source(request, party_id: UUID, payload: AcquisitionSourceIn
     try:
         identity_service.set_party_acquisition_source(
             actor, party_id=party_id, source_id=payload.source_id
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _party_detail(party_id)
+
+
+@router.put("/parties/{party_id}/note", response=PartyDetailOut, auth=django_auth)
+def set_party_note(request, party_id: UUID, payload: NoteIn):
+    """Freies Notizfeld eines Kontakts setzen/leeren (identity.party.note, Kontakte-3)."""
+    actor, _ = require(request, "identity", "AENDERN")
+    try:
+        identity_service.set_party_note(
+            actor, party_id=party_id, note=payload.note
         )
     except ValueError as exc:
         raise HttpError(422, str(exc))
@@ -429,6 +454,7 @@ def create_address(request, party_id: UUID, payload: AddressIn):
             country_code=payload.country_code,
             is_primary=payload.is_primary,
             valid_from=payload.valid_from,
+            label=payload.label,
         )
     except ValueError as exc:
         raise HttpError(422, str(exc))
@@ -523,6 +549,7 @@ def _address_link(link_id):
         is_primary=link.is_primary,
         valid_from=link.valid_from,
         valid_until=link.valid_until,
+        label=link.label,
         address=AddressOut.from_orm(link.address),
     )
 

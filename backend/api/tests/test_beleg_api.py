@@ -273,3 +273,47 @@ def test_rechnung_create_ohne_login(anonymous_client, db, app_user):
         content_type="application/json",
     )
     assert r.status_code in (401, 403)
+
+
+# --- Anschreiben-Freitext am Angebot (Hero-Angleichung Dokumente-9) ---------
+
+@pytest.mark.django_db
+def test_cover_letter_setzen_auslesen_und_freeze(client, db, app_user, seeded):
+    """Anschreiben im Entwurf setzbar/auslesbar, nach Versand eingefroren (B-30)."""
+    c = _logged_in_client(client, with_app_user=True)
+    qid = seeded["quote"].id
+
+    # Entwurf: noch kein Anschreiben.
+    assert c.get(f"/api/invoicing/quotes/{qid}").json()["cover_letter"] is None
+
+    # Setzen (PUT-Kopf, wird getrimmt) — Positionen unangetastet.
+    r = c.put(
+        f"/api/invoicing/quotes/{qid}",
+        data={"cover_letter": "  Sehr geehrte Damen und Herren, anbei unser Angebot.  "},
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    assert r.json()["cover_letter"] == "Sehr geehrte Damen und Herren, anbei unser Angebot."
+    # Persistent im Detail.
+    assert (
+        c.get(f"/api/invoicing/quotes/{qid}").json()["cover_letter"]
+        == "Sehr geehrte Damen und Herren, anbei unser Angebot."
+    )
+
+    # Versenden — ab jetzt friert die DB den Beleginhalt ein.
+    rs = c.post(f"/api/invoicing/quotes/{qid}/send", content_type="application/json")
+    assert rs.status_code == 200, rs.content
+    assert rs.json()["status"] == "VERSENDET"
+
+    # Anschreiben am versendeten Angebot ändern → 422 (Beleginhalt eingefroren).
+    r2 = c.put(
+        f"/api/invoicing/quotes/{qid}",
+        data={"cover_letter": "Nachtraeglich geaendert"},
+        content_type="application/json",
+    )
+    assert r2.status_code == 422
+    # Der ursprüngliche Text bleibt erhalten.
+    assert (
+        c.get(f"/api/invoicing/quotes/{qid}").json()["cover_letter"]
+        == "Sehr geehrte Damen und Herren, anbei unser Angebot."
+    )

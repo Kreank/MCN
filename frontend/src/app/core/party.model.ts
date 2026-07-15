@@ -51,6 +51,13 @@ export interface PartyDetail extends Party {
   person: Person | null;
   organization: Organization | null;
   acquisition_source: AcquisitionSourceRef | null;
+  // Freies Notizfeld im Stammdaten-Tab (Kontakte-3). null = keine Notiz.
+  note: string | null;
+}
+
+// PUT /api/identity/parties/{id}/note — null/leer entfernt die Notiz.
+export interface PartyNoteInput {
+  note: string | null;
 }
 
 // --- Anlage (POST /api/identity/parties/person | /organization) ------------
@@ -100,6 +107,8 @@ export interface PartyAddress {
   is_primary: boolean;
   valid_from: string;
   valid_until: string | null;
+  // Freier Titel/Beschreibung der Objektadresse (Kontakte-6). null = ohne.
+  label: string | null;
   address: Address;
 }
 
@@ -113,6 +122,8 @@ export interface AddressIn {
   country_code?: string;
   is_primary?: boolean;
   valid_from?: string | null;
+  // Optionaler freier Titel/Beschreibung der Objektadresse (Kontakte-6).
+  label?: string | null;
 }
 
 export interface ContactPoint {

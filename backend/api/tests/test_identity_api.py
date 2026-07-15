@@ -399,3 +399,76 @@ def test_akquisekanal_setzen_ohne_recht_403(client_with_role):
         data={"source_id": None}, content_type="application/json",
     )
     assert r.status_code == 403
+
+
+# --- Freies Notizfeld am Kontakt (Hero-Angleichung Kontakte-3) -------------
+
+@pytest.mark.django_db
+def test_party_note_setzen_und_auslesen(admin_client, seeded):
+    pid = str(seeded["persons"][0].id)
+    # Ohne Notiz ist das Feld None.
+    assert admin_client.get(f"/api/identity/parties/{pid}").json()["note"] is None
+
+    r = admin_client.put(
+        f"/api/identity/parties/{pid}/note",
+        data={"note": "  VIP-Kunde, nur per Mail  "},
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    assert r.json()["note"] == "VIP-Kunde, nur per Mail"
+    # Persistent im Detail auslesbar.
+    assert (
+        admin_client.get(f"/api/identity/parties/{pid}").json()["note"]
+        == "VIP-Kunde, nur per Mail"
+    )
+    # Leeren normalisiert auf None.
+    r2 = admin_client.put(
+        f"/api/identity/parties/{pid}/note",
+        data={"note": ""}, content_type="application/json",
+    )
+    assert r2.status_code == 200
+    assert r2.json()["note"] is None
+
+
+@pytest.mark.django_db
+def test_party_note_ohne_recht_403(client_with_role):
+    """NUR_LESEN hat kein identity/AENDERN."""
+    c = client_with_role("NUR_LESEN")
+    r = c.put(
+        f"/api/identity/parties/{uuid.uuid4()}/note",
+        data={"note": "x"}, content_type="application/json",
+    )
+    assert r.status_code == 403
+
+
+# --- Bezeichnung an der Objektadresse (Hero-Angleichung Kontakte-6) --------
+
+@pytest.mark.django_db
+def test_adresse_label_setzen_und_listen(admin_client, seeded):
+    party = seeded["persons"][2]
+    r = admin_client.post(
+        f"/api/identity/parties/{party.id}/addresses",
+        data={"address_type": "BUSINESS", "street": "Nordweg", "postal_code": "22111",
+              "city": "Hamburg", "is_primary": True, "valid_from": "2021-01-01",
+              "label": "  Baustelle Nord  "},
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    # Anlage-Antwort trägt das (getrimmte) Label.
+    assert r.json()["label"] == "Baustelle Nord"
+    # Die Adressliste führt es mit.
+    lst = admin_client.get(f"/api/identity/parties/{party.id}/addresses").json()
+    assert any(a["label"] == "Baustelle Nord" for a in lst)
+
+
+@pytest.mark.django_db
+def test_adresse_ohne_label_bleibt_none(admin_client, seeded):
+    party = seeded["persons"][1]
+    r = admin_client.post(
+        f"/api/identity/parties/{party.id}/addresses",
+        data={"address_type": "POSTAL", "street": "Ohnename", "postal_code": "10000",
+              "city": "Berlin", "is_primary": True, "valid_from": "2021-01-01"},
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    assert r.json()["label"] is None

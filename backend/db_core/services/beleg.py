@@ -530,6 +530,7 @@ def create_quote(
     work_order_id=None,
     quote_date=None,
     valid_until_date=None,
+    cover_letter=None,
     lines=None,
     rubriken=None,
 ):
@@ -559,6 +560,9 @@ def create_quote(
             status="ENTWURF",
             quote_date=quote_date,
             valid_until_date=valid_until_date,
+            cover_letter=(
+                cover_letter.strip() if cover_letter and cover_letter.strip() else None
+            ),
             net_total=net_total,
             tax_total=tax_total,
             gross_total=gross_total,
@@ -642,6 +646,7 @@ def update_quote(
     valid_until_date=...,
     work_order_id=...,
     project_id=...,
+    cover_letter=...,
     lines=None,
     rubriken=None,
 ):
@@ -686,6 +691,7 @@ def update_quote(
         title is not None
         or quote_date is not ...
         or valid_until_date is not ...
+        or cover_letter is not ...
         or lines is not None
     )
     if inhalt_geaendert and quote.status not in QUOTE_EDITIERBAR:
@@ -703,6 +709,13 @@ def update_quote(
         kopf["quote_date"] = quote_date
     if valid_until_date is not ...:
         kopf["valid_until_date"] = valid_until_date
+    # Anschreiben-Freitext (Dokumente-9): Beleginhalt — durch das Gate oben ab
+    # VERSENDET gesperrt; leer wird zu NULL normalisiert. Der DB-Trigger
+    # invoicing.freeze_sent_quote friert die Spalte zusätzlich ein (letzte Instanz).
+    if cover_letter is not ...:
+        kopf["cover_letter"] = (
+            cover_letter.strip() if cover_letter and cover_letter.strip() else None
+        )
     # Zielprojekt zuerst bestimmen: die Auftragsprüfung darunter muss gegen das
     # NEUE Projekt laufen, nicht gegen das alte.
     ziel_project = quote.project_id

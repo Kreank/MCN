@@ -121,6 +121,35 @@
           <div class="feld"><dt class="feld__label">Zieltermin</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.target_end_date">{{ daten()!.target_end_date || '—' }}</dd></div>
           <div class="feld"><dt class="feld__label">Liegenschaften / Vorgänge</dt><dd class="feld__wert">{{ daten()!.properties.length }} / {{ daten()!.service_cases.length }}</dd></div>
         </dl>
+
+        <!-- Freies Notizfeld (Projekte-7): getrennt vom Logbuch -->
+        <section class="notizfeld" aria-labelledby="notiz-titel">
+          <h3 id="notiz-titel" class="notizfeld__titel">Notiz</h3>
+          @if (darfAendern()) {
+            <form [formGroup]="notizForm" (ngSubmit)="notizSpeichern()">
+              <app-feld
+                [control]="notizForm.controls.internal_note"
+                label="Interne Notiz"
+                typ="textarea"
+                hinweis="Frei, nur intern sichtbar. Getrennt vom Logbuch."
+                platzhalter="z. B. Absprachen, Besonderheiten, Erinnerungen …"
+              />
+              <div class="notizfeld__aktionen">
+                <button
+                  type="submit"
+                  class="btn btn--primary"
+                  [disabled]="!notizGeaendert() || notizLaedt()"
+                >
+                  {{ notizLaedt() ? 'Speichert …' : 'Notiz speichern' }}
+                </button>
+              </div>
+            </form>
+          } @else if (daten()!.internal_note) {
+            <p class="notizfeld__text">{{ daten()!.internal_note }}</p>
+          } @else {
+            <p class="feld__wert feld__wert--leer">—</p>
+          }
+        </section>
       }
 
       <!-- ---------------------------- Liegenschaften ---------------------- -->

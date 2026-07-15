@@ -187,6 +187,13 @@
               [pflicht]="true"
               hinweis="Erscheint als Überschrift des Angebots."
             />
+            <app-feld
+              [control]="kopfForm.controls.cover_letter"
+              label="Anschreiben"
+              typ="textarea"
+              hinweis="Optionaler Anschreiben-Text im Belegkopf. Nach dem Versand nicht mehr änderbar."
+              platzhalter="z. B. Sehr geehrte Damen und Herren, gern unterbreiten wir Ihnen folgendes Angebot …"
+            />
             <div class="ed-kopf__datum">
               <app-feld [control]="kopfForm.controls.quote_date" label="Angebotsdatum" typ="datum" />
               <app-feld [control]="kopfForm.controls.valid_until_date" label="Gültig bis" typ="datum" />

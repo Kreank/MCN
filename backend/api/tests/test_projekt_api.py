@@ -1196,3 +1196,34 @@ def test_set_responsible_ohne_login_401(anonymous_client, seeded):
         content_type="application/json",
     )
     assert r.status_code in (401, 403)
+
+
+# --- Freies Notizfeld am Projekt (Hero-Angleichung Projekte-7) --------------
+
+@pytest.mark.django_db
+def test_internal_note_setzen_und_auslesen(admin_client, seeded):
+    # Frisch angelegtes Projekt hat kein Notizfeld.
+    r0 = admin_client.get(f"/api/workflow/projects/{seeded['p1'].id}")
+    assert r0.status_code == 200
+    assert r0.json()["internal_note"] is None
+
+    r = admin_client.post(
+        f"/api/workflow/projects/{seeded['p1'].id}/internal-note",
+        data={"internal_note": "  Kunde ruft freitags zurueck  "},
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    # Antwort trägt die (getrimmte) Notiz sofort.
+    assert r.json()["internal_note"] == "Kunde ruft freitags zurueck"
+    # Und sie ist persistent auslesbar.
+    r2 = admin_client.get(f"/api/workflow/projects/{seeded['p1'].id}")
+    assert r2.json()["internal_note"] == "Kunde ruft freitags zurueck"
+
+    # Leeren normalisiert auf None.
+    r3 = admin_client.post(
+        f"/api/workflow/projects/{seeded['p1'].id}/internal-note",
+        data={"internal_note": "   "},
+        content_type="application/json",
+    )
+    assert r3.status_code == 200
+    assert r3.json()["internal_note"] is None
