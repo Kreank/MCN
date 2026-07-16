@@ -43,6 +43,12 @@ from db_core.models import ArticleSupplierReference
 IDS_NAMESPACE = "http://www.itek.de/Shop-Anbindung/Warenkorb/"
 IDS_VERSION = "2.5"
 
+# NetPrice-Semantik einer Anbindung (pricing.supplier_connection.net_price_semantics,
+# Migration 0111 — GC-Quirk). EINHEIT = itek-Standard (NetPrice/PriceBasis ist bereits
+# je Einheit); GESAMT = Positionssumme (NetPrice zusätzlich durch die Menge teilen).
+NET_PRICE_EINHEIT = "EINHEIT"
+NET_PRICE_GESAMT = "GESAMT"
+
 # Bekannte Präfix→Namespace-Zuordnungen für die Reparatur nicht deklarierter
 # Präfixe (siehe _parse_xml). Das reale IDS-Beispiel trägt `xsi:schemaLocation`,
 # ohne `xmlns:xsi` zu deklarieren — streng genommen nicht wohlgeformt, aber in der
@@ -62,8 +68,10 @@ class CartPosition:
     """Eine Warenkorb-Position, wie sie der Shop zurückgibt.
 
     `net_price` ist der Netto-Einkaufspreis JE EINHEIT (aus `NetPrice`/`PriceBasis`
-    umgerechnet), `vat` der Mehrwertsteuersatz in Prozent — beide optional, weil
-    reale Rückgabe-Warenkörbe oft nur ArtNo/Qty/QU tragen.
+    und der NetPrice-Semantik der Anbindung umgerechnet), `vat` der
+    Mehrwertsteuersatz in Prozent — beide optional, weil reale Rückgabe-Warenkörbe
+    oft nur ArtNo/Qty/QU tragen. `preis_hinweis` ist ein optionaler
+    Plausibilitäts-Hinweis (z. B. „EK wirkt wie Positionssumme" — GC-Quirk).
     """
     art_no: str
     qty: Decimal
@@ -72,6 +80,7 @@ class CartPosition:
     ean: str | None = None
     net_price: Decimal | None = None
     vat: Decimal | None = None
+    preis_hinweis: str | None = None
 
 
 @dataclass(frozen=True)
@@ -84,6 +93,7 @@ class ResolvedPosition:
     ean: str | None
     net_price: Decimal | None
     vat: Decimal | None
+    preis_hinweis: str | None
     article_id: str | None
     article_number: str | None
     article_name: str | None
@@ -170,13 +180,15 @@ def _parse_xml(raw: bytes):
 
 # --- Rückgabe-Warenkorb parsen ----------------------------------------------
 
-def parse_returned_cart(xml) -> list[CartPosition]:
+def parse_returned_cart(xml, *, net_price_semantics=NET_PRICE_EINHEIT) -> list[CartPosition]:
     """Parst einen empfangenen IDS-Warenkorb in seine Positionen.
 
-    `xml` sind Bytes oder ein String. Wirft `WarenkorbError` bei ungültigem XML,
-    fehlendem `<Warenkorb>`-Wurzelelement oder ungültiger Menge. Positionen ohne
-    `ArtNo` werden übersprungen (eine leere Rückgabe ist zulässig — z. B. wenn der
-    Handwerker im Shop abbricht).
+    `xml` sind Bytes oder ein String. `net_price_semantics` (aus der Anbindung:
+    EINHEIT | GESAMT) steuert die Umrechnung von `NetPrice` in den Einheits-EK —
+    Default EINHEIT (itek-Standard, byte-gleich zum bisherigen Verhalten). Wirft
+    `WarenkorbError` bei ungültigem XML, fehlendem `<Warenkorb>`-Wurzelelement oder
+    ungültiger Menge. Positionen ohne `ArtNo` werden übersprungen (eine leere
+    Rückgabe ist zulässig — z. B. wenn der Handwerker im Shop abbricht).
     """
     raw = xml.encode("utf-8") if isinstance(xml, str) else xml
     root = _parse_xml(raw)
@@ -207,6 +219,9 @@ def parse_returned_cart(xml) -> list[CartPosition]:
             raise WarenkorbError(
                 f"Position {art_no}: Menge muss größer als 0 sein (war '{qty_raw}')."
             )
+        net_price, preis_hinweis = _unit_price(
+            item, qty=qty, semantics=net_price_semantics
+        )
         positions.append(
             CartPosition(
                 art_no=art_no,
@@ -214,8 +229,9 @@ def parse_returned_cart(xml) -> list[CartPosition]:
                 unit=_text(item, "QU"),
                 short_text=_text(item, "Kurztext"),
                 ean=_text(item, "EAN"),
-                net_price=_unit_price(item),
+                net_price=net_price,
                 vat=_dezimal(_text(item, "VAT")),
+                preis_hinweis=preis_hinweis,
             )
         )
     return positions
@@ -232,26 +248,66 @@ def _dezimal(wert):
     return d if d.is_finite() else None
 
 
-def _unit_price(item):
-    """Netto-EK je Einheit aus `NetPrice`/`PriceBasis`.
+def _unit_price(item, *, qty, semantics=NET_PRICE_EINHEIT):
+    """Netto-EK je Einheit aus `NetPrice`/`PriceBasis` (+ NetPrice-Semantik) und ein
+    optionaler Plausibilitäts-Hinweis. Rückgabe: `(einheits_ek | None, hinweis | None)`.
 
     IDS gibt Preise auf eine Preisbasis bezogen an (z. B. `NetPrice=522`,
     `PriceBasis=1000` → 0,522 je Einheit). Fehlt `PriceBasis` oder ist sie 0/
-    ungültig, gilt Basis 1. Ohne `NetPrice` gibt es keinen Preis (None)."""
+    ungültig, gilt Basis 1. Ohne `NetPrice` gibt es keinen Preis (None).
+
+    Preis-Semantik (Händler-Konfiguration, nie geraten — GC-Quirk):
+      * EINHEIT (itek-Standard): `NetPrice/PriceBasis` ist bereits der Preis je
+        Einheit.
+      * GESAMT: `NetPrice` ist die Positionssumme; zusätzlich durch die Menge teilen
+        (`NetPrice/PriceBasis/Qty`). Ohne positive Menge kein Preis (None) — die
+        Menge ist die Bezugsgröße.
+
+    Ein absurd großer Wert (Koeffizient über der Decimal-Kontextpräzision) würde beim
+    quantize werfen — dann lieber keinen Preis (None) als einen 500er. Auf vier
+    Nachkommastellen begrenzt (Sub-Cent-Preise je Einheit sind üblich); der Beleg
+    quantisiert später auf seine eigene Preisskala."""
     net = _dezimal(_text(item, "NetPrice"))
     if net is None:
-        return None
+        return None, None
     basis = _dezimal(_text(item, "PriceBasis"))
     if basis is None or basis == 0:
         basis = Decimal("1")
-    # Auf vier Nachkommastellen begrenzen (Sub-Cent-Preise je Einheit sind üblich);
-    # der Beleg quantisiert später auf seine eigene Preisskala. Ein absurd großer
-    # Wert (Koeffizient über der Decimal-Kontextpräzision) würde beim quantize
-    # werfen — dann lieber keinen Preis (None) als einen 500er.
+
+    if semantics == NET_PRICE_GESAMT:
+        # Positionssumme → je Einheit: zusätzlich durch die Menge teilen.
+        if qty is None or qty <= 0:
+            return None, None
+        roh = net / basis / qty
+    else:
+        roh = net / basis
+
     try:
-        return (net / basis).quantize(Decimal("0.0001"))
+        preis = roh.quantize(Decimal("0.0001"))
     except InvalidOperation:
+        return None, None
+
+    return preis, _preis_hinweis(item, net=net, basis=basis, qty=qty, semantics=semantics)
+
+
+def _preis_hinweis(item, *, net, basis, qty, semantics):
+    """Plausibilitäts-Hinweis statt stiller Heuristik (kein Auto-Umrechnen).
+
+    Unter EINHEIT-Semantik wirkt ein NetPrice wie eine Positionssumme, wenn
+    `NetPrice/PriceBasis` den Listenpreis `OfferPrice` übersteigt (ein Netto-EK
+    über dem Listenpreis ist im Großhandel widersinnig), `NetPrice/Qty` ihn aber
+    unterschreitet. Dann ist die NetPrice-Interpretation der Anbindung vermutlich
+    falsch (GC-Quirk) — der Anwender soll das prüfen. Kein Hinweis unter GESAMT
+    (dort ist die Summensemantik bereits gewählt)."""
+    if semantics != NET_PRICE_EINHEIT:
         return None
+    offer = _dezimal(_text(item, "OfferPrice"))
+    if offer is None or offer <= 0 or qty is None or qty <= 0:
+        return None
+    if (net / basis) > offer and (net / qty) <= offer:
+        return ("EK wirkt wie Positionssumme — NetPrice-Interpretation der "
+                "Anbindung prüfen.")
+    return None
 
 
 # --- Positionen auf den Artikelstamm mappen ---------------------------------
@@ -295,6 +351,7 @@ def resolve_positions(source_namespace: str, positions) -> list[ResolvedPosition
                 ean=p.ean,
                 net_price=p.net_price,
                 vat=p.vat,
+                preis_hinweis=p.preis_hinweis,
                 article_id=str(art.id) if art else None,
                 article_number=art.article_number if art else None,
                 article_name=art.description if art else None,

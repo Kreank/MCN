@@ -164,7 +164,8 @@ def session_preview(session_id):
     if session.status != "EINGELOEST" or not session.returned_cart_xml:
         return session, []
     positions = ids_warenkorb.parse_returned_cart(
-        session.returned_cart_xml.encode("latin-1")
+        session.returned_cart_xml.encode("latin-1"),
+        net_price_semantics=session.connection.net_price_semantics,
     )
     resolved = ids_warenkorb.resolve_positions(
         session.connection.source_namespace, positions

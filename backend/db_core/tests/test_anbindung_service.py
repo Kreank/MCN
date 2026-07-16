@@ -39,7 +39,45 @@ def test_create_grundfall(app_user):
     assert c.source_namespace == "gut"
     assert c.connection_kind == "GROSSHAENDLER"  # Default
     assert c.status == "ACTIVE"
+    assert c.net_price_semantics == "EINHEIT"    # Default
     assert c.supplier_party_id == p.id
+
+
+@pytest.mark.django_db
+def test_create_mit_gesamt_semantik(app_user):
+    """GC-Quirk: eine Anbindung kann NetPrice als Positionssumme deklarieren."""
+    p = _lieferant(app_user)
+    c = anbindung_service.create_connection(
+        app_user.id, supplier_party_id=p.id, source_namespace="gut",
+        label="G.U.T.", net_price_semantics="gesamt",  # klein → normalisiert
+    )
+    assert c.net_price_semantics == "GESAMT"
+
+
+@pytest.mark.django_db
+def test_create_ungueltige_semantik_scheitert(app_user):
+    p = _lieferant(app_user)
+    with pytest.raises(ValueError):
+        anbindung_service.create_connection(
+            app_user.id, supplier_party_id=p.id, source_namespace="gut",
+            label="G.U.T.", net_price_semantics="BRUTTO",
+        )
+
+
+@pytest.mark.django_db
+def test_update_net_price_semantics(app_user):
+    p = _lieferant(app_user)
+    c = anbindung_service.create_connection(
+        app_user.id, supplier_party_id=p.id, source_namespace="gut", label="G.U.T.",
+    )
+    c = anbindung_service.update_connection(
+        app_user.id, connection_id=c.id, net_price_semantics="GESAMT",
+    )
+    assert c.net_price_semantics == "GESAMT"
+    with pytest.raises(ValueError):
+        anbindung_service.update_connection(
+            app_user.id, connection_id=c.id, net_price_semantics="X",
+        )
 
 
 @pytest.mark.django_db

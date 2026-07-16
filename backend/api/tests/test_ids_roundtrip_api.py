@@ -116,6 +116,64 @@ def test_roundtrip_wke_bis_uebernahme(admin_client, anonymous_client):
     assert not fehl["matched"]
 
 
+# Echtes G.U.T.-OrderItem (GC-Quirk): NetPrice 35,30 ist die Positionssumme für
+# 5 m, nicht der Preis je Meter. Unter GESAMT-Semantik ergibt sich 35,30/5 = 7,06.
+_CART_GESAMT = (
+    "<Warenkorb><Order>"
+    "<OrderItem><ArtNo>4711</ArtNo><Qty>5.000</Qty><QU>MTR</QU>"
+    "<OfferPrice>12.83</OfferPrice><NetPrice>35.30</NetPrice><PriceBasis>1.0</PriceBasis>"
+    "<VAT>19.00</VAT><Kurztext>Kupferrohr</Kurztext></OrderItem>"
+    "</Order></Warenkorb>"
+)
+
+
+@override_settings(MCN_MAIL_KEY=_MAIL_KEY)
+@pytest.mark.django_db
+def test_roundtrip_gesamt_semantik_teilt_durch_menge(admin_client, anonymous_client):
+    """GC-Quirk end-to-end: eine GESAMT-Anbindung teilt den NetPrice durch die Menge,
+    der EK je Einheit (und der daraus abgeleitete VK) sind NICHT mehr ×Menge zu hoch."""
+    conn, _art = _connection_mit_artikel_und_login()
+    anbindung_service.update_connection(
+        _seed_actor().id, connection_id=conn.id, net_price_semantics="GESAMT",
+    )
+    r = admin_client.post(
+        f"{_URL}/{conn.id}/punchout-session",
+        data={"action": "WKE"}, content_type="application/json",
+    )
+    token = _token_aus_hookurl(r.json()["punchout"]["fields"]["hookurl"])
+    session_id = r.json()["session_id"]
+    anonymous_client.post(
+        f"/api/pricing/warenkorb-return/{token}",
+        data=_CART_GESAMT, content_type="application/xml",
+    )
+    nach = admin_client.get(f"/api/pricing/punchout-sessions/{session_id}").json()
+    treffer = next(p for p in nach["positions"] if p["art_no"] == "4711")
+    assert treffer["net_price"] == "7.0600"      # 35,30 / 5, NICHT 35,30
+    assert treffer["preis_hinweis"] is None       # Summensemantik gewählt → kein Hinweis
+
+
+@override_settings(MCN_MAIL_KEY=_MAIL_KEY)
+@pytest.mark.django_db
+def test_roundtrip_einheit_default_warnt_bei_summensemantik(admin_client, anonymous_client):
+    """Default EINHEIT bei einem GC-Warenkorb: EK bleibt (bewusst) ×Menge, aber die
+    Vorschau warnt sichtbar an der Position, dass der EK wie eine Positionssumme wirkt."""
+    conn, _art = _connection_mit_artikel_und_login()  # Default EINHEIT
+    r = admin_client.post(
+        f"{_URL}/{conn.id}/punchout-session",
+        data={"action": "WKE"}, content_type="application/json",
+    )
+    token = _token_aus_hookurl(r.json()["punchout"]["fields"]["hookurl"])
+    session_id = r.json()["session_id"]
+    anonymous_client.post(
+        f"/api/pricing/warenkorb-return/{token}",
+        data=_CART_GESAMT, content_type="application/xml",
+    )
+    nach = admin_client.get(f"/api/pricing/punchout-sessions/{session_id}").json()
+    treffer = next(p for p in nach["positions"] if p["art_no"] == "4711")
+    assert treffer["net_price"] == "35.3000"
+    assert treffer["preis_hinweis"] and "Positionssumme" in treffer["preis_hinweis"]
+
+
 @override_settings(MCN_MAIL_KEY=_MAIL_KEY)
 @pytest.mark.django_db
 def test_start_wks_uebergibt_warenkorb(admin_client):

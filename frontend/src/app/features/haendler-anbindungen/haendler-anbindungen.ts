@@ -7,6 +7,7 @@ import {
   CredentialStatus,
   SupplierConnection,
   kindLabel,
+  netPriceSemanticsLabel,
   sourceSystemLabel,
   statusLabel,
 } from '../../core/anbindung.model';
@@ -77,6 +78,12 @@ export class HaendlerAnbindungen {
     { wert: 'GROSSHAENDLER', label: 'Großhändler' },
     { wert: 'HERSTELLER', label: 'Hersteller' },
   ];
+  // NetPrice-Interpretation des IDS-Rückgabe-Warenkorbs (GC-Quirk): manche Shops
+  // (G.U.T. ONLINE PLUS) liefern NetPrice als Positionssumme statt je Einheit.
+  protected readonly semantikOptionen: FeldOption[] = [
+    { wert: 'EINHEIT', label: 'Preis je Einheit (itek-Standard)' },
+    { wert: 'GESAMT', label: 'Positionssumme (G.U.T.-Quirk)' },
+  ];
 
   /** Lieferantensuche über den Kontaktstamm (identity.party). */
   protected readonly lieferantSuche: RefSuche = (q) =>
@@ -125,6 +132,7 @@ export class HaendlerAnbindungen {
     label: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
     source_system: this.fb.control('IDS_CONNECT', { nonNullable: true }),
     connection_kind: this.fb.control('GROSSHAENDLER', { nonNullable: true }),
+    net_price_semantics: this.fb.control('EINHEIT', { nonNullable: true }),
     shop_url: this.fb.control('', { nonNullable: true }),
     credential_reference: this.fb.control('', { nonNullable: true }),
   });
@@ -158,6 +166,7 @@ export class HaendlerAnbindungen {
       label: '',
       source_system: 'IDS_CONNECT',
       connection_kind: 'GROSSHAENDLER',
+      net_price_semantics: 'EINHEIT',
       shop_url: '',
       credential_reference: '',
     });
@@ -176,6 +185,7 @@ export class HaendlerAnbindungen {
       label: c.label,
       source_system: c.source_system,
       connection_kind: c.connection_kind,
+      net_price_semantics: c.net_price_semantics,
       shop_url: c.shop_url ?? '',
       credential_reference: c.credential_reference ?? '',
     });
@@ -217,6 +227,7 @@ export class HaendlerAnbindungen {
         .update(editing.id, {
           label: v.label.trim(),
           connection_kind: v.connection_kind,
+          net_price_semantics: v.net_price_semantics,
           shop_url: v.shop_url.trim() || null,
           credential_reference: v.credential_reference.trim() || null,
         })
@@ -232,6 +243,7 @@ export class HaendlerAnbindungen {
           label: v.label.trim(),
           source_system: v.source_system,
           connection_kind: v.connection_kind,
+          net_price_semantics: v.net_price_semantics,
           shop_url: v.shop_url.trim() || null,
           credential_reference: v.credential_reference.trim() || null,
         })
@@ -327,6 +339,9 @@ export class HaendlerAnbindungen {
   }
   kindLabel(k: string): string {
     return kindLabel(k);
+  }
+  netPriceSemanticsLabel(s: string): string {
+    return netPriceSemanticsLabel(s);
   }
   statusLabel(s: string): string {
     return statusLabel(s);

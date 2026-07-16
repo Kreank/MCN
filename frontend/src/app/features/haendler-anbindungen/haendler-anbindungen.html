@@ -150,6 +150,15 @@
         typ="text"
         hinweis="IDS-Connect: die Einstiegs-/Connector-URL des Händler-Shops, an die der Punchout gesendet wird."
       />
+      @if (form.controls.source_system.value === 'IDS_CONNECT') {
+        <app-feld
+          [control]="form.controls.net_price_semantics"
+          label="NetPrice-Interpretation"
+          typ="select"
+          [optionen]="semantikOptionen"
+          hinweis="Wie der zurückgegebene Warenkorb den NetPrice meint: je Einheit (itek-Standard) oder als Positionssumme (G.U.T. ONLINE PLUS liefert die Zeilensumme statt des Einheitspreises)."
+        />
+      }
       <app-feld
         [control]="form.controls.credential_reference"
         label="Zugangsdaten-Verweis"

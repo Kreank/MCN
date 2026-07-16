@@ -65,6 +65,11 @@
             } @else {
               <span class="stamp">Frei</span>
             }
+            @if (p.preis_hinweis) {
+              <span class="ids-pos__warn" role="note">
+                <span aria-hidden="true">⚠</span> {{ p.preis_hinweis }}
+              </span>
+            }
           </li>
         }
       </ul>

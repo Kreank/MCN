@@ -7,6 +7,7 @@ export interface SupplierConnection {
   source_namespace: string;
   label: string;
   connection_kind: string; // 'GROSSHAENDLER' | 'HERSTELLER'
+  net_price_semantics: string; // 'EINHEIT' | 'GESAMT'
   shop_url: string | null;
   credential_reference: string | null;
   status: string; // 'ACTIVE' | 'INACTIVE'
@@ -19,6 +20,7 @@ export interface SupplierConnectionIn {
   label: string;
   source_system?: string;
   connection_kind?: string;
+  net_price_semantics?: string;
   shop_url?: string | null;
   credential_reference?: string | null;
 }
@@ -26,6 +28,7 @@ export interface SupplierConnectionIn {
 export interface SupplierConnectionPatch {
   label?: string;
   connection_kind?: string;
+  net_price_semantics?: string;
   shop_url?: string | null;
   credential_reference?: string | null;
   status?: string;
@@ -41,6 +44,15 @@ export function kindLabel(k: string): string {
 
 export function statusLabel(s: string): string {
   return s === 'ACTIVE' ? 'Aktiv' : s === 'INACTIVE' ? 'Inaktiv' : s;
+}
+
+/** NetPrice-Interpretation des Rückgabe-Warenkorbs (GC-Quirk). */
+export function netPriceSemanticsLabel(s: string): string {
+  return s === 'EINHEIT'
+    ? 'Preis je Einheit (itek-Standard)'
+    : s === 'GESAMT'
+      ? 'Positionssumme (G.U.T.-Quirk)'
+      : s;
 }
 
 // --- IDS-Connect: Zugangsdaten ---------------------------------------------
@@ -84,6 +96,11 @@ export interface ResolvedPosition {
   ean: string | null;
   net_price: string | null;
   vat: string | null;
+  /**
+   * Plausibilitäts-Hinweis zur Position (z. B. „EK wirkt wie Positionssumme" —
+   * GC-Quirk). null, wenn unauffällig.
+   */
+  preis_hinweis: string | null;
   article_id: string | null;
   article_number: string | null;
   article_name: string | null;

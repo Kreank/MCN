@@ -123,6 +123,33 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
   (braucht die echte Domain — beim ersten echten Deploy prüfen); **Backup weiter
   bewusst offen** (Abschnitt 10, Invarianten stehen bereit).
 
+**IDS-Connect Preis-Semantik — der „GC-Quirk" (Fix 2026-07-16, Migration 0111):**
+- **Symptom (Live-Repro, produktive Instanz):** Punchout zu G.U.T. ONLINE PLUS
+  (echte Connector-URL `gutonlineplus.de/ids.aspx` — steht an der produktiven
+  Anbindung; `seed_demo` behält seinen `.example`-Platzhalter). 5 m Kupferrohr kamen
+  mit EK **35,30 €/m** an statt **7,06 €/m** — Faktor = Menge.
+- **Ursache:** GC liefert `OrderItem/NetPrice` als **Positionssumme** (5 × 7,06 =
+  35,30), obwohl `PriceBasis=1.0` „je Einheit" behauptet und kein `AQU`-Element
+  vorliegt. Das verletzt die itek-Spec (ohne AQU beziehen sich
+  OfferPrice/NetPrice/PriceBasis auf **1 Einheit** der Qty — itek OrderItem-Wiki:
+  `itek-wissen.atlassian.net/wiki/spaces/GW/pages/32866531/OrderItem`) und ist in
+  sich inkonsistent (OfferPrice je Einheit, NetPrice als Summe). Der spec-treue
+  `_unit_price` übernahm die Summe als Einheits-EK; der VK wird aus diesem EK
+  abgeleitet (`ek_override`) → VK ebenfalls ×Menge zu hoch.
+- **Fix (deterministisch, nie geraten):** Preis-Semantik ist **Anbindungs-Konfig** —
+  `pricing.supplier_connection.net_price_semantics` (`EINHEIT` = itek-Standard,
+  Default, byte-gleich zu heute | `GESAMT` = Positionssumme, NetPrice zusätzlich
+  durch die Menge teilen). Durchgereicht bis `ids_warenkorb.parse_returned_cart`
+  (vor der VK-Ableitung). Zusätzlich eine **Plausibilitäts-Warnung** (kein
+  Auto-Umrechnen): unter EINHEIT wird an der Warenkorb-Position gewarnt, wenn der EK
+  wie eine Positionssumme wirkt (`NetPrice/PriceBasis > OfferPrice` und
+  `NetPrice/Qty ≤ OfferPrice`). Frontend: Dropdown „NetPrice-Interpretation" an der
+  Anbindung + Amber-Hinweis in der IDS-Bestellvorschau.
+- **Offen (empirisch):** Ob GC pro Position oder pro Verpackungseinheit (Stange = 5 m)
+  summiert, war mit dem einen Fall (Qty = genau 1 Stange) nicht unterscheidbar. Beim
+  Live-Test einen Korb mit **10 m (2 Stangen)** bauen — das Roh-XML landet in
+  `pricing.punchout_session.returned_cart_xml` und entscheidet die Frage.
+
 **Was seit dem letzten Handoff dazukam (Commits `858ca85`, `ff711b9`, `4cd52e6`,
 `e41c36d`; alles auf `main`, deployed):**
 - **Globale Suche + Kommandopalette** (`6e6e4ee` bzw. im Block): ein Feld,

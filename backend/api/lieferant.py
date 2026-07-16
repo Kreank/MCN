@@ -44,6 +44,7 @@ class SupplierConnectionOut(Schema):
     source_namespace: str
     label: str
     connection_kind: str
+    net_price_semantics: str
     shop_url: str | None = None
     credential_reference: str | None = None
     status: str
@@ -56,6 +57,7 @@ class SupplierConnectionIn(Schema):
     label: str
     source_system: str = "IDS_CONNECT"
     connection_kind: str = "GROSSHAENDLER"
+    net_price_semantics: str = "EINHEIT"
     shop_url: str | None = None
     credential_reference: str | None = None
 
@@ -63,6 +65,7 @@ class SupplierConnectionIn(Schema):
 class SupplierConnectionPatch(Schema):
     label: str | None = None
     connection_kind: str | None = None
+    net_price_semantics: str | None = None
     shop_url: str | None = None
     credential_reference: str | None = None
     status: str | None = None
@@ -77,6 +80,7 @@ def _connection_out(c):
         source_namespace=c.source_namespace,
         label=c.label,
         connection_kind=c.connection_kind,
+        net_price_semantics=c.net_price_semantics,
         shop_url=c.shop_url,
         credential_reference=c.credential_reference,
         status=c.status,
@@ -126,6 +130,9 @@ class ResolvedPositionOut(Schema):
     ean: str | None = None
     net_price: Decimal | None = None
     vat: Decimal | None = None
+    # Plausibilitäts-Hinweis zur Position (z. B. „EK wirkt wie Positionssumme" —
+    # GC-Quirk); None, wenn unauffällig.
+    preis_hinweis: str | None = None
     article_id: UUID | None = None
     article_number: str | None = None
     article_name: str | None = None
@@ -163,7 +170,8 @@ def _resolved_out(r, regelwerk=None):
             hinweis = vorschlag["hinweis"]
     return ResolvedPositionOut(
         art_no=r.art_no, qty=r.qty, unit=r.unit, short_text=r.short_text,
-        ean=r.ean, net_price=r.net_price, vat=r.vat, article_id=r.article_id,
+        ean=r.ean, net_price=r.net_price, vat=r.vat, preis_hinweis=r.preis_hinweis,
+        article_id=r.article_id,
         article_number=r.article_number, article_name=r.article_name,
         matched=r.matched, ambiguous=r.ambiguous,
         sale_price=vk, sale_price_hinweis=hinweis,
@@ -203,7 +211,9 @@ def warenkorb_preview(request, connection_id: UUID):
     if conn is None:
         raise HttpError(404, "Anbindung nicht gefunden.")
     try:
-        positions = ids_warenkorb_service.parse_returned_cart(request.body)
+        positions = ids_warenkorb_service.parse_returned_cart(
+            request.body, net_price_semantics=conn.net_price_semantics
+        )
     except ids_warenkorb_service.WarenkorbError as exc:
         raise HttpError(422, str(exc))
     resolved = ids_warenkorb_service.resolve_positions(conn.source_namespace, positions)

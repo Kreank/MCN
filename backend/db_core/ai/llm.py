@@ -202,6 +202,7 @@ class OpenAICompatBackend(LlmBackend):
         model_version: str = "unbekannt",
         api_key: str | None = None,
         timeout: float | None = 120.0,
+        params: dict | None = None,
         transport=None,
     ):
         self._base_url = base_url.rstrip("/")
@@ -210,6 +211,10 @@ class OpenAICompatBackend(LlmBackend):
         self.model_version = model_version
         self._api_key = api_key
         self._timeout = timeout
+        # Zusätzliche, profil-definierte Payload-Schlüssel (z. B. `reasoning_effort`,
+        # `top_p`, `seed`). „Parameter sind Konfiguration, kein Code": das Profil
+        # liefert Defaults, der einzelne Aufruf gewinnt (siehe generate()).
+        self._params = dict(params or {})
         self._transport = transport or _default_transport
 
     def generate(
@@ -228,6 +233,14 @@ class OpenAICompatBackend(LlmBackend):
             "model": self._model,
             "messages": [{"role": m.role, "content": m.content} for m in messages],
         }
+        # Profil-Defaults ZUERST — aber `model`/`messages` des konkreten Aufrufs sind
+        # unantastbar: ein Profil darf Defaults liefern (reasoning_effort, top_p, …),
+        # niemals das Modell oder die Nachrichten eines Laufs kapern. Die expliziten
+        # Aufruf-Parameter unten überschreiben die Defaults (ein Workflow mit
+        # temperature=0.2 gewinnt über einen Profil-Default).
+        payload.update(
+            {k: v for k, v in self._params.items() if k not in ("model", "messages")}
+        )
         if temperature is not None:
             payload["temperature"] = temperature
         if max_tokens is not None:
@@ -277,9 +290,19 @@ class OpenAICompatBackend(LlmBackend):
 #
 # MCN_AI_PROFILES: JSON-Objekt {profilname: {...}}. Ein Profil:
 #   {"backend": "openai_compat", "base_url": "http://host:8080/v1",
-#    "model": "mistral-nemo", "model_version": "q4", "api_key_env": "MCN_AI_KEY"}
+#    "model": "mistral-nemo", "model_version": "q4", "api_key_env": "MCN_AI_KEY",
+#    "params": {"reasoning_effort": "none"}}
 #   oder {"backend": "fake", "model": "…", "model_version": "…"}
 # MCN_AI_DEFAULT_PROFILE: welches Profil ohne Angabe genommen wird.
+#
+# `params` (optional, JSON-Objekt): zusätzliche Payload-Schlüssel für die
+# OpenAI-Schnittstelle. „Parameter sind Konfiguration, kein Code" — das Profil
+# liefert Defaults (model/messages eines Aufrufs sind unantastbar, explizite
+# Aufruf-Parameter wie temperature gewinnen). Konkreter Anlass: qwen3.5 denkt
+# über Ollama standardmäßig und verbrennt das max_tokens-Budget im Thinking;
+# `{"reasoning_effort": "none"}` schaltet es ab. Morgen kann dasselbe Feld auch
+# top_p, seed o. Ä. setzen. Fehlt `params`, ändert sich nichts (rückwärtskompatibel).
+# Secrets gehören NICHT in params — dafür bleibt `api_key_env` der einzige Weg.
 #
 # Der API-Key steht NIE im Profil, nur ein Verweis (`api_key_env`) auf die
 # Umgebungsvariable — dieselbe Doktrin wie `credential_reference` bei den
@@ -340,11 +363,19 @@ def get_backend(profile: str | None = None, *, transport=None) -> LlmBackend:
             api_key = os.environ.get(key_env)
             if not api_key:
                 raise LlmError(f"KI-Profil '{name}': Umgebungsvariable {key_env} nicht gesetzt.")
+        # `params` ist optional; ist es gesetzt, muss es ein JSON-Objekt sein — ein
+        # vertipptes `params` (String o. Ä.) soll laut fail-closed scheitern, nicht
+        # still ignoriert werden. Secrets gehören NICHT in params (dafür bleibt
+        # `api_key_env` der einzige Weg, dieselbe Doktrin wie credential_reference).
+        params = cfg.get("params") or {}
+        if not isinstance(params, dict):
+            raise LlmError(f"KI-Profil '{name}': 'params' muss ein JSON-Objekt sein.")
         return OpenAICompatBackend(
             base_url=base_url,
             model=model,
             model_version=cfg.get("model_version", "unbekannt"),
             api_key=api_key,
+            params=params,
             transport=transport,
         )
 

@@ -408,6 +408,11 @@ class Command(BaseCommand):
                 actor.id, supplier_party_id=gh.id, source_namespace="gut",
                 label="G.U.T. Großhandel (IDS-Connect)", source_system="IDS_CONNECT",
                 connection_kind="GROSSHAENDLER",
+                # Platzhalter — die echte Connector-URL ist gutonlineplus.de/ids.aspx
+                # (an der produktiven Anbindung gesetzt). G.U.T. liefert NetPrice als
+                # Positionssumme; produktiv trägt die Anbindung dafür
+                # net_price_semantics='GESAMT' (GC-Quirk, Migration 0111). Der Demo-
+                # Platzhalter macht keinen echten Roundtrip → Default EINHEIT genügt.
                 shop_url="https://shop.gut-gruppe.example",
             )
             self.stdout.write("IDS-Anbindung angelegt: G.U.T. (gut)")

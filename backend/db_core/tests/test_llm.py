@@ -115,6 +115,50 @@ def test_openai_schema_setzt_response_format_und_parst():
     assert resp.data == {"positionen": [{"menge": 2}]}
 
 
+def test_openai_params_landen_im_payload():
+    """Profil-`params` werden in die OpenAI-Payload gemischt (z. B. reasoning_effort)."""
+    transport = RecordingTransport(_canned("ok"))
+    backend = OpenAICompatBackend(
+        base_url="http://h/v1", model="m",
+        params={"reasoning_effort": "none"}, transport=transport,
+    )
+    backend.generate(_msgs())
+    assert transport.calls[0]["body"]["reasoning_effort"] == "none"
+
+
+def test_openai_aufruf_schlaegt_profil_default():
+    """Ein expliziter Aufruf-Parameter (temperature) gewinnt über den Profil-Default."""
+    transport = RecordingTransport(_canned("ok"))
+    backend = OpenAICompatBackend(
+        base_url="http://h/v1", model="m",
+        params={"temperature": 0.9}, transport=transport,
+    )
+    backend.generate(_msgs(), temperature=0.2)
+    assert transport.calls[0]["body"]["temperature"] == 0.2
+
+
+def test_openai_params_koennen_kernfelder_nicht_kapern():
+    """`params` darf model/messages eines Aufrufs niemals überschreiben."""
+    transport = RecordingTransport(_canned("ok"))
+    backend = OpenAICompatBackend(
+        base_url="http://h/v1", model="echt-modell",
+        params={"model": "boese", "messages": [{"role": "user", "content": "kapern"}]},
+        transport=transport,
+    )
+    backend.generate(_msgs("original"))
+    body = transport.calls[0]["body"]
+    assert body["model"] == "echt-modell"
+    assert body["messages"][1] == {"role": "user", "content": "original"}
+
+
+def test_openai_ohne_params_rueckwaertskompatibel():
+    """Ein Backend ohne params baut die Payload wie bisher — keine Extra-Schlüssel."""
+    transport = RecordingTransport(_canned("ok"))
+    backend = OpenAICompatBackend(base_url="http://h/v1", model="m", transport=transport)
+    backend.generate(_msgs())
+    assert set(transport.calls[0]["body"]) == {"model", "messages"}
+
+
 def test_openai_api_key_als_bearer_header():
     transport = RecordingTransport(_canned("ok"))
     backend = OpenAICompatBackend(
@@ -180,6 +224,38 @@ def test_fabrik_baut_openai_backend_aus_profil(monkeypatch):
     # Zwei Profile nebeneinander → A/B: dasselbe get_backend, anderer Name, anderes Modell.
     backend.generate(_msgs())
     assert transport.calls[0]["body"]["model"] == "mistral-nemo"
+
+
+def test_fabrik_reicht_params_durch(monkeypatch):
+    """Die Fabrik reicht `params` aus dem Profil ans Backend durch."""
+    profiles = {
+        "p": {
+            "backend": "openai_compat",
+            "base_url": "http://h/v1",
+            "model": "qwen3.5",
+            "params": {"reasoning_effort": "none"},
+        }
+    }
+    monkeypatch.setenv("MCN_AI_PROFILES", json.dumps(profiles))
+    transport = RecordingTransport(_canned("ok"))
+    backend = get_backend("p", transport=transport)
+    backend.generate(_msgs())
+    assert transport.calls[0]["body"]["reasoning_effort"] == "none"
+
+
+def test_fabrik_params_kein_objekt_ist_fehler(monkeypatch):
+    """Fail-closed: `params` als String (Tippfehler) scheitert laut, nicht still."""
+    profiles = {
+        "p": {
+            "backend": "openai_compat",
+            "base_url": "http://h/v1",
+            "model": "m",
+            "params": "none",
+        }
+    }
+    monkeypatch.setenv("MCN_AI_PROFILES", json.dumps(profiles))
+    with pytest.raises(LlmError):
+        get_backend("p")
 
 
 def test_fabrik_fehlender_api_key_ist_fehler(monkeypatch):

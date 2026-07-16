@@ -40,6 +40,9 @@ IDS_VERSION = "2.5"
 _SOURCE_SYSTEMS = ("IDS_CONNECT", "DATANORM")
 _KINDS = ("GROSSHAENDLER", "HERSTELLER")
 _STATUS = ("ACTIVE", "INACTIVE")
+# NetPrice-Interpretation im IDS-Rückgabe-Warenkorb (Migration 0111, GC-Quirk):
+# EINHEIT = je Einheit (itek-Standard), GESAMT = Positionssumme (durch Menge teilen).
+_NET_PRICE_SEMANTICS = ("EINHEIT", "GESAMT")
 # Spiegelt den DB-CHECK source_namespace ~ '^[a-z0-9][a-z0-9-]*$'.
 _NAMESPACE_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
@@ -65,16 +68,21 @@ def list_connections(*, include_inactive=True):
 def create_connection(actor_app_user_id, *, supplier_party_id, source_namespace,
                       label, source_system="IDS_CONNECT",
                       connection_kind="GROSSHAENDLER", shop_url=None,
-                      credential_reference=None):
+                      credential_reference=None, net_price_semantics="EINHEIT"):
     """Legt eine Lieferanten-Anbindung an (Status ACTIVE).
 
     `source_system`/`source_namespace`/`supplier_party_id` sind danach
     unveränderlich (Trigger) — bewusst wählen. `credential_reference` ist ein
-    Verweis, kein Secret.
+    Verweis, kein Secret. `net_price_semantics` (EINHEIT | GESAMT) steuert die
+    Interpretation von NetPrice im IDS-Rückgabe-Warenkorb (Default EINHEIT).
     """
     system = (_clean(source_system) or "IDS_CONNECT").upper()
     if system not in _SOURCE_SYSTEMS:
         raise ValueError("Quellsystem muss IDS_CONNECT oder DATANORM sein.")
+
+    semantics = (_clean(net_price_semantics) or "EINHEIT").upper()
+    if semantics not in _NET_PRICE_SEMANTICS:
+        raise ValueError("NetPrice-Interpretation muss EINHEIT oder GESAMT sein.")
 
     namespace = (_clean(source_namespace) or "").lower()
     if not namespace:
@@ -117,6 +125,7 @@ def create_connection(actor_app_user_id, *, supplier_party_id, source_namespace,
             credential_reference=_clean(credential_reference),
             status="ACTIVE",
             connection_kind=kind,
+            net_price_semantics=semantics,
             version=1,
         )
     conn.refresh_from_db()
@@ -126,15 +135,15 @@ def create_connection(actor_app_user_id, *, supplier_party_id, source_namespace,
 def update_connection(actor_app_user_id, *, connection_id, **fields):
     """Ändert die pflegbaren Felder einer Anbindung.
 
-    Nur `label`, `shop_url`, `credential_reference`, `status` und
-    `connection_kind` sind änderbar — Quellsystem, Namespace und Lieferant sind
-    unveränderlich (Trigger) und werden hier bewusst NICHT angenommen.
+    Nur `label`, `shop_url`, `credential_reference`, `status`, `connection_kind`
+    und `net_price_semantics` sind änderbar — Quellsystem, Namespace und Lieferant
+    sind unveränderlich (Trigger) und werden hier bewusst NICHT angenommen.
     """
     conn = SupplierConnection.objects.filter(id=connection_id).first()
     if conn is None:
         raise ValueError("Anbindung nicht gefunden.")
     allowed = ("label", "shop_url", "credential_reference", "status",
-               "connection_kind")
+               "connection_kind", "net_price_semantics")
     unknown = set(fields) - set(allowed)
     if unknown:
         raise ValueError(f"Unbekannte oder unveränderliche Felder: "
@@ -159,6 +168,12 @@ def update_connection(actor_app_user_id, *, connection_id, **fields):
             raise ValueError("Art muss GROSSHAENDLER oder HERSTELLER sein.")
         conn.connection_kind = kind
         changed.append("connection_kind")
+    if "net_price_semantics" in fields:
+        semantics = (_clean(fields["net_price_semantics"]) or "").upper()
+        if semantics not in _NET_PRICE_SEMANTICS:
+            raise ValueError("NetPrice-Interpretation muss EINHEIT oder GESAMT sein.")
+        conn.net_price_semantics = semantics
+        changed.append("net_price_semantics")
     if "status" in fields:
         status = (_clean(fields["status"]) or "").upper()
         if status not in _STATUS:

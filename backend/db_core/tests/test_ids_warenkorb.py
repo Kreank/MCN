@@ -5,6 +5,7 @@ nachgebildet — einmal OHNE deklarierten Namespace (wie das reale Beispiel) und
 einmal MIT, um die Namespace-Toleranz zu sichern.
 """
 from decimal import Decimal
+from xml.etree import ElementTree as ET
 
 import pytest
 
@@ -126,6 +127,90 @@ def test_parse_dtd_abgelehnt():
            '<Warenkorb><Order></Order></Warenkorb>')
     with pytest.raises(ids.WarenkorbError):
         ids.parse_returned_cart(xml)
+
+
+# --- NetPrice-Semantik (GC-Quirk) -------------------------------------------
+#
+# Echtes G.U.T.-OrderItem (Live-Repro 2026-07-16): 5 m Kupferrohr. NetPrice 35,30
+# ist die POSITIONSSUMME (5 × 7,06), obwohl PriceBasis=1.0 „je Einheit" behauptet
+# und OfferPrice 12,83 der Listenpreis je Meter ist. Richtiger Einheits-EK: 7,06.
+
+def _gut_cart(*, art_no="CUS15H", qty="5.000", offer="12.83", net="35.30",
+              basis="1.0"):
+    """Ein Warenkorb mit dem echten G.U.T.-OrderItem (optionale Felder variierbar)."""
+    felder = (
+        f"<ArtNo>{art_no}</ArtNo><Qty>{qty}</Qty><QU>MTR</QU>"
+        + (f"<OfferPrice>{offer}</OfferPrice>" if offer is not None else "")
+        + (f"<NetPrice>{net}</NetPrice>" if net is not None else "")
+        + (f"<PriceBasis>{basis}</PriceBasis>" if basis is not None else "")
+        + "<VAT>19.00</VAT>"
+    )
+    return (f"<Warenkorb><Order><OrderItem><ItemChara>normal</ItemChara>"
+            f"<RefItems />{felder}<Divers>false</Divers></OrderItem>"
+            f"</Order></Warenkorb>")
+
+
+def test_gc_quirk_gesamt_teilt_durch_menge():
+    """GESAMT: NetPrice ist die Positionssumme → durch die Menge teilen (35,30/5=7,06)."""
+    pos = ids.parse_returned_cart(_gut_cart(), net_price_semantics=ids.NET_PRICE_GESAMT)
+    assert pos[0].net_price == Decimal("7.0600")
+    # Summensemantik ist gewählt → kein Plausibilitäts-Hinweis.
+    assert pos[0].preis_hinweis is None
+
+
+def test_gc_quirk_einheit_default_unveraendert():
+    """EINHEIT (Default): byte-gleich zu heute — NetPrice/PriceBasis (35,30) unverändert."""
+    default = ids.parse_returned_cart(_gut_cart())
+    explizit = ids.parse_returned_cart(_gut_cart(), net_price_semantics=ids.NET_PRICE_EINHEIT)
+    assert default[0].net_price == Decimal("35.3000")
+    assert explizit[0].net_price == default[0].net_price
+
+
+def test_gc_quirk_einheit_warnt_bei_summensemantik():
+    """EINHEIT + EK über Listenpreis, aber EK/Menge darunter → Hinweis (Fehlkonfig)."""
+    pos = ids.parse_returned_cart(_gut_cart())
+    assert pos[0].preis_hinweis is not None
+    assert "Positionssumme" in pos[0].preis_hinweis
+
+
+def test_gc_quirk_einheit_kein_warnhinweis_ohne_offerprice():
+    """Ohne OfferPrice keine Plausibilitätsprüfung — Preis trotzdem berechnet, kein Crash."""
+    pos = ids.parse_returned_cart(_gut_cart(offer=None))
+    assert pos[0].net_price == Decimal("35.3000")
+    assert pos[0].preis_hinweis is None
+
+
+def test_gc_quirk_einheit_kein_hinweis_bei_plausiblem_ek():
+    """Plausibler EK (unter Listenpreis) → kein Hinweis, auch unter EINHEIT."""
+    pos = ids.parse_returned_cart(_gut_cart(net="7.06"))
+    assert pos[0].net_price == Decimal("7.0600")
+    assert pos[0].preis_hinweis is None
+
+
+def test_gesamt_mit_pricebasis_100():
+    """GESAMT kombiniert mit PriceBasis: NetPrice/PriceBasis/Qty."""
+    # NetPrice 200 über 4 Einheiten, Basis 100 → 200/100/4 = 0,5 je Einheit.
+    pos = ids.parse_returned_cart(
+        _gut_cart(qty="4.000", net="200", basis="100", offer=None),
+        net_price_semantics=ids.NET_PRICE_GESAMT,
+    )
+    assert pos[0].net_price == Decimal("0.5000")
+
+
+def test_ohne_netprice_kein_preis():
+    """Ohne NetPrice gibt es keinen EK (None) und keinen Hinweis — unter beiden Semantiken."""
+    for sem in (ids.NET_PRICE_EINHEIT, ids.NET_PRICE_GESAMT):
+        pos = ids.parse_returned_cart(_gut_cart(net=None, offer=None), net_price_semantics=sem)
+        assert pos[0].net_price is None
+        assert pos[0].preis_hinweis is None
+
+
+def test_unit_price_gesamt_qty_null_ist_none():
+    """Defensiv: _unit_price unter GESAMT ohne positive Menge → kein Preis (None),
+    kein DivisionByZero. (parse_returned_cart weist Qty<=0 schon vorher ab.)"""
+    item = ET.fromstring("<OrderItem><NetPrice>35.30</NetPrice></OrderItem>")
+    preis, hinweis = ids._unit_price(item, qty=Decimal("0"), semantics=ids.NET_PRICE_GESAMT)
+    assert preis is None and hinweis is None
 
 
 # --- Ausgangs-Warenkorb bauen + Round-Trip ----------------------------------

@@ -3647,6 +3647,10 @@ class SupplierConnection(models.Model):
     credential_reference = models.TextField(null=True, blank=True)
     status = models.TextField()                 # ACTIVE | INACTIVE
     connection_kind = models.TextField()        # GROSSHAENDLER | HERSTELLER
+    # Interpretation von OrderItem/NetPrice im IDS-Rückgabe-Warenkorb (GC-Quirk,
+    # Migration 0111): EINHEIT = je Einheit (itek-Standard), GESAMT = Positionssumme
+    # (NetPrice zusätzlich durch die Menge teilen). Default EINHEIT.
+    net_price_semantics = models.TextField()    # EINHEIT | GESAMT
     last_import_at = models.DateTimeField(null=True, blank=True)
     version = models.IntegerField(db_default=1)
     created_at = models.DateTimeField(db_default=Now())
