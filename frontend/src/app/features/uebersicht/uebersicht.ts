@@ -5,11 +5,13 @@ import { AufgabeService } from '../../core/aufgabe.service';
 import { ProjektService } from '../../core/projekt.service';
 import { BelegService } from '../../core/beleg.service';
 import { FirmaService } from '../../core/firma.service';
+import { KiService } from '../../core/ki.service';
 import { AuthService } from '../../core/auth.service';
 import { Task } from '../../core/aufgabe.model';
 import { Project, ServiceCaseCard } from '../../core/projekt.model';
 import { Quote } from '../../core/beleg.model';
 import { Onboarding } from '../../core/firma.model';
+import { Briefing, BriefingBereich, BriefingDringlichkeit } from '../../core/ki.model';
 import { UebersichtMonteur } from '../uebersicht-monteur/uebersicht-monteur';
 
 type Tile<T> =
@@ -17,6 +19,27 @@ type Tile<T> =
   | { kind: 'ready'; total: number; items: T[] }
   | VerbotenState
   | { kind: 'error' };
+
+/** Zustand der KI-Briefing-Kachel (kein Listen-Tile: schlagzeile + punkte). */
+type BriefingState =
+  | { kind: 'loading' }
+  | { kind: 'ready'; briefing: Briefing }
+  | { kind: 'error' };
+
+/** Bereich → Route der zugehörigen Kachel (jeder Briefing-Punkt ist klickbar). */
+const BEREICH_ROUTE: Record<BriefingBereich, string> = {
+  aufgaben: '/aufgaben',
+  vorgaenge: '/projekte/vorgaenge',
+  wartung: '/wartung',
+  angebote: '/dokumente',
+};
+
+/** Dringlichkeit → Textlabel (Status nie nur über Farbe, WCAG 2.2). */
+const DRINGLICHKEIT_LABEL: Record<BriefingDringlichkeit, string> = {
+  info: 'Info',
+  bald: 'Bald',
+  ueberfaellig: 'Überfällig',
+};
 
 /** Ein Erste-Schritte-Punkt: Label, Zielroute und ob er erledigt ist. */
 export interface OnboardingSchritt {
@@ -49,12 +72,14 @@ export class Uebersicht {
   private readonly projektSvc = inject(ProjektService);
   private readonly belegSvc = inject(BelegService);
   private readonly firmaSvc = inject(FirmaService);
+  private readonly kiSvc = inject(KiService);
   private readonly auth = inject(AuthService);
 
   protected readonly tasks = signal<Tile<Task>>({ kind: 'loading' });
   protected readonly serviceCases = signal<Tile<ServiceCaseCard>>({ kind: 'loading' });
   protected readonly projects = signal<Tile<Project>>({ kind: 'loading' });
   protected readonly quotes = signal<Tile<Quote>>({ kind: 'loading' });
+  protected readonly briefing = signal<BriefingState>({ kind: 'loading' });
   private readonly onboarding = signal<Onboarding | null>(null);
 
   /**
@@ -133,6 +158,34 @@ export class Uebersicht {
         error: (err) => this.quotes.set(fehlerState(err)),
       });
     }
+    this.ladeBriefing();
+  }
+
+  /** Das KI-Tagesbriefing laden. `refresh` erzwingt eine serverseitige Neuberechnung. */
+  ladeBriefing(refresh = false): void {
+    this.briefing.set({ kind: 'loading' });
+    this.kiSvc.briefing(refresh).subscribe({
+      next: (b) => this.briefing.set({ kind: 'ready', briefing: b }),
+      error: () => this.briefing.set({ kind: 'error' }),
+    });
+  }
+
+  /** Zielroute der Kachel, auf die ein Briefing-Punkt verweist. */
+  bereichRoute(bereich: BriefingBereich): string {
+    return BEREICH_ROUTE[bereich];
+  }
+
+  /** Textlabel der Dringlichkeit (Status nie nur über Farbe). */
+  dringlichkeitLabel(d: BriefingDringlichkeit): string {
+    return DRINGLICHKEIT_LABEL[d];
+  }
+
+  /** Uhrzeit (HH:MM) des Stands für die Fußzeile der Kachel. */
+  uhrzeit(iso: string): string {
+    return new Intl.DateTimeFormat('de-DE', {
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(new Date(iso));
   }
 
   /** Kurzes Eingangsdatum (de-DE) für die Vorgangskachel. */

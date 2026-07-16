@@ -179,19 +179,59 @@
       </article>
     }
 
-    <!-- ---------------------------- KI-Vorschläge ---------------------- -->
+    <!-- ---------------------------- KI-Tagesbriefing ------------------
+         Lese-Zusammenfassung der Lage (Aufgaben, Vorgänge, Fälligkeiten,
+         Angebote), vom lokalen Modell formuliert — ohne fachliche Wirkung,
+         daher kein Freigabe-Tor. Jeder Punkt führt in die zuständige Kachel. -->
     <article class="kachel kachel--ki">
       <header class="kachel__kopf">
         <div>
-          <p class="kachel__kicker">KI-Vorschläge</p>
+          <p class="kachel__kicker">KI-Tagesbriefing</p>
         </div>
+        @if (briefing().kind === 'ready') {
+          <button
+            type="button"
+            class="kachel__aktion"
+            (click)="ladeBriefing(true)"
+            aria-label="Tagesbriefing neu erstellen"
+          >
+            Aktualisieren
+          </button>
+        }
       </header>
       <div class="kachel__ki">
-        <p class="kachel__leer">
-          Die KI schlägt hier bald Aktionen vor (Angebote, Aufgaben, nächste
-          Schritte) — durch dieselben Freigabe-Tore wie ein Mensch. Schema
-          <code>ai.ai_proposal</code>; Anbindung folgt.
-        </p>
+        @switch (briefing().kind) {
+          @case ('loading') {
+            <p class="kachel__leer" role="status">Wird erstellt …</p>
+          }
+          @case ('error') {
+            <p class="kachel__leer">Briefing konnte nicht geladen werden.</p>
+          }
+          @case ('ready') {
+            <p class="briefing__schlagzeile">{{ $any(briefing()).briefing.schlagzeile }}</p>
+            @if ($any(briefing()).briefing.punkte.length > 0) {
+              <ul class="briefing__liste">
+                @for (p of $any(briefing()).briefing.punkte; track $index) {
+                  <li class="briefing__punkt">
+                    <a class="briefing__link" [routerLink]="bereichRoute(p.bereich)">
+                      <span
+                        class="briefing__badge"
+                        [class]="'briefing__badge--' + p.dringlichkeit"
+                      >{{ dringlichkeitLabel(p.dringlichkeit) }}</span>
+                      <span class="briefing__text">{{ p.text }}</span>
+                    </a>
+                  </li>
+                }
+              </ul>
+            }
+            <p class="briefing__stand">
+              Stand {{ uhrzeit($any(briefing()).briefing.stand) }}
+              @if (!$any(briefing()).briefing.ki_generiert) {
+                · automatisch zusammengefasst
+              }
+            </p>
+          }
+        }
       </div>
     </article>
   </div>

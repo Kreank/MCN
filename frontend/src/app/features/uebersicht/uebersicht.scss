@@ -112,6 +112,95 @@
   font-size: 0.85em;
 }
 
+// ---- KI-Tagesbriefing ----------------------------------------------------
+.kachel__aktion {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  color: var(--accent-ink);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+
+  &:hover {
+    text-decoration: underline;
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+}
+.briefing__schlagzeile {
+  margin: 0 0 var(--space-3);
+  font-size: var(--step-0);
+  font-weight: 700;
+  color: var(--ink);
+  line-height: 1.3;
+}
+.briefing__liste {
+  list-style: none;
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.briefing__punkt {
+  border-bottom: 1px solid var(--line);
+  &:last-child {
+    border-bottom: none;
+  }
+}
+.briefing__link {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  text-decoration: none;
+  color: var(--ink);
+
+  &:hover .briefing__text {
+    text-decoration: underline;
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+}
+.briefing__text {
+  font-size: var(--step--1);
+}
+.briefing__badge {
+  flex: none;
+  align-self: center;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.03em;
+  padding: 0.1rem 0.4rem;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+.briefing__badge--info {
+  background: var(--neutral-tint);
+  color: var(--ink-muted);
+}
+.briefing__badge--bald {
+  background: var(--warn-tint);
+  color: var(--warn-ink);
+}
+.briefing__badge--ueberfaellig {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  color: var(--accent-ink);
+}
+.briefing__stand {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--ink-hint);
+}
+
 .kachel__liste {
   list-style: none;
   margin: 0;
