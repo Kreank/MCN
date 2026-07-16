@@ -197,6 +197,27 @@ def test_gesamt_mit_pricebasis_100():
     assert pos[0].net_price == Decimal("0.5000")
 
 
+def test_offer_price_wird_als_listenpreis_je_einheit_geparst():
+    """OfferPrice (Listenpreis je Einheit) wird erfasst — die tagesaktuelle
+    Händler-Aussage, die als listenpreis_override in die VK-Basis fließt. Beim echten
+    G.U.T.-Korb (PriceBasis 1.0) ist das der rohe 12,83."""
+    pos = ids.parse_returned_cart(_gut_cart())
+    assert pos[0].offer_price == Decimal("12.8300")
+
+
+def test_offer_price_wird_durch_pricebasis_geteilt():
+    """Wie NetPrice ist OfferPrice auf die PriceBasis bezogen (Basis 100 → /100)."""
+    pos = ids.parse_returned_cart(_gut_cart(offer="1283", basis="100"))
+    assert pos[0].offer_price == Decimal("12.8300")
+
+
+def test_ohne_offerprice_kein_listenpreis():
+    """Fehlt OfferPrice, bleibt offer_price None (die VK-Basis fällt auf den
+    Stamm-Listenpreis zurück)."""
+    pos = ids.parse_returned_cart(_gut_cart(offer=None))
+    assert pos[0].offer_price is None
+
+
 def test_ohne_netprice_kein_preis():
     """Ohne NetPrice gibt es keinen EK (None) und keinen Hinweis — unter beiden Semantiken."""
     for sem in (ids.NET_PRICE_EINHEIT, ids.NET_PRICE_GESAMT):

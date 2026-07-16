@@ -189,6 +189,64 @@ def test_basis_listenpreis(app_user):
 
 
 @pytest.mark.django_db
+def test_listenpreis_override_ersetzt_stammlistenpreis_matrix(app_user):
+    # IDS-OfferPrice überschreibt den DATANORM-Listenpreis in der Matrix-Basis:
+    # Stamm 200, aktuell 250; LISTENPREIS +10 % -> 275 statt 220.
+    art = _article(app_user, number="M-7b", list_price=Decimal("200.0000"))
+    matrix.create_markup_rule(
+        app_user.id, name="Liste", markup_percent=Decimal("10"),
+        calc_basis="LISTENPREIS",
+    )
+    res = matrix.vk_vorschlag(art.id, listenpreis_override=Decimal("250"))
+    assert res["sale_price"] == "275.00"
+    assert res["basis_kind"] == "LISTENPREIS"
+    # Der Kopf meldet die tatsächlich gerechnete Basis (den Override), nicht 200.
+    assert Decimal(res["list_price"]) == Decimal("250")
+
+
+@pytest.mark.django_db
+def test_listenpreis_override_je_stueck_mit_price_unit(app_user):
+    # Override ist JE STÜCK und wird — exakt wie ek_override — auf die Stamm-Skala
+    # (je price_unit) hochgerechnet: 2,50 €/Stück, price_unit 100, LISTENPREIS
+    # +10 % -> 2,75 €. Kein doppeltes Teilen.
+    art = _article(app_user, number="M-7c", price_unit=100)
+    matrix.create_markup_rule(
+        app_user.id, name="Liste", markup_percent=Decimal("10"),
+        calc_basis="LISTENPREIS",
+    )
+    res = matrix.vk_vorschlag(art.id, listenpreis_override=Decimal("2.50"))
+    assert res["sale_price"] == "2.75"
+
+
+@pytest.mark.django_db
+def test_listenpreis_override_gilt_auch_fuer_zugewiesene_gruppe(app_user):
+    # Auch die am Artikel zugewiesene LISTENPREIS-VK-Gruppe (Zweig 2, schlägt die
+    # Matrix) rechnet mit dem Override: Stamm 200, aktuell 300; +20 % -> 360.
+    art = _article(app_user, number="M-7d", list_price=Decimal("200.0000"))
+    grp = artikel_service.create_sale_price_group(
+        app_user.id, name="Liste +20", calc_basis="LISTENPREIS",
+        operator="AUFSCHLAG", percent_change=Decimal("20"),
+    )
+    artikel_service.set_article_sale_price(
+        app_user.id, article_id=art.id, sale_price_group_id=grp.id, is_standard=True,
+    )
+    res = matrix.vk_vorschlag(art.id, listenpreis_override=Decimal("300"))
+    assert res["sale_price"] == "360.00"
+    assert res["quelle"] == matrix.QUELLE_VK_GRUPPE
+
+
+@pytest.mark.django_db
+def test_ohne_override_bleibt_stammlistenpreis(app_user):
+    # Regression: ohne Override zählt weiter der Stammwert (200 +10 % -> 220).
+    art = _article(app_user, number="M-7e", list_price=Decimal("200.0000"))
+    matrix.create_markup_rule(
+        app_user.id, name="Liste", markup_percent=Decimal("10"),
+        calc_basis="LISTENPREIS",
+    )
+    assert matrix.vk_vorschlag(art.id)["sale_price"] == "220.00"
+
+
+@pytest.mark.django_db
 def test_price_unit_wird_beruecksichtigt(app_user):
     # EK je 100 Stück = 7,74 € -> 0,0774 €/Stück; +30 % = 0,10062 -> 0,10 €
     art = _article(app_user, number="M-8", price_unit=100)

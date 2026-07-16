@@ -560,6 +560,64 @@ def create_sale_price_group(
     return group
 
 
+def update_sale_price_group(
+    actor_app_user_id,
+    *,
+    group_id,
+    name=None,
+    calc_basis=None,
+    operator=None,
+    percent_change=...,
+    amount_change=...,
+    status=None,
+):
+    """Ändert eine bestehende VK-Kalkulationsgruppe (Name/Formel/Status).
+
+    Nicht mitgegebene Felder bleiben unverändert. `percent_change`/`amount_change`
+    tragen den Sentinel `...` als „nicht mitgeschickt": nur so lässt sich die
+    Formel von prozentual auf Betrag (oder umgekehrt) umstellen — dazu MÜSSEN beide
+    Werte explizit gesetzt werden (der neue Wert und `None` für den anderen), sonst
+    verletzt der Doppelwert den DB-XOR-CHECK und die Änderung wird als 422 abgelehnt.
+    """
+    group = SalePriceGroup.objects.filter(id=group_id).first()
+    if group is None:
+        raise ValueError("Kalkulationsgruppe nicht gefunden.")
+
+    if name is not None:
+        if not name.strip():
+            raise ValueError("name darf nicht leer sein.")
+        group.name = name.strip()
+    if calc_basis is not None:
+        if calc_basis not in SALE_CALC_BASES:
+            raise ValueError(f"Ungültige calc_basis '{calc_basis}'.")
+        group.calc_basis = calc_basis
+    if operator is not None:
+        if operator not in SALE_OPERATORS:
+            raise ValueError(f"Ungültiger operator '{operator}'.")
+        group.operator = operator
+
+    pc = group.percent_change if percent_change is ... else percent_change
+    ac = group.amount_change if amount_change is ... else amount_change
+    if (pc is None) == (ac is None):
+        raise ValueError(
+            "Genau eines von percent_change oder amount_change ist zu setzen."
+        )
+    group.percent_change = pc
+    group.amount_change = ac
+
+    if status is not None:
+        if status not in ("AKTIV", "INAKTIV"):
+            raise ValueError(f"Ungültiger Status '{status}'.")
+        group.status = status
+
+    with business_transaction(actor_app_user_id):
+        group.save(update_fields=[
+            "name", "calc_basis", "operator", "percent_change",
+            "amount_change", "status", "updated_at",
+        ])
+    return group
+
+
 def set_article_sale_price(
     actor_app_user_id,
     *,

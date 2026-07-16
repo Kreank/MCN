@@ -768,7 +768,18 @@ class Command(BaseCommand):
                 self.stdout.write(f"VK-Gruppe angelegt: {existing.name}")
             vk_groups[g["name"]] = existing
 
-        for art in Article.objects.filter(status="AKTIV", list_price__isnull=False):
+        # NUR die Demo-Artikel bepreisen — niemals den ganzen Stamm. Die frühere
+        # Fassung lief über alle Artikel mit Listenpreis; nach einem DATANORM-Import
+        # legte MCN_SEED=1 dadurch für ~215.000 Fremdartikel eine „Standard"-VK-Zeile
+        # über die 45%-Demo-Gruppe an (Unfall vom 14.07.2026, bereinigt via
+        # bereinige_vk_seed_unfall). Eine solche Artikel-Zuweisung schlägt die
+        # Matrix-Standardregel und verfälscht den VK still um +45 %.
+        _demo_artikelnummern = {a["article_number"] for a in DEMO_ARTICLES}
+        for art in Article.objects.filter(
+            status="AKTIV",
+            list_price__isnull=False,
+            article_number__in=_demo_artikelnummern,
+        ):
             if ArticleSalePrice.objects.filter(article_id=art.id).exists():
                 continue
             grp = (

@@ -163,7 +163,8 @@ def _resolved_out(r, regelwerk=None):
     if r.article_id:
         vorschlag = matrix_service.vk_vorschlag(
             r.article_id, menge=r.qty,
-            ek_override=r.net_price, regelwerk=regelwerk,
+            ek_override=r.net_price, listenpreis_override=r.offer_price,
+            regelwerk=regelwerk,
         )
         if vorschlag:
             vk = vorschlag["sale_price"]

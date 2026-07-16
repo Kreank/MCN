@@ -81,6 +81,9 @@ class CartPosition:
     net_price: Decimal | None = None
     vat: Decimal | None = None
     preis_hinweis: str | None = None
+    # Listenpreis JE EINHEIT (aus `OfferPrice`/`PriceBasis`) — die tagesaktuelle
+    # Händler-Aussage; speist als Override die VK-Basis der LISTENPREIS-Formeln.
+    offer_price: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -99,6 +102,7 @@ class ResolvedPosition:
     article_name: str | None
     matched: bool
     ambiguous: bool
+    offer_price: Decimal | None = None
 
 
 # --- XML-Hilfen (namespace-tolerant) ---------------------------------------
@@ -232,9 +236,31 @@ def parse_returned_cart(xml, *, net_price_semantics=NET_PRICE_EINHEIT) -> list[C
                 net_price=net_price,
                 vat=_dezimal(_text(item, "VAT")),
                 preis_hinweis=preis_hinweis,
+                offer_price=_offer_unit_price(item),
             )
         )
     return positions
+
+
+def _offer_unit_price(item):
+    """Listenpreis (`OfferPrice`) JE EINHEIT, auf dieselbe `PriceBasis` bezogen wie
+    `NetPrice`. Rückgabe: Decimal je Einheit oder None (kein/ungültiger OfferPrice).
+
+    Anders als beim EK gibt es hier KEINEN Mengenbezug: `OfferPrice` ist ein
+    Einheits-Listenpreis, keine Positionssumme — die NetPrice-Semantik (EINHEIT/
+    GESAMT) betrifft nur den NetPrice. Bei `PriceBasis` 1 (Regelfall der beobachteten
+    Körbe) ist das Ergebnis der rohe OfferPrice. Ein absurd großer Wert (quantize
+    wirft) liefert None statt eines falschen Preises."""
+    offer = _dezimal(_text(item, "OfferPrice"))
+    if offer is None or offer <= 0:
+        return None
+    basis = _dezimal(_text(item, "PriceBasis"))
+    if basis is None or basis == 0:
+        basis = Decimal("1")
+    try:
+        return (offer / basis).quantize(Decimal("0.0001"))
+    except InvalidOperation:
+        return None
 
 
 def _dezimal(wert):
@@ -357,6 +383,7 @@ def resolve_positions(source_namespace: str, positions) -> list[ResolvedPosition
                 article_name=art.description if art else None,
                 matched=matched,
                 ambiguous=ambiguous,
+                offer_price=p.offer_price,
             )
         )
     return resolved

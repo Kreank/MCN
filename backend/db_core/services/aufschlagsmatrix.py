@@ -256,10 +256,19 @@ def berechne(regel, *, ek, list_price, price_unit, menge=Decimal(1), tiers=None)
     return ergebnis
 
 
-def matrix_preis(article, *, ek, supplier_party_id, menge=Decimal(1), regelwerk=None):
+def matrix_preis(
+    article, *, ek, supplier_party_id, menge=Decimal(1), regelwerk=None,
+    list_price_override=None,
+):
     """Regel + Rechenergebnis für EINEN Artikel (oder (None, None), wenn keine
     Regel greift). Gemeinsame Auflösung für `vk_vorschlag`, die Massenpflege und
-    die Kalkulationsansichten — es gibt nur diese eine Rechenstelle."""
+    die Kalkulationsansichten — es gibt nur diese eine Rechenstelle.
+
+    `list_price_override` setzt den gespeicherten Listenpreis für diese Rechnung
+    außer Kraft (IDS-Warenkorb: der Händler liefert mit `OfferPrice` die
+    tagesaktuelle Listenpreis-Aussage, der Stamm trägt nur den DATANORM-Stand). Der
+    Wert liegt auf der Stamm-Skala (je `price_unit`), damit `berechne` ihn gleich
+    behandelt wie den gespeicherten Listenpreis; None = Stammwert verwenden."""
     regeln, tiers = regelwerk if regelwerk is not None else lade_regelwerk()
     regel = regel_aufloesen(
         regeln, article.id, article.product_group, supplier_party_id
@@ -269,7 +278,9 @@ def matrix_preis(article, *, ek, supplier_party_id, menge=Decimal(1), regelwerk=
     res = berechne(
         regel,
         ek=ek,
-        list_price=article.list_price,
+        list_price=(
+            article.list_price if list_price_override is None else list_price_override
+        ),
         price_unit=article.price_unit,
         menge=menge,
         tiers=tiers.get(regel.id, []),
@@ -393,7 +404,10 @@ def _scope_kind(regel):
 # Öffentliche Auflösung: Artikel → Regel → Verkaufspreis
 # ---------------------------------------------------------------------------
 
-def vk_vorschlag(article_id, menge=None, *, ek_override=None, regelwerk=None):
+def vk_vorschlag(
+    article_id, menge=None, *, ek_override=None, listenpreis_override=None,
+    regelwerk=None,
+):
     """VK-Vorschlag für EINEN Artikel (Artikel-Detail, Angebots-Editor, IDS,
     DATANORM). Gibt None zurück, wenn der Artikel nicht existiert.
 
@@ -405,6 +419,13 @@ def vk_vorschlag(article_id, menge=None, *, ek_override=None, regelwerk=None):
     EK aus dem Warenkorb und einen VK aus dem alten Stamm-EK — eine still falsche,
     womöglich negative Marge. Der Override wird NICHT in den Stamm geschrieben
     (dafür gibt es den DATANORM-Import).
+
+    `listenpreis_override` ist analog der **Listenpreis JE STÜCK** aus derselben
+    Warenkorbzeile (`OfferPrice`) — die tagesaktuelle Händler-Aussage. Er setzt den
+    gespeicherten `list_price` (DATANORM-Stand) außer Kraft, damit die VK-Basis bei
+    LISTENPREIS-Formeln (auch die Catch-all-Standardregel) auf dem aktuellen
+    Listenpreis steht statt auf dem womöglich veralteten Stammwert. Wie `ek_override`
+    wird er NICHT in den Stamm geschrieben.
 
     `regelwerk` (aus `lade_regelwerk()`) vermeidet N+1, wenn viele Artikel
     hintereinander bepreist werden.
@@ -425,6 +446,15 @@ def vk_vorschlag(article_id, menge=None, *, ek_override=None, regelwerk=None):
         # hochgerechnet, damit die Division ihn nicht ein zweites Mal teilt —
         # price_unit ist stets eine Zehnerpotenz, das ist exakt.
         ek = _dec(ek_override, "Einkaufspreis") * Decimal(article.price_unit or 1)
+
+    # Listenpreis für diese Rechnung: Override (IDS-OfferPrice) je Stück auf die
+    # Stamm-Skala (je price_unit) hochgerechnet, exakt wie der EK-Override — sonst
+    # der gespeicherte Stammwert.
+    list_price = article.list_price
+    if listenpreis_override is not None:
+        list_price = _dec(listenpreis_override, "Listenpreis") * Decimal(
+            article.price_unit or 1
+        )
     asp = _standard_variante([article.id]).get(article.id)
 
     kopf = {
@@ -436,9 +466,10 @@ def vk_vorschlag(article_id, menge=None, *, ek_override=None, regelwerk=None):
         "product_group": article.product_group,
         "menge": str(menge),
         "ek": str(ek) if ek is not None else None,
-        "list_price": (
-            str(article.list_price) if article.list_price is not None else None
-        ),
+        # Der effektiv verwendete Listenpreis (mit Override der aktuelle OfferPrice,
+        # sonst der Stammwert) — nicht der rohe Stammwert, damit das UI die wirklich
+        # gerechnete Basis sieht.
+        "list_price": (str(list_price) if list_price is not None else None),
         "regel": None,
         "basis_kind": None,
         "basis_amount": None,
@@ -465,7 +496,7 @@ def vk_vorschlag(article_id, menge=None, *, ek_override=None, regelwerk=None):
     # 2) Zugewiesene VK-Gruppe am Artikel (bestehende Formel, unverändert).
     if asp is not None and asp.sale_price_group_id is not None and asp.fixed_price is None:
         gruppe = asp.sale_price_group
-        roh = article.list_price if gruppe.calc_basis == "LISTENPREIS" else ek
+        roh = list_price if gruppe.calc_basis == "LISTENPREIS" else ek
         basis = _je_stueck(roh, article.price_unit)
         vk = _apply_formula(basis, gruppe)
         kopf["basis_kind"] = gruppe.calc_basis
@@ -486,7 +517,10 @@ def vk_vorschlag(article_id, menge=None, *, ek_override=None, regelwerk=None):
     #    rutscht).
     regelwerk = regelwerk if regelwerk is not None else lade_regelwerk()
     regel, res = matrix_preis(
-        article, ek=ek, supplier_party_id=lief, menge=menge, regelwerk=regelwerk
+        article, ek=ek, supplier_party_id=lief, menge=menge, regelwerk=regelwerk,
+        list_price_override=(
+            list_price if listenpreis_override is not None else None
+        ),
     )
     if regel is None:
         kopf["hinweis"] = (

@@ -493,6 +493,20 @@ class SalePriceGroupIn(Schema):
     amount_change: Decimal | None = None
 
 
+class SalePriceGroupUpdateIn(Schema):
+    """PATCH: alle Felder optional. Nur mitgeschickte Felder werden geändert
+    (`model_dump(exclude_unset=True)`). Um die Formel von Prozent auf Betrag (oder
+    umgekehrt) umzustellen, beide Felder senden — den neuen Wert und `null` für
+    den anderen."""
+
+    name: str | None = None
+    calc_basis: str | None = None
+    operator: str | None = None
+    percent_change: Decimal | None = None
+    amount_change: Decimal | None = None
+    status: str | None = None
+
+
 class ArticleSalePriceOut(Schema):
     id: UUID
     label: str
@@ -635,6 +649,46 @@ def create_sale_price_group(request, payload: SalePriceGroupIn):
     except ValueError as exc:
         raise HttpError(422, str(exc))
     return Status(201, SalePriceGroup.objects.get(id=group.id))
+
+
+@router.patch(
+    "/sale_price_groups/{group_id}", response=SalePriceGroupOut, auth=django_auth
+)
+def update_sale_price_group(request, group_id: UUID, payload: SalePriceGroupUpdateIn):
+    """VK-Kalkulationsgruppe nachträglich ändern (Name/Formel/Status).
+
+    Nur mitgeschickte Felder werden geändert. Ein Umstellen der Formel (Prozent ↔
+    Betrag) verlangt beide Werte im Body (neuer Wert + `null`), sonst XOR-Verstoß
+    (422). Kein Löschen (Schutzstandard) — INAKTIV setzen statt entfernen.
+    """
+    actor, _ = require(request, "pricing", "AENDERN")
+    if not SalePriceGroup.objects.filter(id=group_id).exists():
+        raise HttpError(404, "Kalkulationsgruppe nicht gefunden.")
+    daten = payload.model_dump(exclude_unset=True)
+    try:
+        artikel_service.update_sale_price_group(
+            actor,
+            group_id=group_id,
+            name=daten.get("name"),
+            calc_basis=daten.get("calc_basis"),
+            operator=daten.get("operator"),
+            # `...` = nicht mitgeschickt (Wert bleibt); nur so ist ein Formelwechsel
+            # von Prozent auf Betrag ausdrückbar (der andere Wert wird auf NULL gesetzt).
+            percent_change=(
+                _quantize(daten["percent_change"], 3)
+                if "percent_change" in daten
+                else ...
+            ),
+            amount_change=(
+                _quantize(daten["amount_change"], 2)
+                if "amount_change" in daten
+                else ...
+            ),
+            status=daten.get("status"),
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return SalePriceGroup.objects.get(id=group_id)
 
 
 @router.put(

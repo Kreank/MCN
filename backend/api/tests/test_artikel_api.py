@@ -243,6 +243,98 @@ def test_create_sale_price_group_beide_werte_422(admin_client, db):
     assert r.status_code == 422
 
 
+def _create_group(admin_client, **felder):
+    """Legt eine VK-Gruppe über den POST-Endpunkt an und gibt ihre UUID zurück."""
+    daten = {
+        "name": felder.pop("name", f"Gruppe {uuid.uuid4().hex[:6]}"),
+        "calc_basis": "EK", "operator": "AUFSCHLAG", "percent_change": "30.000",
+    }
+    daten.update(felder)
+    r = admin_client.post(
+        "/api/pricing/sale_price_groups", data=daten,
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    return r.json()["id"]
+
+
+@pytest.mark.django_db
+def test_update_sale_price_group_name_und_formel(admin_client, db):
+    gid = _create_group(admin_client, name="Alt 30", percent_change="30.000")
+    r = admin_client.patch(
+        f"/api/pricing/sale_price_groups/{gid}",
+        data={"name": "Neu 40", "percent_change": "40.000"},
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    body = r.json()
+    assert body["name"] == "Neu 40"
+    assert Decimal(body["percent_change"]) == Decimal("40.000")
+
+
+@pytest.mark.django_db
+def test_update_sale_price_group_status_inaktiv(admin_client, db):
+    gid = _create_group(admin_client, name="Stilllegen", percent_change="10.000")
+    r = admin_client.patch(
+        f"/api/pricing/sale_price_groups/{gid}",
+        data={"status": "INAKTIV"},
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    assert r.json()["status"] == "INAKTIV"
+
+
+@pytest.mark.django_db
+def test_update_sale_price_group_formel_umstellen_prozent_auf_betrag(admin_client, db):
+    """Prozent -> Betrag: beide Felder senden (neuer Betrag + percent=null),
+    sonst XOR-Verstoß."""
+    gid = _create_group(admin_client, name="Umbau", percent_change="30.000")
+    r = admin_client.patch(
+        f"/api/pricing/sale_price_groups/{gid}",
+        data={"percent_change": None, "amount_change": "5.00"},
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    body = r.json()
+    assert body["percent_change"] is None
+    assert Decimal(body["amount_change"]) == Decimal("5.00")
+
+
+@pytest.mark.django_db
+def test_update_sale_price_group_xor_verletzung_422(admin_client, db):
+    """percent gesetzt lassen und zusätzlich amount setzen (ohne percent=null) →
+    beide belegt → XOR-Verstoß → 422."""
+    gid = _create_group(admin_client, name="Kaputt-Patch", percent_change="30.000")
+    r = admin_client.patch(
+        f"/api/pricing/sale_price_groups/{gid}",
+        data={"amount_change": "5.00"},
+        content_type="application/json",
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.django_db
+def test_update_sale_price_group_unbekannt_404(admin_client, db):
+    r = admin_client.patch(
+        f"/api/pricing/sale_price_groups/{uuid.uuid4()}",
+        data={"name": "Egal"},
+        content_type="application/json",
+    )
+    assert r.status_code == 404
+
+
+@pytest.mark.django_db
+def test_update_sale_price_group_ohne_recht_403(client_with_role, admin_client, db):
+    gid = _create_group(admin_client, name="Geschützt", percent_change="10.000")
+    c = client_with_role("NUR_LESEN")
+    r = c.patch(
+        f"/api/pricing/sale_price_groups/{gid}",
+        data={"name": "Fremdzugriff"},
+        content_type="application/json",
+    )
+    assert r.status_code == 403
+
+
 @pytest.mark.django_db
 def test_set_article_sale_price_happy(admin_client, seeded):
     grp = artikel_service.create_sale_price_group(
@@ -452,6 +544,9 @@ def _anbindung(app_user, namespace, kind):
             id=_uuid.uuid4(), supplier_party_id=party.id, source_system="DATANORM",
             source_namespace=namespace, label=f"Lieferant {namespace}",
             status="ACTIVE", connection_kind=kind,
+            # Seit Migration 0111 NOT NULL mit CHECK — das Modell trägt keinen
+            # db_default, die DB-Default greift bei ORM-Inserts nicht. Explizit setzen.
+            net_price_semantics="EINHEIT",
             version=1,
         )
     return party
