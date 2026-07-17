@@ -1,0 +1,443 @@
+.geraetewissen {
+  max-width: var(--content-w);
+  margin: 0 auto;
+}
+
+// ============================== Seitenkopf ==================================
+.page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-6);
+}
+.page-head__kicker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+}
+.page-head__scale {
+  width: 2.5rem;
+  height: 0.5rem;
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--line-strong) 0,
+    var(--line-strong) 1px,
+    transparent 1px,
+    transparent 0.5rem
+  );
+  border-bottom: 1.5px solid var(--line-strong);
+}
+.page-head__titel {
+  font-size: var(--step-3);
+}
+.page-head__hint {
+  margin: var(--space-2) 0 0;
+  max-width: 30rem;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+// ============================== Steuerung ===================================
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+.search {
+  flex: 1 1 18rem;
+}
+.search__label {
+  display: block;
+  margin-bottom: var(--space-2);
+  font-size: var(--step--1);
+  font-weight: 600;
+  color: var(--ink-muted);
+}
+.search__field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  min-height: 44px;
+  background: var(--surface);
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius);
+  transition: border-color 0.15s ease;
+
+  &:focus-within {
+    border-color: var(--ink);
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+.search__icon {
+  color: var(--ink-faint);
+  font-size: 1.1rem;
+}
+.search__input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--step-0);
+  padding: 0.4rem 0;
+
+  &:focus {
+    outline: none;
+  }
+  &::placeholder {
+    color: var(--ink-faint);
+  }
+}
+.search__hilfe {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-3);
+  margin: var(--space-2) 0 0;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+.search__hilfe-lead {
+  font-weight: 600;
+}
+.search__op {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+}
+.search__op-z {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  padding: 0 0.3rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--ink);
+}
+
+// ============================ Hersteller-Filter (Chips) =====================
+.filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+}
+.filter__label {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 38px;
+  padding: 0 var(--space-3);
+  background: var(--surface);
+  border: 1.5px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--ink);
+  font-size: var(--step--1);
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+
+  &:hover:not(:disabled) {
+    border-color: var(--ink);
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+  // Aktiv: nicht nur über Farbe erkennbar — die Marke wird gefüllt und der
+  // Rahmen kräftiger; zusätzlich trägt der Button aria-pressed=true.
+  &.is-active {
+    background: var(--command);
+    border-color: var(--command);
+    color: var(--on-command);
+  }
+  // Leerer Katalog: deaktiviert, klar als „nichts drin" lesbar (Text + Zustand),
+  // nicht allein über eine blasse Farbe.
+  &.is-leer {
+    cursor: not-allowed;
+    opacity: 0.6;
+  }
+}
+.chip__mark {
+  font-size: 0.6rem;
+  line-height: 1;
+  color: var(--accent-ink);
+
+  .chip.is-active & {
+    color: var(--on-command);
+  }
+}
+.chip__zahl {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.4rem;
+  height: 1.4rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 700;
+
+  .chip.is-active & {
+    background: color-mix(in srgb, var(--on-command) 22%, transparent);
+    color: var(--on-command);
+  }
+}
+
+// ============================ Liste =========================================
+.rows {
+  list-style: none;
+  margin: 0 0 var(--space-5);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  width: 100%;
+  min-height: 4rem;
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-1);
+  color: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+
+  &:hover {
+    border-left-color: var(--accent);
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+.row__badge {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: var(--radius);
+  border: 1.5px solid color-mix(in srgb, var(--accent-ink) 45%, var(--line-strong));
+  color: var(--accent-ink);
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.06em;
+}
+.row__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.row__title {
+  font-size: var(--step-1);
+  font-weight: 600;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.row__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+.row__nr {
+  font-family: var(--font-mono);
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+}
+.row__nr-label {
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.row__sum {
+  flex: none;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: var(--step-1);
+  color: var(--ink);
+}
+
+// ============================== Pagination ==================================
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  padding-top: var(--space-2);
+}
+.pager__pos {
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+// ============================== Detail-Dialog ===============================
+.detail {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.detail__row {
+  display: grid;
+  grid-template-columns: minmax(9rem, 14rem) 1fr;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface);
+}
+.detail__row--voll {
+  grid-template-columns: 1fr;
+  gap: var(--space-2);
+}
+.detail__dt {
+  margin: 0;
+  font-size: var(--step--1);
+  font-weight: 600;
+  color: var(--ink-muted);
+}
+.detail__dd {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--step-0);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.detail__dd--nr {
+  font-family: var(--font-mono);
+}
+.detail__dd--preis {
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+.detail__dd--text {
+  white-space: pre-line;
+  color: var(--ink-muted);
+}
+.detail__laedt {
+  margin: 0;
+  color: var(--ink-muted);
+}
+.detail__hinweis {
+  margin: var(--space-3) 0 0;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+// ============================== Skelett =====================================
+.row--skeleton {
+  border-left-color: var(--line);
+}
+.sk-block {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.sk {
+  display: block;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  position: relative;
+  overflow: hidden;
+}
+.sk--badge {
+  flex: none;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: var(--radius);
+}
+.sk--line {
+  width: 40%;
+  height: 1rem;
+}
+.sk--chips {
+  width: 11rem;
+  height: 0.85rem;
+}
+.sk--sum {
+  flex: none;
+  width: 4rem;
+  height: 1rem;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .sk::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(
+      90deg,
+      transparent,
+      color-mix(in srgb, var(--surface) 60%, transparent),
+      transparent
+    );
+    animation: sk-shimmer 1.4s ease-in-out infinite;
+  }
+}
+@keyframes sk-shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@media (max-width: 560px) {
+  .row {
+    flex-wrap: wrap;
+  }
+  .row__sum {
+    width: 100%;
+    padding-left: calc(2.5rem + var(--space-4));
+  }
+  .detail__row {
+    grid-template-columns: 1fr;
+    gap: var(--space-1, 0.25rem);
+  }
+}

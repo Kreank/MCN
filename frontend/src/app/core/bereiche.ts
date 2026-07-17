@@ -26,6 +26,8 @@ export const BEREICH_RECHT: Record<string, readonly [string, string]> = {
   auswertungen: ['invoicing', 'LESEN'],
   artikel: ['pricing', 'LESEN'],
   leistungen: ['pricing', 'LESEN'],
+  // Gerätewissen: read-only-Sicht auf Hersteller-Ersatzteile (pricing.article).
+  geraetewissen: ['pricing', 'LESEN'],
   // Eingangsrechnungen (accounting.receipt) — eigener Belegkreis, eigenes Recht.
   belegerfassung: ['accounting', 'LESEN'],
   // Vier-Augen-Anträge: die Liste selbst verlangt nur security/LESEN; das

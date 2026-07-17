@@ -75,6 +75,9 @@ export class App {
     // also gerade auch für den Monteur mit Scope EIGENE.
     { path: '/meine-zeiten', label: 'Meine Zeiten', mark: '67', recht: ['hr', 'AENDERN'] },
     { path: '/artikel', label: 'Artikel', mark: '70', recht: ['pricing', 'LESEN'] },
+    // Gerätewissen: read-only-Sicht auf Hersteller-Ersatzteile (Vaillant/Junkers)
+    // — dieselbe pricing/LESEN-Berechtigung wie der Artikelstamm, direkt daneben.
+    { path: '/geraetewissen', label: 'Gerätewissen', mark: '72', recht: ['pricing', 'LESEN'] },
     // `nurAlle` (seit Migration 0102): MONTEUR trägt jetzt invoicing/LESEN mit Scope
     // EIGENE — er darf das ANGEBOT seines Objekts sehen (ohne Preise). Buchhaltung
     // und Auswertungen werten den Scope NICHT aus (`require` → 403) und sind

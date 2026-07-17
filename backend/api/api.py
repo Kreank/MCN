@@ -28,6 +28,7 @@ from api.dateien import router as dateien_router
 from api.dossier import router as dossier_router
 from api.buchhaltung import router as buchhaltung_router
 from api.firma import router as firma_router
+from api.geraetewissen import router as geraetewissen_router
 from api.identity import router as identity_router
 from api.ki import router as ki_router
 from api.lieferant import router as lieferant_router
@@ -90,6 +91,9 @@ api.add_router("/zeiterfassung", zeiterfassung_router, tags=["zeiterfassung"])
 api.add_router("/pricing", artikel_router, tags=["pricing"])
 api.add_router("/pricing", lohngruppe_router, tags=["pricing"])
 api.add_router("/pricing", lieferant_router, tags=["pricing"])
+# Gerätewissen: read-only-Sicht auf Hersteller-Ersatzteile (pricing.article,
+# gefiltert auf die Hersteller-Namensräume). Eigener Tag, Recht pricing/LESEN.
+api.add_router("/geraetewissen", geraetewissen_router, tags=["geraetewissen"])
 api.add_router("/auswertungen", auswertungen_router, tags=["auswertungen"])
 api.add_router("/company", firma_router, tags=["company"])
 api.add_router("/company", mail_router, tags=["company"])

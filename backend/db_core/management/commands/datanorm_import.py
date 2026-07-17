@@ -1,12 +1,34 @@
-"""DATANORM-Import: Artikelstamm und Preise eines Großhändlers einlesen.
+"""DATANORM-Import: Artikelstamm und Preise eines Großhändlers/Herstellers einlesen.
 
-Aufruf (Trockenlauf, schreibt NICHTS):
+Zwei DATANORM-4-Varianten werden unterstützt:
 
-    uv run python manage.py datanorm_import \
-        --stamm "D:/Mitra/MCN/DATANORM/3STAMM.ZIP" \
-        --preise "D:/Mitra/MCN/DATANORM/DATANORM (1).ZIP" \
-        --namespace bo --lieferant "BÄR & OLLENROTH KG" \
-        --dry-run --limit 10
+1. GROSSHÄNDLER (B&O): Preise stehen in einer SEPARATEN Preisdatei (P-Sätze),
+   die per --preise übergeben wird. Rabatt steckt im P-Satz.
+
+       uv run python manage.py datanorm_import \
+           --stamm "3STAMM.ZIP" --preise "DATANORM (1).ZIP" \
+           --namespace bo --lieferant "BÄR & OLLENROTH KG" --dry-run --limit 10
+
+2. HERSTELLER (Vaillant, Bosch/Junkers): Preis steht IM A-Satz (Feld nach der
+   Einheit, in Cent; Preiskennzeichen 1 = Bruttopreis/Liste). Der Rabatt liegt
+   NICHT am Artikel, sondern verweist per Rabattgruppe (RC/RA/PP21/…) auf eine
+   separate .RAB-Datei, die per --rabatt übergeben wird (oder im Stamm-ZIP
+   mitgeliefert ist, wie bei Bosch). Ohne .RAB bleibt der EK unbekannt (NULL).
+
+       uv run python manage.py datanorm_import \
+           --stamm "Preisliste_ET_DE_Update_01.07.2026.zip" \
+           --namespace vaillant --dry-run --limit 5
+       uv run python manage.py datanorm_import \
+           --stamm "DATANORM_PPT01042026_Handelsware-neu.zip" \
+           --rabatt "datanorm-rab-ppt01062023-2669958.zip" \
+           --namespace vaillant --dry-run --limit 5
+
+Die Wahl der Preisquelle geschieht je Artikel automatisch: liegt ein P-Satz vor,
+gewinnt er (B&O); sonst wird der A-Satz-Preis verwendet (Hersteller). Der
+bestehende B&O-Weg bleibt damit unverändert.
+
+Die Dateinamen im ZIP sind tolerant (datanorm.001/.002, Groß/Klein; Mehr-Member-
+ZIPs mit .RAB/.WRG oder einer Ordnerebene werden korrekt aufgelöst).
 
 Der Trockenlauf zeigt je Artikel den Rohsatz, die geparsten Felder und den
 errechneten Preis — zum Gegenlesen, bevor irgendetwas geschrieben wird. Ein
@@ -32,15 +54,69 @@ from db_core.models import AppUser, Article, ArticleSupplierReference, Party
 from db_core.services import datanorm
 
 
-def _zeilen(zip_pfad):
-    """Streamt die (einzige) Datei im ZIP zeilenweise, dekodiert als CP850."""
+def _ist_rab(name):
+    return name.rsplit("/", 1)[-1].lower().endswith(".rab")
+
+
+def _ist_beiwerk(name):
+    """.RAB (Rabatte) und .WRG (Warengruppen) sind Beiwerk, nicht der Artikelstamm."""
+    return name.rsplit("/", 1)[-1].lower().endswith((".rab", ".wrg"))
+
+
+def _artikel_member(namen):
+    """Wählt die Artikel-Hauptdatei aus einem ZIP.
+
+    Toleriert alle DATANORM-Varianten: `datanorm.001`, `.002`, Groß/Klein, sowie
+    Mehr-Member-ZIPs (Hersteller bündeln DATANORM.001 + .RAB + .WRG) und
+    Verzeichnis-Einträge (die Grundausstattung packt eine Ordnerebene mit ein).
+    Der bisherige B&O-Weg (genau eine Datei) fällt als Sonderfall darunter.
+    """
+    dateien = [n for n in namen if not n.endswith("/")]      # keine Verzeichnisse
+    haupt = [n for n in dateien if not _ist_beiwerk(n)]
+    if len(haupt) == 1:
+        return haupt[0]
+    if len(dateien) == 1:
+        return dateien[0]
+    raise CommandError(
+        f"ZIP: Artikel-Hauptdatei nicht eindeutig bestimmbar, gefunden {namen}"
+    )
+
+
+def _zeilen(zip_pfad, member=None):
+    """Streamt die Artikel-Hauptdatei im ZIP zeilenweise, dekodiert als CP850.
+
+    Ohne `member` wird die Hauptdatei automatisch gewählt (siehe `_artikel_member`);
+    mit `member` wird gezielt dieser Eintrag gelesen (z. B. eine .RAB-Datei).
+    """
     with zipfile.ZipFile(zip_pfad) as z:
-        namen = z.namelist()
-        if len(namen) != 1:
-            raise CommandError(f"{zip_pfad}: erwartet genau eine Datei, gefunden {namen}")
-        with z.open(namen[0]) as roh:
+        name = member or _artikel_member(z.namelist())
+        with z.open(name) as roh:
             for zeile in io.TextIOWrapper(roh, encoding=datanorm.ENCODING, newline=""):
                 yield zeile.rstrip("\r\n")
+
+
+def _rabattindex(zip_pfade, stdout=None):
+    """Rabattgruppe -> `Rabattgruppe`, gelesen aus allen .RAB-Membern der ZIPs.
+
+    Sammelt die Rabatttabelle aus einer separaten .RAB-ZIP (--rabatt) UND aus
+    einer im Artikelstamm-ZIP mitgelieferten .RAB-Datei (Bosch/Junkers bündeln
+    beides). Ohne .RAB-Datei bleibt die Tabelle leer → EK unbekannt.
+    """
+    tabelle = {}
+    for zip_pfad in zip_pfade:
+        if not zip_pfad:
+            continue
+        with zipfile.ZipFile(zip_pfad) as z:
+            rab_member = [n for n in z.namelist() if _ist_rab(n)]
+            for m in rab_member:
+                for zeile in _zeilen(zip_pfad, member=m):
+                    if zeile.startswith("R;"):
+                        r = datanorm.parse_rabattgruppe(zeile)
+                        if r.gruppe:
+                            tabelle[r.gruppe] = r
+    if stdout and tabelle:
+        stdout(f"  Rabatttabelle: {len(tabelle)} Rabattgruppen")
+    return tabelle
 
 
 def _preisindex(zip_pfad, stdout=None):
@@ -144,8 +220,20 @@ class Command(BaseCommand):
     help = "Importiert einen DATANORM-4-Artikelstamm (Trockenlauf mit --dry-run)."
 
     def add_arguments(self, parser):
-        parser.add_argument("--stamm", required=True, help="ZIP mit datanorm.001")
-        parser.add_argument("--preise", help="ZIP mit datpreis.001")
+        parser.add_argument(
+            "--stamm", required=True,
+            help="ZIP mit dem Artikelstamm (datanorm.001/.002, Groß/Klein egal)",
+        )
+        parser.add_argument(
+            "--preise",
+            help="ZIP mit datpreis.001 (B&O-Weg: separate P-Sätze). Fehlt sie, "
+            "wird der Preis aus dem A-Satz gelesen (Herstellerkataloge).",
+        )
+        parser.add_argument(
+            "--rabatt",
+            help="ZIP mit einer .RAB-Rabatttabelle (Herstellerkataloge). Löst die "
+            "Rabattgruppe am A-Satz zum EK auf. Fehlt sie, bleibt der EK unbekannt.",
+        )
         parser.add_argument("--namespace", required=True, help="z. B. 'bo'")
         parser.add_argument("--lieferant", help="Anzeigename des Lieferanten")
         parser.add_argument("--dry-run", action="store_true", help="nichts schreiben")
@@ -184,6 +272,13 @@ class Command(BaseCommand):
             )
             self.stdout.write("")
 
+        # Rabatttabelle: aus --rabatt UND aus einer im Stamm-ZIP mitgelieferten .RAB.
+        rabatt_tabelle = _rabattindex(
+            [opts.get("rabatt"), opts["stamm"]], stdout=self.stdout.write
+        )
+        if rabatt_tabelle:
+            self.stdout.write("")
+
         # Zusatzsätze (Fabrikat) für die gesuchten Artikel einsammeln
         limit = opts["limit"]
         gesucht = set(opts["nummer"])
@@ -212,9 +307,11 @@ class Command(BaseCommand):
         for roh, a in artikel:
             b = zusatz.get(a.artikelnummer)
             p = preis_netto.get(a.artikelnummer) or preis_liste.get(a.artikelnummer)
+            rg = rabatt_tabelle.get(a.rabattgruppe) if a.rabattgruppe else None
             ek = lp = None
             herkunft = "kein Preissatz"
             if p is not None:
+                # B&O-Weg: Preis aus separatem P-Satz.
                 ek, lp = datanorm.einkaufspreis(p, a.preiseinheit)
                 if p.preiskennzeichen == datanorm.PREISKENNZEICHEN_NETTO:
                     herkunft = "Nettopreis (PKZ 2)"
@@ -224,6 +321,17 @@ class Command(BaseCommand):
                     herkunft = f"Rabattgruppe {a.rabattgruppe} (nicht auflösbar)"
                 else:
                     herkunft = f"Rabattkennzeichen {p.rabatt_kennzeichen}"
+            elif a.listenpreis is not None:
+                # Herstellerkatalog: Preis steckt im A-Satz.
+                ek, lp = datanorm.preis_aus_artikel(a, rabatt=rg)
+                if a.preiskennzeichen == datanorm.PREISKENNZEICHEN_NETTO:
+                    herkunft = "A-Satz Nettopreis (PKZ 2)"
+                elif rg is not None and ek is not None:
+                    herkunft = f"A-Satz Liste - Rabattgruppe {a.rabattgruppe}"
+                elif a.rabattgruppe:
+                    herkunft = f"A-Satz Liste, Rabattgruppe {a.rabattgruppe} (keine .RAB)"
+                else:
+                    herkunft = "A-Satz Liste (ohne Rabattgruppe)"
 
             self.stdout.write("")
             self.stdout.write(self.style.SQL_KEYWORD(f"  {a.artikelnummer}"))
@@ -253,8 +361,14 @@ class Command(BaseCommand):
     def _importieren(self, **opts):
         namespace = opts["namespace"]
         name = opts["lieferant"] or namespace
-        if not opts.get("preise"):
-            raise CommandError("--preise ist für den Import erforderlich (EK-Quelle).")
+        # Der B&O-Weg braucht die Preisdatei als EK-Quelle. Herstellerkataloge
+        # tragen den Preis im A-Satz (EK aus der Rabattgruppe via --rabatt) — dort
+        # ist --preise nicht erforderlich.
+        if not opts.get("preise") and not opts.get("rabatt"):
+            self.stdout.write(self.style.WARNING(
+                "  Weder --preise noch --rabatt: Listenpreise aus dem A-Satz, "
+                "Einkaufspreise bleiben unbekannt (EK = NULL)."
+            ))
 
         actor = AppUser.objects.filter(status="ACTIVE").order_by("created_at").first()
         if actor is None:
@@ -270,8 +384,13 @@ class Command(BaseCommand):
                 "Der Erstimport bricht ab, statt Dubletten anzulegen."
             )
 
-        self.stdout.write("  Lese Preisdatei …")
-        preis_liste, preis_netto = _preisindex(opts["preise"], stdout=self.stdout.write)
+        preis_liste, preis_netto = {}, {}
+        if opts.get("preise"):
+            self.stdout.write("  Lese Preisdatei …")
+            preis_liste, preis_netto = _preisindex(opts["preise"], stdout=self.stdout.write)
+        rabatt_tabelle = _rabattindex(
+            [opts.get("rabatt"), opts["stamm"]], stdout=self.stdout.write
+        )
 
         party = _lieferant_und_anbindung(actor.id, name=name, namespace=namespace)
         self.stdout.write(f"  Lieferant : {party.display_name} ({party.id})")
@@ -299,7 +418,12 @@ class Command(BaseCommand):
             p = preis_netto.get(a.artikelnummer) or preis_liste.get(a.artikelnummer)
             ek = lp = None
             if p is not None:
+                # B&O-Weg: Preis aus separatem P-Satz.
                 ek, lp = datanorm.einkaufspreis(p, a.preiseinheit)
+            else:
+                # Herstellerkatalog: Preis aus dem A-Satz, EK über die Rabattgruppe.
+                rg = rabatt_tabelle.get(a.rabattgruppe) if a.rabattgruppe else None
+                ek, lp = datanorm.preis_aus_artikel(a, rabatt=rg)
             if lp is None:
                 lp = a.listenpreis          # Stammpreis als Rückfall
             if ek is None:

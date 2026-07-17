@@ -193,6 +193,22 @@ class Preis:
     rabatt_wert: int | None
 
 
+@dataclass(frozen=True)
+class Rabattgruppe:
+    """R-Satz aus einer .RAB-Datei: die Rabatttabelle der Herstellerkataloge.
+
+    Anders als der B&O-Weg (Rabatt steckt im P-Satz) tragen Herstellerkataloge
+    (Vaillant, Bosch/Junkers) den Rabatt NICHT am Artikel, sondern verweisen per
+    Rabattgruppe (RC/RA/PP21/…) auf eine separate .RAB-Datei. `kennzeichen`/`wert`
+    sind auf DERSELBEN Skala wie im P-Satz kodiert (Kennzeichen 1 = Prozent in
+    Hundertstel-Prozent: 2000 → 20,00 %), damit `rabatt_anwenden` sie unverändert
+    verrechnen kann.
+    """
+    gruppe: str
+    kennzeichen: int | None
+    wert: int | None
+
+
 def parse_vorlauf(zeile):
     """V-Satz: als EINZIGE Satzart positionsbasiert, nicht semikolongetrennt."""
     if not zeile.startswith("V"):
@@ -313,3 +329,50 @@ def einkaufspreis(preis: Preis, preiseinheit: int):
     if preis.preiskennzeichen == PREISKENNZEICHEN_WERK:
         return None, preis_je_einheit(preis.preis_cent, preiseinheit)
     raise DatanormFehler(f"Unbekanntes Preiskennzeichen {preis.preiskennzeichen!r}.")
+
+
+def parse_rabattgruppe(zeile):
+    """R-Satz einer .RAB-Datei → `Rabattgruppe`.
+
+    Feldlage: `R;;<gruppe>;<kennzeichen>;<wert>;<text>;`
+        gruppe      = Rabattgruppen-Schlüssel (RC, RA, PP21, 100, …)
+        kennzeichen = wie Rabattkennzeichen im P-Satz (1 = Prozent üblich)
+        wert        = Hundertstel-Prozent bei Kennzeichen 1 (2000 → 20,00 %)
+    """
+    f = zeile.rstrip("\r\n").split(";")
+    if len(f) < 5 or f[0] != "R":
+        raise DatanormFehler(f"Kein R-Satz: {zeile[:40]!r}")
+    return Rabattgruppe(
+        gruppe=(f[2] or "").strip(),
+        kennzeichen=_int(f[3], "Rabattkennzeichen"),
+        wert=_int(f[4], "Rabattwert"),
+    )
+
+
+def preis_aus_artikel(artikel: Artikel, rabatt: Rabattgruppe | None = None):
+    """Einkaufs- und Listenpreis je EINER Mengeneinheit aus dem A-Satz selbst.
+
+    Die Herstellerkataloge (Vaillant, Bosch/Junkers) tragen den Preis IM A-Satz,
+    nicht in einem separaten P-Satz. Semantik des Preiskennzeichens (Feld 7 des
+    A-Satzes) wie beim P-Satz:
+
+        1 = Listenpreis (brutto) → list_price = A-Satz-Preis; EK = Liste × (1 − Rabatt),
+            der Rabatt kommt aus der Rabattgruppe (.RAB-Datei). Ohne Rabatttabelle
+            bleibt der EK unbekannt (None) — nicht raten.
+        2 = Nettopreis            → EK = A-Satz-Preis, kein Listenpreis.
+        3 = Werkspreis / fehlend  → list_price = A-Satz-Preis, EK unbekannt.
+
+    Der Preis ist über `Artikel.listenpreis` bereits um die Preiseinheit bereinigt.
+    Gibt `(ek, list_price)` zurück, jeweils None wo nicht bestimmbar — konsistent
+    zu `einkaufspreis`.
+    """
+    preis = artikel.listenpreis          # Preiseinheit bereits angewandt
+    if artikel.preiskennzeichen == PREISKENNZEICHEN_NETTO:
+        return preis, None
+    if artikel.preiskennzeichen == PREISKENNZEICHEN_WERK:
+        return None, preis
+    # Kennzeichen 1 (Liste) oder fehlend: als Bruttopreis behandeln.
+    ek = None
+    if rabatt is not None and preis is not None:
+        ek = rabatt_anwenden(preis, rabatt.kennzeichen, rabatt.wert)
+    return ek, preis

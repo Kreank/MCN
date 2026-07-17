@@ -516,6 +516,13 @@ export const routes: Routes = [
           ),
       },
       {
+        path: 'geraetewissen',
+        title: 'Gerätewissen — Mitra Sanitär',
+        canActivate: [darfGuard('pricing', 'LESEN')],
+        loadComponent: () =>
+          import('./features/geraetewissen/geraetewissen').then((m) => m.Geraetewissen),
+      },
+      {
         path: 'artikel/:id',
         title: 'Artikel — Mitra Sanitär',
         canActivate: [darfGuard('pricing', 'LESEN')],

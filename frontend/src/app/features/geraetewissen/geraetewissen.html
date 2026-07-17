@@ -1,0 +1,239 @@
+<section class="geraetewissen" aria-labelledby="gw-titel">
+  <header class="page-head">
+    <div>
+      <p class="page-head__kicker">
+        <span class="page-head__scale" aria-hidden="true"></span>
+        Ersatzteilkatalog
+      </p>
+      <h1 id="gw-titel" class="page-head__titel">Gerätewissen</h1>
+      <p class="page-head__hint">
+        Durchsuchbare Sicht auf Hersteller-Ersatzteile (Vaillant, Junkers, …) aus
+        dem Artikelstamm. Nur zum Nachschlagen — keine Bestellartikel des
+        Großhandels.
+      </p>
+    </div>
+  </header>
+
+  <div class="controls">
+    <div class="search">
+      <label class="search__label" for="gw-suche">Ersatzteil suchen</label>
+      <div class="search__field">
+        <span class="search__icon" aria-hidden="true">⌕</span>
+        <input
+          id="gw-suche"
+          class="search__input"
+          type="search"
+          inputmode="search"
+          autocomplete="off"
+          placeholder="Sachnummer, Bezeichnung oder Fabrikat"
+          aria-describedby="gw-suche-hilfe"
+          [value]="query()"
+          (input)="onSearch($any($event.target).value)"
+        />
+      </div>
+      <p id="gw-suche-hilfe" class="search__hilfe">
+        <span class="search__hilfe-lead">Operatoren:</span>
+        <span class="search__op"><code class="search__op-z">+</code> alle Begriffe (UND)</span>
+        <span class="search__op"><code class="search__op-z">|</code> einer der Begriffe (ODER)</span>
+        <span class="search__op"><code class="search__op-z">*</code> Platzhalter</span>
+      </p>
+    </div>
+  </div>
+
+  @if (hersteller().length) {
+    <div class="filter" role="group" aria-label="Nach Hersteller filtern">
+      <span class="filter__label" id="gw-filter-label">Hersteller</span>
+      <div class="chips" aria-labelledby="gw-filter-label">
+        <button
+          type="button"
+          class="chip"
+          [class.is-active]="istAktiv(null)"
+          [attr.aria-pressed]="istAktiv(null)"
+          (click)="selectHersteller(null)"
+        >
+          <span class="chip__mark" aria-hidden="true">◆</span>
+          Alle
+        </button>
+        @for (h of hersteller(); track h.namespace) {
+          <button
+            type="button"
+            class="chip"
+            [class.is-active]="istAktiv(h.namespace)"
+            [class.is-leer]="h.anzahl === 0"
+            [attr.aria-pressed]="istAktiv(h.namespace)"
+            [disabled]="h.anzahl === 0"
+            (click)="selectHersteller(h.namespace)"
+          >
+            <span class="chip__mark" aria-hidden="true">◆</span>
+            {{ h.label }}
+            <span class="chip__zahl">{{ h.anzahl }}<span class="sr-only"> Ersatzteile</span></span>
+          </button>
+        }
+      </div>
+    </div>
+  }
+
+  <p class="sr-only" role="status">{{ resultSummary() }}</p>
+
+  @switch (state().kind) {
+    @case ('loading') {
+      <ul class="rows" aria-hidden="true">
+        @for (s of skeletons; track $index) {
+          <li class="row row--skeleton">
+            <span class="sk sk--badge"></span>
+            <span class="sk-block">
+              <span class="sk sk--line"></span>
+              <span class="sk sk--chips"></span>
+            </span>
+            <span class="sk sk--sum"></span>
+          </li>
+        }
+      </ul>
+    }
+
+    @case ('forbidden') {
+      <app-kein-zugriff [detail]="$any(state()).detail" />
+    }
+
+    @case ('error') {
+      <div class="note note--error" role="alert">
+        <h2 class="note__titel">Verbindung zum Gerätewissen unterbrochen</h2>
+        <p class="note__text">
+          Die Ersatzteile ließen sich nicht laden. Prüfe die Verbindung und lade
+          den Bereich erneut.
+        </p>
+        <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
+      </div>
+    }
+
+    @case ('ready') {
+      @if ($any(state()).data.items.length === 0) {
+        @if (katalogeLeer()) {
+          <div class="note note--empty">
+            <h2 class="note__titel">Noch keine Ersatzteilkataloge importiert</h2>
+            <p class="note__text">
+              Sobald die Hersteller-Kataloge (Vaillant, Junkers, …) eingelesen sind,
+              erscheinen ihre Ersatzteile hier automatisch. Der Import läuft als
+              eigener Vorgang.
+            </p>
+          </div>
+        } @else {
+          <div class="note note--empty">
+            <h2 class="note__titel">Keine Ersatzteile für diese Auswahl</h2>
+            <p class="note__text">
+              Andere Suchbegriffe oder ein anderer Hersteller-Filter bringen
+              vielleicht Treffer.
+            </p>
+          </div>
+        }
+      } @else {
+        <ul class="rows">
+          @for (e of $any(state()).data.items; track e.article_id) {
+            <li>
+              <button type="button" class="row" (click)="ersatzteilOeffnen(e)">
+                <span class="row__badge" aria-hidden="true">ETL</span>
+                <span class="row__body">
+                  <span class="row__title">{{ e.description }}</span>
+                  <span class="row__meta">
+                    @if (e.supplier_article_number) {
+                      <span class="row__nr">
+                        <span class="row__nr-label">Sachnr.</span>{{ e.supplier_article_number }}
+                      </span>
+                    }
+                    @if (e.manufacturer_name || e.namespace) {
+                      <span class="stamp">{{ e.manufacturer_name || herstellerLabel(e.namespace) }}</span>
+                    }
+                    <span>je {{ e.unit }}</span>
+                  </span>
+                </span>
+                <span class="row__sum">{{ euro(e.list_price) }}</span>
+              </button>
+            </li>
+          }
+        </ul>
+
+        <nav class="pager" aria-label="Blättern">
+          <button type="button" class="btn" (click)="prev()" [disabled]="page() <= 1">Zurück</button>
+          <span class="pager__pos" aria-hidden="true">Seite {{ page() }} von {{ totalPages() }}</span>
+          <button type="button" class="btn" (click)="next()" [disabled]="page() >= totalPages()">Weiter</button>
+        </nav>
+      }
+    }
+  }
+
+  <!-- ------------------------------ Ersatzteil-Detail --------------------- -->
+  <app-dialog [offen]="detailOffen()" [titel]="detailTitel()" (schliessen)="detailSchliessen()">
+    @switch (detail().kind) {
+      @case ('loading') {
+        <p class="detail__laedt" role="status">Detail wird geladen …</p>
+      }
+      @case ('error') {
+        <div class="melde melde--fehler" role="alert">
+          <span class="melde__mark" aria-hidden="true">!</span>
+          <span class="melde__text">
+            <strong>Fehler:</strong> Das Ersatzteil-Detail ließ sich nicht laden.
+          </span>
+        </div>
+      }
+      @case ('ready') {
+        <dl class="detail">
+          <div class="detail__row">
+            <dt class="detail__dt">Herstellereigene Sachnummer</dt>
+            <dd class="detail__dd detail__dd--nr">
+              {{ $any(detail()).data.supplier_article_number || '—' }}
+            </dd>
+          </div>
+          <div class="detail__row">
+            <dt class="detail__dt">Fabrikat / Hersteller</dt>
+            <dd class="detail__dd">
+              {{ $any(detail()).data.manufacturer_name || herstellerLabel($any(detail()).data.namespace) }}
+            </dd>
+          </div>
+          @if ($any(detail()).data.manufacturer_type) {
+            <div class="detail__row">
+              <dt class="detail__dt">Typ-Bezeichnung</dt>
+              <dd class="detail__dd">{{ $any(detail()).data.manufacturer_type }}</dd>
+            </div>
+          }
+          @if ($any(detail()).data.manufacturer_number) {
+            <div class="detail__row">
+              <dt class="detail__dt">Hersteller-Nr.</dt>
+              <dd class="detail__dd detail__dd--nr">{{ $any(detail()).data.manufacturer_number }}</dd>
+            </div>
+          }
+          <div class="detail__row">
+            <dt class="detail__dt">Einheit</dt>
+            <dd class="detail__dd">{{ $any(detail()).data.unit }}</dd>
+          </div>
+          @if ($any(detail()).data.product_group) {
+            <div class="detail__row">
+              <dt class="detail__dt">Warengruppe</dt>
+              <dd class="detail__dd">{{ $any(detail()).data.product_group }}</dd>
+            </div>
+          }
+          <div class="detail__row">
+            <dt class="detail__dt">Listenpreis (netto)</dt>
+            <dd class="detail__dd detail__dd--preis">{{ euro($any(detail()).data.list_price) }}</dd>
+          </div>
+          <div class="detail__row">
+            <dt class="detail__dt">Interne Artikelnummer</dt>
+            <dd class="detail__dd detail__dd--nr">{{ $any(detail()).data.article_number }}</dd>
+          </div>
+          @if ($any(detail()).data.long_description) {
+            <div class="detail__row detail__row--voll">
+              <dt class="detail__dt">Beschreibung</dt>
+              <dd class="detail__dd detail__dd--text">{{ $any(detail()).data.long_description }}</dd>
+            </div>
+          }
+        </dl>
+        <p class="detail__hinweis">
+          Read-only-Sicht aus dem Artikelstamm. Änderungen erfolgen im
+          Artikelstamm bzw. über den Katalog-Import.
+        </p>
+      }
+    }
+    <div dialog-aktionen class="dialog__aktionen">
+      <button type="button" class="btn btn--primary" (click)="detailSchliessen()">Schließen</button>
+    </div>
+  </app-dialog>
+</section>
