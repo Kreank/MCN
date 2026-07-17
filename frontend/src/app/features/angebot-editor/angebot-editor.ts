@@ -11,6 +11,7 @@ import { AufschlagsmatrixService } from '../../core/aufschlagsmatrix.service';
 import { StammdatenUebernahmeIn } from '../../core/artikel.model';
 import { AuthService } from '../../core/auth.service';
 import {
+  BelegVorschau,
   InvoiceDetail,
   InvoiceUpdate,
   Kalkulation,
@@ -116,6 +117,20 @@ interface EditorLine {
    */
   labour_net_amount: string | null;
   labourManual: boolean;
+  /**
+   * Ob der VK aus dem **Server-Vorschlag** stammt (Palette/IDS) und seitdem NICHT
+   * manuell überschrieben wurde. Nur dann wird bei einer Mengenänderung der
+   * Staffelpreis automatisch nachgeführt. Manuelles Editieren von VK oder
+   * Aufschlag (inline oder im Dialog) setzt das Flag auf false — ab da gilt die
+   * Kalkulator-Entscheidung, nicht mehr die Regel.
+   */
+  preisAuto: boolean;
+  /**
+   * Ob der Bediener den **Aufschlag** ausdrücklich gesetzt hat. Nur dann geht
+   * `markup_percent` in den Payload — der Server kalkuliert den VK daraus. Sonst
+   * leitet er den Aufschlag aus EK/VK ab (Feld weglassen).
+   */
+  markupManuell: boolean;
 }
 
 /** Anzeige-Gruppe: ein Abschnitt (oder die Sammelgruppe „Ohne Abschnitt"). */
@@ -438,6 +453,9 @@ export class AngebotEditor {
     unit: this.fb.control('', { nonNullable: true }),
     unit_price: this.fb.control('', { nonNullable: true, validators: [dezimalValidator] }),
     unit_cost: this.fb.control('', { nonNullable: true, validators: [dezimalValidator] }),
+    // Aufschlag % — an EK und VK gekoppelt (siehe Kopplungs-Subscriptions).
+    // dezimalValidator lässt Vorzeichen zu (negativer Aufschlag = bewusster Verlust).
+    markup_percent: this.fb.control('', { nonNullable: true, validators: [dezimalValidator] }),
     discount_percent: this.fb.control('', { nonNullable: true, validators: [dezimalValidator] }),
     tax_code: this.fb.control('DE_19', { nonNullable: true }),
     // § 35a: abweichender Arbeitskostenanteil. Ohne Häkchen leitet ihn der Server
@@ -453,6 +471,33 @@ export class AngebotEditor {
     stamm_uebernehmen: this.fb.control(false, { nonNullable: true }),
   });
   protected readonly posFormMeldung = signal<string | null>(null);
+
+  // --- Preis-Kopplung im Positionsdialog (EK ↔ Aufschlag ↔ VK) --------------
+  /** Welches der beiden Preisfelder der NUTZER zuletzt angefasst hat. Steuert,
+   *  wem eine EK-Änderung folgt: 'markup' → VK folgt (Aufschlag hält); sonst →
+   *  Aufschlag folgt (VK hält). null = noch nichts angefasst → wie 'vk'. */
+  private posLetztesFeld: 'markup' | 'vk' | null = null;
+  /** Unterdrückt die Kopplung, während der Dialog programmatisch (reset, Rück-
+   *  schreiben eines abgeleiteten Feldes) befüllt wird — sonst löste der
+   *  programmatische Schreibvorgang die Gegenrichtung erneut aus (Endlosschleife). */
+  private posKopplungStumm = false;
+  /** Hat der Nutzer VK oder Aufschlag im Dialog angefasst? → preisAuto false. */
+  private posPreisManuell = false;
+  /** Hat der Nutzer den AUFSCHLAG angefasst? → markup_percent mitschicken. */
+  private posMarkupManuell = false;
+
+  // --- Live-Vorschau vom Server (ungespeicherter Stand) --------------------
+  /** Kopfsummen der letzten gültigen Server-Vorschau (null = keine/gespeicherter
+   *  Stand gilt). Die Zeilen-Netto landen direkt in den EditorLines. */
+  protected readonly vorschauSummen = signal<{
+    net: string | null;
+    tax: string | null;
+    gross: string | null;
+  } | null>(null);
+  private readonly vorschau$ = new Subject<void>();
+  private vorschauReq = 0;
+  /** Request-Ids je Zeile für die race-sichere Staffel-Nachführung. */
+  private readonly staffelReq = new Map<string, number>();
 
   // --- Abschnitt-Dialog ----------------------------------------------------
   protected readonly rubrikOffen = signal(false);
@@ -519,20 +564,113 @@ export class AngebotEditor {
     ...this.rubriken().map((r, i) => ({ wert: r.uid, label: `${i + 1}. ${r.title}` })),
   ]);
 
-  /**
-   * Live-Vorschau des Aufschlags im Positionsdialog (Server bestätigt beim
-   * Speichern). Methode statt `computed`: liest FormControl-Werte (keine
-   * Signale) und muss je Change-Detection neu ausgewertet werden.
-   */
-  markupVorschau(): string | null {
-    const ekRoh = this.posForm.controls.unit_cost.value;
-    const vkRoh = this.posForm.controls.unit_price.value;
-    const ek = Number(deZuApiDezimal(ekRoh));
-    const vk = Number(deZuApiDezimal(vkRoh));
-    if (!Number.isFinite(ek) || !Number.isFinite(vk) || ek <= 0 || !vkRoh || !ekRoh) return null;
-    const pct = ((vk - ek) / ek) * 100;
-    return new Intl.NumberFormat('de-DE', { maximumFractionDigits: 1 }).format(pct);
+  // ---- Preis-Kopplung EK ↔ Aufschlag ↔ VK (nur Feld-Ableitung) ------------
+  // WICHTIG: Diese Arithmetik füllt NUR das jeweils andere Eingabefeld; sie
+  // rechnet KEINE Summen. Die Invariante „der Server rechnet Geld verbindlich"
+  // bleibt — Positionsnetto/Steuer/Summen liefert die Server-Vorschau (siehe
+  // vorschauLaden). Das abgeleitete Feld wird sofort als String rück-quantisiert
+  // (2 NK beim VK, 1 NK beim Aufschlag), nie als float im Zustand gehalten.
+
+  /** EK als positive Zahl oder null (leer/0/negativ/unlesbar → kein Aufschlag
+   *  bestimmbar, weil die Division durch den EK sonst undefiniert wäre). */
+  private ekPositiv(): number | null {
+    const api = deZuApiDezimal(this.posForm.controls.unit_cost.value);
+    if (api === '' || !istDezimalApiWert(api)) return null;
+    const n = Number(api);
+    return Number.isFinite(n) && n > 0 ? n : null;
   }
+
+  /** VK = EK × (1 + Aufschlag/100), auf 2 NK gerundet ins VK-Feld schreiben. */
+  private vkAusAufschlag(): void {
+    const ek = this.ekPositiv();
+    if (ek === null) return;
+    const api = deZuApiDezimal(this.posForm.controls.markup_percent.value);
+    if (api === '' || !istDezimalApiWert(api)) return;
+    const m = Number(api);
+    if (!Number.isFinite(m)) return;
+    this.setzeStumm(this.posForm.controls.unit_price, ek * (1 + m / 100), 2);
+  }
+
+  /** Aufschlag = (VK−EK)/EK×100, auf 1 NK gerundet ins Aufschlag-Feld schreiben. */
+  private aufschlagAusVk(): void {
+    const ek = this.ekPositiv();
+    if (ek === null) return;
+    const api = deZuApiDezimal(this.posForm.controls.unit_price.value);
+    if (api === '' || !istDezimalApiWert(api)) return;
+    const vk = Number(api);
+    if (!Number.isFinite(vk)) return;
+    this.setzeStumm(this.posForm.controls.markup_percent, ((vk - ek) / ek) * 100, 1);
+  }
+
+  /** EK geändert: bei zuletzt angefasstem Aufschlag folgt der VK (Aufschlag hält),
+   *  sonst folgt der Aufschlag (VK hält). Ohne gültigen EK ist der Aufschlag nicht
+   *  bestimmbar → Feld sperren. */
+  private ekKopplung(): void {
+    const ek = this.ekPositiv();
+    this.aufschlagFeldSperren(ek === null);
+    if (ek === null) return;
+    if (this.posLetztesFeld === 'markup') this.vkAusAufschlag();
+    else this.aufschlagAusVk();
+  }
+
+  /** Schreibt eine abgeleitete Zahl als deutschen String OHNE die Kopplung erneut
+   *  auszulösen (emitEvent:false + Stumm-Guard, doppelt abgesichert). */
+  private setzeStumm(control: FormControl<string>, wert: number, nachkomma: number): void {
+    this.posKopplungStumm = true;
+    control.setValue(apiZuDeEingabe(wert.toFixed(nachkomma), nachkomma), { emitEvent: false });
+    this.posKopplungStumm = false;
+  }
+
+  /** Aufschlag-Feld je nach EK freigeben/sperren (EK 0/leer → gesperrt). */
+  private aufschlagFeldSperren(gesperrt: boolean): void {
+    const c = this.posForm.controls.markup_percent;
+    if (gesperrt && c.enabled) c.disable({ emitEvent: false });
+    else if (!gesperrt && c.disabled) c.enable({ emitEvent: false });
+  }
+
+  /** Ob das Aufschlag-Feld mangels EK gesperrt ist (für den Dialog-Hinweis). */
+  protected aufschlagGesperrt(): boolean {
+    return this.posForm.controls.markup_percent.disabled;
+  }
+
+  /**
+   * Unverbindliche Positionsgesamt-Vorschau im Dialog: Menge × VK abzüglich
+   * Rabatt. Rein zur Orientierung beim Tippen — die VERBINDLICHE Zahl liefert die
+   * Server-Vorschau (Positionsnetto der Zeile). Deshalb im Template als „Vorschau"
+   * gekennzeichnet.
+   */
+  posGesamtVorschau(): string | null {
+    if (this.posIstText()) return null;
+    const qApi = deZuApiDezimal(this.posForm.controls.quantity.value);
+    const vkApi = deZuApiDezimal(this.posForm.controls.unit_price.value);
+    if (qApi === '' || vkApi === '' || !istDezimalApiWert(qApi) || !istDezimalApiWert(vkApi)) {
+      return null;
+    }
+    const q = Number(qApi);
+    const vk = Number(vkApi);
+    if (!Number.isFinite(q) || !Number.isFinite(vk)) return null;
+    const rabApi = deZuApiDezimal(this.posForm.controls.discount_percent.value);
+    const rab = rabApi !== '' && istDezimalApiWert(rabApi) ? Number(rabApi) : 0;
+    const netto = q * vk * (1 - (Number.isFinite(rab) ? rab : 0) / 100);
+    return this.euroFmt.format(netto);
+  }
+
+  // ---- Anzeige der Server-Vorschau (Kopfsummen / Kalkulationsleiste) -------
+  /** True, solange eine gültige, ungespeicherte Server-Vorschau vorliegt. */
+  protected readonly vorschauAktiv = computed(() => this.dirty() && this.vorschauSummen() !== null);
+
+  /** Netto für „Auf einen Blick": Vorschau bei ungespeichertem Stand, sonst der
+   *  gespeicherte Server-Wert. */
+  protected readonly anzeigeNetto = computed<string | null>(() => {
+    const v = this.vorschauSummen();
+    if (this.dirty() && v) return v.net;
+    return this.quote()?.net_total ?? null;
+  });
+  protected readonly anzeigeBrutto = computed<string | null>(() => {
+    const v = this.vorschauSummen();
+    if (this.dirty() && v) return v.gross;
+    return this.quote()?.gross_total ?? null;
+  });
 
   /** Ob die aktuell im Dialog gewählte Positionsart eine Textzeile ist. */
   posIstText(): boolean {
@@ -581,6 +719,39 @@ export class AngebotEditor {
     this.paletteSuche$
       .pipe(debounceTime(300), distinctUntilChanged(), takeUntilDestroyed())
       .subscribe((q) => this.paletteFetch(q));
+
+    // Live-Vorschau vom Server, debounced. Jede Inhaltsänderung (Zeilen/Rubriken/
+    // Rabatt) stößt sie über `markiereInhalt`/`vorschauAnstossen` an; die letzte
+    // gewinnt (Request-Id in vorschauLaden).
+    this.vorschau$
+      .pipe(debounceTime(400), takeUntilDestroyed())
+      .subscribe(() => this.vorschauLaden());
+
+    // Preis-Kopplung EK ↔ Aufschlag ↔ VK. Nur NUTZER-Eingaben zählen: programma-
+    // tische Rückschreiber laufen unter `posKopplungStumm` (siehe setzeStumm) und
+    // mit emitEvent:false, das reset im Dialog ebenfalls unter dem Guard.
+    this.posForm.controls.markup_percent.valueChanges
+      .pipe(takeUntilDestroyed())
+      .subscribe(() => {
+        if (this.posKopplungStumm) return;
+        this.posLetztesFeld = 'markup';
+        this.posPreisManuell = true;
+        this.posMarkupManuell = true;
+        this.vkAusAufschlag();
+      });
+    this.posForm.controls.unit_price.valueChanges.pipe(takeUntilDestroyed()).subscribe(() => {
+      if (this.posKopplungStumm) return;
+      this.posLetztesFeld = 'vk';
+      this.posPreisManuell = true;
+      // Ein manuell gesetzter VK ist gerade KEIN gesetzter Aufschlag — der Server
+      // leitet den Aufschlag daraus ab (Feld weglassen).
+      this.posMarkupManuell = false;
+      this.aufschlagAusVk();
+    });
+    this.posForm.controls.unit_cost.valueChanges.pipe(takeUntilDestroyed()).subscribe(() => {
+      if (this.posKopplungStumm) return;
+      this.ekKopplung();
+    });
 
     // Häkchen „abweichend angeben" an → der Betrag ist Pflicht. Ohne diesen
     // Validator liefe ein leeres Feld als „nichts angegeben" durch, der Server
@@ -720,6 +891,12 @@ export class AngebotEditor {
     } else {
       this.kopfForm.disable({ emitEvent: false });
     }
+    // Gespeicherter Server-Stand gilt wieder — die ungespeicherte Vorschau
+    // verwerfen (sonst zeigte „Auf einen Blick" weiter die alte Vorschau).
+    // Auch eine noch OFFENE Vorschau-Antwort ist ab jetzt veraltet: rid
+    // entwerten, damit sie die frisch geladenen Zeilen nicht überschreibt.
+    this.vorschauReq++;
+    this.vorschauSummen.set(null);
     this.dirty.set(false);
   }
 
@@ -744,6 +921,11 @@ export class AngebotEditor {
       taxRatePercent: l.tax_rate_percent,
       labour_net_amount: l.labour_net_amount,
       labourManual: this.istAbweichenderAnteil(l),
+      // Herkunft des VK ist nach dem Laden nicht überliefert → als manuell
+      // behandeln: eine Mengenänderung führt den Preis dann NICHT eigenmächtig
+      // nach (der geladene Preis ist eine bewusste Kalkulator-Entscheidung).
+      preisAuto: false,
+      markupManuell: false,
     };
   }
 
@@ -790,6 +972,92 @@ export class AngebotEditor {
     if (!this.dirty()) this.dirty.set(true);
   }
 
+  /**
+   * Eine Änderung am **Beleg-Inhalt** (Zeilen/Rubriken/Rabatt) — markiert dirty
+   * UND stößt die Server-Vorschau an. Reine Kopftexte (Titel, Datum, Anschreiben)
+   * nutzen weiterhin nur `markiereGeaendert`, weil sie die Summen nicht ändern.
+   */
+  private markiereInhalt(): void {
+    this.markiereGeaendert();
+    this.vorschauAnstossen();
+  }
+
+  /** Server-Vorschau debounced anfordern (nur im bearbeitbaren Beleg). */
+  private vorschauAnstossen(): void {
+    if (this.readonly()) return;
+    this.vorschau$.next();
+  }
+
+  /** Uids der geflatteten Zeilen in Payload-Reihenfolge — identisch zur Flatten-
+   *  Logik in `payloadBauen` (Abschnitte, dann „Ohne Abschnitt"). Dient dem
+   *  race-toleranten Rück-Mapping der Vorschau-Zeilen über die uid. */
+  private flatLineUids(): string[] {
+    const uids: string[] = [];
+    for (const g of this.gruppen()) for (const l of g.lines) uids.push(l.uid);
+    return uids;
+  }
+
+  /**
+   * Server-Vorschau laden: derselbe Payload wie beim Speichern, aber der Server
+   * schreibt nicht. Zeilen-Netto (in Payload-Reihenfolge) zurück in die
+   * EditorLines, Kopfsummen und Kalkulationsleiste aktualisieren. Ungültige
+   * Zwischenzustände (422) und Netzfehler werden STILL ignoriert — die letzte
+   * gültige Vorschau bleibt stehen; das Speichern bleibt die Wahrheit.
+   */
+  private vorschauLaden(): void {
+    if (this.readonly()) return;
+    const payload = this.payloadBauen();
+    // Reihenfolge zum Zeitpunkt des Requests festhalten; die Zuordnung erfolgt
+    // über die uid, damit ein zwischenzeitliches Umsortieren nichts verschiebt.
+    const flatUids = this.flatLineUids();
+    const rid = ++this.vorschauReq;
+    const req$: Observable<BelegVorschau> = this.istRechnung
+      ? this.svc.invoiceVorschau(this.quoteId, payload as InvoiceUpdate)
+      : this.svc.quoteVorschau(this.quoteId, payload as QuoteUpdate);
+    req$.subscribe({
+      next: (v) => {
+        if (rid !== this.vorschauReq) return;
+        const proUid = new Map<
+          string,
+          { net: string | null; tax: string | null; markup: string | null }
+        >();
+        v.lines.forEach((zl, i) => {
+          const uid = flatUids[i];
+          if (uid) {
+            proUid.set(uid, {
+              net: zl.net_amount,
+              tax: zl.tax_rate_percent,
+              markup: zl.markup_percent,
+            });
+          }
+        });
+        this.lines.update((ls) =>
+          ls.map((l) => {
+            const t = proUid.get(l.uid);
+            if (!t) return l;
+            return {
+              ...l,
+              netAmount: t.net,
+              taxRatePercent: t.tax ?? l.taxRatePercent,
+              // Einen manuell gesetzten Aufschlag NICHT vom Server überschreiben.
+              markup_percent: l.markupManuell ? l.markup_percent : (t.markup ?? l.markup_percent),
+            };
+          }),
+        );
+        this.vorschauSummen.set({ net: v.net_total, tax: v.tax_total, gross: v.gross_total });
+        // Kalkulationsleiste live mitziehen; ohne pricing-Recht bleibt sie null
+        // (kalkVerborgen steuert die Sichtbarkeit — nicht hier anfassen).
+        if (v.kalkulation) {
+          this.kalk.set(v.kalkulation);
+          this.kalkVerborgen.set(false);
+        }
+      },
+      error: () => {
+        /* 422 (ungültige Zwischenstände) oder Netzfehler: still ignorieren. */
+      },
+    });
+  }
+
   // ======================= Abschnitte =====================================
   rubrikNeu(): void {
     this.rubrikUid = null;
@@ -823,7 +1091,7 @@ export class AngebotEditor {
       );
       this.ansage.set(`Abschnitt „${title}" geändert.`);
     }
-    this.markiereGeaendert();
+    this.markiereInhalt();
     this.rubrikOffen.set(false);
   }
 
@@ -839,7 +1107,7 @@ export class AngebotEditor {
     this.ansage.set(
       `Abschnitt „${r.title}" entfernt, Positionen nach „Ohne Abschnitt" verschoben.`,
     );
-    this.markiereGeaendert();
+    this.markiereInhalt();
   }
 
   rubrikVerschieben(r: EditorRubrik, richtung: -1 | 1): void {
@@ -860,7 +1128,7 @@ export class AngebotEditor {
     if (von < 0 || nach < 0 || von >= rs.length || nach >= rs.length || von === nach) return;
     moveItemInArray(rs, von, nach);
     this.rubriken.set(rs);
-    this.markiereGeaendert();
+    this.markiereInhalt();
   }
 
   /** Drop-Handler: Abschnitt per Ziehen umsortieren (gleicher Pfad wie ▲/▼). */
@@ -932,7 +1200,7 @@ export class AngebotEditor {
     const at = this.flatEinfuegeIndex(rest, zielRubrikUid, zielIndex);
     rest.splice(at, 0, { ...moving, rubrikUid: zielRubrikUid });
     this.lines.set(rest);
-    this.markiereGeaendert();
+    this.markiereInhalt();
   }
 
   /** Wie {@link lineEinordnen}, aber für eine noch nicht enthaltene neue Zeile. */
@@ -941,7 +1209,7 @@ export class AngebotEditor {
     const at = this.flatEinfuegeIndex(rest, zielRubrikUid, zielIndex);
     rest.splice(at, 0, { ...line, rubrikUid: zielRubrikUid });
     this.lines.set(rest);
-    this.markiereGeaendert();
+    this.markiereInhalt();
   }
 
   /**
@@ -1027,19 +1295,35 @@ export class AngebotEditor {
     }
 
     if ((neu ?? '') === (line[feld] ?? '')) return;
+    // Ein manuell eingetippter VK löst die Auto-Preisbindung (keine Staffel-
+    // Nachführung mehr) UND die manuelle Aufschlag-Bindung — sonst ginge ein
+    // veralteter markup_percent zusammen mit dem neuen VK in den Payload und
+    // der Server fröre ein widersprüchliches EK/VK/Aufschlag-Paar ein. Ohne
+    // markupManuell wird kein Aufschlag gesendet; der Server leitet ihn aus
+    // dem neuen VK ab.
+    const preisAutoPatch =
+      feld === 'unit_price' ? { preisAuto: false, markupManuell: false } : {};
     this.lines.update((ls) =>
-      ls.map((l) => (l.uid === line.uid ? { ...l, [feld]: neu, netAmount: null } : l)),
+      ls.map((l) =>
+        l.uid === line.uid ? { ...l, [feld]: neu, netAmount: null, ...preisAutoPatch } : l,
+      ),
     );
     // Anzeige normalisieren (das [value]-Binding schreibt nicht zurück, wenn der
     // gebundene Wert sich aus Angulars Sicht nicht geändert hat).
     el.value = feld === 'unit' ? (neu ?? '') : this.zahlEingabe(neu, nachkomma);
-    this.markiereGeaendert();
+    this.markiereInhalt();
+    // Menge geändert und der Preis stammt (noch) aus dem Server-Vorschlag →
+    // Staffelpreis für die neue Menge nachführen (Rabattstaffel!).
+    if (feld === 'quantity' && line.source_article_id && line.preisAuto) {
+      this.staffelNachfuehren(line.uid);
+    }
   }
 
   zeileEntfernen(line: EditorLine): void {
     this.lines.update((ls) => ls.filter((l) => l.uid !== line.uid));
+    this.staffelReq.delete(line.uid);
     this.ansage.set('Position entfernt.');
-    this.markiereGeaendert();
+    this.markiereInhalt();
   }
 
   private rubrikName(uid: string): string {
@@ -1051,6 +1335,15 @@ export class AngebotEditor {
     this.posUid = line.uid;
     this.posQuelleArtikelId.set(line.source_article_id);
     this.posFormMeldung.set(null);
+    // Kopplungs-Merker auf den geladenen Stand setzen: ein bereits ausdrücklich
+    // gesetzter Aufschlag „hält" bei EK-Änderungen (posLetztesFeld = 'markup'),
+    // sonst hält der VK. posPreisManuell erst durch echte Nutzereingaben.
+    this.posLetztesFeld = line.markupManuell ? 'markup' : null;
+    this.posPreisManuell = false;
+    this.posMarkupManuell = line.markupManuell;
+    // reset emittet valueChanges — unter dem Guard, damit die Kopplung nicht auf
+    // das programmatische Befüllen reagiert (sonst überschriebe sie hier Felder).
+    this.posKopplungStumm = true;
     this.posForm.reset({
       description: line.description,
       line_type: line.line_type,
@@ -1059,6 +1352,7 @@ export class AngebotEditor {
       unit: line.unit ?? '',
       unit_price: line.unit_price != null ? apiZuDeEingabe(line.unit_price, 2) : '',
       unit_cost: line.unit_cost != null ? apiZuDeEingabe(line.unit_cost, 2) : '',
+      markup_percent: line.markup_percent != null ? apiZuDeEingabe(line.markup_percent, 1) : '',
       discount_percent: line.discount_percent != null ? apiZuDeEingabe(line.discount_percent) : '',
       tax_code: line.tax_code ?? 'DE_19',
       labour_manual: line.labourManual,
@@ -1069,6 +1363,9 @@ export class AngebotEditor {
       // Häkchen bei jedem Öffnen zurücksetzen — es ist transient und persistiert nie.
       stamm_uebernehmen: false,
     });
+    this.posKopplungStumm = false;
+    // Aufschlag-Feld nur nutzbar, wenn ein EK > 0 vorliegt (sonst keine Basis).
+    this.aufschlagFeldSperren(this.ekPositiv() === null);
     this.posOffen.set(true);
   }
 
@@ -1140,6 +1437,9 @@ export class AngebotEditor {
       return;
     }
     const uid = this.posUid;
+    // Alte Menge merken — für die Entscheidung, ob die Staffel nachgeführt wird.
+    const alt = this.lines().find((l) => l.uid === uid);
+    const alteMenge = alt?.quantity ?? null;
     this.lines.update((ls) =>
       ls.map((l) => {
         if (l.uid !== uid) return l;
@@ -1160,6 +1460,9 @@ export class AngebotEditor {
             // Eine Textzeile trägt keinen Betrag — und damit keine Arbeitskosten.
             labour_net_amount: null,
             labourManual: false,
+            // Eine Textzeile hat keinen (Auto-)Preis mehr.
+            preisAuto: false,
+            markupManuell: false,
           };
         }
         const manuell = v.labour_manual;
@@ -1174,8 +1477,13 @@ export class AngebotEditor {
           discount_percent: deZuApiDezimal(v.discount_percent) || null,
           tax_code: v.tax_code,
           unit_cost: deZuApiDezimal(v.unit_cost) || null,
-          // markup wird vom Server neu abgeleitet; lokal verwerfen.
-          markup_percent: null,
+          // Der (abgeleitete oder manuelle) Aufschlag bleibt für die Anzeige
+          // erhalten; ob er in den Payload geht, entscheidet `markupManuell`.
+          markup_percent: deZuApiDezimal(v.markup_percent) || null,
+          markupManuell: this.posMarkupManuell,
+          // Hat der Nutzer VK/Aufschlag angefasst, ist der Preis nicht mehr „auto";
+          // sonst bleibt die bisherige Herkunft (Server-Vorschlag) erhalten.
+          preisAuto: this.posPreisManuell ? false : l.preisAuto,
           netAmount: null,
           // Ohne Häkchen leitet der Server den Anteil ab (und rechnet ihn bei
           // jeder Mengenänderung neu) — nichts mitschicken.
@@ -1184,7 +1492,20 @@ export class AngebotEditor {
         };
       }),
     );
-    this.markiereGeaendert();
+    this.markiereInhalt();
+
+    // Menge im Dialog geändert und Preis stammt (noch) aus dem Server-Vorschlag →
+    // Staffelpreis nachführen (wie beim Inline-Editieren der Menge).
+    const neu = this.lines().find((l) => l.uid === uid);
+    if (
+      neu &&
+      !text &&
+      neu.source_article_id &&
+      neu.preisAuto &&
+      (neu.quantity ?? '') !== (alteMenge ?? '')
+    ) {
+      this.staffelNachfuehren(uid);
+    }
 
     // Die Position ist jetzt (lokal) gespeichert — reine Kopie-Semantik, es
     // wurde NICHT in den Artikelstamm geschrieben. Nur wenn das transiente
@@ -1209,6 +1530,55 @@ export class AngebotEditor {
 
     this.posOffen.set(false);
     this.ansage.set('Position übernommen.');
+  }
+
+  /**
+   * Staffelpreis einer Auto-Preis-Zeile nach einer Mengenänderung nachführen:
+   * neuen VK-Vorschlag für die aktuelle Menge holen (Rabattstaffel!) und
+   * sale_price/markup_percent/EK wie beim erstmaligen Übernehmen setzen.
+   * Race-sicher über eine Request-Id je Zeile; überschreibt nur, solange der
+   * Preis noch „auto" ist (zwischenzeitliches manuelles Editieren gewinnt).
+   */
+  private staffelNachfuehren(uid: string): void {
+    const line = this.lines().find((l) => l.uid === uid);
+    if (!line || !line.source_article_id || !line.preisAuto) return;
+    const menge = line.quantity ?? '1';
+    const rid = (this.staffelReq.get(uid) ?? 0) + 1;
+    this.staffelReq.set(uid, rid);
+    this.matrixSvc.vkVorschlag(line.source_article_id, menge).subscribe({
+      next: (v) => {
+        if (this.staffelReq.get(uid) !== rid) return;
+        const aktuell = this.lines().find((l) => l.uid === uid);
+        // Inzwischen entfernt oder manuell überschrieben → Vorschlag verwerfen.
+        if (!aktuell || !aktuell.preisAuto) return;
+        const alterVk = aktuell.unit_price;
+        const neuerVk = v.sale_price ?? alterVk;
+        this.lines.update((ls) =>
+          ls.map((l) =>
+            l.uid === uid
+              ? {
+                  ...l,
+                  unit_cost: v.ek ?? l.unit_cost,
+                  unit_price: neuerVk,
+                  markup_percent: v.quelle === 'MATRIX' ? v.markup_percent : l.markup_percent,
+                  netAmount: null,
+                }
+              : l,
+          ),
+        );
+        if ((neuerVk ?? '') !== (alterVk ?? '')) {
+          this.ansage.set(
+            `Staffelpreis aktualisiert: Einzelpreis ${this.euro(neuerVk)} bei Menge ` +
+              `${this.zahlAnzeige(menge)}.`,
+          );
+          // Der geänderte VK ändert das Netto → Server-Vorschau neu anfordern.
+          this.vorschauAnstossen();
+        }
+      },
+      error: () => {
+        /* VK-Vorschlag nicht abrufbar → der bisherige Preis bleibt stehen. */
+      },
+    });
   }
 
   // ======================= Palette ========================================
@@ -1313,6 +1683,9 @@ export class AngebotEditor {
           // Der Server leitet den § 35a-Anteil aus der Positionsart ab.
           labour_net_amount: null,
           labourManual: false,
+          // Noch kein Preis — erst der VK-Vorschlag unten markiert ihn ggf. „auto".
+          preisAuto: false,
+          markupManuell: false,
         };
         this.lineEinsetzen(line, zielRubrik, zielIndex);
         this.ansage.set(`Artikel „${art.description}" nach „${zielName}" übernommen.`);
@@ -1322,7 +1695,7 @@ export class AngebotEditor {
         // Der Vorschlag ist ÜBERSCHREIBBAR: die Kalkulation genau dieses Angebots
         // bleibt die Entscheidung des Kalkulators. Ohne Preis bleibt das Feld LEER
         // (nie 0). Best effort — ein 403 lässt die Position ohne Preise stehen.
-        this.matrixSvc.vkVorschlag(id, '1').subscribe({
+        this.matrixSvc.vkVorschlag(id, line.quantity ?? '1').subscribe({
           next: (v) => {
             this.lines.update((ls) =>
               ls.map((l) =>
@@ -1332,10 +1705,16 @@ export class AngebotEditor {
                       unit_cost: v.ek,
                       unit_price: v.sale_price ?? l.unit_price,
                       markup_percent: v.quelle === 'MATRIX' ? v.markup_percent : l.markup_percent,
+                      // Kam ein VK aus der Rechenstelle, ist er „auto" — eine
+                      // spätere Mengenänderung führt die Staffel nach.
+                      preisAuto: v.sale_price != null ? true : l.preisAuto,
+                      netAmount: null,
                     }
                   : l,
               ),
             );
+            // Der ergänzte VK ändert das Netto → Server-Vorschau neu anfordern.
+            if (v.sale_price != null) this.vorschauAnstossen();
             if (v.sale_price == null) {
               this.ansage.set(
                 `Artikel „${art.description}" übernommen — kein Verkaufspreis ` +
@@ -1389,6 +1768,9 @@ export class AngebotEditor {
           // Der Server leitet den § 35a-Anteil aus der Positionsart ab.
           labour_net_amount: null,
           labourManual: false,
+          // Leistungen/Stücklisten liefern keinen Matrix-VK → kein Auto-Preis.
+          preisAuto: false,
+          markupManuell: false,
         };
         this.lineEinsetzen(line, zielRubrik, zielIndex);
         this.ansage.set(
@@ -1427,9 +1809,11 @@ export class AngebotEditor {
       // Der Server leitet den § 35a-Anteil aus der Positionsart ab.
       labour_net_amount: null,
       labourManual: false,
+      preisAuto: false,
+      markupManuell: false,
     };
     this.lines.update((ls) => [...ls, line]);
-    this.markiereGeaendert();
+    this.markiereInhalt();
     this.zeileOeffnen(line);
   }
 
@@ -1471,9 +1855,13 @@ export class AngebotEditor {
       // Händlerware ist MATERIAL — der Server setzt den § 35a-Anteil auf 0,00.
       labour_net_amount: null,
       labourManual: false,
+      // Der VK stammt aus der Aufschlagsmatrix (sale_price) — dann „auto";
+      // ohne ermittelten VK bleibt es manuell (der Nutzer trägt ihn nach).
+      preisAuto: p.sale_price != null,
+      markupManuell: false,
     }));
     this.lines.update((ls) => [...ls, ...neu]);
-    this.markiereGeaendert();
+    this.markiereInhalt();
     const ohneVk = neu.filter((l) => l.unit_price == null).length;
     this.ansage.set(
       `${neu.length} Position(en) aus dem Händler-Warenkorb übernommen. ` +
@@ -1525,9 +1913,11 @@ export class AngebotEditor {
       // Der Server leitet den § 35a-Anteil aus der Positionsart ab.
       labour_net_amount: null,
       labourManual: false,
+      preisAuto: false,
+      markupManuell: false,
     };
     this.lines.update((ls) => [...ls, line]);
-    this.markiereGeaendert();
+    this.markiereInhalt();
     this.ansage.set('Rechenergebnis als Textposition übernommen.');
   }
 
@@ -1565,9 +1955,11 @@ export class AngebotEditor {
       // Der Server leitet den § 35a-Anteil aus der Positionsart ab.
       labour_net_amount: null,
       labourManual: false,
+      preisAuto: false,
+      markupManuell: false,
     };
     this.lines.update((ls) => [...ls, line]);
-    this.markiereGeaendert();
+    this.markiereInhalt();
     this.ansage.set(`Aufmaß übernommen: ${p.menge} ${p.einheit}. Bitte den Einzelpreis ergänzen.`);
     this.zeileOeffnen(line);
   }
@@ -1612,6 +2004,10 @@ export class AngebotEditor {
             sale_price_group_id: l.sale_price_group_id,
             source_article_id: l.source_article_id,
             source_assembly_id: l.source_assembly_id,
+            // Aufschlag nur mitschicken, wenn der Nutzer ihn AUSDRÜCKLICH gesetzt
+            // hat — dann kalkuliert der Server den VK daraus. Sonst weglassen und
+            // den Aufschlag serverseitig aus EK/VK ableiten lassen.
+            ...(l.markupManuell ? { markup_percent: l.markup_percent } : {}),
             // Nur einen ABWEICHEND angegebenen Anteil mitschicken. Ein
             // abgeleiteter würde sonst zum ausdrücklichen Wert erstarren und bei
             // der nächsten Mengenänderung falsch stehen bleiben.

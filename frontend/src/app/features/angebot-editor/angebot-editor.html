@@ -235,17 +235,17 @@
 
             <div class="blick-zelle">
               <span class="blick-zelle__k">Netto</span>
-              <span class="blick-zelle__v" [class.blick-zelle__v--alt]="dirty()">{{ euro(q.net_total) }}</span>
+              <span class="blick-zelle__v" [class.blick-zelle__v--alt]="dirty() && !vorschauAktiv()">{{ euro(anzeigeNetto()) }}</span>
               <span class="blick-zelle__sub">
-                {{ dirty() ? 'Stand vom letzten Speichern' : 'Vom Server berechnet' }}
+                {{ vorschauAktiv() ? 'Vorschau (ungespeichert)' : (dirty() ? 'Stand vom letzten Speichern' : 'Vom Server berechnet') }}
               </span>
             </div>
 
             <div class="blick-zelle">
               <span class="blick-zelle__k">Brutto</span>
-              <span class="blick-zelle__v" [class.blick-zelle__v--alt]="dirty()">{{ euro(q.gross_total) }}</span>
+              <span class="blick-zelle__v" [class.blick-zelle__v--alt]="dirty() && !vorschauAktiv()">{{ euro(anzeigeBrutto()) }}</span>
               <span class="blick-zelle__sub">
-                {{ dirty() ? 'Stand vom letzten Speichern' : 'inkl. USt' }}
+                {{ vorschauAktiv() ? 'Vorschau (ungespeichert)' : (dirty() ? 'Stand vom letzten Speichern' : 'inkl. USt') }}
               </span>
             </div>
 
@@ -266,8 +266,13 @@
           @if (dirty()) {
             <p class="ed-blick__hinweis" role="status">
               <span aria-hidden="true">⟳</span>
-              Beträge und Arbeitszeit zeigen den zuletzt gespeicherten Stand — beim
-              Speichern rechnet der Server sie neu. Die Positionszahlen sind aktuell.
+              @if (vorschauAktiv()) {
+                Beträge und Arbeitszeit zeigen die Server-Vorschau des ungespeicherten
+                Stands. Verbindlich wird er erst beim Speichern.
+              } @else {
+                Beträge und Arbeitszeit zeigen den zuletzt gespeicherten Stand — beim
+                Speichern rechnet der Server sie neu. Die Positionszahlen sind aktuell.
+              }
             </p>
           }
         </section>
@@ -520,7 +525,7 @@
                             <span class="posrow__net">{{ euro(l.netAmount) }}</span>
                           }
                         } @else {
-                          <span class="posrow__net posrow__net--leer" title="Betrag wird nach dem Speichern vom Server berechnet">nach Speichern</span>
+                          <span class="posrow__net posrow__net--leer" title="Positionsnetto wird als Server-Vorschau berechnet">Vorschau …</span>
                         }
                       </span>
                     }
@@ -755,7 +760,7 @@
             -->
             <section
               class="kalk"
-              [class.kalk--alt]="dirty()"
+              [class.kalk--alt]="dirty() && !vorschauAktiv()"
               aria-label="Kalkulationsübersicht (Einkauf, Deckungsbeitrag, Marge)"
             >
               <div class="kalk__bar">
@@ -802,7 +807,9 @@
                 @if (dirty()) {
                   <p class="kalk__alt-hinweis" role="status">
                     <span aria-hidden="true">⟳</span>
-                    Stand vom letzten Speichern — wird beim Speichern neu berechnet.
+                    {{ vorschauAktiv()
+                      ? 'Vorschau (ungespeichert) — vom Server gerechnet, verbindlich beim Speichern.'
+                      : 'Stand vom letzten Speichern — wird beim Speichern neu berechnet.' }}
                   </p>
                 }
               </div>
@@ -893,73 +900,119 @@
         <span class="melde__text">{{ f }}</span>
       </div>
     }
-    <app-feld [control]="posForm.controls.description" label="Bezeichnung" typ="textarea" [pflicht]="true" />
-    <div class="pos-grid">
-      <app-feld [control]="posForm.controls.line_type" label="Positionsart" typ="select" [optionen]="lineTypeOptionen" />
-      @if (!posIstText()) {
-        <app-feld [control]="posForm.controls.line_kind" label="Wertung" typ="select" [optionen]="lineKindOptionen" />
-      }
-    </div>
-    @if (!posIstText()) {
-      <div class="pos-grid">
-        <app-feld [control]="posForm.controls.quantity" label="Menge" typ="zahl" [pflicht]="true" />
-        <app-feld [control]="posForm.controls.unit" label="Einheit" hinweis="z. B. Stk, m, h" />
-      </div>
-      <div class="pos-grid">
-        <app-feld [control]="posForm.controls.unit_price" label="Einzelpreis (VK)" typ="zahl" [pflicht]="true" hinweis="Netto, in Euro" />
-        <app-feld [control]="posForm.controls.unit_cost" label="Einkaufspreis (EK)" typ="zahl" hinweis="Interne Kalkulation" />
-      </div>
-      <div class="pos-grid">
-        <app-feld [control]="posForm.controls.discount_percent" label="Rabatt %" typ="zahl" />
-        <app-feld [control]="posForm.controls.tax_code" label="Steuersatz" typ="select" [optionen]="taxCodeOptionen" />
-      </div>
-      @if (markupVorschau(); as mv) {
-        <!-- &ngsp; erzwingt das Leerzeichen: Angular entfernt reine Whitespace-
-             Textknoten zwischen Elementen (sonst stünde da „63,2 %(Vorschau“). -->
-        <p class="pos-markup" role="status">
-          Abgeleiteter Aufschlag: <strong>{{ mv }} %</strong>&ngsp;<span class="pos-markup__hinw"
-            >(Vorschau — der Server bestätigt beim Speichern.)</span
-          >
-        </p>
-      }
 
-      <!-- § 35a EStG: Lohn-, Maschinen- und Fahrtkosten sind für den Privatkunden
-           mit 20 % steuerlich begünstigt, Material nicht. Wo die Positionsart die
-           Aufteilung nicht hergibt (Pauschale, Fremdleistung, Zuschlag), muss sie
-           angegeben werden — sonst weist die Rechnung gar nichts aus. -->
-      <div class="pos-lohn">
-        <app-feld
-          [control]="posForm.controls.labour_manual"
-          label="Arbeitskostenanteil abweichend angeben (§ 35a)"
-          typ="checkbox"
-        />
-        @if (posForm.controls.labour_manual.value) {
-          <app-feld
-            [control]="posForm.controls.labour_net_amount"
-            label="davon Arbeitskosten (netto)"
-            typ="zahl"
-            [pflicht]="true"
-            hinweis="In Euro, höchstens der Positionsbetrag. Lohn-, Maschinen- und Fahrtkosten zählen; Material nicht (Verbrauchsmittel schon)."
-          />
-        } @else if (arbeitskostenHinweis(); as ah) {
-          <p class="pos-lohn__hinw" role="status">{{ ah }}</p>
+    <!--
+      Der Dialog ist in drei klare Abschnitte gegliedert (Position · Kalkulation ·
+      Steuer & § 35a) — kein Tab-Wechsel, ein Formular. Jede Gruppe trägt eine
+      Mono-Versalien-Legende (wie überall in der App).
+    -->
+    <fieldset class="pos-block">
+      <legend class="legende">Position</legend>
+      <app-feld [control]="posForm.controls.description" label="Bezeichnung" typ="textarea" [pflicht]="true" />
+      <div class="pos-grid">
+        <app-feld [control]="posForm.controls.line_type" label="Positionsart" typ="select" [optionen]="lineTypeOptionen" />
+        @if (!posIstText()) {
+          <app-feld [control]="posForm.controls.line_kind" label="Wertung" typ="select" [optionen]="lineKindOptionen" />
         }
       </div>
+      @if (!posIstText()) {
+        <div class="pos-grid">
+          <app-feld [control]="posForm.controls.quantity" label="Menge" typ="zahl" [pflicht]="true" />
+          <app-feld [control]="posForm.controls.unit" label="Einheit" hinweis="z. B. Stk, m, h" />
+        </div>
+      }
+    </fieldset>
+
+    @if (!posIstText()) {
+      <!--
+        Kalkulation: EK, Aufschlag %, VK sind gekoppelt (Aufschlag eingeben → VK
+        folgt; VK eingeben → Aufschlag folgt; EK ändern → das jeweils zuletzt
+        angefasste Feld hält). Das ist reine Feld-Ableitung — Positionsgesamt und
+        Summen rechnet der Server (unverbindliche Vorschau unten).
+      -->
+      <fieldset class="pos-block">
+        <legend class="legende">Kalkulation</legend>
+        <div class="pos-grid">
+          <app-feld
+            [control]="posForm.controls.unit_cost"
+            label="Einkaufspreis (EK)"
+            typ="zahl"
+            hinweis="Netto — interne Kalkulationsbasis für den Aufschlag."
+          />
+          <app-feld
+            [control]="posForm.controls.markup_percent"
+            label="Aufschlag %"
+            typ="zahl"
+            [hinweis]="aufschlagGesperrt()
+              ? 'Erst einen Einkaufspreis (EK) erfassen — der Aufschlag rechnet auf den EK.'
+              : 'Auf den EK; der VK folgt automatisch. Negativer Wert = bewusster Abschlag (Verlust).'"
+          />
+        </div>
+        <div class="pos-grid">
+          <app-feld
+            [control]="posForm.controls.unit_price"
+            label="Einzelpreis (VK)"
+            typ="zahl"
+            [pflicht]="true"
+            hinweis="Netto, in Euro. Folgt dem Aufschlag — jederzeit überschreibbar."
+          />
+          <app-feld [control]="posForm.controls.discount_percent" label="Rabatt %" typ="zahl" />
+        </div>
+        @if (posGesamtVorschau(); as pg) {
+          <!-- &ngsp; erzwingt das Leerzeichen (Angular entfernt reine Whitespace-
+               Textknoten zwischen Elementen). -->
+          <p class="pos-gesamt" role="status">
+            Positionsgesamt: <strong>{{ pg }}</strong>&ngsp;<span class="pos-gesamt__hinw"
+              >(unverbindliche Vorschau — die verbindliche Zahl rechnet der Server.)</span
+            >
+          </p>
+        }
+      </fieldset>
+
+      <fieldset class="pos-block">
+        <legend class="legende">Steuer &amp; § 35a</legend>
+        <div class="pos-grid">
+          <app-feld [control]="posForm.controls.tax_code" label="Steuersatz" typ="select" [optionen]="taxCodeOptionen" />
+        </div>
+
+        <!-- § 35a EStG: Lohn-, Maschinen- und Fahrtkosten sind für den Privatkunden
+             mit 20 % steuerlich begünstigt, Material nicht. Wo die Positionsart die
+             Aufteilung nicht hergibt (Pauschale, Fremdleistung, Zuschlag), muss sie
+             angegeben werden — sonst weist die Rechnung gar nichts aus. -->
+        <div class="pos-lohn">
+          <app-feld
+            [control]="posForm.controls.labour_manual"
+            label="Arbeitskostenanteil abweichend angeben (§ 35a)"
+            typ="checkbox"
+          />
+          @if (posForm.controls.labour_manual.value) {
+            <app-feld
+              [control]="posForm.controls.labour_net_amount"
+              label="davon Arbeitskosten (netto)"
+              typ="zahl"
+              [pflicht]="true"
+              hinweis="In Euro, höchstens der Positionsbetrag. Lohn-, Maschinen- und Fahrtkosten zählen; Material nicht (Verbrauchsmittel schon)."
+            />
+          } @else if (arbeitskostenHinweis(); as ah) {
+            <p class="pos-lohn__hinw" role="status">{{ ah }}</p>
+          }
+        </div>
+
+        @if (zeigeStammHaken()) {
+          <div class="pos-stamm">
+            <app-feld
+              [control]="posForm.controls.stamm_uebernehmen"
+              label="Änderungen auch in den Artikelstamm übernehmen"
+              typ="checkbox"
+              hinweis="Standardmäßig ändert das Speichern nur diese Belegposition (Kopie). Mit Häkchen wird nach dem Speichern zusätzlich der Artikelstamm aktualisiert — für alle künftigen Belege. Der Einkaufspreis wird dabei nicht übernommen."
+            />
+          </div>
+        }
+      </fieldset>
     } @else {
       <p class="pos-texthinweis">
         Text- und Zwischensummenzeilen tragen keinen Betrag und zählen nicht in die Summe.
       </p>
-    }
-
-    @if (zeigeStammHaken()) {
-      <div class="pos-stamm">
-        <app-feld
-          [control]="posForm.controls.stamm_uebernehmen"
-          label="Änderungen auch in den Artikelstamm übernehmen"
-          typ="checkbox"
-          hinweis="Standardmäßig ändert das Speichern nur diese Belegposition (Kopie). Mit Häkchen wird nach dem Speichern zusätzlich der Artikelstamm aktualisiert — für alle künftigen Belege. Der Einkaufspreis wird dabei nicht übernommen."
-        />
-      </div>
     }
 
     <div dialog-aktionen class="dialog__aktionen">

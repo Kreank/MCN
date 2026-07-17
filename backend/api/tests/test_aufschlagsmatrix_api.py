@@ -59,6 +59,36 @@ def test_regel_anlegen_und_auflisten(admin_client, stamm):
 
 
 @pytest.mark.django_db
+def test_markup_rules_nach_artikel_filterbar(admin_client, stamm):
+    """`?article_id=` liefert genau die Regeln dieses Artikels (Scope ARTIKEL) —
+    das Artikel-Detail holt so seine eigene Aufschlagsregel gezielt."""
+    art = stamm["article"]
+    # Eine Warengruppenregel (nicht am Artikel) und eine Artikelregel.
+    _regel(admin_client, product_group="Sanitär")
+    artikel_regel = _regel(
+        admin_client, name="Nur dieser Artikel", article_id=str(art.id),
+        product_group=None, markup_percent="12",
+    )
+    assert artikel_regel["scope"] == "ARTIKEL"
+    assert artikel_regel["article_id"] == str(art.id)
+
+    r = admin_client.get(f"/api/pricing/markup-rules?article_id={art.id}")
+    assert r.status_code == 200
+    body = r.json()
+    assert [x["name"] for x in body] == ["Nur dieser Artikel"]
+    assert body[0]["article_number"] == art.article_number
+
+    # Ohne Filter sind beide Regeln sichtbar.
+    alle = admin_client.get("/api/pricing/markup-rules").json()
+    assert {x["name"] for x in alle} == {"Sanitär", "Nur dieser Artikel"}
+
+    # Fremder Artikel ohne eigene Regel → leere Liste.
+    r = admin_client.get(f"/api/pricing/markup-rules?article_id={uuid.uuid4()}")
+    assert r.status_code == 200
+    assert r.json() == []
+
+
+@pytest.mark.django_db
 def test_vk_vorschlag_zeigt_regel_und_rechenweg(admin_client, stamm):
     _regel(admin_client, product_group="Sanitär")
     r = admin_client.get(

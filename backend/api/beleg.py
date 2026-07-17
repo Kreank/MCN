@@ -40,7 +40,7 @@ from ninja.errors import HttpError
 from ninja.responses import Status
 from ninja.security import django_auth
 
-from api.permissions import require, require_scoped
+from api.permissions import check, require, require_scoped
 from db_core.mail_crypto import MailKeyError
 from db_core.models import BillingLink, Invoice, Quote
 from db_core.services import abrechnung as abrechnung_service
@@ -294,6 +294,30 @@ class KalkAbschnittOut(Schema):
 class KalkulationOut(Schema):
     abschnitte: list[KalkAbschnittOut]
     gesamt: KalkAbschnittOut
+
+
+# --- Live-Vorschau des Editors ---------------------------------------------
+
+class VorschauZeileOut(Schema):
+    """Die serverberechneten Rechenwerte einer Position, in Payload-Reihenfolge.
+    Textzeilen tragen keinen Betrag → durchweg null."""
+    net_amount: Decimal | None = None
+    markup_percent: Decimal | None = None
+    tax_rate_percent: Decimal | None = None
+    labour_net_amount: Decimal | None = None
+
+
+class VorschauOut(Schema):
+    """Live-Vorschau: dieselbe Rechnung wie das PUT, aber ohne zu speichern.
+
+    `kalkulation` ist null, wenn der Nutzer kein `pricing/LESEN` hat — KEIN 403 für
+    den Gesamtendpunkt, die (preisfreien) Summen sieht er trotzdem.
+    """
+    lines: list[VorschauZeileOut]
+    net_total: Decimal
+    tax_total: Decimal
+    gross_total: Decimal
+    kalkulation: KalkulationOut | None = None
 
 
 class QuoteFilter(Schema):
@@ -687,6 +711,33 @@ def quote_kalkulation(request, quote_id: UUID):
         return beleg_service.quote_kalkulation(quote_id)
     except ValueError as exc:
         raise HttpError(404, str(exc))
+
+
+@router.post("/quotes/{quote_id}/vorschau", response=VorschauOut, auth=django_auth)
+def quote_vorschau(request, quote_id: UUID, payload: QuoteUpdateIn):
+    """Live-Vorschau eines Angebots: rechnet den Editor-Payload (wie `PUT /quotes/{id}`)
+    durch, ohne zu speichern — Positionsnetto, Kopfsummen und Kalkulationsleiste
+    sofort aktuell.
+
+    Leseartig, ändert nichts → `invoicing/LESEN` genügt (wie `GET /quotes/{id}`,
+    `require`: Scope EIGENE bekommt 403). Die Kalkulation (EK/Marge) zusätzlich nur
+    mit `pricing/LESEN` — sonst `kalkulation: null`, ohne den Endpunkt zu sperren
+    (Muster von `GET /quotes/{id}/kalkulation`). Der Beleg muss existieren (404),
+    darf aber in JEDEM Status sein. Payload-Fehler → 422 (wie beim PUT).
+    """
+    require(request, "invoicing", "LESEN")
+    mit_kalkulation = check(request, "pricing", "LESEN") is not None
+    try:
+        return beleg_service.vorschau_quote(
+            quote_id,
+            lines=[line.dict() for line in payload.lines or []],
+            rubriken=[r.dict() for r in payload.rubriken or []],
+            mit_kalkulation=mit_kalkulation,
+        )
+    except beleg_service.BelegNichtGefunden as exc:
+        raise HttpError(404, str(exc))
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
 
 
 @router.post("/quotes/{quote_id}/send", response=QuoteDetailOut, auth=django_auth)
@@ -1729,6 +1780,32 @@ def invoice_kalkulation(request, invoice_id: UUID):
         return beleg_service.invoice_kalkulation(invoice_id)
     except ValueError as exc:
         raise HttpError(404, str(exc))
+
+
+@router.post("/invoices/{invoice_id}/vorschau", response=VorschauOut, auth=django_auth)
+def invoice_vorschau(request, invoice_id: UUID, payload: InvoiceUpdateIn):
+    """Live-Vorschau einer Rechnung: rechnet den Editor-Payload (wie
+    `PUT /invoices/{id}`) durch, ohne zu speichern.
+
+    Bei einer SCHLUSSRECHNUNG mit angerechneten Abschlägen fließt die Anrechnung —
+    wie beim echten Speichern — in Summen und Kalkulation ein; sonst wichen die
+    Vorschauwerte von den gestellten ab. Rechte wie bei `quote_vorschau`:
+    `invoicing/LESEN` für den Endpunkt, `pricing/LESEN` zusätzlich für die
+    Kalkulation (sonst null). 404, wenn die Rechnung fehlt; 422 bei Payload-Fehler.
+    """
+    require(request, "invoicing", "LESEN")
+    mit_kalkulation = check(request, "pricing", "LESEN") is not None
+    try:
+        return beleg_service.vorschau_invoice(
+            invoice_id,
+            lines=[line.dict() for line in payload.lines or []],
+            rubriken=[r.dict() for r in payload.rubriken or []],
+            mit_kalkulation=mit_kalkulation,
+        )
+    except beleg_service.BelegNichtGefunden as exc:
+        raise HttpError(404, str(exc))
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
 
 
 @router.post(

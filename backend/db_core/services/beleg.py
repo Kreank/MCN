@@ -3172,29 +3172,78 @@ def _gruppe_abschliessen(g):
     }
 
 
-def _kalkulation(lines, rubriken):
-    gruppen = {r.id: _leere_gruppe(r.position_number, r.title, r.description) for r in rubriken}
+# Die Kalkulation liest je Position nur fünf Werte und ordnet sie über einen
+# **Abschnitts-Schlüssel** einer Rubrik zu. Persistierte Positionen tragen den
+# Schlüssel als `rubrik_id` (UUID), noch-nicht-gespeicherte Vorschauzeilen als
+# 1-basierten Rubrikindex (`_rubrik`) — der Kern (`_kalkulation_core`) kennt beide
+# nicht, er vergleicht nur Schlüssel gegen Schlüssel. So rechnet dieselbe Formel
+# aus DB-Zeilen (GET) wie aus vorbereiteten Zeilen-Dicts (Editor-Vorschau), ohne
+# Duplikat.
+
+
+def _kalk_zeile_db(line):
+    """Normalisiert eine persistierte Positionszeile für `_kalkulation_core`."""
+    return {
+        "line_type": line.line_type,
+        "line_kind": line.line_kind,
+        "net_amount": line.net_amount,
+        "unit_cost": line.unit_cost,
+        "quantity": line.quantity,
+        "rubrik_key": line.rubrik_id,
+    }
+
+
+def _kalk_zeile_prepared(row):
+    """Normalisiert eine vorbereitete (nicht persistierte) Zeile für die Vorschau.
+
+    `_prepare_lines`/`_anrechnung_lines` liefern dieselben Feldnamen; der
+    Abschnitts-Schlüssel ist hier der 1-basierte Rubrikindex `_rubrik`. Textzeilen
+    und Anrechnungspositionen ohne EK tragen `unit_cost`/`quantity` nicht — daher
+    `.get()`.
+    """
+    return {
+        "line_type": row["line_type"],
+        "line_kind": row["line_kind"],
+        "net_amount": row.get("net_amount"),
+        "unit_cost": row.get("unit_cost"),
+        "quantity": row.get("quantity"),
+        "rubrik_key": row.get("_rubrik"),
+    }
+
+
+def _kalkulation_core(zeilen, rubriken):
+    """Rechnet die Kalkulationsübersicht aus normalisierten Zeilen und Rubriken.
+
+    `zeilen`: Dicts mit line_type/line_kind/net_amount/unit_cost/quantity/rubrik_key.
+    `rubriken`: Dicts mit key/position_number/title/description; `key` matcht den
+    `rubrik_key` der Zeilen.
+    """
+    gruppen = {
+        r["key"]: _leere_gruppe(r["position_number"], r["title"], r["description"])
+        for r in rubriken
+    }
     ohne = _leere_gruppe(None, "Ohne Abschnitt")
 
-    for line in lines:
-        if line.line_type in TEXT_TYPES:
+    for line in zeilen:
+        if line["line_type"] in TEXT_TYPES:
             continue
-        g = gruppen.get(line.rubrik_id, ohne) if line.rubrik_id else ohne
-        netto = line.net_amount or Decimal("0.00")
-        if line.line_kind == "ALTERNATIV":
+        key = line["rubrik_key"]
+        g = gruppen.get(key, ohne) if key else ohne
+        netto = line["net_amount"] or Decimal("0.00")
+        if line["line_kind"] == "ALTERNATIV":
             g["alternativ_netto"] += netto
             continue
-        if line.line_kind == "BEDARF":
+        if line["line_kind"] == "BEDARF":
             g["bedarf_netto"] += netto
             continue
         g["netto"] += netto
         g["positionen"] += 1
-        if line.unit_cost is None:
+        if line["unit_cost"] is None:
             g["positionen_ohne_ek"] += 1
         else:
-            g["ek"] += _round2(line.unit_cost * (line.quantity or Decimal(0)))
-        if line.line_type == "ARBEITSZEIT" and line.quantity:
-            g["arbeitszeit"] += line.quantity
+            g["ek"] += _round2(line["unit_cost"] * (line["quantity"] or Decimal(0)))
+        if line["line_type"] == "ARBEITSZEIT" and line["quantity"]:
+            g["arbeitszeit"] += line["quantity"]
 
     abschnitte = [_gruppe_abschliessen(g) for g in sorted(
         gruppen.values(), key=lambda g: g["rubrik"]
@@ -3209,6 +3258,43 @@ def _kalkulation(lines, rubriken):
         gesamt["positionen"] += g["positionen"]
         gesamt["positionen_ohne_ek"] += g["positionen_ohne_ek"]
     return {"abschnitte": abschnitte, "gesamt": _gruppe_abschliessen(gesamt)}
+
+
+def _kalkulation(lines, rubriken):
+    """Kalkulation aus persistierten Model-Instanzen (GET /…/kalkulation)."""
+    return _kalkulation_core(
+        [_kalk_zeile_db(l) for l in lines],
+        [
+            {
+                "key": r.id,
+                "position_number": r.position_number,
+                "title": r.title,
+                "description": r.description,
+            }
+            for r in rubriken
+        ],
+    )
+
+
+def _kalkulation_aus_prepared(prepared, rubriken_norm):
+    """Kalkulation aus vorbereiteten Zeilen-Dicts (Editor-Vorschau, nicht gespeichert).
+
+    `rubriken_norm` stammt aus `_prepare_rubriken` (1-basiert, ohne UUID); der
+    Schlüssel ist deshalb der Index — genau das, was `_prepare_lines` als `_rubrik`
+    an die Zeilen schreibt.
+    """
+    return _kalkulation_core(
+        [_kalk_zeile_prepared(r) for r in prepared],
+        [
+            {
+                "key": idx,
+                "position_number": r["position_number"],
+                "title": r["title"],
+                "description": r["description"],
+            }
+            for idx, r in enumerate(rubriken_norm, start=1)
+        ],
+    )
 
 
 def quote_kalkulation(quote_id):
@@ -3233,3 +3319,130 @@ def invoice_kalkulation(invoice_id):
     if invoice is None:
         raise ValueError("Rechnung nicht gefunden.")
     return _kalkulation(list(invoice.lines.all()), list(invoice.rubriken.all()))
+
+
+# ---------------------------------------------------------------------------
+# Live-Vorschau des Editors (leseartig, persistiert NICHT)
+# ---------------------------------------------------------------------------
+# Der Angular-Editor rechnet bewusst kein Geld — Netto/Summen/Kalkulation kommen
+# heute erst nach dem PUT zurück. Diese beiden Funktionen nehmen denselben Payload
+# wie das PUT und führen DIESELBE Rechnung aus (`_prepare_lines`/`_totals`/
+# `_kalkulation`), ohne zu schreiben: kein `business_transaction`, es entsteht
+# keine Zeile. Damit bekommt der Editor Positionsnetto, Kopfsummen und
+# Kalkulationsleiste sofort — verlässlich identisch zu dem, was nach dem Speichern
+# gestellt würde.
+
+
+class BelegNichtGefunden(LookupError):
+    """Der vorzuschauende Beleg existiert nicht (→ 404, nicht 422).
+
+    Getrennt vom `ValueError` der Payload-Prüfung: ein unbekannter Beleg ist ein
+    fehlendes Ziel (404), ein kaputter Payload ein Eingabefehler (422). Muster wie
+    `dossier.DossierNichtGefunden`.
+    """
+
+
+def _vorschau_zeile(row):
+    """Die vier Rechenwerte einer Position für die Editor-Vorschau.
+
+    In Payload-Reihenfolge; Textzeilen (TEXT/ZWISCHENSUMME) tragen keinen Betrag
+    und liefern durchweg null.
+    """
+    return {
+        "net_amount": row.get("net_amount"),
+        "markup_percent": row.get("markup_percent"),
+        "tax_rate_percent": row.get("tax_rate_percent"),
+        "labour_net_amount": row.get("labour_net_amount"),
+    }
+
+
+def vorschau_quote(quote_id, *, lines, rubriken, mit_kalkulation):
+    """Rechnet einen Angebots-Payload durch, ohne ihn zu speichern.
+
+    Dieselbe Positions-/Summenrechnung wie `update_quote` (`_prepare_lines`), nur
+    ohne Schreibvorgang. Der Beleg muss existieren (`BelegNichtGefunden` → 404),
+    darf aber in JEDEM Status sein: eine Vorschau verändert nichts und ist damit
+    auch am eingefrorenen Beleg harmlos (das Frontend ruft sie dort schlicht nicht).
+
+    `mit_kalkulation=False` (Aufrufer ohne pricing/LESEN) blendet die Kalkulation
+    aus (null) — dieselbe Sicht, die GET /quotes/{id}/kalkulation mit 403 verwehrt,
+    nur ohne den Gesamtendpunkt zu sperren.
+    """
+    if not Quote.objects.filter(id=quote_id).exists():
+        raise BelegNichtGefunden("Angebot nicht gefunden.")
+    prepared, net_total, tax_total, gross_total = _prepare_lines(lines)
+    rubriken_norm = _prepare_rubriken(rubriken, prepared)
+    return {
+        "lines": [_vorschau_zeile(r) for r in prepared],
+        "net_total": net_total,
+        "tax_total": tax_total,
+        "gross_total": gross_total,
+        "kalkulation": (
+            _kalkulation_aus_prepared(prepared, rubriken_norm)
+            if mit_kalkulation
+            else None
+        ),
+    }
+
+
+def vorschau_invoice(invoice_id, *, lines, rubriken, mit_kalkulation):
+    """Rechnet einen Rechnungs-Payload durch, ohne ihn zu speichern.
+
+    Spiegelt `update_invoice` — insbesondere den Schlussrechnungs-Sonderfall: eine
+    SCHLUSSRECHNUNG mit angerechneten Abschlägen hängt Anrechnungspositionen aus
+    der Verkettung (`invoice_advance`) an. Die Vorschau bildet das GLEICH ab, sonst
+    wichen ihre Summen von den nach dem Speichern gestellten ab — genau der
+    Vertrauensbruch, den der Endpunkt beheben soll. Die Anrechnung steht nicht im
+    Editor-Payload; sie fließt in Kopfsummen UND Kalkulation ein, erscheint aber
+    nicht in der zeilenweisen Payload-Antwort (die bleibt 1:1 zum Payload).
+    """
+    invoice = (
+        Invoice.objects.filter(id=invoice_id).only("id", "invoice_type").first()
+    )
+    if invoice is None:
+        raise BelegNichtGefunden("Rechnung nicht gefunden.")
+    prepared, net_total, tax_total, gross_total = _prepare_lines(lines)
+    rubriken_norm = _prepare_rubriken(rubriken, prepared)
+
+    # Anrechnungspositionen der Schlussrechnung wie in update_invoice: aus der
+    # bestehenden Verkettung erzeugt (nicht aus dem Payload) und ans Ende gehängt.
+    kalk_lines = prepared
+    if invoice.invoice_type == FINAL_TYPE:
+        anrechnung_rows = [
+            {
+                "advance_invoice_id": a.advance_invoice_id,
+                "tax_code_id": a.tax_code_id,
+                "tax_rate_percent": a.tax_rate_percent,
+                "net_amount": a.net_amount,
+                "tax_amount": a.tax_amount,
+                "gross_amount": a.gross_amount,
+            }
+            for a in InvoiceAdvance.objects.filter(final_invoice_id=invoice.id)
+            .select_related("advance_invoice")
+            .order_by("advance_invoice__invoice_date",
+                      "advance_invoice__invoice_number", "tax_rate_percent")
+        ]
+        if anrechnung_rows:
+            abschlaege = list(
+                Invoice.objects.filter(
+                    id__in={r["advance_invoice_id"] for r in anrechnung_rows}
+                ).prefetch_related("lines")
+            )
+            anrechnung_lines = _anrechnung_lines(
+                anrechnung_rows, abschlaege, len(prepared)
+            )
+            net_total, tax_total, gross_total = _totals(prepared + anrechnung_lines)
+            _anrechnung_pruefen(gross_total)
+            kalk_lines = prepared + anrechnung_lines
+
+    return {
+        "lines": [_vorschau_zeile(r) for r in prepared],
+        "net_total": net_total,
+        "tax_total": tax_total,
+        "gross_total": gross_total,
+        "kalkulation": (
+            _kalkulation_aus_prepared(kalk_lines, rubriken_norm)
+            if mit_kalkulation
+            else None
+        ),
+    }

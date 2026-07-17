@@ -178,6 +178,201 @@
                   und MwSt. werden über „Bearbeiten“ bzw. den Lieferantenbezug gepflegt.
                 </p>
 
+                <!-- Artikel-Aufschlag (Aufschlagsmatrix-Regel Scope ARTIKEL) -->
+                <div class="regel-block regel-block--aufschlag">
+                  <div class="regel-block__kopf">
+                    <h3 class="regel-block__titel">Artikel-Aufschlag</h3>
+                    @if (darfAendern() && !regelBearbeiten()) {
+                      <button type="button" class="btn btn--klein" (click)="regelBearbeitenOeffnen()">
+                        {{ artikelRegel() ? '✎ Bearbeiten' : '+ Aufschlag setzen' }}
+                      </button>
+                    }
+                  </div>
+
+                  @if (regelMeldung(); as rm) {
+                    <div class="melde melde--fehler" role="alert">
+                      <span class="melde__mark" aria-hidden="true">!</span>
+                      <span class="melde__text"><strong>Fehler:</strong> {{ rm }}</span>
+                    </div>
+                  }
+
+                  @if (aufschlagUebersteuert(); as u) {
+                    <div class="melde melde--warnung" role="note">
+                      <span class="melde__mark" aria-hidden="true">!</span>
+                      <span class="melde__text">
+                        @if (u === 'FESTPREIS') {
+                          Am Artikel ist ein <strong>Festpreis</strong> gesetzt — er übersteuert
+                          den Aufschlag (Rangfolge: Festpreis &gt; VK-Gruppe &gt; Aufschlag). Der
+                          Aufschlag wirkt erst, wenn der Festpreis entfernt ist.
+                          @if (kannFestpreisEntfernen()) {
+                            <button
+                              type="button"
+                              class="btn btn--klein"
+                              [disabled]="vkSaving()"
+                              (click)="festpreisEntfernen()"
+                            >
+                              Festpreis entfernen
+                            </button>
+                          } @else {
+                            Den Festpreis in der Tabelle „Verkaufspreise“ (rechts) leeren.
+                          }
+                        } @else {
+                          Am Artikel ist eine <strong>VK-Gruppe</strong> zugewiesen — sie
+                          übersteuert den Aufschlag. Zum Wirken des Aufschlags die Standard-VK
+                          in der Tabelle „Verkaufspreise“ (rechts) anders wählen.
+                        }
+                      </span>
+                    </div>
+                  }
+
+                  @if (!regelBearbeiten()) {
+                    @if (artikelRegel(); as r) {
+                      <dl class="feld-raster">
+                        <div class="feld">
+                          <dt class="feld__label">Aufschlag</dt>
+                          <dd class="feld__wert">{{ prozent(r.markup_percent) }}</dd>
+                        </div>
+                        <div class="feld">
+                          <dt class="feld__label">Basis</dt>
+                          <dd class="feld__wert">{{ basisLabel(r.calc_basis) }}</dd>
+                        </div>
+                        <div class="feld">
+                          <dt class="feld__label">Mindestmarge</dt>
+                          <dd class="feld__wert" [class.feld__wert--leer]="!r.min_margin_percent">
+                            {{ margeAnzeige(r.min_margin_percent) }}
+                          </dd>
+                        </div>
+                      </dl>
+                      @if (r.tiers.length) {
+                        <p class="regel-block__staffel-titel">Mengenstaffel</p>
+                        <ul class="staffel-liste">
+                          @for (t of r.tiers; track t.id) {
+                            <li>ab {{ zahl(t.min_quantity) }}: {{ prozent(t.markup_percent) }}</li>
+                          }
+                        </ul>
+                      }
+                      @if (darfAendern()) {
+                        <button
+                          type="button"
+                          class="btn btn--klein regel-block__entfernen"
+                          [disabled]="regelLaedt()"
+                          (click)="regelEntfernen()"
+                        >
+                          Aufschlag entfernen
+                        </button>
+                      }
+                    } @else {
+                      <p class="kalk__hinweis">
+                        Kein eigener Aufschlag an diesem Artikel. Ohne Artikel-Aufschlag greift die
+                        allgemeinere Aufschlagsmatrix (Warengruppe/Lieferant/Standard).
+                      </p>
+                    }
+                  } @else {
+                    <form
+                      class="regel-editor"
+                      (submit)="$event.preventDefault(); regelSpeichern()"
+                      novalidate
+                    >
+                      <div class="pos-grid">
+                        <app-feld
+                          [control]="regelForm.controls.markup_percent"
+                          label="Aufschlag (%)"
+                          typ="zahl"
+                          [pflicht]="true"
+                          hinweis="z. B. 45. Negativ = Abschlag."
+                        />
+                        <app-feld
+                          [control]="regelForm.controls.calc_basis"
+                          label="Basis"
+                          typ="select"
+                          [optionen]="basisOptionen"
+                          hinweis="Worauf der Aufschlag rechnet."
+                        />
+                        <app-feld
+                          [control]="regelForm.controls.min_margin_percent"
+                          label="Mindestmarge (%)"
+                          typ="zahl"
+                          hinweis="Untergrenze der Handelsspanne auf den VK. Leer = keine."
+                        />
+                      </div>
+
+                      <fieldset class="staffel">
+                        <legend class="legende">Mengenstaffel (optional)</legend>
+                        <p class="kalk__hinweis">
+                          Ab einer Menge gilt ein anderer Aufschlag. Es zählt die höchste
+                          erreichte Stufe.
+                        </p>
+                        @if (regelStaffel().length === 0) {
+                          <p class="kalk__hinweis">Keine Staffel — es gilt immer der Basisaufschlag.</p>
+                        } @else {
+                          <table class="staffel-tabelle">
+                            <caption class="sr-only">Staffelstufen des Artikel-Aufschlags</caption>
+                            <thead>
+                              <tr>
+                                <th scope="col">ab Menge</th>
+                                <th scope="col">Aufschlag (%)</th>
+                                <th scope="col"><span class="sr-only">Aktionen</span></th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              @for (z of regelStaffel(); track $index) {
+                                <tr>
+                                  <td>
+                                    <label class="sr-only" [attr.for]="'reg-st-m-' + $index">
+                                      Mengenschwelle Stufe {{ $index + 1 }}
+                                    </label>
+                                    <input
+                                      class="vk-eingabe__input"
+                                      [id]="'reg-st-m-' + $index"
+                                      type="text"
+                                      inputmode="decimal"
+                                      [value]="z.min_quantity"
+                                      (input)="regelStaffelAendern($index, 'min_quantity', $event)"
+                                    />
+                                  </td>
+                                  <td>
+                                    <label class="sr-only" [attr.for]="'reg-st-a-' + $index">
+                                      Aufschlag Stufe {{ $index + 1 }}
+                                    </label>
+                                    <input
+                                      class="vk-eingabe__input"
+                                      [id]="'reg-st-a-' + $index"
+                                      type="text"
+                                      inputmode="decimal"
+                                      [value]="z.markup_percent"
+                                      (input)="regelStaffelAendern($index, 'markup_percent', $event)"
+                                    />
+                                  </td>
+                                  <td>
+                                    <button type="button" class="btn btn--klein" (click)="regelStaffelEntfernen($index)">
+                                      Entfernen
+                                    </button>
+                                  </td>
+                                </tr>
+                              }
+                            </tbody>
+                          </table>
+                        }
+                        <button type="button" class="btn btn--klein" (click)="regelStaffelZeile()">+ Stufe</button>
+                      </fieldset>
+
+                      <div class="tab-aktionen">
+                        <button
+                          type="submit"
+                          class="btn btn--primary"
+                          [disabled]="regelLaedt()"
+                          [attr.aria-busy]="regelLaedt()"
+                        >
+                          {{ regelLaedt() ? 'Wird gespeichert …' : 'Speichern' }}
+                        </button>
+                        <button type="button" class="btn" [disabled]="regelLaedt()" (click)="regelBearbeitenAbbrechen()">
+                          Abbrechen
+                        </button>
+                      </div>
+                    </form>
+                  }
+                </div>
+
                 <!-- Welche Regel macht den Preis? (Aufschlagsmatrix) -------- -->
                 @if (vorschlag(); as v) {
                   <div class="regel-block">
@@ -217,7 +412,11 @@
                         <strong> Die Mindestmarge hat den Preis angehoben.</strong>
                       }
                     </p>
-                    <a class="btn" routerLink="/artikel/aufschlagsmatrix">
+                    <a
+                      class="btn"
+                      routerLink="/artikel/aufschlagsmatrix"
+                      [queryParams]="{ article_id: daten()!.id }"
+                    >
                       Aufschlagsmatrix pflegen →
                     </a>
                   </div>

@@ -1103,10 +1103,18 @@ def _markup_rule_out(rule_id):
 
 
 @router.get("/markup-rules", response=list[MarkupRuleOut])
-def list_markup_rules(request, status: str | None = Query(None)):
-    """Alle Aufschlagsregeln (mit Staffeln), spezifischste zuerst."""
+def list_markup_rules(
+    request,
+    status: str | None = Query(None),
+    article_id: UUID | None = Query(None),
+):
+    """Alle Aufschlagsregeln (mit Staffeln), spezifischste zuerst.
+
+    `article_id` grenzt auf die Regeln eines Artikels ein (Scope ARTIKEL) — das
+    Artikel-Detail holt so die aktive Artikel-Aufschlagsregel gezielt, statt die
+    ganze Regeltabelle zu laden."""
     require(request, "pricing", "LESEN")
-    return matrix_service.list_markup_rules(status=status)
+    return matrix_service.list_markup_rules(status=status, article_id=article_id)
 
 
 @router.get("/markup-rules/warengruppen", response=list[WarengruppeOut])

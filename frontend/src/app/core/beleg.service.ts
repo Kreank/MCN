@@ -3,6 +3,7 @@ import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import {
   AnrechenbarerAbschlag,
+  BelegVorschau,
   InvoiceCreate,
   InvoiceUpdate,
   InvoiceDetail,
@@ -116,6 +117,23 @@ export class BelegService {
    */
   updateQuote(id: string, payload: QuoteUpdate): Observable<QuoteDetail> {
     return this.http.put<QuoteDetail>(`${this.base}/${id}`, payload);
+  }
+
+  /**
+   * Live-Vorschau eines Angebotsentwurfs: derselbe Payload wie {@link updateQuote}
+   * (PUT), aber der Server rechnet nur und schreibt NICHT. Liefert Zeilen-Netto
+   * (in Payload-Reihenfolge), Kopfsummen und die Kalkulation zurück — für den
+   * ungespeicherten Zwischenstand. 422 bei ungültigen Positionen (gleiche
+   * Meldungen wie PUT); der Aufrufer ignoriert das still und lässt die letzte
+   * gültige Vorschau stehen. Das Speichern bleibt die Wahrheit.
+   */
+  quoteVorschau(id: string, payload: QuoteUpdate): Observable<BelegVorschau> {
+    return this.http.post<BelegVorschau>(`${this.base}/${id}/vorschau`, payload);
+  }
+
+  /** Live-Vorschau eines Rechnungsentwurfs (Gegenstück zu {@link quoteVorschau}). */
+  invoiceVorschau(id: string, payload: InvoiceUpdate): Observable<BelegVorschau> {
+    return this.http.post<BelegVorschau>(`/api/invoicing/invoices/${id}/vorschau`, payload);
   }
 
   /** Angebot versenden — unumkehrbar: DB vergibt die AN-Nummer und friert ein. */

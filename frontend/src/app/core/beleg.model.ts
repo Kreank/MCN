@@ -495,6 +495,13 @@ export interface QuoteLineInput {
    */
   labour_net_amount?: string | null;
   unit_cost?: string | null;
+  /**
+   * EK→VK-Aufschlag in Prozent (Decimal als Punkt-String, vorzeichenbehaftet —
+   * negativ = bewusster Abschlag/Verlust). **Weglassen = vom Server ableiten
+   * lassen** (aus `unit_cost`/`unit_price`). Nur mitschicken, wenn der Bediener
+   * den Aufschlag AUSDRÜCKLICH gesetzt hat — dann kalkuliert der Server den VK
+   * daraus (und der Aufschlag hält, nicht der Preis). Sonst folgt er dem VK.
+   */
   markup_percent?: string | null;
   sale_price_group_id?: string | null;
   source_article_id?: string | null;
@@ -594,6 +601,33 @@ export interface InvoiceUpdate {
   show_labour_costs?: boolean;
   rubriken?: RubrikInput[];
   lines?: QuoteLineInput[];
+}
+
+/**
+ * Eine Zeile der Live-Vorschau (POST …/vorschau). **In Payload-Reihenfolge** —
+ * also passend zur geflatteten Zeilenliste von `payloadBauen()`. Alle Beträge
+ * als Punkt-String oder null (unbestimmt); Textzeilen tragen keinen Betrag.
+ */
+export interface BelegVorschauLine {
+  net_amount: string | null;
+  markup_percent: string | null;
+  tax_rate_percent: string | null;
+  labour_net_amount: string | null;
+}
+
+/**
+ * Antwort der Live-Vorschau: derselbe Rechenweg wie beim Speichern (PUT), aber
+ * **ohne** zu schreiben. Der Server bleibt die einzige verbindliche Rechenstelle;
+ * die Vorschau ist reiner Komfort für den ungespeicherten Stand. `kalkulation`
+ * ist null, wenn der Abrufer kein `pricing/LESEN` hat (dann bleibt die Leiste
+ * verborgen, genau wie bei der geladenen Kalkulation).
+ */
+export interface BelegVorschau {
+  lines: BelegVorschauLine[];
+  net_total: string | null;
+  tax_total: string | null;
+  gross_total: string | null;
+  kalkulation: Kalkulation | null;
 }
 
 export interface InvoicePartyCreate {

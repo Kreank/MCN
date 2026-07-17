@@ -383,3 +383,106 @@
   margin: 0 0 var(--space-3);
   font-size: var(--step-0);
 }
+
+/* Artikel-Aufschlag: der pflegbare Block (Scope-ARTIKEL-Regel) — vom
+   read-only „Woher kommt der VK"-Block durch den Akzentrand abgesetzt. */
+.regel-block--aufschlag {
+  border-style: solid;
+  border-left: 3px solid var(--accent-ink);
+}
+.regel-block__kopf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+
+  .regel-block__titel {
+    margin-bottom: 0;
+  }
+}
+.regel-block__staffel-titel {
+  margin: var(--space-3) 0 var(--space-1);
+  font-size: var(--step--1);
+  font-weight: 600;
+  color: var(--ink-muted);
+}
+.regel-block__entfernen {
+  margin-top: var(--space-3);
+}
+
+/* Kleiner sekundärer Button (Inline-Aktionen im Kalkulations-Tab). */
+.btn--klein {
+  padding: 0.25rem 0.6rem;
+  font-size: var(--step--1);
+}
+
+/* Zusätzliche Melde-Variante: der Aufschlag wird übersteuert (informativ). */
+.melde--warnung {
+  border-color: color-mix(in srgb, var(--accent-ink) 45%, var(--line-strong));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent-ink);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-3);
+
+  .btn {
+    margin-top: var(--space-2);
+  }
+}
+
+/* Inline-Editor des Artikel-Aufschlags (Formular + Mengenstaffel). */
+.regel-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.staffel {
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.legende {
+  padding: 0 var(--space-1);
+  font-size: var(--step--1);
+  font-weight: 600;
+  color: var(--ink);
+}
+.staffel-tabelle {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--step--1);
+
+  th,
+  td {
+    padding: var(--space-1) var(--space-2) var(--space-1) 0;
+    text-align: left;
+    vertical-align: middle;
+  }
+  input {
+    width: 6.5rem;
+    padding: 0.35rem var(--space-2);
+    background: var(--surface);
+    border: 1.5px solid var(--line-strong);
+    border-radius: var(--radius);
+    color: var(--ink);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+
+    &:focus {
+      border-color: var(--ink);
+      outline: 2.5px solid var(--focus-ring);
+      outline-offset: 2px;
+    }
+  }
+}
+.staffel-liste {
+  margin: 0;
+  padding-left: var(--space-4);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}

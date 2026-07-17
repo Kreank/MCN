@@ -787,11 +787,18 @@ def markup_rule_out(rule_id):
     return eintrag
 
 
-def list_markup_rules(*, status=None):
-    """Alle Regeln (mit Staffeln), spezifischste zuerst."""
+def list_markup_rules(*, status=None, article_id=None):
+    """Alle Regeln (mit Staffeln), spezifischste zuerst.
+
+    `article_id` grenzt auf die Regeln EINES Artikels ein (Scope ARTIKEL) — so
+    holt das Artikel-Detail seine eigene Aufschlagsregel, ohne die ganze
+    Regeltabelle zu ziehen und clientseitig zu filtern.
+    """
     qs = MarkupRule.objects.all().select_related("supplier_party", "article")
     if status:
         qs = qs.filter(status=status)
+    if article_id is not None:
+        qs = qs.filter(article_id=article_id)
     regeln = list(qs)
     tiers = _tiers([r.id for r in regeln])
     regeln.sort(key=lambda r: (-_rang(r), r.name.casefold()))

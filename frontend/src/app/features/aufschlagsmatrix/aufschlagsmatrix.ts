@@ -1,8 +1,10 @@
 import { Component, computed, inject, signal } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
+import { ActivatedRoute } from '@angular/router';
 import { map } from 'rxjs';
 import { AufschlagsmatrixService } from '../../core/aufschlagsmatrix.service';
+import { ArtikelService } from '../../core/artikel.service';
 import { AuthService } from '../../core/auth.service';
 import { PartyService } from '../../core/party.service';
 import {
@@ -31,7 +33,19 @@ type ViewState =
   | { kind: 'error' };
 
 /** Geltungsbereich im Formular — bestimmt, welche Selektoren sichtbar sind. */
-type ScopeWahl = 'STANDARD' | 'WARENGRUPPE' | 'LIEFERANT' | 'WARENGRUPPE_LIEFERANT';
+type ScopeWahl =
+  | 'ARTIKEL'
+  | 'STANDARD'
+  | 'WARENGRUPPE'
+  | 'LIEFERANT'
+  | 'WARENGRUPPE_LIEFERANT';
+
+/** Ein für den ARTIKEL-Scope vorgewählter Artikel (Deeplink/Anzeige). */
+interface ArtikelWahl {
+  id: string;
+  article_number: string;
+  description: string;
+}
 
 interface StaffelZeile {
   min_quantity: string;
@@ -55,6 +69,8 @@ interface StaffelZeile {
 export class Aufschlagsmatrix {
   private readonly svc = inject(AufschlagsmatrixService);
   private readonly partySvc = inject(PartyService);
+  private readonly artikelSvc = inject(ArtikelService);
+  private readonly route = inject(ActivatedRoute);
   private readonly fb = inject(FormBuilder);
   private readonly auth = inject(AuthService);
 
@@ -68,16 +84,21 @@ export class Aufschlagsmatrix {
   /** 'neu' beim Anlegen, Regel-id beim Bearbeiten, sonst null. */
   protected readonly modus = signal<string | null>(null);
   protected readonly staffel = signal<StaffelZeile[]>([]);
+  /** Beim Bearbeiten: die Regel, deren (unveränderlicher) Scope angezeigt wird. */
+  protected readonly aktuelleRegel = signal<MarkupRule | null>(null);
+  /** Für Scope ARTIKEL vorgewählter Artikel (Deeplink `?article_id=`). */
+  protected readonly vorgewaehlterArtikel = signal<ArtikelWahl | null>(null);
 
   protected readonly basisOptionen: FeldOption[] = [
     { wert: 'EK', label: 'Einkaufspreis (EK)' },
     { wert: 'LISTENPREIS', label: 'Listenpreis' },
   ];
   protected readonly scopeOptionen: FeldOption[] = [
-    { wert: 'STANDARD', label: 'Standardregel (greift, wenn keine andere passt)' },
+    { wert: 'ARTIKEL', label: 'Artikel (Einzelfall — höchste Priorität)' },
+    { wert: 'WARENGRUPPE_LIEFERANT', label: 'Warengruppe + Lieferant' },
     { wert: 'WARENGRUPPE', label: 'Warengruppe' },
     { wert: 'LIEFERANT', label: 'Lieferant' },
-    { wert: 'WARENGRUPPE_LIEFERANT', label: 'Warengruppe + Lieferant' },
+    { wert: 'STANDARD', label: 'Standardregel (greift, wenn keine andere passt)' },
   ];
 
   protected readonly lieferantSuche: RefSuche = (q) =>
@@ -85,11 +106,26 @@ export class Aufschlagsmatrix {
       .list({ page: 1, page_size: 20, q })
       .pipe(map((p) => p.items.map((o) => ({ id: o.id, label: o.display_name }))));
 
+  /** Artikelsuche für den ARTIKEL-Scope (Nummer/Bezeichnung als Zweitzeile). */
+  protected readonly artikelSuche: RefSuche = (q) =>
+    this.artikelSvc
+      .listArticles({ page: 1, page_size: 20, q })
+      .pipe(
+        map((p) =>
+          p.items.map((a) => ({
+            id: a.id,
+            label: a.description,
+            sub: a.article_number,
+          })),
+        ),
+      );
+
   protected readonly form = this.fb.group({
     name: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
     scope: this.fb.control<ScopeWahl>('WARENGRUPPE', { nonNullable: true }),
     product_group: this.fb.control('', { nonNullable: true }),
     supplier_party_id: this.fb.control('', { nonNullable: true }),
+    article_id: this.fb.control('', { nonNullable: true }),
     calc_basis: this.fb.control<CalcBasis>('EK', { nonNullable: true }),
     markup_percent: this.fb.control('', {
       nonNullable: true,
@@ -113,6 +149,31 @@ export class Aufschlagsmatrix {
 
   constructor() {
     this.laden();
+    // Deeplink aus dem Artikel-Detail: `?article_id=` öffnet den Anlege-Dialog
+    // mit Scope ARTIKEL und dem Artikel vorbelegt.
+    const articleId = this.route.snapshot.queryParamMap.get('article_id');
+    if (articleId && this.darfAnlegen()) {
+      this.artikelVorwaehlen(articleId);
+    }
+  }
+
+  private artikelVorwaehlen(articleId: string): void {
+    this.artikelSvc.getArticle(articleId).subscribe({
+      next: (a) => {
+        this.neu();
+        this.vorgewaehlterArtikel.set({
+          id: a.id,
+          article_number: a.article_number,
+          description: a.description,
+        });
+        this.form.controls.scope.setValue('ARTIKEL');
+        this.form.controls.article_id.setValue(a.id);
+        this.form.controls.name.setValue(`Artikel ${a.article_number}`);
+      },
+      error: () => {
+        /* Artikel nicht abrufbar → normaler Anlege-Dialog ohne Vorwahl. */
+      },
+    });
   }
 
   private laden(): void {
@@ -148,6 +209,17 @@ export class Aufschlagsmatrix {
     const s = this.scopeWahl();
     return s === 'LIEFERANT' || s === 'WARENGRUPPE_LIEFERANT';
   });
+  protected readonly zeigtArtikel = computed(() => this.scopeWahl() === 'ARTIKEL');
+
+  /** Anzeige des (unveränderlichen) Geltungsbereichs beim Bearbeiten. */
+  protected readonly bearbeitenScopeText = computed(() => {
+    const r = this.aktuelleRegel();
+    if (!r) return 'Standardregel';
+    if (r.scope === 'ARTIKEL') {
+      return `Artikel ${r.article_number ?? ''}`.trim();
+    }
+    return r.scope_text || 'Standardregel';
+  });
 
   protected prozent(wert: string | null): string {
     if (wert == null || String(wert).trim() === '') return '—';
@@ -172,11 +244,14 @@ export class Aufschlagsmatrix {
   neu(): void {
     if (!this.darfAnlegen()) return;
     this.meldung.set(null);
+    this.aktuelleRegel.set(null);
+    this.vorgewaehlterArtikel.set(null);
     this.form.reset({
       name: '',
       scope: 'WARENGRUPPE',
       product_group: '',
       supplier_party_id: '',
+      article_id: '',
       calc_basis: 'EK',
       markup_percent: '',
       min_margin_percent: '',
@@ -188,13 +263,16 @@ export class Aufschlagsmatrix {
   starteBearbeiten(r: MarkupRule): void {
     if (!this.darfAendern()) return;
     this.meldung.set(null);
+    this.aktuelleRegel.set(r);
+    this.vorgewaehlterArtikel.set(null);
     this.form.reset({
       name: r.name,
       // Der Geltungsbereich ist unveränderlich (DB-Trigger) — das Feld wird beim
-      // Bearbeiten nur angezeigt, nicht gesendet.
-      scope: (r.scope === 'ARTIKEL' ? 'STANDARD' : r.scope) as ScopeWahl,
+      // Bearbeiten nur angezeigt (echter Scope, inkl. ARTIKEL), nicht gesendet.
+      scope: r.scope as ScopeWahl,
       product_group: r.product_group ?? '',
       supplier_party_id: r.supplier_party_id ?? '',
+      article_id: r.article_id ?? '',
       calc_basis: r.calc_basis,
       markup_percent: apiZuDeEingabe(r.markup_percent, 3),
       min_margin_percent: apiZuDeEingabe(r.min_margin_percent, 3),
@@ -255,8 +333,14 @@ export class Aufschlagsmatrix {
     this.laedt.set(true);
 
     if (modus === 'neu') {
+      const artikelNoetig = v.scope === 'ARTIKEL';
       const wgNoetig = v.scope === 'WARENGRUPPE' || v.scope === 'WARENGRUPPE_LIEFERANT';
       const liefNoetig = v.scope === 'LIEFERANT' || v.scope === 'WARENGRUPPE_LIEFERANT';
+      if (artikelNoetig && !v.article_id) {
+        this.laedt.set(false);
+        this.meldung.set('Bitte einen Artikel wählen.');
+        return;
+      }
       if (wgNoetig && !v.product_group) {
         this.laedt.set(false);
         this.meldung.set('Bitte eine Warengruppe wählen.');
@@ -273,6 +357,7 @@ export class Aufschlagsmatrix {
           calc_basis: v.calc_basis,
           markup_percent: deZuApiDezimal(v.markup_percent),
           min_margin_percent: marge === '' ? null : marge,
+          article_id: artikelNoetig ? v.article_id : null,
           product_group: wgNoetig ? v.product_group : null,
           supplier_party_id: liefNoetig ? v.supplier_party_id : null,
         })

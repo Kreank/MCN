@@ -947,6 +947,45 @@ button {
   background: var(--surface-sunken);
 }
 
+/* Sichtbare Gruppierung des Positionsdialogs (Position · Kalkulation · Steuer &
+   § 35a) — ein Formular, drei Abschnitte mit Mono-Versalien-Legende. Das
+   <fieldset> wird auf ein schlichtes Flex-Layout zurückgesetzt (kein Rahmen). */
+.pos-block {
+  min-width: 0; // sonst sprengt ein <fieldset> das umgebende Grid/Flex
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+// Trennlinie zwischen den Abschnitten (nicht vor dem ersten).
+.pos-block + .pos-block {
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--line);
+}
+// § 35a-/Stamm-Blöcke stehen im dritten Abschnitt schon in eigenen Karten —
+// ihr erster margin-top würde den Flex-gap verdoppeln.
+.pos-block .pos-lohn:first-of-type,
+.pos-block .pos-stamm {
+  margin-top: 0;
+}
+
+/* Unverbindliche Positionsgesamt-Vorschau im Dialog (Menge × VK − Rabatt). Der
+   Server liefert die verbindliche Zahl — deshalb als „Vorschau" gekennzeichnet. */
+.pos-gesamt {
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+}
+.pos-gesamt__hinw {
+  color: var(--ink-hint);
+  font-size: var(--step--1);
+}
+
 /* ===========================================================================
    Formular-Bausteine, die mehrere Bereiche teilen
    ===========================================================================

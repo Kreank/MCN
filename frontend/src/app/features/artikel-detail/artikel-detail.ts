@@ -18,9 +18,15 @@ import {
   deZuApiDezimal,
   dezimalValidator,
   istDezimalApiWert,
+  istMehrdeutigeDezimalEingabe,
 } from '../../shared/formular/dezimal';
 import { AufschlagsmatrixService } from '../../core/aufschlagsmatrix.service';
-import { VkVorschlag } from '../../core/aufschlagsmatrix.model';
+import {
+  CalcBasis,
+  MarkupRule,
+  MarkupTierIn,
+  VkVorschlag,
+} from '../../core/aufschlagsmatrix.model';
 import { gtinValidator } from '../../shared/formular/gtin';
 import {
   felderAlsBeruehrtMarkieren,
@@ -70,6 +76,17 @@ type BildState =
   | { kind: 'error' };
 
 type Meldung = { art: 'erfolg' | 'fehler'; text: string };
+
+/** Eine Staffelstufe im Artikel-Aufschlag-Editor (deutsche Eingabe-Strings). */
+interface StaffelZeile {
+  min_quantity: string;
+  markup_percent: string;
+}
+
+const BASIS_OPTIONEN: FeldOption[] = [
+  { wert: 'EK', label: 'Einkaufspreis (EK)' },
+  { wert: 'LISTENPREIS', label: 'Listenpreis' },
+];
 
 const LINE_TYPE_OPTIONEN: FeldOption[] = [
   { wert: 'MATERIAL', label: 'Material' },
@@ -189,6 +206,29 @@ export class ArtikelDetail {
   /** Welche Regel/Kalkulation den VK gerade macht (Aufschlagsmatrix, 0069). */
   protected readonly vorschlag = signal<VkVorschlag | null>(null);
 
+  // --- Artikel-Aufschlag (Aufschlagsmatrix-Regel mit Scope ARTIKEL) --------
+  // Der Betrieb arbeitet ohne feste VK — der Aufschlag wird je Artikel gepflegt.
+  // Hier wird die AKTIVE Artikelregel dieses Artikels direkt (inline) bearbeitet.
+  protected readonly basisOptionen = BASIS_OPTIONEN;
+  /** Die aktive Artikel-Aufschlagsregel dieses Artikels (oder null). */
+  protected readonly artikelRegel = signal<MarkupRule | null>(null);
+  private artikelRegelReqId = 0;
+  protected readonly regelBearbeiten = signal(false);
+  protected readonly regelLaedt = signal(false);
+  protected readonly regelMeldung = signal<string | null>(null);
+  protected readonly regelStaffel = signal<StaffelZeile[]>([]);
+  protected readonly regelForm = this.fb.group({
+    calc_basis: this.fb.control<CalcBasis>('EK', { nonNullable: true }),
+    markup_percent: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.required, dezimalValidator],
+    }),
+    min_margin_percent: this.fb.control('', {
+      nonNullable: true,
+      validators: [dezimalValidator],
+    }),
+  });
+
   protected readonly historie = signal<HistorieState>({ kind: 'idle' });
   private historieReqId = 0;
 
@@ -294,6 +334,9 @@ export class ArtikelDetail {
       const id = pm.get('id');
       this.tab.set('informationen');
       this.vk.set({ kind: 'idle' });
+      this.artikelRegel.set(null);
+      this.regelBearbeiten.set(false);
+      this.regelMeldung.set(null);
       this.historie.set({ kind: 'idle' });
       this.bildFreigeben();
       this.bild.set({ kind: 'idle' });
@@ -754,13 +797,38 @@ export class ArtikelDetail {
     });
     // Welche Regel greift gerade? (Nachvollziehbarkeit — der Anwender muss sehen,
     // WARUM der Preis so ist.) Best effort: ein Fehler blendet den Block nur aus.
+    this.ladeVorschlag(id);
+    // Die aktive Artikel-Aufschlagsregel dieses Artikels (für den Aufschlag-Block).
+    this.ladeArtikelRegel(id);
+  }
+
+  /** Den VK-Vorschlag (Rechenweg) neu laden — auch nach jedem Aufschlag-/VK-Save,
+   *  damit der „Woher der Verkaufspreis kommt"-Block sofort den neuen Preis zeigt. */
+  private ladeVorschlag(id: string): void {
     this.vorschlag.set(null);
     this.matrixSvc.vkVorschlag(id).subscribe({
       next: (v) => {
-        if (rid === this.vkReqId) this.vorschlag.set(v);
+        if (id === this.daten()?.id) this.vorschlag.set(v);
       },
       error: () => {
         /* Vorschlag nicht abrufbar → Block bleibt leer. */
+      },
+    });
+  }
+
+  /** Die AKTIVE Artikel-Aufschlagsregel (Scope ARTIKEL) dieses Artikels holen.
+   *  Gezielt über den `article_id`-Filter — nicht über den Vorschlag, denn ein
+   *  Festpreis/eine VK-Gruppe übersteuert die Regel und blendet sie im Vorschlag
+   *  aus, obwohl sie weiter gepflegt gehört. */
+  private ladeArtikelRegel(id: string): void {
+    const rid = ++this.artikelRegelReqId;
+    this.matrixSvc.listRules('AKTIV', id).subscribe({
+      next: (regeln) => {
+        if (rid !== this.artikelRegelReqId) return;
+        this.artikelRegel.set(regeln.find((r) => r.scope === 'ARTIKEL') ?? null);
+      },
+      error: () => {
+        if (rid === this.artikelRegelReqId) this.artikelRegel.set(null);
       },
     });
   }
@@ -860,6 +928,8 @@ export class ArtikelDetail {
         this.vkSaving.set(false);
         this.vkAusDaten(data);
         this.vk.set({ kind: 'ready', data });
+        // Der VK hat sich geändert → Rechenweg-Block nachziehen (Rangfolge!).
+        this.ladeVorschlag(art.id);
         this.meldung.set({ art: 'erfolg', text: 'Die Verkaufspreise wurden gespeichert.' });
       },
       error: (err) => {
@@ -872,6 +942,209 @@ export class ArtikelDetail {
   /** Zwei Geldbeträge (Punkt-Strings) auf Cent-Ebene vergleichen. */
   private gleicheBetraege(a: string, b: string): boolean {
     return Number(a).toFixed(2) === Number(b).toFixed(2);
+  }
+
+  // ---- Artikel-Aufschlag (Aufschlagsmatrix-Regel je Artikel) --------------
+
+  /** Wird der Artikel-Aufschlag durch einen höherrangigen Preis übersteuert?
+   *  (Rangfolge: Festpreis > VK-Gruppe > Matrix/Aufschlag.) */
+  protected readonly aufschlagUebersteuert = computed<'FESTPREIS' | 'VK_GRUPPE' | null>(() => {
+    const v = this.vorschlag();
+    if (!v) return null;
+    if (v.quelle === 'ARTIKEL_FESTPREIS') return 'FESTPREIS';
+    if (v.quelle === 'ARTIKEL_VK_GRUPPE') return 'VK_GRUPPE';
+    return null;
+  });
+
+  /** Lässt sich der übersteuernde Festpreis über den bestehenden VK-Weg lösen?
+   *  Nur, wenn es VK-Gruppen gibt, denen der Standard neu zugewiesen werden kann. */
+  protected readonly kannFestpreisEntfernen = computed(() => {
+    const s = this.vk();
+    return (
+      this.darfAendern() &&
+      this.aufschlagUebersteuert() === 'FESTPREIS' &&
+      s.kind === 'ready' &&
+      s.data.groups.length > 0
+    );
+  });
+
+  regelBearbeitenOeffnen(): void {
+    if (!this.darfAendern()) return;
+    const r = this.artikelRegel();
+    this.regelMeldung.set(null);
+    this.regelForm.reset({
+      calc_basis: r?.calc_basis ?? 'EK',
+      markup_percent: r ? apiZuDeEingabe(r.markup_percent, 3) : '',
+      min_margin_percent: r?.min_margin_percent != null ? apiZuDeEingabe(r.min_margin_percent, 3) : '',
+    });
+    this.regelStaffel.set(
+      (r?.tiers ?? []).map((t) => ({
+        min_quantity: apiZuDeEingabe(t.min_quantity, 3),
+        markup_percent: apiZuDeEingabe(t.markup_percent, 3),
+      })),
+    );
+    this.regelBearbeiten.set(true);
+  }
+
+  regelBearbeitenAbbrechen(): void {
+    if (this.regelLaedt()) return;
+    this.regelBearbeiten.set(false);
+    this.regelMeldung.set(null);
+  }
+
+  regelStaffelZeile(): void {
+    this.regelStaffel.update((s) => [...s, { min_quantity: '', markup_percent: '' }]);
+  }
+
+  regelStaffelEntfernen(i: number): void {
+    this.regelStaffel.update((s) => s.filter((_, idx) => idx !== i));
+  }
+
+  regelStaffelAendern(i: number, feld: keyof StaffelZeile, ev: Event): void {
+    const wert = (ev.target as HTMLInputElement).value;
+    this.regelStaffel.update((s) => s.map((z, idx) => (idx === i ? { ...z, [feld]: wert } : z)));
+  }
+
+  /** Staffel-Eingaben → API-Payload; null bei fehlerhafter Eingabe (Meldung
+   *  ist dann bereits gesetzt). Die Staffelfelder hängen an keinem FormControl
+   *  (nur am Signal), deshalb passiert die Dezimal-Prüfung hier — sonst ginge
+   *  der 'UNGUELTIG'-Sentinel von `deZuApiDezimal` als Wert an die API und der
+   *  Nutzer bekäme statt der üblichen „1.500 ist nicht eindeutig"-Hilfe nur
+   *  einen generischen 422. */
+  private regelStaffelPayload(): MarkupTierIn[] | null {
+    const out: MarkupTierIn[] = [];
+    for (const z of this.regelStaffel()) {
+      const mengeRoh = z.min_quantity.trim();
+      const aufRoh = z.markup_percent.trim();
+      if (mengeRoh === '' && aufRoh === '') continue;
+      if (mengeRoh === '' || aufRoh === '') {
+        this.regelMeldung.set('Jede Staffelstufe braucht eine Menge UND einen Aufschlag.');
+        return null;
+      }
+      const menge = deZuApiDezimal(mengeRoh);
+      const auf = deZuApiDezimal(aufRoh);
+      for (const [api, roh] of [
+        [menge, mengeRoh],
+        [auf, aufRoh],
+      ] as const) {
+        if (!istDezimalApiWert(api)) {
+          this.regelMeldung.set(
+            istMehrdeutigeDezimalEingabe(roh)
+              ? `„${roh}" ist nicht eindeutig — Tausenderpunkt oder Dezimalpunkt? Bitte ohne ` +
+                  `Punkt schreiben („${roh.replace(/\./g, '')}") oder Nachkommastellen mit ` +
+                  `Komma angeben.`
+              : `„${roh}" ist keine gültige Zahl.`,
+          );
+          return null;
+        }
+      }
+      out.push({ min_quantity: menge, markup_percent: auf });
+    }
+    return out;
+  }
+
+  regelSpeichern(): void {
+    const art = this.daten();
+    if (this.regelLaedt() || !art) return;
+    this.regelMeldung.set(null);
+    this.regelForm.markAllAsTouched();
+    if (this.regelForm.invalid) return;
+    // Bei fehlerhafter Staffel hat regelStaffelPayload die konkrete Meldung
+    // (fehlende Hälfte / ungültige Zahl / mehrdeutig) bereits gesetzt.
+    const tiers = this.regelStaffelPayload();
+    if (tiers === null) return;
+    const v = this.regelForm.getRawValue();
+    const marge = deZuApiDezimal(v.min_margin_percent);
+    const markup = deZuApiDezimal(v.markup_percent);
+    const bestehend = this.artikelRegel();
+    this.regelLaedt.set(true);
+
+    if (bestehend) {
+      this.matrixSvc
+        .updateRule(bestehend.id, {
+          calc_basis: v.calc_basis,
+          markup_percent: markup,
+          min_margin_percent: marge === '' ? null : marge,
+        })
+        .subscribe({
+          next: () => this.regelTiersSpeichern(art.id, bestehend.id, tiers),
+          error: (err) => this.regelFehler(err),
+        });
+      return;
+    }
+
+    this.matrixSvc
+      .createRule({
+        article_id: art.id,
+        name: `Artikel ${art.article_number}`,
+        calc_basis: v.calc_basis,
+        markup_percent: markup,
+        min_margin_percent: marge === '' ? null : marge,
+      })
+      .subscribe({
+        next: (regel) => this.regelTiersSpeichern(art.id, regel.id, tiers),
+        error: (err) => this.regelFehler(err),
+      });
+  }
+
+  /** Die Staffel wird immer mitgesendet (auch leer = alle Stufen deaktivieren). */
+  private regelTiersSpeichern(articleId: string, ruleId: string, tiers: MarkupTierIn[]): void {
+    this.matrixSvc.setTiers(ruleId, tiers).subscribe({
+      next: () => this.regelFertig(articleId, 'Der Artikel-Aufschlag wurde gespeichert.'),
+      error: (err) => this.regelFehler(err),
+    });
+  }
+
+  /** Aufschlag entfernen: die Artikelregel auf INAKTIV setzen (kein Löschen). */
+  regelEntfernen(): void {
+    const art = this.daten();
+    const r = this.artikelRegel();
+    if (this.regelLaedt() || !art || !r) return;
+    this.regelMeldung.set(null);
+    this.regelLaedt.set(true);
+    this.matrixSvc.setStatus(r.id, 'INAKTIV').subscribe({
+      next: () => this.regelFertig(art.id, 'Der Artikel-Aufschlag wurde entfernt.'),
+      error: (err) => this.regelFehler(err),
+    });
+  }
+
+  private regelFertig(articleId: string, text: string): void {
+    this.regelLaedt.set(false);
+    this.regelBearbeiten.set(false);
+    this.regelMeldung.set(null);
+    this.ladeArtikelRegel(articleId);
+    this.ladeVorschlag(articleId);
+    this.meldung.set({ art: 'erfolg', text });
+  }
+
+  private regelFehler(err: unknown): void {
+    this.regelLaedt.set(false);
+    this.regelMeldung.set(
+      fehlerDetail(err) ?? 'Der Artikel-Aufschlag ließ sich nicht speichern.',
+    );
+  }
+
+  /** Den übersteuernden Festpreis über den bestehenden VK-Weg lösen: die
+   *  Überschreibung der Standard-VK-Gruppe leeren und speichern (setzt
+   *  fixed_price=null; ein freistehender Festpreis verliert dabei den Standard). */
+  festpreisEntfernen(): void {
+    if (!this.kannFestpreisEntfernen() || this.vkSaving()) return;
+    const std = this.vkStandard();
+    if (std) this.vkFelder.update((f) => ({ ...f, [std]: '' }));
+    this.vkSpeichern();
+  }
+
+  /** Aufschlag-Prozent einer Regel/Stufe menschenlesbar („+ 45 %" / „− 10 %"). */
+  prozent(wert: string | null): string {
+    if (wert == null || String(wert).trim() === '') return '—';
+    const vorzeichen = Number(wert) < 0 ? '−' : '+';
+    return `${vorzeichen} ${apiZuDeAnzeige(wert, 1).replace('-', '')} %`;
+  }
+
+  /** Mindestmarge (immer positiv) menschenlesbar. */
+  margeAnzeige(wert: string | null): string {
+    if (wert == null || String(wert).trim() === '') return '—';
+    return `${apiZuDeAnzeige(wert, 1)} %`;
   }
 
   /** Kurzbeschreibung der Formel einer Gruppe (Hero-Stil „(+ 10,00 %)"). */

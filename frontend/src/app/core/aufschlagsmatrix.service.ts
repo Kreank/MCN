@@ -26,9 +26,12 @@ export class AufschlagsmatrixService {
   private readonly http = inject(HttpClient);
   private readonly base = '/api/pricing';
 
-  listRules(status?: MatrixStatus): Observable<MarkupRule[]> {
+  /** Aufschlagsregeln. `articleId` grenzt auf die Regeln EINES Artikels ein
+   *  (Scope ARTIKEL) — so holt das Artikel-Detail seine eigene Regel gezielt. */
+  listRules(status?: MatrixStatus, articleId?: string): Observable<MarkupRule[]> {
     let params = new HttpParams();
     if (status) params = params.set('status', status);
+    if (articleId) params = params.set('article_id', articleId);
     return this.http.get<MarkupRule[]>(`${this.base}/markup-rules`, { params });
   }
 

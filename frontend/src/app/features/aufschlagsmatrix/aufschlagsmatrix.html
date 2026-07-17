@@ -47,13 +47,33 @@
           <p class="feld">
             <span class="feld__label">Geltungsbereich</span>
             <span class="feld__wert">
-              {{ form.controls.product_group.value || 'Standardregel' }}
+              {{ bearbeitenScopeText() }}
               <span class="hinweis-inline">
                 — unveränderlich. Zum Umzielen eine neue Regel anlegen und diese
                 deaktivieren.
               </span>
             </span>
           </p>
+        }
+
+        @if (modus() === 'neu' && zeigtArtikel()) {
+          @if (vorgewaehlterArtikel(); as a) {
+            <p class="feld">
+              <span class="feld__label">Artikel</span>
+              <span class="feld__wert">
+                {{ a.article_number }} — {{ a.description }}
+                <span class="hinweis-inline">— aus dem Artikel-Detail übernommen.</span>
+              </span>
+            </p>
+          } @else {
+            <app-referenz-wahl
+              [control]="form.controls.article_id"
+              label="Artikel"
+              platzhalter="Artikel suchen …"
+              [suche]="artikelSuche"
+              leerText="Kein Artikel gefunden."
+            />
+          }
         }
 
         @if (modus() === 'neu' && zeigtWarengruppe()) {
