@@ -3,6 +3,36 @@
 Dieses Dokument macht eine frische Session sofort handlungsfähig. **Zuerst lesen**,
 dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 
+---
+
+## ⚡ SESSION 2026-07-17/18 — Fresh-Reset, neuer Artikelstamm, Gerätewissen + DRINGENDER OFFENER PUNKT (DNS)
+
+### 🔴 ZUERST: Alle Seiten waren offline — DNS zeigt auf alte IP (server-weit, nicht MCN)
+- **Ursache:** Anschluss hat über Nacht neue öffentliche IP bekommen (dynamische IP, Zwangstrennung). DNS-A-Record von `tech-artist.de` (alle Subdomains CNAME darauf) zeigt noch auf **ALT 77.13.203.157**, Server hat aber **NEU 77.191.86.207**. Server-Stack ist komplett gesund (Uptime 7+ Wochen, keine Reboots) — reines DNS-Problem.
+- **Sofort-Fix (Saschas Strato-Panel):** A-Record `tech-artist.de → 77.191.86.207` setzen. ODER lokal Windows-hosts-Datei.
+- **Dauer-Fix HALB FERTIG:** DDNS-Updater gebaut unter `/srv/storage/scripts/strato-ddns/` (`update.sh` + `strato-ddns.conf` chmod 600). Endpoint verifiziert = **`dyndns.strato.com`** (NICHT `dyn.strato.com`), Basic-Auth, User `tech-artist.de`, Host `tech-artist.de`, `myip=`. **BLOCKER:** Strato antwortet **`badauth`** — Saschas Testpasswort war falsch bzw. DynDNS im Strato-Panel noch nicht aktiviert. **TODO:** Sascha aktiviert DynDNS im Panel + setzt DynDNS-Passwort → in `strato-ddns.conf` eintragen → `update.sh` laufen lassen (behebt Ausfall sofort) → dann **cron alle 5 Min** einrichten (noch NICHT installiert). Ggf. `curl -4` erzwingen (Strato echote IPv6).
+
+### Was diese Session gemacht wurde (alles live, außer wo vermerkt)
+- **Demo komplett verworfen:** `mcn_pgdata`+`mcn_miniodata`-Volumes gelöscht, Stack frisch migriert (0001–0113, `MCN_SEED=0`). Sicherungen in `backups/`: `mcn-db-demo-final-20260717.sql.gz`, `env-demo-final-20260717.bak`, **`mcn-mail-key-20260717.txt`** (chmod 600: neuer MCN_MAIL_KEY + Erst-Admin-Zugang).
+- **Neuer MCN_MAIL_KEY** in `.env` (alter Demo-Key ungültig).
+- **Erst-Admin:** `sascha@mitra-sanitaer.de` / Passwort **`Mitra-2026-Start!`** (2026-07-17 neu gesetzt+verifiziert; das erste generierte PW verifizierte NICHT — Hash-Mismatch, ist ersetzt). Superuser + Rolle ADMINISTRATION, app_user_id `cff3a146-73e7-440c-b79b-ba3bd6b4e8bf`. Login end-to-end getestet (CSRF via `GET /api/auth/csrf`, Login mit Origin/Referer → 200).
+- **Artikelstamm NEU:** B&O-Original-Datanorm importiert = **2.043.336 Artikel, alle mit Listenpreis** (`datanorm_import --stamm 3STAMM.ZIP --preise DATANORM.ZIP --namespace bo`, ZIPs aus `websearch/datanorm_sample/`). VK-Standardregel „Händler-Listenpreis (Standard)" (LISTENPREIS +0 %) neu angelegt.
+- **Hersteller-Ersatzteile importiert:** Vaillant **10.942** (`~/datanorm_quellen/Anleitungen/Preisliste_ET_DE_Update_01.07.2026.zip`, namespace `vaillant`) + Bosch/Junkers **17.921** (`~/datanorm_quellen/Datanorm_bosh_junkers/ers0726e.zip`, namespace `junkers`). Nur Listenpreis (EK=NULL ohne passende RAB). Importer erweitert für Hersteller-Datanorm-Variante (Preis im A-Satz, `--rabatt`-Flag, .002-Toleranz).
+- **Neuer Reiter „Gerätewissen" LIVE** (Commit `ee4e0d4`): read-only `/geraetewissen`, zeigt NUR Ersatzteil-Namespaces (`GERAETEWISSEN_NAMESPACES=("vaillant","junkers")`, erweiterbar per Django-Setting), Großhandel `bo` ausgeschlossen. Endpunkte `/api/geraetewissen/{hersteller,ersatzteile,ersatzteile/{id}}`.
+- **Emblem** entorangt (Navy statt Orange), live.
+
+### ⚠️ Deploy-Weg & Saschas paralleler App-Login
+Sascha entwickelt **parallel im selben Checkout** einen **App-Login (Device-Bearer-Token)** für die native Android-App. Diese Arbeit liegt jetzt committet auf develop (**Commit `17ca41a`**, WIP): `security.device_token` (Migr. 0114/0115), `api/device_auth.py`, `db_core/services/geraetetoken.py`, `/auth/device/login`+`logout`, globale Bearer-Auth. **⚠️ Nicht deployen bis Brute-Force-Schutz für `/auth/device/login` drin ist** (fehlt noch). **Live-Backend enthält diesen Code NICHT** — es lief aus isoliertem Worktree ohne Device-Auth (`security.device_token` existiert produktiv nicht, Migrationskopf 0113). **DESHALB Deploy IMMER aus isoliertem worktree** (`git worktree add /tmp/x <clean-commit>` → `docker build -f deploy/{backend,nginx}.Dockerfile -t mcn-{backend,nginx}:latest /tmp/x` → `docker compose up -d --no-build`), NIE `up --build` solange unfertige Login-Arbeit im Baum liegt. Ein zweites, agent-gebautes Device-Auth-System ist auf Branch `feature/device-token-auth` geparkt.
+
+### Offene TODOs
+1. **DNS/DDNS** (oben, dringend, Sascha-Passwort).
+2. **Backup-Routine** — jetzt Pflicht (2 Mio echter Artikelstamm live), noch nicht gebaut. Nächtlicher pg_dump + MinIO-Spiegel + Mail-Key-Sicherung, am besten Compose-Dienst wie Scheduler.
+3. **IDS-Anbindung G.U.T.** neu einrichten (Saschas UI-Schritt, neuer Mail-Key) — `net_price_semantics=GESAMT`.
+4. **App-Login** fertigstellen (Brute-Force-Schutz) bevor Device-Auth live geht.
+5. Optional: EK für Vaillant/Bosch-Ersatzteile via passender RAB nachziehen.
+
+---
+
 > TL;DR: MCN ist ein KI-first CRM (Nachfolger des Hero-CRM) für Handwerk/
 > Gebäudeservice. DB ist database-first PostgreSQL (Regeln in Triggern). Backend
 > Django 5 + django-ninja. Frontend Angular „Leitstand". Es wird in **vertikalen
