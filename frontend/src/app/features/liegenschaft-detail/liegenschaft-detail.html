@@ -145,7 +145,7 @@
            3D-Planung. Die Kennzahlen rechnet der Server — hier wird nur
            erfasst und angezeigt. -->
       @if (tab() === 'raeume') {
-        <app-raumaufmass [propertyId]="daten()!.id" />
+        <app-raumaufmass [propertyId]="daten()!.id" [gebaeude]="daten()!.buildings" />
       }
 
       <!-- ------------------------------ Beteiligte ------------------------ -->

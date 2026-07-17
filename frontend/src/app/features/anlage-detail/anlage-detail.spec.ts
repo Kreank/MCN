@@ -21,7 +21,7 @@ const DETAIL: AnlageDetailModel = {
   id: 'a-1',
   property_id: 'p-1',
   name: 'Heizzentrale',
-  asset_type: 'HEIZUNG',
+  asset_type: 'KESSEL_HEIZUNG',
   status: 'AKTIV',
   supply_type: 'ZENTRAL',
   building_id: null,

@@ -213,6 +213,48 @@ describe('RaumEditor', () => {
     expect(werte[1]).toContain('—');
   });
 
+  it('legt einen neuen Raum mit vorbelegter Zuordnung an (building_id/unit_id im Payload)', () => {
+    fixture.componentRef.setInput('raum', null);
+    fixture.componentRef.setInput('gebaeude', [
+      {
+        id: 'b-1',
+        building_number: '1',
+        name: 'Haupthaus',
+        units: [{ id: 'u-1', unit_type: 'APARTMENT', unit_number: 'W3' }],
+      },
+    ]);
+    fixture.componentRef.setInput('vorbelegung', { building_id: 'b-1', unit_id: 'u-1' });
+    fixture.detectChanges();
+
+    tippen(eingabeZu('Name'), 'Wohnzimmer');
+    // Fläche kommt aus dem Schnellmaß in Schritt 2; die Höhe ist mit 2,50 vorbelegt.
+    tippen(eingabeZu('Fläche (m²)'), '20');
+
+    Array.from(el().querySelectorAll('button'))
+      .find((b) => (b.textContent ?? '').includes('Raum anlegen'))!
+      .click();
+
+    const req = http.expectOne('/api/property/properties/p-1/rooms');
+    expect(req.request.method).toBe('POST');
+    const body = req.request.body as { building_id: string; unit_id: string; floor_area_m2: string };
+    expect(body.building_id).toBe('b-1');
+    expect(body.unit_id).toBe('u-1');
+    expect(body.floor_area_m2).toBe('20');
+    req.flush(raum());
+  });
+
+  it('rechnet das Volumen LIVE und markiert es als „Vorschau", wenn die Höhe geändert wird', () => {
+    fixture.componentRef.setInput('raum', raum()); // Fläche 24 m², Höhe 2,50 m → 60 m³ gespeichert
+    fixture.detectChanges();
+
+    tippen(eingabeZu('Höhe (m)'), '3'); // 24 × 3 = 72 m³ — muss SOFORT erscheinen
+
+    const volumen = Array.from(el().querySelectorAll('.kz__wert'))[1];
+    const t = (volumen.textContent ?? '').replace(/\s+/g, ' ');
+    expect(t).toContain('72,00 m³');
+    expect(t).toContain('Vorschau'); // klar als ungespeicherte Vorschau markiert
+  });
+
   it('jedes Eingabefeld des Aufbaus trägt eine id (Formularfeld-Semantik)', () => {
     fixture.componentRef.setInput('raum', raum());
     fixture.detectChanges();

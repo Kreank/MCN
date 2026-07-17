@@ -117,3 +117,30 @@ export interface PartyRoleIn {
   valid_from: string;
   valid_until?: string | null;
 }
+
+// --- Deutsche Labels --------------------------------------------------------
+
+/**
+ * Deutsche Bezeichnung eines Einheitstyps. Zentral, damit Struktur-Tab,
+ * Raumaufmaß und Anlagen-Dialog dieselben Begriffe zeigen (eine Wahrheit statt
+ * dreier Kopien, die auseinanderlaufen).
+ */
+const UNIT_TYPE_LABELS: Record<UnitTypeCode, string> = {
+  APARTMENT: 'Wohnung',
+  COMMERCIAL: 'Gewerbe',
+  GARAGE: 'Garage',
+  PARKING: 'Stellplatz',
+  STORAGE: 'Lager',
+  COMMON_AREA: 'Gemeinschaft',
+  TECHNICAL_ROOM: 'Technikraum',
+  OTHER: 'Sonstige',
+};
+
+export function unitTypeLabel(t: string): string {
+  return UNIT_TYPE_LABELS[t as UnitTypeCode] ?? t;
+}
+
+/** Anzeigename eines Gebäudes — Name, sonst „Gebäude <Nummer>". */
+export function gebaeudeLabel(b: { name?: string | null; building_number: string }): string {
+  return b.name || `Gebäude ${b.building_number}`;
+}

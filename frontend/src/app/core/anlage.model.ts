@@ -13,19 +13,17 @@
  * liefert Dezimalzahlen als String; `null` bleibt `null`.
  */
 
+// SHK-Anlagenarten des Betriebs (Backend-Codeliste, Migration 0112). Die
+// Reihenfolge in ART_LABELS unten ist zugleich die Reihenfolge im Dropdown.
 export type AssetType =
-  | 'HEIZUNG'
-  | 'THERME'
-  | 'WARMWASSER'
-  | 'WAERMEPUMPE'
-  | 'SOLARTHERMIE'
-  | 'LUEFTUNG'
-  | 'KLIMA'
-  | 'TRINKWASSER'
+  | 'THERME_HEIZUNG'
+  | 'THERME_COMBI'
+  | 'ERDWAERMEPUMPE'
+  | 'FERNWAERMESTATION'
+  | 'KESSEL_HEIZUNG'
+  | 'KESSEL_COMBI'
   | 'HEBEANLAGE'
-  | 'AUFZUG'
-  | 'BRANDSCHUTZ'
-  | 'ELEKTRO'
+  | 'SOLARANLAGE'
   | 'SONSTIGE';
 
 /** Zentral oder dezentral. UNBEKANNT ist ein ehrlicher Wert, kein Fehler. */
@@ -143,19 +141,15 @@ export type AnlagePatch = Partial<AnlageIn> & { status?: AnlageStatus };
 // --- Beschriftungen (eine Stelle, damit Liste und Detail nicht auseinanderlaufen)
 
 const ART_LABELS: Record<AssetType, string> = {
-  HEIZUNG: 'Heizung',
-  THERME: 'Therme',
-  WARMWASSER: 'Warmwasser',
-  WAERMEPUMPE: 'Wärmepumpe',
-  SOLARTHERMIE: 'Solarthermie',
-  LUEFTUNG: 'Lüftung',
-  KLIMA: 'Klima',
-  TRINKWASSER: 'Trinkwasser',
+  THERME_HEIZUNG: 'Therme Heizung',
+  THERME_COMBI: 'Therme Combi',
+  ERDWAERMEPUMPE: 'Erdwärmepumpe',
+  FERNWAERMESTATION: 'Fernwärmestation',
+  KESSEL_HEIZUNG: 'Kessel Heizung',
+  KESSEL_COMBI: 'Kessel Combi',
   HEBEANLAGE: 'Hebeanlage',
-  AUFZUG: 'Aufzug',
-  BRANDSCHUTZ: 'Brandschutz',
-  ELEKTRO: 'Elektro',
-  SONSTIGE: 'Sonstige',
+  SOLARANLAGE: 'Solaranlage',
+  SONSTIGE: 'Sonstiges',
 };
 
 const SUPPLY_LABELS: Record<SupplyType, string> = {

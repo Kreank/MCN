@@ -2,6 +2,7 @@ import { Component, computed, effect, inject, input, signal, viewChild } from '@
 import { AuthService } from '../../core/auth.service';
 import { RaumService } from '../../core/raum.service';
 import { Aufmass, Auslegung, Room, istStillgelegt, roomTypeLabel } from '../../core/raum.model';
+import { Building, gebaeudeLabel, unitTypeLabel } from '../../core/property.model';
 import { Bestaetigung } from '../../shared/bestaetigung/bestaetigung';
 import { fehlerDetail } from '../../shared/http-fehler';
 import { AuslegungPanel } from './auslegung-panel';
@@ -20,6 +21,25 @@ interface Geschoss {
   readonly label: string;
   readonly raeume: Room[];
   /** Nur die aktiven Räume zählen — Fläche, Volumen und Anzahl. */
+  readonly aktivAnzahl: number;
+  readonly inaktivAnzahl: number;
+  readonly flaeche: number | null;
+  readonly volumen: number | null;
+}
+
+/**
+ * Eine Gruppe der Raumliste — eine Einheit, „Gebäude allgemein" oder „Ohne
+ * Zuordnung". Das ist die Sicht des Betriebs: **in einer Einheit lege ich die
+ * Räume an.** `building_id`/`unit_id` sind die Vorbelegung für „＋ Raum".
+ */
+interface RaumGruppe {
+  readonly key: string;
+  readonly titel: string;
+  /** Kurzer Zusatz (Einheitstyp bzw. Erklärung) — nie nur der Titel. */
+  readonly zusatz: string;
+  readonly building_id: string | null;
+  readonly unit_id: string | null;
+  readonly raeume: Room[];
   readonly aktivAnzahl: number;
   readonly inaktivAnzahl: number;
   readonly flaeche: number | null;
@@ -53,6 +73,13 @@ export class Raumaufmass {
   private readonly auth = inject(AuthService);
 
   readonly propertyId = input.required<string>();
+  /**
+   * Gebäude/Einheiten der Liegenschaft (aus dem Struktur-Tab). Sie geben der
+   * Raumliste ihre Gliederung: je Einheit eine Gruppe, dazu „Gebäude allgemein".
+   * Leer = die Liegenschaft hat (noch) keine Struktur → die Ansicht fällt sauber
+   * auf „Ohne Zuordnung" zurück.
+   */
+  readonly gebaeude = input<readonly Building[]>([]);
 
   private readonly panel = viewChild(AuslegungPanel);
 
@@ -68,6 +95,16 @@ export class Raumaufmass {
 
   /** Welcher Raum wird gerade erfasst? '' = Liste, 'neu' = neuer Raum. */
   protected readonly offenerRaum = signal<string | null>(null);
+
+  /**
+   * Vorbelegung der Zuordnung für einen NEUEN Raum — gesetzt, wenn „＋ Raum" aus
+   * einer Einheiten-Gruppe geklickt wurde. Beim Öffnen eines bestehenden Raumes
+   * und in der allgemeinen „＋ Raum"-Aktion ist sie `null`.
+   */
+  protected readonly neuVorbelegung = signal<{
+    building_id: string | null;
+    unit_id: string | null;
+  } | null>(null);
 
   /**
    * Liste oder Grundriss. Die Koordinaten des Umrisses gelten je GESCHOSS
@@ -155,6 +192,95 @@ export class Raumaufmass {
           volumen: summeApi(aktive.map((r) => r.volume_m3)),
         };
       });
+  });
+
+  /** Hat die Liegenschaft überhaupt eine Struktur (Gebäude)? */
+  protected readonly hatStruktur = computed(() => this.gebaeude().length > 0);
+
+  /**
+   * Räume nach **Einheit** gruppiert (die Sicht des Betriebs) — je Einheit eine
+   * Gruppe (auch leer, denn genau da will man anlegen), dazu je Gebäude „Gebäude
+   * allgemein" (Keller/Technik: Raum nur mit `building_id`) und „Ohne Zuordnung"
+   * (Altbestand: Raum ohne `building_id`).
+   *
+   * Reihenfolge = Struktur-Tab: Gebäude nach Nummer, Einheiten nach Nummer. Ein
+   * Raum, dessen Einheit/Gebäude nicht (mehr) in der Struktur steht, fällt in
+   * „Ohne Zuordnung" — er verschwindet nicht.
+   */
+  protected readonly einheitenGruppen = computed<RaumGruppe[]>(() => {
+    const alle = this.raeume();
+    const zugeordnet = new Set<string>();
+
+    const bauen = (
+      key: string,
+      titel: string,
+      zusatz: string,
+      building_id: string | null,
+      unit_id: string | null,
+      raeume: Room[],
+    ): RaumGruppe => {
+      const aktive = raeume.filter((r) => !istStillgelegt(r));
+      return {
+        key,
+        titel,
+        zusatz,
+        building_id,
+        unit_id,
+        // Stillgelegte ans Ende — Bestandsnachweis, nicht Arbeitsvorrat.
+        raeume: [...raeume].sort(
+          (a, b) =>
+            Number(istStillgelegt(a)) - Number(istStillgelegt(b)) ||
+            a.name.localeCompare(b.name, 'de'),
+        ),
+        aktivAnzahl: aktive.length,
+        inaktivAnzahl: raeume.length - aktive.length,
+        flaeche: summeApi(aktive.map((r) => r.floor_area_m2)),
+        volumen: summeApi(aktive.map((r) => r.volume_m3)),
+      };
+    };
+
+    const gruppen: RaumGruppe[] = [];
+    for (const b of [...this.gebaeude()].sort((x, y) =>
+      x.building_number.localeCompare(y.building_number, 'de'),
+    )) {
+      const gLabel = gebaeudeLabel(b);
+      for (const u of [...b.units].sort((x, y) =>
+        x.unit_number.localeCompare(y.unit_number, 'de'),
+      )) {
+        const rs = alle.filter((r) => r.unit_id === u.id);
+        rs.forEach((r) => zugeordnet.add(r.id));
+        gruppen.push(
+          bauen(
+            `u-${u.id}`,
+            `${gLabel} · ${u.unit_number}`,
+            unitTypeLabel(u.unit_type),
+            b.id,
+            u.id,
+            rs,
+          ),
+        );
+      }
+      const allg = alle.filter((r) => r.building_id === b.id && r.unit_id == null);
+      allg.forEach((r) => zugeordnet.add(r.id));
+      gruppen.push(
+        bauen(
+          `b-${b.id}`,
+          `${gLabel} · allgemein`,
+          'Keller, Technik, Treppenhaus …',
+          b.id,
+          null,
+          allg,
+        ),
+      );
+    }
+
+    const ohne = alle.filter((r) => !zugeordnet.has(r.id));
+    // „Ohne Zuordnung" nur zeigen, wenn dort etwas liegt — oder wenn es gar keine
+    // Struktur gibt (dann ist es die einzige Gruppe, in der man anlegen kann).
+    if (ohne.length || gruppen.length === 0) {
+      gruppen.push(bauen('ohne', 'Ohne Zuordnung', 'Altbestand ohne Gebäude/Einheit', null, null, ohne));
+    }
+    return gruppen;
   });
 
   /** Auslegungsdaten des Objekts — sie kommen mit dem Aufmaß. */
@@ -268,10 +394,19 @@ export class Raumaufmass {
 
   // --- Navigation zwischen Liste und Erfassung -----------------------------
   raumOeffnen(id: string): void {
+    this.neuVorbelegung.set(null);
     this.offenerRaum.set(id);
   }
 
+  /** Allgemeines „＋ Raum" (Kopf) — ohne Vorbelegung. */
   raumAnlegen(): void {
+    this.neuVorbelegung.set(null);
+    this.offenerRaum.set('neu');
+  }
+
+  /** „＋ Raum" an einer Gruppe — Gebäude/Einheit sind vorbelegt. */
+  raumAnlegenIn(g: RaumGruppe): void {
+    this.neuVorbelegung.set({ building_id: g.building_id, unit_id: g.unit_id });
     this.offenerRaum.set('neu');
   }
 

@@ -631,7 +631,7 @@
                   <li class="ds-zeile">
                     <div class="ds-zeile__haupt">
                       <span class="ds-zeile__titel">{{ a.name }}</span>
-                      @if (a.asset_type) { <span class="stamp stamp--type">{{ a.asset_type }}</span> }
+                      @if (a.asset_type) { <span class="stamp stamp--type">{{ anlagenArt(a.asset_type) }}</span> }
                     </div>
                   </li>
                 }

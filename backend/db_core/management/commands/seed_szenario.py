@@ -692,7 +692,7 @@ class Command(BaseCommand):
         if not TechnicalAsset.objects.filter(property_id=weg_obj.id).exists():
             anlage_service.create_asset(actor.id, weg_obj.id, {
                 "name": "Zentralheizung Badensche Straße 53",
-                "asset_type": "HEIZUNG",
+                "asset_type": "KESSEL_HEIZUNG",
                 "supply_type": "ZENTRAL",     # <- die Kernfrage des Monteurs
                 "energy_source": "GAS",
                 "manufacturer": "Viessmann",
@@ -707,7 +707,8 @@ class Command(BaseCommand):
             self._ok("Anlage: Zentralheizung (ZENTRAL, Viessmann, Bj. 2015, 80 kW)")
             anlage_service.create_asset(actor.id, weg_obj.id, {
                 "name": "Trinkwassererwärmer (Speicher 400 l)",
-                "asset_type": "TRINKWASSER",
+                # SHK-Liste (0112) kennt kein „Trinkwasser" mehr → Sammelbecken.
+                "asset_type": "SONSTIGE",
                 "supply_type": "ZENTRAL",
                 "energy_source": "GAS",
                 "manufacturer": "Viessmann",
@@ -758,7 +759,7 @@ class Command(BaseCommand):
         if not TechnicalAsset.objects.filter(property_id=efh.id).exists():
             anlage_service.create_asset(actor.id, efh.id, {
                 "name": "Gastherme Bad/OG",
-                "asset_type": "THERME",
+                "asset_type": "THERME_HEIZUNG",
                 "supply_type": "DEZENTRAL",   # <- der Gegensatz zur Zentralanlage
                 "energy_source": "GAS",
                 "manufacturer": "Vaillant",
@@ -1018,8 +1019,10 @@ class Command(BaseCommand):
     def _szenario_b(self, actor):
         self._kapitel("Szenario B — Legionellenprüfung (TrinkwV)")
         weg_obj = Property.objects.get(name=WEG_OBJEKT)
+        # Der Trinkwasserspeicher trägt seit 0112 keine eigene Anlagenart mehr
+        # (SONSTIGE); über den Namen bleibt er eindeutig auffindbar.
         speicher = TechnicalAsset.objects.filter(
-            property_id=weg_obj.id, asset_type="TRINKWASSER"
+            property_id=weg_obj.id, name__startswith="Trinkwassererwärmer"
         ).first()
         art = InspectionType.objects.filter(
             name="Trinkwasser: Legionellenprüfung"
@@ -1325,7 +1328,7 @@ class Command(BaseCommand):
         weg_party = Party.objects.get(display_name=WEG_NAME)
         stegos = Party.objects.get(display_name=STEGOS)
         heizung = TechnicalAsset.objects.filter(
-            property_id=weg_obj.id, asset_type="HEIZUNG"
+            property_id=weg_obj.id, asset_type="KESSEL_HEIZUNG"
         ).first()
         gestern = self.heute - timedelta(days=1)
 
@@ -1814,7 +1817,7 @@ class Command(BaseCommand):
         efh = Property.objects.get(name=EFH_OBJEKT)
         borm = Party.objects.get(display_name="Peter Borm")
         therme = TechnicalAsset.objects.filter(
-            property_id=efh.id, asset_type="THERME"
+            property_id=efh.id, asset_type="THERME_HEIZUNG"
         ).first()
         # Der Einsatz liegt fünf Wochen zurück; die Rechnung ist seit drei
         # Wochen fällig und wurde nie bezahlt.

@@ -52,19 +52,17 @@ from db_core.services._validation import ensure_exists, ensure_standort
 # Ein Paritätstest fährt sie gegen die DB.
 # ---------------------------------------------------------------------------
 
+# SHK-Anlagenarten des Betriebs (Migration 0112 löste die allgemeine
+# Gebäudetechnik-Liste aus 0101 ab). Reihenfolge = Anzeigereihenfolge im UI.
 ASSET_TYPES = (
-    "HEIZUNG",
-    "THERME",
-    "WARMWASSER",
-    "WAERMEPUMPE",
-    "SOLARTHERMIE",
-    "LUEFTUNG",
-    "KLIMA",
-    "TRINKWASSER",
+    "THERME_HEIZUNG",
+    "THERME_COMBI",
+    "ERDWAERMEPUMPE",
+    "FERNWAERMESTATION",
+    "KESSEL_HEIZUNG",
+    "KESSEL_COMBI",
     "HEBEANLAGE",
-    "AUFZUG",
-    "BRANDSCHUTZ",
-    "ELEKTRO",
+    "SOLARANLAGE",
     "SONSTIGE",
 )
 

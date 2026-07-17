@@ -104,10 +104,11 @@
   color: var(--ink-muted);
 }
 
-// Der Grundriss-Block bekommt eine eigene Kante — er ist der Schritt, der die
-// Zahlen erzeugt, statt sie abzufragen.
-.re__block--plan {
-  border-left-color: var(--warn-ink);
+// Unter-Kopf „Grundriss zeichnen" im Maß-Block: Titel links, Klapp-Knopf rechts.
+.re__block-kopf--sub {
+  justify-content: space-between;
+  margin-top: var(--space-3);
+  border-top: 1px solid var(--line);
 }
 
 // „Aus der Zeichnung berechnet": Flaeche und Umfang sind hier ERGEBNIS, nicht

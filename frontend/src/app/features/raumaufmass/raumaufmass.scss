@@ -88,11 +88,32 @@
   text-transform: uppercase;
   color: var(--accent-ink);
 }
+.ra__geschoss-info {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
 .ra__geschoss-summe {
   margin: 0;
   font-size: var(--step--1);
   font-variant-numeric: tabular-nums;
   color: var(--ink-muted);
+}
+
+// „＋ Raum" an einer Gruppe — kleiner als der Kopf-Knopf, damit die Gruppen ihn
+// tragen, ohne laut zu werden.
+.ra__neu-klein {
+  flex: none;
+  align-self: center;
+  font-size: var(--step--1);
+}
+
+// Leere Einheiten-Gruppe: sie bleibt sichtbar (genau da will man anlegen).
+.ra__leer {
+  margin: 0;
+  padding: var(--space-3) 0;
+  font-size: var(--step--1);
+  color: var(--ink-hint);
 }
 
 .ra__liste {
@@ -215,7 +236,8 @@
 // ------------------------------------------------------------- Raum-Kachel ---
 .rk {
   display: grid;
-  grid-template-columns: minmax(8rem, 1.4fr) auto repeat(3, minmax(6rem, 1fr)) auto;
+  // Name · Nutzung · Geschoss · Fläche/Volumen/Heizlast · Pfeil.
+  grid-template-columns: minmax(8rem, 1.4fr) auto auto repeat(3, minmax(6rem, 1fr)) auto;
   align-items: center;
   gap: var(--space-3);
   width: 100%;
@@ -261,6 +283,12 @@
 .rk__nutzung {
   justify-self: start;
 }
+// Geschoss als Badge — wir gruppieren jetzt nach Einheit, das Geschoss steht
+// deshalb an der Kachel (Text, nicht nur Farbe).
+.rk__geschoss {
+  justify-self: start;
+  font-variant-numeric: tabular-nums;
+}
 .rk__zahl {
   display: flex;
   flex-direction: column;
@@ -295,6 +323,7 @@
     font-size: var(--step-1);
   }
   .rk__nutzung,
+  .rk__geschoss,
   .rk__zahl {
     grid-column: span 1;
   }

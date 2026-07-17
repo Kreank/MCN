@@ -69,6 +69,7 @@ import {
   intervalKindLabel,
 } from '../../core/wartung.model';
 import { DueAction } from '../../core/wartung.model';
+import { AssetType, artLabel as anlageArtLabel } from '../../core/anlage.model';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { MargeBlock } from '../../shared/marge-block/marge-block';
 import { VerbotenState, fehlerState } from '../../shared/http-fehler';
@@ -212,6 +213,11 @@ export class Dossier {
     const s = this.state();
     return s.kind === 'ready' ? s.daten : null;
   });
+
+  /** Anlagenart als deutsches Label (statt des rohen Codes THERME_HEIZUNG …). */
+  protected anlagenArt(t: string | null): string {
+    return anlageArtLabel(t as AssetType | null);
+  }
 
   protected readonly abschnitte = computed<Abschnitt[]>(() => {
     const d = this.daten();

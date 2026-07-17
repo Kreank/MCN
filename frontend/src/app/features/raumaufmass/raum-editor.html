@@ -43,114 +43,52 @@
       />
     </div>
 
-    <div class="re__masse">
-      <app-feld [control]="form.controls.length_m" label="Länge (m)" typ="zahl" />
-      <span class="re__mal" aria-hidden="true">×</span>
-      <app-feld [control]="form.controls.width_m" label="Breite (m)" typ="zahl" />
-    </div>
-
-    <!-- WER ZEICHNET, MISST NICHT DOPPELT. Hat der Raum einen Umriss, rechnet der
-         SERVER Fläche und Umfang aus dem Polygon — dann gibt es hier nichts zu
-         tippen, sondern nur das Ergebnis zu lesen. Ein zweiter Satz Zahlen, der
-         auseinanderlaufen kann, wäre genau der Fehler, den 0091 abschafft. -->
-    @if (gezeichnet()) {
-      <div class="re__abgeleitet">
-        <p class="re__abgeleitet-kopf">
-          <span class="stamp stamp--positive">aus der Zeichnung berechnet</span>
-          Fläche und Umfang kommen aus dem Umriss (Gauß'sche Trapezformel bzw. Summe der
-          Kantenlängen) — <strong>gerechnet hat sie der Server</strong>. Sie sind deshalb hier nicht
-          tippbar.
-        </p>
-        <dl class="re__abgeleitet-raster">
-          <div>
-            <dt>Fläche</dt>
-            <dd>{{ wert(raum()!.kennzahlen.floor_area_m2, 'm²') }}</dd>
-          </div>
-          <div>
-            <dt>Umfang</dt>
-            <dd>{{ wert(raum()!.kennzahlen.perimeter_m, 'm') }}</dd>
-          </div>
-        </dl>
-        <div class="re__aktionen">
-          <button
-            type="button"
-            class="btn"
-            [disabled]="!darfAendern() || umrissLaeuft()"
-            (click)="umrissEntfernenFragen()"
-          >
-            Umriss entfernen
-          </button>
-          <p class="re__hinweis">
-            Danach sind Fläche und Umfang wieder von Hand einzutragen, und die Wände verlieren ihre
-            Kante.
-          </p>
-        </div>
-      </div>
-
+    <!-- Zuordnung: in welcher Einheit liegt der Raum? Vorbelegt aus der Gruppe,
+         aus der „＋ Raum" geklickt wurde; hier änderbar. Die Einheit setzt ihr
+         Gebäude voraus (Kaskade) — ohne Gebäude bleibt der Raum unzugeordnet
+         (Altbestand), mit Gebäude ohne Einheit ist er „Gebäude allgemein". -->
+    @if (hatStruktur()) {
       <div class="re__felder">
         <app-feld
-          [control]="form.controls.room_height_m"
-          label="Höhe (m)"
-          typ="zahl"
-          [pflicht]="true"
-          [hinweis]="
-            volumen()
-              ? 'Volumen: ' +
-                live(volumen()) +
-                ' m³ — und Grundlage der Wandflächen (Kante × Höhe).'
-              : 'lichte Raumhöhe — Grundlage der Wandflächen (Kantenlänge × Höhe).'
+          [control]="form.controls.building_id"
+          label="Gebäude"
+          typ="select"
+          platzhalter="keine Zuordnung (Altbestand)"
+          [optionen]="gebaeudeOptionen()"
+        />
+        <app-feld
+          [control]="form.controls.unit_id"
+          label="Einheit"
+          typ="select"
+          [platzhalter]="
+            form.controls.building_id.value
+              ? 'Gebäude allgemein (Keller, Technik …)'
+              : 'erst ein Gebäude wählen'
           "
-        />
-      </div>
-    } @else {
-      <div class="re__flaeche">
-        <app-feld
-          [control]="form.controls.floor_area_m2"
-          label="Fläche (m²)"
-          typ="zahl"
-          [pflicht]="true"
-          [hinweis]="
-            flaecheManuell()
-              ? 'Von Hand eingetragen — sie gilt. Länge × Breite ist nur die Herleitung.'
-              : 'Wird aus Länge × Breite vorgerechnet und ist überschreibbar (L-förmige Räume).'
-          "
-        />
-        @if (flaecheAbweichung(); as vorschlag) {
-          <p class="re__abweichung">
-            <span class="stamp stamp--warn">Abweichung</span>
-            Länge × Breite ergäbe <strong>{{ live(vorschlag) }} m²</strong>.
-            <button type="button" class="mini" (click)="flaecheAusMassenUebernehmen()">
-              Wert übernehmen
-            </button>
-          </p>
-        }
-        @if (raum()) {
-          <p class="re__abweichung">
-            <span class="stamp stamp--type">nicht gezeichnet</span>
-            Für diesen Raum gibt es keinen Umriss — Fläche und Umfang sind Handeingabe.
-            <button type="button" class="mini" (click)="grundrissOffen.set(true)">
-              Raum zeichnen
-            </button>
-          </p>
-        }
-      </div>
-
-      <div class="re__felder">
-        <app-feld
-          [control]="form.controls.room_height_m"
-          label="Höhe (m)"
-          typ="zahl"
-          [pflicht]="true"
-          [hinweis]="volumen() ? 'Volumen: ' + live(volumen()) + ' m³' : 'lichte Raumhöhe'"
-        />
-        <app-feld
-          [control]="form.controls.perimeter_m"
-          label="Umfang (m)"
-          typ="zahl"
-          hinweis="Für Sockelleisten und Leitungslängen."
+          [optionen]="einheitOptionen()"
+          hinweis="Ohne Einheit gilt der Raum dem ganzen Gebäude (z. B. Keller, Treppenhaus)."
         />
       </div>
     }
+
+    <!-- Die Raumhöhe gehört fachlich hierher: sie ist eine Heizlast-/Wandflächen-
+         angabe und kommt NICHT aus der 2D-Skizze. Das eigentliche Maß (Fläche)
+         folgt in Schritt 2 — als Rechteck-Schnellmaß oder aus der Zeichnung. -->
+    <div class="re__felder">
+      <app-feld
+        [control]="form.controls.room_height_m"
+        label="Höhe (m)"
+        typ="zahl"
+        [pflicht]="true"
+        [hinweis]="
+          volumen()
+            ? 'Volumen: ' +
+              live(volumen()) +
+              ' m³ — und Grundlage der Wandflächen (Kante × Höhe).'
+            : 'lichte Raumhöhe — Grundlage der Wandflächen (Kantenlänge × Höhe).'
+        "
+      />
+    </div>
 
     <button
       type="button"
@@ -214,11 +152,98 @@
     </div>
   </form>
 
-  <!-- ============================ 2. Der Grundriss ======================== -->
-  <section class="re__block re__block--plan" aria-labelledby="re-plan-titel">
+  <!-- ============================ 2. Das Maß ============================= -->
+  <!-- WER ZEICHNET, MISST NICHT DOPPELT (0091). Das Maß entsteht auf EINEM von
+       zwei Wegen: dem Rechteck-Schnellmaß (Länge × Breite bzw. Fläche direkt) —
+       oder der Zeichnung. Beides ist gleichwertig; es gibt keinen zweiten Satz
+       Zahlen, der auseinanderlaufen kann. Hat der Raum einen Umriss, rechnet der
+       SERVER Fläche und Umfang daraus, und das Schnellmaß tritt zurück. -->
+  <section class="re__block re__block--mass" aria-labelledby="re-mass-titel">
     <div class="re__block-kopf">
       <p class="re__schritt">Schritt 2</p>
-      <h3 class="re__block-titel" id="re-plan-titel">Grundriss — den Raum zeichnen</h3>
+      <h3 class="re__block-titel" id="re-mass-titel">Maß — Rechteck-Schnellmaß oder Grundriss</h3>
+    </div>
+
+    @if (gezeichnet()) {
+      <div class="re__abgeleitet">
+        <p class="re__abgeleitet-kopf">
+          <span class="stamp stamp--positive">aus der Zeichnung berechnet</span>
+          Fläche und Umfang kommen aus dem Umriss (Gauß'sche Trapezformel bzw. Summe der
+          Kantenlängen) — <strong>gerechnet hat sie der Server</strong>. Sie sind deshalb hier nicht
+          tippbar.
+        </p>
+        <dl class="re__abgeleitet-raster">
+          <div>
+            <dt>Fläche</dt>
+            <dd>{{ wert(raum()!.kennzahlen.floor_area_m2, 'm²') }}</dd>
+          </div>
+          <div>
+            <dt>Umfang</dt>
+            <dd>{{ wert(raum()!.kennzahlen.perimeter_m, 'm') }}</dd>
+          </div>
+        </dl>
+        <div class="re__aktionen">
+          <button
+            type="button"
+            class="btn"
+            [disabled]="!darfAendern() || umrissLaeuft()"
+            (click)="umrissEntfernenFragen()"
+          >
+            Umriss entfernen
+          </button>
+          <p class="re__hinweis">
+            Danach sind Fläche und Umfang wieder von Hand (Schnellmaß) einzutragen, und die Wände
+            verlieren ihre Kante.
+          </p>
+        </div>
+      </div>
+    } @else {
+      <p class="re__hinweis">
+        <span class="stamp stamp--type">Schnellmaß</span>
+        Fläche des Raumes — als <strong>Länge × Breite</strong> oder direkt eingetragen (Pflicht zum
+        Anlegen). Genauer, und für verwinkelte Räume, geht es unten über „Raum zeichnen".
+      </p>
+      <div class="re__masse">
+        <app-feld [control]="form.controls.length_m" label="Länge (m)" typ="zahl" />
+        <span class="re__mal" aria-hidden="true">×</span>
+        <app-feld [control]="form.controls.width_m" label="Breite (m)" typ="zahl" />
+      </div>
+      <div class="re__flaeche">
+        <app-feld
+          [control]="form.controls.floor_area_m2"
+          label="Fläche (m²)"
+          typ="zahl"
+          [pflicht]="true"
+          [hinweis]="
+            flaecheManuell()
+              ? 'Von Hand eingetragen — sie gilt. Länge × Breite ist nur die Herleitung.'
+              : 'Wird aus Länge × Breite vorgerechnet und ist überschreibbar (L-förmige Räume).'
+          "
+        />
+        @if (flaecheAbweichung(); as vorschlag) {
+          <p class="re__abweichung">
+            <span class="stamp stamp--warn">Abweichung</span>
+            Länge × Breite ergäbe <strong>{{ live(vorschlag) }} m²</strong>.
+            <button type="button" class="mini" (click)="flaecheAusMassenUebernehmen()">
+              Wert übernehmen
+            </button>
+          </p>
+        }
+      </div>
+      <div class="re__felder">
+        <app-feld
+          [control]="form.controls.perimeter_m"
+          label="Umfang (m)"
+          typ="zahl"
+          hinweis="Für Sockelleisten und Leitungslängen. Beim Zeichnen rechnet der Server ihn."
+        />
+      </div>
+    }
+
+    <!-- Zeichnen braucht einen gespeicherten Raum: der Umriss liegt im Koordinaten-
+         system des Geschosses und hängt an der Raum-ID. -->
+    <div class="re__block-kopf re__block-kopf--sub">
+      <h4 class="re__block-titel" id="re-plan-titel">Grundriss zeichnen</h4>
       @if (raum()) {
         <button
           type="button"
@@ -235,7 +260,7 @@
 
     @if (!raum()) {
       <p class="re__hinweis re__hinweis--stark">
-        Erst den Raum anlegen — danach lässt sich sein Umriss zeichnen.
+        Erst den Raum anlegen (das Schnellmaß oben genügt) — danach lässt sich sein Umriss zeichnen.
       </p>
     } @else {
       <p class="re__hinweis">
@@ -244,8 +269,8 @@
           Der Raum hat einen Umriss. Fläche und Umfang rechnet der Server daraus.
         } @else {
           <span class="stamp stamp--type">optional</span>
-          Ein Raum ohne Umriss bleibt gültig (Zahlen von Hand). Wer zeichnet, spart sich die
-          Doppeleingabe: Fläche, Umfang und die Wandflächen fallen aus dem Polygon heraus.
+          Ein Raum ohne Umriss bleibt gültig (Schnellmaß oben). Wer zeichnet, bekommt Fläche, Umfang
+          und die Wandflächen aus dem Polygon.
         }
       </p>
 
@@ -756,21 +781,27 @@
     <h3 class="kz__titel" id="re-kz-titel">Kennzahlen</h3>
 
     <dl class="kz__raster">
-      <!-- Beim ungespeicherten Raum zeigen Fläche UND Volumen die Live-Eingabe.
-           Eine Fläche „—" neben einem Volumen „50,00 m³" wäre in sich unwahr. -->
+      <!-- Fläche und Volumen reagieren SOFORT auf die Eingabe (Höhe, Schnellmaß):
+           gezeigt wird die triviale Geometrie aus dem Formular. Weicht sie vom
+           gespeicherten Stand ab, steht „Vorschau" daneben — die verbindliche Zahl
+           rechnet der Server und liefert sie nach dem Speichern frisch mit. -->
       <div class="kz__wert">
-        <dt>Fläche</dt>
-        <dd>
-          {{
-            raum() ? wert(raum()!.kennzahlen.floor_area_m2, 'm²') : liveEinheit(flaecheLive(), 'm²')
-          }}
-        </dd>
+        <dt>
+          Fläche
+          @if (flaecheVorschau()) {
+            <span class="stamp stamp--warn">Vorschau</span>
+          }
+        </dt>
+        <dd>{{ liveEinheit(kennFlaeche(), 'm²') }}</dd>
       </div>
       <div class="kz__wert">
-        <dt>Volumen</dt>
-        <dd>
-          {{ raum() ? wert(raum()!.kennzahlen.volume_m3, 'm³') : liveEinheit(volumen(), 'm³') }}
-        </dd>
+        <dt>
+          Volumen
+          @if (volumenVorschau()) {
+            <span class="stamp stamp--warn">Vorschau</span>
+          }
+        </dt>
+        <dd>{{ liveEinheit(kennVolumen(), 'm³') }}</dd>
       </div>
       <div class="kz__wert">
         <dt>Wandfläche brutto</dt>

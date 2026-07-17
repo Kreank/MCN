@@ -25,7 +25,7 @@ const anlage = (
   id,
   property_id: 'p-1',
   name,
-  asset_type: 'HEIZUNG',
+  asset_type: 'KESSEL_HEIZUNG',
   status,
   supply_type,
   building_id: null,

@@ -4,6 +4,8 @@
   <app-raum-editor
     [propertyId]="propertyId()"
     [raum]="bearbeiteterRaum()"
+    [gebaeude]="gebaeude()"
+    [vorbelegung]="neuVorbelegung()"
     [darfAendern]="bearbeiteterRaum() ? darfAendern() : darfAnlegen()"
     (gespeichert)="gespeichert($event)"
     (abbrechen)="zurueckZurListe()"
@@ -94,7 +96,7 @@
           </span>
         </label>
 
-        @if (raeume().length === 0) {
+        @if (raeume().length === 0 && !hatStruktur()) {
           <div class="tab-platzhalter">
             <p>Für diese Liegenschaft ist noch kein Raum erfasst.</p>
             @if (darfAnlegen()) {
@@ -138,88 +140,110 @@
               />
             }
           } @else {
-            @for (g of geschosse(); track g.key) {
-              <section class="ra__geschoss" [attr.aria-label]="'Geschoss ' + g.label">
+            <!-- Die Sicht des Betriebs: je Einheit eine Gruppe (auch leer — genau
+                 da will man anlegen), dazu „Gebäude allgemein" und „Ohne
+                 Zuordnung". „＋ Raum" an der Gruppe legt den Raum gleich in dieser
+                 Einheit an (Gebäude/Einheit vorbelegt). -->
+            @for (g of einheitenGruppen(); track g.key) {
+              <section class="ra__geschoss" [attr.aria-label]="g.titel">
                 <header class="ra__geschoss-kopf">
-                  <h3 class="ra__geschoss-name">{{ g.label }}</h3>
-                  <p class="ra__geschoss-summe">
-                    {{ g.aktivAnzahl }} {{ g.aktivAnzahl === 1 ? 'Raum' : 'Räume' }} ·
-                    {{ summe(g.flaeche) }} m² · {{ summe(g.volumen) }} m³
-                    @if (g.inaktivAnzahl) {
-                      <span class="ra__geschoss-still">
-                        · {{ g.inaktivAnzahl }} stillgelegt (nicht gezählt)
-                      </span>
-                    }
-                  </p>
+                  <div class="ra__geschoss-info">
+                    <h3 class="ra__geschoss-name">{{ g.titel }}</h3>
+                    <p class="ra__geschoss-summe">
+                      <span class="stamp stamp--type">{{ g.zusatz }}</span>
+                      {{ g.aktivAnzahl }} {{ g.aktivAnzahl === 1 ? 'Raum' : 'Räume' }} ·
+                      {{ summe(g.flaeche) }} m² · {{ summe(g.volumen) }} m³
+                      @if (g.inaktivAnzahl) {
+                        <span class="ra__geschoss-still">
+                          · {{ g.inaktivAnzahl }} stillgelegt (nicht gezählt)
+                        </span>
+                      }
+                    </p>
+                  </div>
+                  @if (darfAnlegen()) {
+                    <button
+                      type="button"
+                      class="btn ra__neu-klein"
+                      (click)="raumAnlegenIn(g)"
+                      [attr.aria-label]="'Raum in ' + g.titel + ' anlegen'"
+                    >
+                      <span aria-hidden="true">＋</span> Raum
+                    </button>
+                  }
                 </header>
 
-                <ul class="ra__liste">
-                  @for (r of g.raeume; track r.id) {
-                    <li class="ra__zeile">
-                      <button
-                        type="button"
-                        class="rk"
-                        [class.rk--inaktiv]="stillgelegt(r)"
-                        (click)="raumOeffnen(r.id)"
-                      >
-                        <span class="rk__name">
-                          {{ r.name }}
-                          @if (stillgelegt(r)) {
-                            <!-- Text UND Zeichen — nie nur Farbe. -->
-                            <span class="stamp stamp--warn rk__still">
-                              <span aria-hidden="true">⊘</span> stillgelegt
-                            </span>
-                          }
-                        </span>
-                        <span class="stamp stamp--type rk__nutzung">{{ nutzung(r) }}</span>
-                        <span class="rk__zahl">
-                          <span class="rk__zahl-label">Fläche</span>
-                          {{ wert(r.floor_area_m2, 'm²', 2, '—') }}
-                        </span>
-                        <span class="rk__zahl">
-                          <span class="rk__zahl-label">Volumen</span>
-                          {{ wert(r.volume_m3, 'm³', 2, '—') }}
-                        </span>
-                        <span class="rk__zahl">
-                          <span class="rk__zahl-label">Heizlast</span>
-                          @if (stillgelegt(r)) {
-                            <span class="rk__unbekannt">zählt nicht mit</span>
-                          } @else if (r.kennzahlen.heizlast_huellflaeche_w != null) {
-                            {{ kw(r.kennzahlen.heizlast_huellflaeche_w) }}
-                          } @else {
-                            <span class="rk__unbekannt">
-                              <span aria-hidden="true">?</span> unbekannt
-                            </span>
-                          }
-                        </span>
-                        <span class="rk__pfeil" aria-hidden="true">›</span>
-                      </button>
+                @if (g.raeume.length === 0) {
+                  <p class="ra__leer">Noch kein Raum in dieser Gruppe.</p>
+                } @else {
+                  <ul class="ra__liste">
+                    @for (r of g.raeume; track r.id) {
+                      <li class="ra__zeile">
+                        <button
+                          type="button"
+                          class="rk"
+                          [class.rk--inaktiv]="stillgelegt(r)"
+                          (click)="raumOeffnen(r.id)"
+                        >
+                          <span class="rk__name">
+                            {{ r.name }}
+                            @if (stillgelegt(r)) {
+                              <!-- Text UND Zeichen — nie nur Farbe. -->
+                              <span class="stamp stamp--warn rk__still">
+                                <span aria-hidden="true">⊘</span> stillgelegt
+                              </span>
+                            }
+                          </span>
+                          <span class="stamp stamp--type rk__nutzung">{{ nutzung(r) }}</span>
+                          <span class="stamp rk__geschoss">{{ r.storey || 'ohne Geschoss' }}</span>
+                          <span class="rk__zahl">
+                            <span class="rk__zahl-label">Fläche</span>
+                            {{ wert(r.floor_area_m2, 'm²', 2, '—') }}
+                          </span>
+                          <span class="rk__zahl">
+                            <span class="rk__zahl-label">Volumen</span>
+                            {{ wert(r.volume_m3, 'm³', 2, '—') }}
+                          </span>
+                          <span class="rk__zahl">
+                            <span class="rk__zahl-label">Heizlast</span>
+                            @if (stillgelegt(r)) {
+                              <span class="rk__unbekannt">zählt nicht mit</span>
+                            } @else if (r.kennzahlen.heizlast_huellflaeche_w != null) {
+                              {{ kw(r.kennzahlen.heizlast_huellflaeche_w) }}
+                            } @else {
+                              <span class="rk__unbekannt">
+                                <span aria-hidden="true">?</span> unbekannt
+                              </span>
+                            }
+                          </span>
+                          <span class="rk__pfeil" aria-hidden="true">›</span>
+                        </button>
 
-                      @if (darfAendern()) {
-                        @if (stillgelegt(r)) {
-                          <button
-                            type="button"
-                            class="btn ra__akt"
-                            [disabled]="statusLaeuft()"
-                            (click)="reaktivieren(r)"
-                          >
-                            Wieder aktivieren
-                          </button>
-                        } @else {
-                          <button
-                            type="button"
-                            class="btn ra__akt"
-                            [disabled]="statusLaeuft()"
-                            (click)="stilllegenFragen(r)"
-                            [attr.aria-label]="'Raum ' + r.name + ' stilllegen'"
-                          >
-                            Stilllegen
-                          </button>
+                        @if (darfAendern()) {
+                          @if (stillgelegt(r)) {
+                            <button
+                              type="button"
+                              class="btn ra__akt"
+                              [disabled]="statusLaeuft()"
+                              (click)="reaktivieren(r)"
+                            >
+                              Wieder aktivieren
+                            </button>
+                          } @else {
+                            <button
+                              type="button"
+                              class="btn ra__akt"
+                              [disabled]="statusLaeuft()"
+                              (click)="stilllegenFragen(r)"
+                              [attr.aria-label]="'Raum ' + r.name + ' stilllegen'"
+                            >
+                              Stilllegen
+                            </button>
+                          }
                         }
-                      }
-                    </li>
-                  }
-                </ul>
+                      </li>
+                    }
+                  </ul>
+                }
               </section>
             }
           }

@@ -58,7 +58,7 @@ def _einheit(app_user, gebaeude, nummer="EG-01"):
 
 
 def _payload(**kwargs):
-    daten = {"name": "Heizzentrale", "asset_type": "HEIZUNG"}
+    daten = {"name": "Heizzentrale", "asset_type": "KESSEL_HEIZUNG"}
     daten.update(kwargs)
     return daten
 
@@ -82,7 +82,7 @@ def test_anlegen_und_lesen(admin_client, objekt):
     assert r.status_code == 201, r.content
     daten = r.json()
     assert daten["name"] == "Heizzentrale"
-    assert daten["asset_type"] == "HEIZUNG"
+    assert daten["asset_type"] == "KESSEL_HEIZUNG"
     assert daten["status"] == "AKTIV"
     # Der Kern des Auftrags: „zentrale Anlage" muss am Objekt stehen.
     assert daten["supply_type"] == "ZENTRAL"
@@ -192,6 +192,21 @@ def test_die_DATENBANK_verbietet_eine_erfundene_anlagenart(admin_client, objekt)
 
 
 @pytest.mark.django_db
+def test_die_DATENBANK_verbietet_alte_anlagenart_nach_0112(admin_client, objekt):
+    """Migration 0112 tauschte den CHECK auf die SHK-Codeliste.
+
+    Ein alter Code (`HEIZUNG`, `THERME`, `WAERMEPUMPE` …) darf jetzt weder durch
+    den Service noch an ihm vorbei in die DB — sonst wäre die Umstellung nur im
+    Service passiert und der CHECK spräche noch die alte Sprache.
+    """
+    a = _post(admin_client, objekt).json()
+    for alt in ("HEIZUNG", "THERME", "WAERMEPUMPE", "SOLARTHERMIE", "TRINKWASSER"):
+        with pytest.raises(IntegrityError):
+            with transaction.atomic():
+                TechnicalAsset.objects.filter(id=a["id"]).update(asset_type=alt)
+
+
+@pytest.mark.django_db
 def test_codelisten_sind_deckungsgleich_mit_der_db(objekt, app_user):
     """Paritätstest: Was der Service erlaubt, erlaubt auch der CHECK — und umgekehrt.
 
@@ -206,13 +221,14 @@ def test_codelisten_sind_deckungsgleich_mit_der_db(objekt, app_user):
     for quelle in anlage_service.ENERGY_SOURCES:
         asset = anlage_service.create_asset(
             app_user.id, objekt.id,
-            {"name": f"E {quelle}", "asset_type": "HEIZUNG", "energy_source": quelle},
+            {"name": f"E {quelle}", "asset_type": "KESSEL_HEIZUNG",
+             "energy_source": quelle},
         )
         assert asset.energy_source == quelle
     for versorgung in anlage_service.SUPPLY_TYPES:
         asset = anlage_service.create_asset(
             app_user.id, objekt.id,
-            {"name": f"V {versorgung}", "asset_type": "HEIZUNG",
+            {"name": f"V {versorgung}", "asset_type": "KESSEL_HEIZUNG",
              "supply_type": versorgung},
         )
         assert asset.supply_type == versorgung
@@ -605,7 +621,7 @@ def test_monteur_sieht_und_erfasst_anlagen_am_eigenen_objekt(
     assert c.get(f"/api/property/assets/{a['id']}").status_code == 200
 
     # Er darf sie auch erfassen — genau dafür gibt es die Objektsicht.
-    neu = _post(c, objekt, name="Etagentherme", asset_type="THERME",
+    neu = _post(c, objekt, name="Etagentherme", asset_type="THERME_HEIZUNG",
                 supply_type="DEZENTRAL")
     assert neu.status_code == 201, neu.content
 
@@ -638,7 +654,7 @@ def test_fremde_attribute_bleiben_erhalten(app_user, objekt):
     from db_core.db_context import business_transaction
 
     asset = anlage_service.create_asset(
-        app_user.id, objekt.id, {"name": "Therme", "asset_type": "THERME"}
+        app_user.id, objekt.id, {"name": "Therme", "asset_type": "THERME_HEIZUNG"}
     )
     with business_transaction(app_user.id):
         TechnicalAsset.objects.filter(id=asset.id).update(
@@ -655,5 +671,5 @@ def test_unbekanntes_feld_wird_abgewiesen(app_user, objekt):
     with pytest.raises(ValueError, match="Unbekannte Felder"):
         anlage_service.create_asset(
             app_user.id, objekt.id,
-            {"name": "X", "asset_type": "HEIZUNG", "manufacturor": "Tippfehler"},
+            {"name": "X", "asset_type": "KESSEL_HEIZUNG", "manufacturor": "Tippfehler"},
         )

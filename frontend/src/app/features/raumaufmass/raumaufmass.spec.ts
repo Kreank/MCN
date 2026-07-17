@@ -117,6 +117,35 @@ describe('Raumaufmass — Raum stilllegen', () => {
 
   afterEach(() => http.verify());
 
+  it('gruppiert die Räume nach Einheit (aus der Struktur) statt nach Geschoss', () => {
+    fixture.componentRef.setInput('gebaeude', [
+      {
+        id: 'b-1',
+        building_number: '1',
+        name: 'Haupthaus',
+        units: [
+          { id: 'u-1', unit_type: 'APARTMENT', unit_number: 'W3' },
+          { id: 'u-2', unit_type: 'APARTMENT', unit_number: 'W4' },
+        ],
+      },
+    ]);
+    fixture.detectChanges();
+    antworten([
+      { ...raum('r-1', 'Wohnzimmer', 'AKTIV', '20.000'), building_id: 'b-1', unit_id: 'u-1' },
+      { ...raum('r-2', 'Heizraum', 'AKTIV', '8.000'), building_id: 'b-1', unit_id: null },
+    ]);
+
+    const t = text();
+    expect(t).toContain('Haupthaus · W3'); // Einheit mit Raum
+    expect(t).toContain('Haupthaus · W4'); // leere Einheit bleibt sichtbar (da will man anlegen)
+    expect(t).toContain('Haupthaus · allgemein'); // building_id ohne Einheit → Keller/Technik
+    expect(t).toContain('Noch kein Raum in dieser Gruppe'); // die leere Einheit W4
+
+    // Jede Gruppe trägt einen eigenen „＋ Raum"-Knopf (Anlegen direkt in der Einheit).
+    const gruppenNeu = Array.from(el().querySelectorAll('.ra__neu-klein'));
+    expect(gruppenNeu.length).toBe(3);
+  });
+
   it('lädt standardmäßig NUR die aktiven Räume (kein mit_inaktiven)', () => {
     fixture.detectChanges();
     const req = antworten([raum('r-1', 'Wohnzimmer', 'AKTIV', '20.000')]);

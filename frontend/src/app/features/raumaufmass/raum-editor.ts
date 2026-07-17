@@ -28,6 +28,7 @@ import {
   roomTypeLabel,
   surfaceTypeLabel,
 } from '../../core/raum.model';
+import { Building, gebaeudeLabel, unitTypeLabel } from '../../core/property.model';
 import { Bauteil } from '../../core/bauteilkatalog.model';
 import { BauteilkatalogService } from '../../core/bauteilkatalog.service';
 import { BauteilWahl } from '../bauteilkatalog/bauteil-wahl';
@@ -50,7 +51,9 @@ import {
   oeffnungFlaeche,
   oeffnungenGesamt,
   oeffnungenSumme,
+  runde,
   volumenAus,
+  zahlAus,
   zeige,
 } from './raum-rechnen';
 
@@ -91,6 +94,14 @@ export class RaumEditor {
   /** Der zu bearbeitende Raum — `null` legt einen neuen an. */
   readonly raum = input<Room | null>(null);
   readonly darfAendern = input(false);
+  /** Gebäude/Einheiten der Liegenschaft — Grundlage der Standort-Zuordnung. */
+  readonly gebaeude = input<readonly Building[]>([]);
+  /**
+   * Vorbelegung der Zuordnung für einen NEUEN Raum (er wurde aus einer
+   * Einheiten-Gruppe heraus mit „＋ Raum" angelegt). Bei einem bestehenden Raum
+   * unwirksam — dort gilt seine eigene Zuordnung.
+   */
+  readonly vorbelegung = input<{ building_id: string | null; unit_id: string | null } | null>(null);
 
   readonly gespeichert = output<Room>();
   readonly abbrechen = output<void>();
@@ -115,6 +126,26 @@ export class RaumEditor {
     wert: t,
     label: openingTypeLabel(t),
   }));
+
+  // --- Standort-Zuordnung (Gebäude → Einheit) ------------------------------
+  // Kaskade wie im Anlagen-Dialog: die Einheit setzt IHR Gebäude voraus (die DB
+  // erzwingt das über zusammengesetzte Fremdschlüssel, 0086). Ein Gebäudewechsel
+  // leert deshalb die Einheit — sonst schickte das Formular eine Einheit, die
+  // zum neuen Gebäude nicht gehört, und der Server wiese sie mit 422 ab.
+  protected readonly hatStruktur = computed(() => this.gebaeude().length > 0);
+  protected readonly gebaeudeOptionen = computed<FeldOption[]>(() =>
+    this.gebaeude().map((b) => ({ wert: b.id, label: gebaeudeLabel(b) })),
+  );
+  /** Gewähltes Gebäude als Signal, damit die Einheitsliste darauf reagiert. */
+  private readonly gewaehltesGebaeude = signal('');
+  protected readonly einheitOptionen = computed<FeldOption[]>(() => {
+    const b = this.gebaeude().find((g) => g.id === this.gewaehltesGebaeude());
+    if (!b) return [];
+    return b.units.map((u) => ({
+      wert: u.id,
+      label: `${u.unit_number} · ${unitTypeLabel(u.unit_type)}`,
+    }));
+  });
 
   // --- Zustand -------------------------------------------------------------
   protected readonly huellen = signal<Huelle[]>([]);
@@ -158,6 +189,8 @@ export class RaumEditor {
     name: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
     storey: this.fb.control('', { nonNullable: true }),
     room_type: this.fb.control('', { nonNullable: true }),
+    building_id: this.fb.control('', { nonNullable: true }),
+    unit_id: this.fb.control('', { nonNullable: true }),
     length_m: this.fb.control('', { nonNullable: true, validators: [dezimalValidator] }),
     width_m: this.fb.control('', { nonNullable: true, validators: [dezimalValidator] }),
     floor_area_m2: this.fb.control('', {
@@ -215,6 +248,14 @@ export class RaumEditor {
       this.flaecheManuell.set(true);
     });
 
+    // Gebäude gewechselt: die Einheit passt nicht mehr zum neuen Gebäude — sie
+    // wird geleert, statt mitgeschleift zu werden (siehe Kommentar oben).
+    this.form.controls.building_id.valueChanges.pipe(takeUntilDestroyed()).subscribe((b) => {
+      if (b === this.gewaehltesGebaeude()) return;
+      this.gewaehltesGebaeude.set(b);
+      this.form.controls.unit_id.setValue('', { emitEvent: false });
+    });
+
     this.form.valueChanges.pipe(takeUntilDestroyed()).subscribe(() => {
       this.raumFehler.set(null);
       this.tick.update((n) => n + 1);
@@ -230,6 +271,12 @@ export class RaumEditor {
     if (!r) {
       this.form.reset();
       this.form.controls.room_height_m.setValue('2,50', { emitEvent: false });
+      // Zuordnung eines neuen Raumes: die Gruppe, aus der „＋ Raum" geklickt wurde,
+      // gibt Gebäude/Einheit vor. `reset()` hat sie eben geleert — hier zurück.
+      const vor = this.vorbelegung();
+      this.form.controls.building_id.setValue(vor?.building_id ?? '', { emitEvent: false });
+      this.form.controls.unit_id.setValue(vor?.unit_id ?? '', { emitEvent: false });
+      this.gewaehltesGebaeude.set(vor?.building_id ?? '');
       this.flaecheManuell.set(false);
       this.huellen.set([]);
       this.oeffnungen.set([]);
@@ -237,11 +284,14 @@ export class RaumEditor {
       return;
     }
 
+    this.gewaehltesGebaeude.set(r.building_id ?? '');
     this.form.setValue(
       {
         name: r.name,
         storey: r.storey ?? '',
         room_type: r.room_type ?? '',
+        building_id: r.building_id ?? '',
+        unit_id: r.unit_id ?? '',
         length_m: this.feldWert(r.length_m),
         width_m: this.feldWert(r.width_m),
         floor_area_m2: this.feldWert(r.floor_area_m2),
@@ -420,6 +470,44 @@ export class RaumEditor {
     const v = this.form.getRawValue();
     return volumenAus(v.floor_area_m2, v.room_height_m);
   });
+
+  // --- Kennzahlen LIVE (Fläche/Volumen reagieren sofort auf die Eingabe) ----
+  // Die verbindliche Zahl rechnet der Server; er liefert sie nach jedem Speichern
+  // frisch mit (die Antwort aktualisiert `raum()`). SOLANGE aber getippt wird,
+  // zeigt die Kennzahl die triviale Geometrie aus dem Formular — klar als
+  // „Vorschau" markiert, wenn sie vom gespeicherten Stand abweicht. Ohne das
+  // stünde neben einer frisch getippten Höhe weiter das alte Volumen: der Eindruck
+  // „es rechnet nichts".
+  /** Fläche für die Kennzahl: gezeichnet ⇒ Serverwert (aus dem Polygon), sonst live. */
+  protected readonly kennFlaeche = computed<number | null>(() => {
+    if (this.gezeichnet()) {
+      const s = this.raum()?.kennzahlen.floor_area_m2;
+      return s == null || s === '' ? null : Number(s);
+    }
+    return this.flaecheLive();
+  });
+  /** Volumen für die Kennzahl = Fläche × Raumhöhe (Höhe ist live, auch beim Umriss). */
+  protected readonly kennVolumen = computed<number | null>(() => {
+    this.tick();
+    const f = this.kennFlaeche();
+    const h = zahlAus(this.form.getRawValue().room_height_m);
+    if (f == null || h == null || !(h > 0)) return this.gezeichnet() ? null : this.volumen();
+    return runde(f * h, 3);
+  });
+
+  /** Weicht ein Live-Wert vom gespeicherten Serverwert ab? (dann: „Vorschau"). */
+  private weichtAb(live: number | null, server: string | number | null | undefined): boolean {
+    if (live == null) return false;
+    if (server == null || server === '') return true;
+    const s = Number(server);
+    return !Number.isFinite(s) || Math.abs(s - live) > 1e-6;
+  }
+  protected readonly flaecheVorschau = computed(
+    () => this.raum() != null && this.weichtAb(this.kennFlaeche(), this.raum()!.kennzahlen.floor_area_m2),
+  );
+  protected readonly volumenVorschau = computed(
+    () => this.raum() != null && this.weichtAb(this.kennVolumen(), this.raum()!.kennzahlen.volume_m3),
+  );
 
   /** Die Raumhöhe, wie sie im Formular steht — Grundlage der Kantenwand-Flächen. */
   protected readonly hoeheFeld = computed(() => {
@@ -760,6 +848,11 @@ export class RaumEditor {
       room_height_m: hoehe,
       storey: v.storey.trim() || null,
       room_type: (v.room_type as RoomType) || null,
+      // Standort: leer = keine Zuordnung (Altbestand/„Gebäude allgemein"). Die
+      // Einheit setzt ihr Gebäude voraus — die Kaskade oben hält das konsistent,
+      // der Server prüft es zusätzlich (`ensure_standort`).
+      building_id: v.building_id || null,
+      unit_id: v.unit_id || null,
       length_m: opt['length_m'],
       width_m: opt['width_m'],
       perimeter_m: opt['perimeter_m'],
