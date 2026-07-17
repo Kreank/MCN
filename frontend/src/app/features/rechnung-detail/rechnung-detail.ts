@@ -877,6 +877,11 @@ export class RechnungDetail {
     return `/api/invoicing/invoices/${id}/pdf`;
   }
 
+  /** Entwurfsvorschau (jeder Status, ENTWURF-Aufdruck, wird nie archiviert). */
+  vorschauUrl(id: string): string {
+    return `/api/invoicing/invoices/${id}/pdf/vorschau`;
+  }
+
   // --- E-Rechnung (ZUGFeRD/Factur-X) ---------------------------------------
   // Bewusst KEIN `window.open` auf die URL: der Endpunkt ist anmeldepflichtig,
   // und ein neues Fenster trägt weder den CSRF-Header noch verlässlich das

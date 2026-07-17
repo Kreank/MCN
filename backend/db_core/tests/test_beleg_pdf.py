@@ -81,7 +81,7 @@ def _pdf_text(data):
     return " ".join(roh.split())
 
 
-def _published_invoice(app_user, *, lines=None, **invoice_kwargs):
+def _published_invoice(app_user, *, lines=None, publish=True, **invoice_kwargs):
     obj = property_service.create_property(
         app_user.id, name="PDF-Objekt", property_type="WEG",
         street="Weg 1", postal_code="10115", city="Berlin",
@@ -117,7 +117,8 @@ def _published_invoice(app_user, *, lines=None, **invoice_kwargs):
         beleg_service.add_invoice_party(
             app_user.id, invoice_id=inv.id, party_id=weg.id, role=role, is_primary=True
         )
-    beleg_service.publish_invoice(app_user.id, invoice_id=inv.id)
+    if publish:
+        beleg_service.publish_invoice(app_user.id, invoice_id=inv.id)
     inv.refresh_from_db()
     return inv
 
@@ -180,29 +181,31 @@ def test_pdf_bettet_logo_ein(app_user, fake_storage):
 
 
 @pytest.mark.django_db
-def test_pdf_ohne_logo_enthaelt_kein_bild(app_user, fake_storage):
-    """Regressionsschutz: ohne Logo bleibt das PDF bildfrei (Text-Kopf unverändert)."""
+def test_pdf_ohne_logo_nutzt_markenfallback(app_user, fake_storage):
+    """Ohne gepflegtes Firmenlogo rendert das PDF mit den eingebauten
+    Markenzeichen (Wortmarke + Wasserzeichen) — Bilder sind seit dem
+    Marken-Layout immer enthalten, ein Absturz bleibt ausgeschlossen."""
     inv = _published_invoice(app_user)
     firma_service.update_company_profile(app_user.id, company_name="Ohne Logo GmbH")
     data = beleg_pdf.render_invoice_pdf(inv.id)
-    assert data is not None and b"/Subtype /Image" not in data
+    assert data is not None and data[:4] == b"%PDF"
+    assert b"/Subtype /Image" in data
 
 
 @pytest.mark.django_db
-def test_pdf_ohne_logo_bytegleich_mit_ohne_profilfeld(app_user):
-    """Der „kein Logo"-Pfad ist unverändert: dieselbe Rechnung rendert (bis auf
-    die eingefrorene Zeit) mit derselben Struktur wie vor dem Logo-Feature —
-    insbesondere ohne Bild und ohne Absturz, auch wenn nie ein Storage berührt wird."""
+def test_pdf_ohne_profil_rendert_ohne_storagezugriff(app_user):
+    """Ohne Firmenprofil-Logo rendert dieselbe Rechnung ohne jeden
+    Storage-Zugriff und ohne Absturz (Markenzeichen kommen aus dem Repo,
+    nicht aus MinIO)."""
     inv = _published_invoice(app_user)
     data = beleg_pdf.render_invoice_pdf(inv.id)
     assert data is not None and data[:4] == b"%PDF"
-    assert b"/Subtype /Image" not in data
 
 
 @pytest.mark.django_db
 def test_pdf_logo_gesetzt_aber_storage_weg_rendert_ohne_logo(app_user, monkeypatch):
     """Logo ist gesetzt, der Objektspeicher aber nicht erreichbar → das PDF
-    rendert trotzdem (ohne Logo), kein Absturz."""
+    rendert trotzdem (mit Marken-Fallback statt Profillogo), kein Absturz."""
     # Logo mit funktionierendem Speicher setzen …
     fake = FakeStorage()
     monkeypatch.setattr(storage_module, "get_storage", lambda: fake)
@@ -217,7 +220,6 @@ def test_pdf_logo_gesetzt_aber_storage_weg_rendert_ohne_logo(app_user, monkeypat
     monkeypatch.setattr(storage_module, "get_storage", boom)
     data = beleg_pdf.render_invoice_pdf(inv.id)
     assert data is not None and data[:4] == b"%PDF"
-    assert b"/Subtype /Image" not in data
 
 
 @pytest.mark.django_db
@@ -484,3 +486,75 @@ def test_pdf_ohne_ausweis_bei_reiner_materiallieferung(app_user):
     inv = _published_invoice(app_user)  # Default: nur MATERIAL
     text = _pdf_text(beleg_pdf.render_invoice_pdf(inv.id))
     assert "35a" not in text
+
+
+# --- Vorschau (render_invoice_preview / render_quote_preview) ----------------
+# Die Vorschau rendert JEDEN Status on-the-fly und archiviert nichts. Ein
+# unveröffentlichter Beleg trägt den ENTWURF-Aufdruck, die veröffentlichte
+# Rechnung zeigt ihr normales Sichtbild.
+
+@pytest.mark.django_db
+def test_vorschau_entwurf_traegt_entwurfsaufdruck(app_user):
+    inv = _published_invoice(app_user, publish=False)
+    data = beleg_pdf.render_invoice_preview(inv.id)
+    assert data is not None and data[:4] == b"%PDF"
+    text = _pdf_text(data)
+    assert "ENTWURF" in text
+    assert "Entwurf" in text  # Titelzusatz „— Entwurf"
+
+
+@pytest.mark.django_db
+def test_vorschau_veroeffentlicht_ohne_entwurfsaufdruck(app_user):
+    inv = _published_invoice(app_user)
+    data = beleg_pdf.render_invoice_preview(inv.id)
+    assert data is not None and data[:4] == b"%PDF"
+    assert "ENTWURF" not in _pdf_text(data)
+
+
+@pytest.mark.django_db
+def test_vorschau_unbekannte_rechnung_ist_none(app_user):
+    import uuid as _uuid
+    assert beleg_pdf.render_invoice_preview(_uuid.uuid4()) is None
+    assert beleg_pdf.render_quote_preview(_uuid.uuid4()) is None
+
+
+@pytest.mark.django_db
+def test_vorschau_entwurf_archiviert_nichts(app_user):
+    inv = _published_invoice(app_user, publish=False)
+    beleg_pdf.render_invoice_preview(inv.id)
+    assert beleg_pdf.archived_key_for("invoice_id", inv.id) is None
+
+
+# --- Giro-Code (EPC-QR) ------------------------------------------------------
+
+@pytest.mark.django_db
+def test_girocode_bei_gepflegter_iban(app_user):
+    firma_service.update_company_profile(
+        app_user.id, company_name="QR GmbH",
+        iban="DE89370400440532013000", bic="COBADEFFXXX",
+        bank_name="Musterbank",
+    )
+    inv = _published_invoice(app_user)
+    text = _pdf_text(beleg_pdf.render_invoice_pdf(inv.id))
+    assert "Giro-Code" in text
+
+
+@pytest.mark.django_db
+def test_kein_girocode_ohne_iban(app_user):
+    firma_service.update_company_profile(app_user.id, company_name="Ohne IBAN GmbH")
+    inv = _published_invoice(app_user)
+    text = _pdf_text(beleg_pdf.render_invoice_pdf(inv.id))
+    assert "Giro-Code" not in text
+
+
+def test_epc_qr_daten_None_sicher():
+    """Ohne IBAN/Name/positiven Betrag gibt es keinen QR (statt eines kaputten)."""
+    assert beleg_pdf._epc_qr_png(None, Decimal("10"), "x") is None
+    assert beleg_pdf._epc_qr_png({"company_name": "A"}, Decimal("10"), "x") is None
+    assert beleg_pdf._epc_qr_png(
+        {"company_name": "A", "iban": "DE0"}, Decimal("0"), "x"
+    ) is None
+    assert beleg_pdf._epc_qr_png(
+        {"company_name": "A", "iban": "DE89 3704 0044 0532 0130 00"},
+        Decimal("12.34"), "Rechnung X",
+    )[:8] == b"\x89PNG\r\n\x1a\n"

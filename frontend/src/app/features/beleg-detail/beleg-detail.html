@@ -37,6 +37,10 @@
       <span mappe-kopf class="kopf-summe">{{ euro(daten()!.gross_total) }}</span>
       @if (kannPdf()) {
         <a mappe-kopf class="btn" [href]="pdfUrl(daten()!.id)" target="_blank" rel="noopener" aria-label="PDF ansehen (öffnet in neuem Tab)">PDF ansehen ↗</a>
+      } @else {
+        <!-- Entwurfsvorschau: on-the-fly mit ENTWURF-Aufdruck, unarchiviert —
+             die verbindliche Ausfertigung entsteht erst mit dem Versand. -->
+        <a mappe-kopf class="btn" [href]="vorschauUrl(daten()!.id)" target="_blank" rel="noopener" aria-label="Entwurfsvorschau als PDF ansehen (öffnet in neuem Tab)">Vorschau (PDF) ↗</a>
       }
       @if (darfBearbeiten()) {
         <a mappe-kopf class="btn btn--primary" [routerLink]="['/dokumente/angebot', daten()!.id]">

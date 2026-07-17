@@ -83,6 +83,12 @@ type Anker = { art: 'auftrag' | 'einsatz'; id: string };
   styleUrl: './berichte.scss',
 })
 export class Berichte {
+  /** Bericht-PDF (Markenlayout): ENTWURF mit Aufdruck, unterzeichnet mit
+   *  Unterschriftsblock — on-the-fly vom Server, wird nie archiviert. */
+  pdfUrl(id: string): string {
+    return `/api/workflow/site_reports/${id}/pdf`;
+  }
+
   private readonly svc = inject(SiteReportService);
   private readonly einsatzSvc = inject(EinsatzService);
   private readonly auth = inject(AuthService);

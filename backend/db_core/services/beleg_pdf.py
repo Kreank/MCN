@@ -23,13 +23,21 @@ nachgeholt, sobald der Speicher wieder da ist.
 
 Nutzt fpdf2 (reines Python). Beträge in deutscher Formatierung.
 
-Schrift: **eingebettete TrueType-Schrift** (DejaVu Sans, freie Lizenz, unter
+Layout (seit dem Marken-Redesign 2026-07): DIN 5008 Form B (Anschriftfeld für
+Fensterkuverts, Falz-/Lochmarken), Mitra-Markenfarben aus den Frontend-Tokens
+(frontend/src/styles/_tokens.scss), Wortmarke im Kopf, blasses Tropfen-Emblem
+als Wasserzeichen (Blässe im PNG gebacken — keine PDF-Transparenz-Gruppen),
+Giro-Code (EPC-QR) im Zahlungsblock. Vorschau unveröffentlichter Belege über
+``render_invoice_preview``/``render_quote_preview`` mit ENTWURF-Aufdruck, ohne
+Archivierung.
+
+Schrift: **eingebettete TrueType-Schrift** (Inter, SIL OFL, unter
 ``db_core/assets/fonts/``) statt des fpdf2-Kernfonts Helvetica. Zwei Gründe:
 1. PDF/A-3B (E-Rechnung, services/erechnung.py) verlangt zwingend eingebettete
    Schriften — ein Kernfont ist dort verboten. Beide Ausfertigungen teilen sich
    dasselbe Layout, also gilt die Schrift für beide.
 2. Der Kernfont kann nur Latin-1; Umlaute mussten ersetzt werden, das €-Zeichen
-   war gar nicht darstellbar. Mit DejaVu ist Unicode-Text unverfälscht.
+   war gar nicht darstellbar. Mit eingebetteter TTF ist Unicode unverfälscht.
 
 **Bekannte Sichtbild-Divergenz bei Altbelegen** (bewusst in Kauf genommen):
 Belege, deren BELEG_PDF VOR der Font-Umstellung archiviert wurde, behalten ihre
@@ -47,6 +55,7 @@ from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 
+import segno
 from django.db import IntegrityError, connection
 from fpdf import FPDF
 
@@ -68,25 +77,176 @@ log = logging.getLogger(__name__)
 
 _BELEG_PDF_CATEGORY = "BELEG_PDF"
 
-# Eingebettete Schrift (freie Lizenz; LICENSE-DejaVu.txt liegt daneben).
+# Eingebettete Schrift (SIL OFL; LICENSE-Inter.txt liegt daneben). Vier
+# Schnitte: Regular/Bold als Familie "Inter", Medium/SemiBold als eigene
+# Familien (fpdf2 kennt je Familie nur ""/"B"/"I"-Stile).
 FONT_DIR = Path(__file__).resolve().parent.parent / "assets" / "fonts"
-FONT_FAMILY = "DejaVu"
-_FONT_FILES = {"": "DejaVuSans.ttf", "B": "DejaVuSans-Bold.ttf"}
+FONT_FAMILY = "Inter"
+_FONT_FILES = {
+    ("Inter", ""): "Inter-Regular.ttf",
+    ("Inter", "B"): "Inter-Bold.ttf",
+    ("InterM", ""): "Inter-Medium.ttf",
+    ("InterSB", ""): "Inter-SemiBold.ttf",
+}
+
+# Markenzeichen (Repo-SVGs, als PNG gerendert). Das Ghost-Emblem trägt seine
+# Blässe im Bild selbst — keine PDF-Transparenz-Gruppen nötig (PDF/A-freundlich).
+BRAND_DIR = Path(__file__).resolve().parent.parent / "assets" / "branding"
+_BRAND_LOGO = BRAND_DIR / "mitra_logo.png"
+_BRAND_GHOST = BRAND_DIR / "mitra_emblem_ghost.png"
+
+# Markenfarben — verbindliche Tokens aus frontend/src/styles/_tokens.scss.
+# Orange in Reinform nur auf Navy bzw. als grafischer Akzent (CI-Regel).
+_NAVY = (28, 50, 68)        # #1c3244
+_ORANGE = (239, 128, 78)    # #ef804e
+_PAPER = (247, 246, 243)    # #f7f6f3
+_HAIR = (221, 216, 206)     # #ddd8ce
+_INK = (28, 50, 68)
+_MUTED = (74, 91, 104)      # #4a5b68
+_HINT = (92, 107, 120)      # #5c6b78
+
+# DIN-5008-Grundraster (Form B): links 25 mm, rechts 20 mm; Falzmarken bei
+# 105/210 mm, Lochmarke bei 148,5 mm; Anschriftfeld ab 45 mm.
+_M_L, _M_R, _M_T = 25, 20, 16
+_PAGE_W = 210
+_USABLE = _PAGE_W - _M_L - _M_R  # 165 mm
+_FOOT_H = 34                     # reservierter Fußbereich je Seite
 
 
-def new_beleg_pdf(*, compliance=None):
-    """Ein leeres A4-Beleg-PDF mit eingebetteter Schrift und Belegrändern.
+class _BelegPDF(FPDF):
+    """A4-Beleg mit Marken-Kopf, Wasserzeichen und Fußzeile auf jeder Seite.
+
+    Kopf/Fuß rendern aus `issuer`-Snapshot-Daten (dict) — bei None greift der
+    Fallback ohne Absturz. `entwurf=True` legt zusätzlich einen deutlichen
+    ENTWURF-Aufdruck unter den Inhalt (Vorschau unveröffentlichter Belege).
+    """
+
+    def __init__(self, *, compliance=None, issuer=None, entwurf=False,
+                 logo_bytes=None):
+        super().__init__(format="A4", unit="mm", enforce_compliance=compliance)
+        self.issuer = issuer
+        self.entwurf = entwurf
+        self.logo_bytes = logo_bytes
+        for (fam, style), datei in _FONT_FILES.items():
+            self.add_font(fam, style, str(FONT_DIR / datei))
+        self.set_margins(_M_L, _M_T, _M_R)
+        self.set_auto_page_break(auto=True, margin=_FOOT_H)
+        self.alias_nb_pages()
+
+    def header(self):
+        # Wasserzeichen zuerst — alles Weitere liegt darüber.
+        if _BRAND_GHOST.exists():
+            self.image(str(_BRAND_GHOST), x=60, y=120, w=100)
+        if self.entwurf:
+            self.set_font("Inter", "B", 58)
+            self.set_text_color(214, 220, 226)
+            with self.rotation(40, x=105, y=160):
+                self.text(x=48, y=172, text="ENTWURF")
+
+        # Falz- und Lochmarken (DIN 5008)
+        self.set_draw_color(150, 150, 150)
+        self.set_line_width(0.2)
+        self.line(4, 105, 8, 105)
+        self.line(4, 210, 8, 210)
+        self.line(3, 148.5, 9, 148.5)
+
+        # Logo rechts: Firmenprofil-Logo, sonst die eingebaute Mitra-Wortmarke.
+        lw, lh = 40, 40 * 449.08 / 1065.59
+        lx = _PAGE_W - _M_R - lw
+        if self.logo_bytes is not None:
+            try:
+                self.image(BytesIO(self.logo_bytes), x=lx, y=_M_T - 1,
+                           w=lw, h=lh, keep_aspect_ratio=True)
+            except Exception as exc:  # noqa: BLE001 - Logo darf nie scheitern
+                log.warning("Beleg-PDF: Logo nicht einbettbar (%s).", exc)
+        elif _BRAND_LOGO.exists():
+            self.image(str(_BRAND_LOGO), x=lx, y=_M_T - 1, w=lw)
+
+        # Aussteller links
+        name, subline = _issuer_lines(self.issuer)
+        self.set_xy(_M_L, _M_T)
+        self.set_font("InterSB", "", 13.5)
+        self.set_text_color(*_NAVY)
+        self.cell(0, 7, _txt(name), new_x="LMARGIN", new_y="NEXT")
+        if subline:
+            self.set_font("Inter", "", 8.5)
+            self.set_text_color(*_HINT)
+            self.cell(0, 4.5, _txt(subline), new_x="LMARGIN", new_y="NEXT")
+
+        # Akzentlinie: kurzer Orange-Auftakt, dann Navy
+        y = _M_T + lh + 1.5
+        self.set_draw_color(*_ORANGE)
+        self.set_line_width(0.9)
+        self.line(_M_L, y, _M_L + 18, y)
+        self.set_draw_color(*_NAVY)
+        self.set_line_width(0.5)
+        self.line(_M_L + 18, y, _PAGE_W - _M_R, y)
+        self.set_text_color(*_INK)
+        self.set_y(y + 5)
+
+    def footer(self):
+        self.set_y(-(_FOOT_H - 6))
+        self.set_draw_color(*_NAVY)
+        self.set_line_width(0.4)
+        self.line(_M_L, self.get_y(), _PAGE_W - _M_R, self.get_y())
+        self.ln(2.5)
+        self.set_font("Inter", "", 7)
+        self.set_text_color(*_HINT)
+        spalten = _footer_spalten(self.issuer)
+        y0 = self.get_y()
+        col_w = _USABLE / 3
+        for i, block in enumerate(spalten[:3]):
+            for j, zeile in enumerate(block[:4]):
+                self.set_xy(_M_L + i * col_w, y0 + j * 3.4)
+                self.cell(col_w, 3.4, _txt(zeile))
+        self.set_xy(_M_L, y0 + 15.5)
+        self.set_font("InterM", "", 7.5)
+        self.cell(_USABLE, 4, f"Seite {self.page_no()} von {{nb}}", align="R")
+
+
+def _footer_spalten(issuer):
+    """Dreispaltige Fußzeile (Kontakt · Steuer/Register · Bank) — nur Gepflegtes."""
+    if not issuer:
+        return [[_FALLBACK_NAME, _FALLBACK_SUBLINE]]
+    kontakt = [issuer.get("company_name")]
+    strasse = issuer.get("street")
+    ort = " ".join(b for b in (issuer.get("postal_code"), issuer.get("city")) if b)
+    if strasse or ort:
+        kontakt.append(" · ".join(b for b in (strasse, ort) if b))
+    if issuer.get("phone"):
+        kontakt.append(issuer["phone"])
+    if issuer.get("email"):
+        kontakt.append(issuer["email"])
+    steuer = []
+    if issuer.get("tax_number"):
+        steuer.append(f"Steuernr. {issuer['tax_number']}")
+    if issuer.get("vat_id"):
+        steuer.append(f"USt-IdNr. {issuer['vat_id']}")
+    if issuer.get("commercial_register"):
+        steuer.append(issuer["commercial_register"])
+    if issuer.get("managing_director"):
+        title = issuer.get("managing_director_title") or "Geschäftsführung"
+        steuer.append(f"{title}: {issuer['managing_director']}")
+    bank = []
+    if issuer.get("bank_name"):
+        bank.append(issuer["bank_name"])
+    if issuer.get("iban"):
+        bank.append(f"IBAN {issuer['iban']}")
+    if issuer.get("bic"):
+        bank.append(f"BIC {issuer['bic']}")
+    return [[z for z in kontakt if z], steuer, bank]
+
+
+def new_beleg_pdf(*, compliance=None, issuer=None, entwurf=False,
+                  logo_bytes=None):
+    """Ein leeres A4-Beleg-PDF im Markenlayout, erste Seite angelegt.
 
     `compliance` reicht fpdf2s `enforce_compliance` durch (z. B. "PDF/A-3B" für
     die E-Rechnung). fpdf2 setzt dann OutputIntent + XMP und verweigert
-    nicht-eingebettete Schriften — deshalb registrieren wir die TTF immer,
-    nicht nur im PDF/A-Fall.
+    nicht-eingebettete Schriften — die Inter-TTFs sind immer eingebettet.
     """
-    pdf = FPDF(format="A4", unit="mm", enforce_compliance=compliance)
-    for style, datei in _FONT_FILES.items():
-        pdf.add_font(FONT_FAMILY, style, str(FONT_DIR / datei))
-    pdf.set_auto_page_break(auto=True, margin=18)
-    pdf.set_margins(20, 18, 20)
+    pdf = _BelegPDF(compliance=compliance, issuer=issuer, entwurf=entwurf,
+                    logo_bytes=logo_bytes)
     pdf.add_page()
     return pdf
 
@@ -240,13 +400,6 @@ def empfaenger_zeilen(party_snapshot):
     return zeilen
 
 
-# Rahmen (mm), in den das Logo oben rechts eingepasst wird (Seitenverhältnis
-# gewahrt). Höhe bewusst knapp unter dem Aussteller-Textblock (Name + Unterzeile),
-# damit das Logo nicht in den Empfängerbereich darunter ragt.
-_LOGO_BOX_W_MM = 50
-_LOGO_BOX_H_MM = 20
-
-
 def _logo_bytes(profile):
     """Bytes des Firmenlogos für den PDF-Kopf, oder None.
 
@@ -270,61 +423,29 @@ def _logo_bytes(profile):
         return None
 
 
-def _place_logo(pdf, logo_bytes):
-    """Bettet das Firmenlogo oben rechts im Kopf ein (Seitenverhältnis gewahrt),
-    ohne den Textcursor zu verschieben — der Aussteller-Text rendert unverändert
-    links daneben. Lässt sich das Bild nicht einbetten (kaputte/unlesbare Bytes),
-    wird es übersprungen: das PDF darf nie wegen des Logos scheitern.
-    """
-    x0, y0 = pdf.get_x(), pdf.get_y()
-    x = pdf.w - pdf.r_margin - _LOGO_BOX_W_MM
-    try:
-        pdf.image(
-            BytesIO(logo_bytes), x=x, y=y0,
-            w=_LOGO_BOX_W_MM, h=_LOGO_BOX_H_MM, keep_aspect_ratio=True,
-        )
-    except Exception as exc:  # noqa: BLE001 - Logo darf das PDF nie scheitern lassen
-        log.warning(
-            "Beleg-PDF: Firmenlogo nicht einbettbar (%s); rendere ohne Logo.", exc
-        )
-    finally:
-        # Cursor exakt zurücksetzen: der nachfolgende Text-Kopf bleibt bit-genau.
-        pdf.set_xy(x0, y0)
+def _zeilenzahl(pdf, breite, text, font, size):
+    """Echte Zeilenzahl eines Textes nach Umbruch (dry_run), min. 1."""
+    pdf.set_font(font, "", size)
+    lines = pdf.multi_cell(breite, 4.6, _txt(text), align="L",
+                           dry_run=True, output="LINES")
+    return max(1, len(lines))
 
 
-def _render_issuer(pdf, issuer):
-    """Kopfzeile des Ausstellers aus dem Stammdaten-Snapshot (oder Fallback).
-
-    Ist ein Firmenlogo gepflegt und abrufbar, wird es oben rechts eingebettet;
-    fehlt es oder ist der Objektspeicher weg, bleibt der Text-Kopf unverändert
-    (graceful degradation). Das Logo bleibt bewusst LIVE (es ist Dekoration, kein
-    belegrelevanter Inhalt, und wird als Dateiverweis geführt).
-    """
-    logo = _logo_bytes(CompanyProfile.objects.first())
-    if logo is not None:
-        _place_logo(pdf, logo)
-    name, subline = _issuer_lines(issuer)
-    pdf.set_font(FONT_FAMILY, "B", 14)
-    pdf.cell(0, 8, _txt(name), new_x="LMARGIN", new_y="NEXT")
-    if subline:
-        pdf.set_font(FONT_FAMILY, "", 9)
-        pdf.set_text_color(110, 110, 110)
-        pdf.cell(0, 5, _txt(subline), new_x="LMARGIN", new_y="NEXT")
-        pdf.set_text_color(0, 0, 0)
-    pdf.ln(6)
+def _tabellenkopf(pdf):
+    """Navy-Tabellenkopf der Positionstabelle (auch nach Seitenumbruch)."""
+    pdf.set_fill_color(*_NAVY)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("InterSB", "", 8.5)
+    heads = ("Pos", "Beschreibung", "Menge", "Einheit", "Einzelpreis", "Betrag")
+    for w, h in zip(_COLS, heads):
+        align = "R" if h in ("Menge", "Einzelpreis", "Betrag") else "L"
+        pdf.cell(w, 8, f" {h}" if align == "L" else f"{h} ",
+                 align=align, fill=True)
+    pdf.ln(8)
+    pdf.set_text_color(*_INK)
 
 
-def _render_footer(pdf, issuer):
-    """Fußzeile mit Steuer-/Register-/Bankangaben (nur was gepflegt ist)."""
-    parts = _footer_parts(issuer)
-    if not parts:
-        return
-    pdf.ln(6)
-    pdf.set_draw_color(210, 210, 210)
-    pdf.set_font(FONT_FAMILY, "", 8)
-    pdf.set_text_color(120, 120, 120)
-    pdf.multi_cell(0, 4, _txt(" · ".join(parts)), border="T")
-    pdf.set_text_color(0, 0, 0)
+_COLS = (10, 75, 16, 12, 26, 26)  # Summe 165 mm = _USABLE
 
 
 def _render_lines(pdf, lines):
@@ -338,16 +459,7 @@ def _render_lines(pdf, lines):
     („−100 × 2,40 EUR"). Ohne diese gemeinsame Quelle zeigte das Sichtbild
     „100 × −2,40" und das eingebettete XML „−100 × 2,40" — dasselbe Ergebnis,
     aber ein in sich widersprüchliches Hybrid-Dokument."""
-    widths = (12, 82, 20, 16, 28, 32)  # Summe 190 mm (usable width)
-    headers = ("Pos", "Beschreibung", "Menge", "Einheit", "Einzelpreis", "Betrag")
-    pdf.set_font(FONT_FAMILY, "B", 9)
-    pdf.set_fill_color(238, 238, 238)
-    for w, h in zip(widths, headers):
-        align = "R" if h in ("Menge", "Einzelpreis", "Betrag") else "L"
-        pdf.cell(w, 7, h, border="B", align=align, fill=True)
-    pdf.ln(7)
-
-    pdf.set_font(FONT_FAMILY, "", 9)
+    _tabellenkopf(pdf)
     for line in sorted(lines, key=lambda x: x.position_number):
         is_text = line.line_type in ("TEXT", "ZWISCHENSUMME")
         anz_menge, anz_preis = anzeige_menge_preis(line)
@@ -355,35 +467,76 @@ def _render_lines(pdf, lines):
         einheit = "" if is_text else _txt(line.unit or "")
         ep = "" if is_text or anz_preis is None else _eur(anz_preis)
         betrag = "" if is_text or line.net_amount is None else _eur(line.net_amount)
+
+        # Beschreibung: erste Zeile betont, Folgezeilen als graues Detail.
+        # Zeilenhöhen VOR dem Zeichnen bestimmen (echter Umbruch, dry_run),
+        # damit der Seitenumbruch je Position als Ganzes fällt.
+        teile = _txt(line.description).split("\n")
+        haupt, detail = teile[0], "\n".join(teile[1:])
+        desc_w = _COLS[1] - 2
+        n_haupt = _zeilenzahl(pdf, desc_w, haupt, "InterM" if not is_text else "Inter", 9)
+        n_detail = _zeilenzahl(pdf, desc_w, detail, "Inter", 8) if detail else 0
+        h = 4.6 * n_haupt + 4.2 * n_detail + 3.6
+        if pdf.get_y() + h > 297 - _FOOT_H:
+            pdf.add_page()
+            _tabellenkopf(pdf)
+
         y0 = pdf.get_y()
-        pdf.multi_cell(widths[0], 6, str(line.position_number), align="L",
-                       new_x="RIGHT", new_y="TOP", max_line_height=6)
-        pdf.set_xy(20 + widths[0], y0)
-        pdf.multi_cell(widths[1], 6, _txt(line.description), align="L",
-                       new_x="RIGHT", new_y="TOP", max_line_height=6)
-        y1 = pdf.get_y()
-        pdf.set_xy(20 + widths[0] + widths[1], y0)
-        pdf.cell(widths[2], 6, menge, align="R")
-        pdf.cell(widths[3], 6, einheit, align="L")
-        pdf.cell(widths[4], 6, ep, align="R")
-        pdf.cell(widths[5], 6, betrag, align="R")
-        pdf.set_y(max(y0 + 6, y1))
+        pdf.set_font("Inter", "", 9)
+        pdf.set_xy(_M_L, y0 + 1.8)
+        pdf.cell(_COLS[0], 4.6, "" if is_text else f" {line.position_number}")
+        if is_text:
+            pdf.set_text_color(*_MUTED)
+        pdf.set_font("InterM" if not is_text else "Inter", "", 9)
+        pdf.set_xy(_M_L + _COLS[0], y0 + 1.8)
+        pdf.multi_cell(desc_w, 4.6, haupt, align="L")
+        if detail:
+            pdf.set_font("Inter", "", 8)
+            pdf.set_text_color(*_HINT)
+            pdf.set_xy(_M_L + _COLS[0], y0 + 1.8 + 4.6 * n_haupt)
+            pdf.multi_cell(desc_w, 4.2, detail, align="L")
+        pdf.set_text_color(*_INK)
+        pdf.set_font("Inter", "", 9)
+        pdf.set_xy(_M_L + _COLS[0] + _COLS[1], y0 + 1.8)
+        pdf.cell(_COLS[2], 4.6, menge, align="R")
+        pdf.cell(_COLS[3], 4.6, f" {einheit}")
+        pdf.cell(_COLS[4], 4.6, f"{ep} " if ep else "", align="R")
+        pdf.set_font("InterM", "", 9)
+        pdf.cell(_COLS[5], 4.6, f"{betrag} " if betrag else "", align="R")
+        # feine Trennlinie statt Zebra — lässt das Wasserzeichen ungestört
+        pdf.set_draw_color(*_HAIR)
+        pdf.set_line_width(0.2)
+        pdf.line(_M_L, y0 + h, _M_L + _USABLE, y0 + h)
+        pdf.set_y(y0 + h)
+
+
+def _platz_sichern(pdf, hoehe):
+    """Seitenumbruch, wenn `hoehe` mm nicht mehr auf die Seite passen."""
+    if pdf.get_y() + hoehe > 297 - _FOOT_H:
+        pdf.add_page()
 
 
 def _render_totals(pdf, net_total, tax_total, gross_total):
     """Summenblock (Netto/USt/Gesamt) — gemeinsam für Rechnung und Angebot."""
+    _platz_sichern(pdf, 32)
     pdf.ln(3)
-    pdf.set_draw_color(180, 180, 180)
-    label_w, val_w = 150, 40
-    for label, value, bold in (
-        ("Nettobetrag", net_total, False),
-        ("Umsatzsteuer", tax_total, False),
-        ("Gesamtbetrag", gross_total, True),
-    ):
-        pdf.set_font(FONT_FAMILY, "B" if bold else "", 10 if bold else 9)
-        pdf.cell(label_w, 7, label, align="R")
-        pdf.cell(val_w, 7, _eur(value), align="R",
-                 border="T" if bold else 0, new_x="LMARGIN", new_y="NEXT")
+    sum_w, val_w = 70, 32
+    sx = _PAGE_W - _M_R - sum_w
+    for label, value in (("Nettobetrag", net_total),
+                         ("Umsatzsteuer", tax_total)):
+        pdf.set_xy(sx, pdf.get_y())
+        pdf.set_font("Inter", "", 9)
+        pdf.cell(sum_w - val_w, 6.4, label, align="R")
+        pdf.cell(val_w, 6.4, f"{_eur(value)} ", align="R",
+                 new_x="LMARGIN", new_y="NEXT")
+    pdf.set_xy(sx, pdf.get_y() + 0.8)
+    pdf.set_fill_color(*_NAVY)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("InterSB", "", 10.5)
+    pdf.cell(sum_w - val_w, 8.6, "Gesamtbetrag  ", align="R", fill=True)
+    pdf.cell(val_w, 8.6, f"{_eur(gross_total)} ", align="R", fill=True,
+             new_x="LMARGIN", new_y="NEXT")
+    pdf.set_text_color(*_INK)
 
 
 def _render_anrechnung(pdf, invoice):
@@ -404,14 +557,17 @@ def _render_anrechnung(pdf, invoice):
     if not spiegel:
         return
 
-    pdf.ln(4)
-    pdf.set_font(FONT_FAMILY, "B", 10)
+    _platz_sichern(pdf, 30 + 6 * len(spiegel["posten"]))
+    pdf.ln(5)
+    pdf.set_font("InterSB", "", 10)
+    pdf.set_text_color(*_NAVY)
     pdf.cell(0, 6, "Anrechnung der Abschlagsrechnungen", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_text_color(*_INK)
     pdf.set_font(FONT_FAMILY, "", 9)
-    label_w, val_w = 150, 40
+    label_w, val_w = 130, 35
 
     def zeile(label, betrag, *, bold=False, border=0):
-        pdf.set_font(FONT_FAMILY, "B" if bold else "", 10 if bold else 9)
+        pdf.set_font("InterSB" if bold else "Inter", "", 10 if bold else 9)
         pdf.multi_cell(label_w, 6, _txt(label), align="R", new_x="RIGHT", new_y="TOP",
                        max_line_height=6)
         pdf.cell(val_w, 6, _eur(betrag), align="R", border=border,
@@ -456,35 +612,43 @@ def _render_arbeitskosten(pdf, invoice):
     if not ausweis["bestimmbar"] or not ausweis["gross_amount"]:
         return
 
-    pdf.ln(4)
-    pdf.set_font(FONT_FAMILY, "B", 10)
+    _platz_sichern(pdf, 42)
+    pdf.ln(5)
+    y0 = pdf.get_y()
+    pdf.set_fill_color(*_NAVY)
+    pdf.rect(_M_L, y0, 1.2, 24, style="F")
+    pdf.set_xy(_M_L + 5, y0)
+    pdf.set_font("InterSB", "", 10)
+    pdf.set_text_color(*_NAVY)
     pdf.cell(0, 6, _txt("Arbeitskosten nach § 35a EStG"),
              new_x="LMARGIN", new_y="NEXT")
-    label_w, val_w = 150, 40
+    pdf.set_text_color(*_INK)
+    label_w, val_w = 130, 35
     for label, betrag, bold in (
         ("in der Rechnung enthaltene Lohn-, Maschinen- und Fahrtkosten (netto)",
          ausweis["net_amount"], False),
         ("darauf entfallende Umsatzsteuer", ausweis["tax_amount"], False),
         ("Arbeitskosten (brutto)", ausweis["gross_amount"], True),
     ):
-        pdf.set_font(FONT_FAMILY, "B" if bold else "", 10 if bold else 9)
+        pdf.set_font("InterSB" if bold else "Inter", "", 10 if bold else 9)
         pdf.multi_cell(label_w, 6, _txt(label), align="R", new_x="RIGHT", new_y="TOP",
                        max_line_height=6)
         pdf.cell(val_w, 6, _eur(betrag), align="R", border="T" if bold else 0,
                  new_x="LMARGIN", new_y="NEXT")
 
     pdf.set_font(FONT_FAMILY, "", 8)
-    pdf.set_text_color(110, 110, 110)
+    pdf.set_text_color(*_HINT)
+    pdf.set_x(_M_L + 5)
     pdf.multi_cell(
-        0, 4,
+        _USABLE - 8, 4,
         _txt("Für Handwerkerleistungen in einem Privathaushalt können 20 % der "
              "Arbeitskosten (höchstens 1.200 EUR im Jahr) von der Steuerschuld "
              "abgezogen werden (§ 35a Abs. 3 EStG). Voraussetzung ist die "
              "unbare Zahlung auf das oben genannte Konto; Materialkosten sind "
              "nicht begünstigt."),
-        new_x="LMARGIN", new_y="NEXT",
+        align="L", new_x="LMARGIN", new_y="NEXT",
     )
-    pdf.set_text_color(0, 0, 0)
+    pdf.set_text_color(*_INK)
 
 
 def load_invoice_for_render(invoice_id):
@@ -504,14 +668,150 @@ def load_invoice_for_render(invoice_id):
     return invoice
 
 
-def render_invoice_document(invoice, *, compliance=None):
-    """Rendert das Beleg-PDF einer veröffentlichten Rechnung (Bytes).
+def _render_anschrift_und_infoblock(pdf, zeilen, meta):
+    """DIN-5008-Anschriftfeld (Fensterkuvert) + Infoblock rechts daneben.
+
+    `zeilen` ist der Empfänger-Anschriftblock, `meta` eine Liste
+    (Label, Wert)-Paare für den rechten Infoblock. Setzt den Cursor
+    anschließend auf die Titelposition (96 mm).
+    """
+    issuer = pdf.issuer
+    pdf.set_y(45)
+    if issuer:
+        ort = " ".join(b for b in (issuer.get("postal_code"),
+                                   issuer.get("city")) if b)
+        ruecksende = " · ".join(
+            b for b in (issuer.get("company_name"), issuer.get("street"), ort) if b
+        )
+        if ruecksende:
+            pdf.set_font("Inter", "", 6.8)
+            pdf.set_text_color(*_HINT)
+            pdf.cell(85, 3.5, _txt(ruecksende), new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(1.5)
+    pdf.set_font("Inter", "", 10.5)
+    pdf.set_text_color(*_INK)
+    for zeile in zeilen:
+        pdf.cell(85, 5.6, _txt(zeile), new_x="LMARGIN", new_y="NEXT")
+
+    ix = 125
+    pdf.set_y(47)
+    for label, wert in meta:
+        if not wert:
+            continue
+        pdf.set_x(ix)
+        pdf.set_font("Inter", "", 7.5)
+        pdf.set_text_color(*_HINT)
+        pdf.cell(26, 4.8, _txt(label))
+        pdf.set_font("InterM", "", 8.5)
+        pdf.set_text_color(*_INK)
+        pdf.cell(0, 4.8, _txt(wert), new_x="LMARGIN", new_y="NEXT")
+    pdf.set_y(96)
+
+
+def _render_titel(pdf, titel, untertitel=None):
+    """Belegtitel in Navy + optionale graue Unterzeile."""
+    pdf.set_font("Inter", "B", 16)
+    pdf.set_text_color(*_NAVY)
+    pdf.cell(0, 9, _txt(titel), new_x="LMARGIN", new_y="NEXT")
+    if untertitel:
+        pdf.set_font("Inter", "", 9.5)
+        pdf.set_text_color(*_HINT)
+        pdf.cell(0, 5.5, _txt(untertitel), new_x="LMARGIN", new_y="NEXT")
+    pdf.set_text_color(*_INK)
+    pdf.ln(3)
+
+
+def _epc_qr_png(issuer, betrag, zweck):
+    """PNG-Bytes eines Giro-Codes (EPC-QR, Version 002) oder None.
+
+    Nur wenn IBAN und Empfängername gepflegt sind und ein positiver Betrag
+    gefordert wird — sonst kein QR (ein leerer/falscher Code wäre schlimmer
+    als keiner).
+    """
+    if not issuer or not issuer.get("iban") or not issuer.get("company_name"):
+        return None
+    if betrag is None or Decimal(betrag) <= 0:
+        return None
+    data = "\n".join([
+        "BCD", "002", "1", "SCT",
+        _txt(issuer.get("bic")),
+        _txt(issuer["company_name"])[:70],
+        issuer["iban"].replace(" ", ""),
+        f"EUR{Decimal(betrag).quantize(Decimal('0.01'))}",
+        "", "",
+        _txt(zweck)[:140],
+    ])
+    buf = BytesIO()
+    segno.make(data, error="m").save(buf, kind="png", scale=8, border=0)
+    return buf.getvalue()
+
+
+def _render_zahlung(pdf, invoice, issuer, *, mit_qr=True):
+    """Zahlungsblock: Zahlungsbedingungen + Giro-Code in einer Markenbox.
+
+    Der Bedingungstext kommt unverändert aus `zahlungsbedingungen_text` —
+    PDF und Bildschirm zeigen denselben Wortlaut. Ohne Bedingungen UND ohne
+    QR entfällt der Block ersatzlos.
+    """
+    zb = zahlungsbedingungen_text(invoice)
+    qr = None
+    if mit_qr and invoice.invoice_type not in ("GUTSCHRIFT", "STORNO"):
+        title = _TYPE_TITLES.get(invoice.invoice_type, invoice.invoice_type)
+        zweck = f"{title} {invoice.invoice_number or ''}".strip()
+        qr = _epc_qr_png(issuer, invoice.gross_total, zweck)
+    if not zb and qr is None:
+        return
+
+    bank_bits = []
+    if issuer and issuer.get("bank_name"):
+        bank_bits.append(issuer["bank_name"])
+    if issuer and issuer.get("iban"):
+        bank_bits.append(f"IBAN {issuer['iban']}")
+    if issuer and issuer.get("bic"):
+        bank_bits.append(f"BIC {issuer['bic']}")
+    zeilen = [z for z in (zb, " · ".join(bank_bits) or None) if z]
+
+    box_h = 38 if qr else 10 + 5 * len(zeilen)
+    _platz_sichern(pdf, box_h + 6)
+    pdf.ln(5)
+    y0 = pdf.get_y()
+    pdf.set_fill_color(*_PAPER)
+    pdf.set_draw_color(*_NAVY)
+    pdf.set_line_width(0.3)
+    pdf.rect(_M_L, y0, _USABLE, box_h, style="DF",
+             round_corners=True, corner_radius=2.5)
+    tx = _M_L + 5
+    if qr is not None:
+        pdf.image(BytesIO(qr), x=_M_L + 5, y=y0 + 5, w=28, h=28)
+        tx = _M_L + 40
+    pdf.set_xy(tx, y0 + 5)
+    pdf.set_font("InterSB", "", 10)
+    pdf.set_text_color(*_NAVY)
+    pdf.cell(0, 5.5, "Bequem bezahlen mit Giro-Code" if qr else "Zahlung",
+             new_x="LMARGIN", new_y="NEXT")
+    pdf.set_text_color(*_INK)
+    pdf.set_font("Inter", "", 8.8)
+    pdf.set_xy(tx, y0 + 11.5)
+    if qr:
+        zeilen.insert(0, "QR-Code mit Ihrer Banking-App scannen — Empfänger, "
+                         "Betrag und Verwendungszweck sind bereits ausgefüllt.")
+    pdf.multi_cell(_USABLE - (tx - _M_L) - 5, 4.6, _txt("\n".join(zeilen)),
+                   align="L")
+    pdf.set_y(y0 + box_h)
+
+
+def render_invoice_document(invoice, *, compliance=None, entwurf=False):
+    """Rendert das Beleg-PDF einer Rechnung (Bytes).
 
     Gemeinsame Layout-Quelle für die normale Ausfertigung und die
     ZUGFeRD-Ausfertigung (`compliance="PDF/A-3B"`, services/erechnung.py) — das
     Sichtbild ist in beiden Fällen dasselbe, nur der PDF-Standard unterscheidet
     sich. Stammdaten (Aussteller/Empfänger) kommen aus dem eingefrorenen
     Snapshot (Live-Fallback nur für Altbelege, siehe beleg.beleg_stammdaten).
+
+    `entwurf=True` (Vorschau unveröffentlichter Belege) legt einen deutlichen
+    ENTWURF-Aufdruck unter den Inhalt und lässt den Giro-Code weg — ein
+    Entwurf fordert keine Zahlung.
     """
     title = _TYPE_TITLES.get(invoice.invoice_type, invoice.invoice_type)
     stamm = beleg_stammdaten(invoice)
@@ -520,37 +820,43 @@ def render_invoice_document(invoice, *, compliance=None):
     debtor_name = (debtor or {}).get("snapshot", {}).get("display_name")
     recipient_snapshot = (recipient or {}).get("snapshot")
 
-    pdf = new_beleg_pdf(compliance=compliance)
-    _render_issuer(pdf, stamm["issuer"])
+    logo = _logo_bytes(CompanyProfile.objects.first())
+    pdf = new_beleg_pdf(compliance=compliance, issuer=stamm["issuer"],
+                        entwurf=entwurf, logo_bytes=logo)
 
-    # Empfänger (Name + Anschrift, soweit gepflegt)
-    pdf.set_font(FONT_FAMILY, "", 11)
-    zeilen = empfaenger_zeilen(recipient_snapshot) or ["-"]
-    for zeile in zeilen:
-        pdf.cell(0, 6, _txt(zeile), new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(4)
+    objekt = None
+    prop = getattr(invoice, "property", None)
+    if prop is not None:
+        objekt = " · ".join(b for b in (
+            prop.name, getattr(getattr(prop, "address", None), "city", None)
+        ) if b)
 
-    # Belegkopf
-    pdf.set_font(FONT_FAMILY, "B", 16)
-    pdf.cell(0, 9, f"{title} {invoice.invoice_number or ''}".strip(), new_x="LMARGIN", new_y="NEXT")
-    pdf.set_font(FONT_FAMILY, "", 10)
-    pdf.cell(0, 6, _txt(f"Belegdatum: {_de_date(invoice.invoice_date)}"
-                        f"    Fällig: {_de_date(invoice.due_date)}"),
-             new_x="LMARGIN", new_y="NEXT")
-    zb = zahlungsbedingungen_text(invoice)
-    if zb:
-        pdf.set_font(FONT_FAMILY, "", 9)
-        pdf.multi_cell(0, 5, _txt(zb), new_x="LMARGIN", new_y="NEXT")
-        pdf.set_font(FONT_FAMILY, "", 10)
+    meta = [
+        ("Beleg-Nr.", invoice.invoice_number or ("Entwurf" if entwurf else None)),
+        ("Belegdatum", _de_date(invoice.invoice_date)),
+        ("Fällig bis", _de_date(invoice.due_date)),
+        ("Objekt", objekt),
+    ]
+    _render_anschrift_und_infoblock(
+        pdf, empfaenger_zeilen(recipient_snapshot) or ["-"], meta
+    )
+
+    titel_text = f"{title} {invoice.invoice_number or ''}".strip()
+    if entwurf:
+        titel_text += " — Entwurf"
+    _render_titel(pdf, titel_text, objekt and f"Objekt: {objekt}")
+
     if debtor_name and debtor is not recipient:
+        pdf.set_font(FONT_FAMILY, "", 10)
         pdf.cell(0, 6, _txt(f"Rechnungsschuldner: {debtor_name}"),
                  new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(4)
+        pdf.ln(2)
 
     # Positionstabelle + Summen (gemeinsame Bausteine)
     _render_lines(pdf, invoice.lines.all())
     _render_totals(pdf, invoice.net_total, invoice.tax_total, invoice.gross_total)
     _render_anrechnung(pdf, invoice)
+    _render_zahlung(pdf, invoice, stamm["issuer"], mit_qr=not entwurf)
     _render_arbeitskosten(pdf, invoice)
 
     if invoice.invoice_type in ("GUTSCHRIFT", "STORNO") and invoice.reference_invoice_id:
@@ -558,12 +864,10 @@ def render_invoice_document(invoice, *, compliance=None):
         if ref:
             pdf.ln(4)
             pdf.set_font(FONT_FAMILY, "", 9)
-            pdf.set_text_color(110, 110, 110)
+            pdf.set_text_color(*_HINT)
             pdf.multi_cell(0, 5, _txt(f"Bezieht sich auf Ursprungsbeleg "
                                       f"{ref.invoice_number or ref.invoice_type}."))
-            pdf.set_text_color(0, 0, 0)
-
-    _render_footer(pdf, stamm["issuer"])
+            pdf.set_text_color(*_INK)
 
     out = pdf.output()
     return bytes(out)
@@ -579,6 +883,27 @@ def render_invoice_pdf(invoice_id):
     if invoice is None:
         return None
     return render_invoice_document(invoice)
+
+
+def render_invoice_preview(invoice_id):
+    """Vorschau-PDF einer Rechnung in JEDEM Status (Bytes) oder None.
+
+    Unveröffentlichte Belege erhalten den ENTWURF-Aufdruck und keinen
+    Giro-Code; eine bereits veröffentlichte Rechnung zeigt ihr normales
+    Sichtbild. Es wird NICHTS archiviert — die GoBD-Ausfertigung entsteht
+    weiterhin ausschließlich über get_or_archive_invoice_pdf.
+    """
+    invoice = (
+        Invoice.objects.filter(id=invoice_id)
+        .select_related("property__address")
+        .prefetch_related("lines", "parties__party")
+        .first()
+    )
+    if invoice is None:
+        return None
+    return render_invoice_document(
+        invoice, entwurf=invoice.status != "VEROEFFENTLICHT"
+    )
 
 
 def _num(value):
@@ -612,67 +937,78 @@ def quote_recipient_party(quote):
     return None
 
 
+def _load_quote(quote_id):
+    return (
+        Quote.objects.filter(id=quote_id)
+        .select_related("property__address", "work_order")
+        .prefetch_related("lines", "work_order__parties__party")
+        .first()
+    )
+
+
+def render_quote_document(quote, *, entwurf=False):
+    """Rendert das Angebots-PDF (Bytes) im Markenlayout.
+
+    Ein Angebot friert keine Stammdaten ein (es ist kein GoBD-Beleg im Sinne
+    der Rechnung) — der Aussteller kommt bewusst live aus dem Firmenprofil.
+    """
+    recipient_party = quote_recipient_party(quote)
+    recipient = recipient_party.display_name if recipient_party else None
+    profile = issuer_stammdaten()
+    logo = _logo_bytes(CompanyProfile.objects.first())
+    pdf = new_beleg_pdf(issuer=profile, entwurf=entwurf, logo_bytes=logo)
+
+    prop = quote.property
+    ort = " · ".join(b for b in (prop.name, prop.address.city) if b)
+
+    # Empfänger, falls ableitbar; sonst die Liegenschaft als Bezug (ein Angebot
+    # darf ohne formalen Adressaten rendern).
+    zeilen = [recipient] if recipient else ([f"Liegenschaft: {ort}"] if ort else ["-"])
+    meta = [
+        ("Angebots-Nr.", quote.quote_number or ("Entwurf" if entwurf else None)),
+        ("Angebotsdatum", _de_date(quote.quote_date)),
+        ("Gültig bis", _de_date(quote.valid_until_date)),
+        ("Objekt", ort or None),
+    ]
+    _render_anschrift_und_infoblock(pdf, zeilen, meta)
+
+    titel_text = f"Angebot {quote.quote_number or ''}".strip()
+    if entwurf:
+        titel_text += " — Entwurf"
+    _render_titel(pdf, titel_text, quote.title)
+
+    # Positionstabelle + Summen (gemeinsame Bausteine)
+    _render_lines(pdf, quote.lines.all())
+    _render_totals(pdf, quote.net_total, quote.tax_total, quote.gross_total)
+
+    out = pdf.output()
+    return bytes(out)
+
+
 def render_quote_pdf(quote_id):
     """Rendert das PDF eines versendeten Angebots und gibt die Bytes zurück.
 
     Gibt None zurück, wenn das Angebot nicht existiert oder noch nicht versendet
     ist (ein Entwurf erhält keine finale Ausfertigung — siehe _QUOTE_PDF_STATUSES).
     """
-    quote = (
-        Quote.objects.filter(id=quote_id)
-        .select_related("property__address", "work_order")
-        .prefetch_related("lines", "work_order__parties__party")
-        .first()
-    )
+    quote = _load_quote(quote_id)
     if quote is None or quote.status not in _QUOTE_PDF_STATUSES:
         return None
+    return render_quote_document(quote)
 
-    recipient_party = quote_recipient_party(quote)
-    recipient = recipient_party.display_name if recipient_party else None
 
-    pdf = new_beleg_pdf()
+def render_quote_preview(quote_id):
+    """Vorschau-PDF eines Angebots in JEDEM Status (Bytes) oder None.
 
-    # Ein Angebot friert keine Stammdaten ein (es ist kein GoBD-Beleg im Sinne
-    # der Rechnung) — der Aussteller kommt hier bewusst live aus dem Firmenprofil.
-    profile = issuer_stammdaten()
-    _render_issuer(pdf, profile)
-
-    # Empfänger, falls ableitbar; sonst die Liegenschaft als Bezug (ein Angebot
-    # darf ohne formalen Adressaten rendern).
-    pdf.set_font(FONT_FAMILY, "", 11)
-    if recipient:
-        pdf.cell(0, 6, _txt(recipient), new_x="LMARGIN", new_y="NEXT")
-    else:
-        prop = quote.property
-        ort = " · ".join(b for b in (prop.name, prop.address.city) if b)
-        pdf.set_text_color(110, 110, 110)
-        pdf.cell(0, 6, _txt(f"Liegenschaft: {ort}") if ort else "-",
-                 new_x="LMARGIN", new_y="NEXT")
-        pdf.set_text_color(0, 0, 0)
-    pdf.ln(4)
-
-    # Belegkopf
-    pdf.set_font(FONT_FAMILY, "B", 16)
-    pdf.cell(0, 9, f"Angebot {quote.quote_number or ''}".strip(),
-             new_x="LMARGIN", new_y="NEXT")
-    pdf.set_font(FONT_FAMILY, "", 12)
-    pdf.set_text_color(70, 70, 70)
-    pdf.cell(0, 7, _txt(quote.title), new_x="LMARGIN", new_y="NEXT")
-    pdf.set_text_color(0, 0, 0)
-    pdf.set_font(FONT_FAMILY, "", 10)
-    pdf.cell(0, 6, f"Angebotsdatum: {_de_date(quote.quote_date)}"
-                   f"    Gültig bis: {_de_date(quote.valid_until_date)}",
-             new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(4)
-
-    # Positionstabelle + Summen (gemeinsame Bausteine)
-    _render_lines(pdf, quote.lines.all())
-    _render_totals(pdf, quote.net_total, quote.tax_total, quote.gross_total)
-
-    _render_footer(pdf, profile)
-
-    out = pdf.output()
-    return bytes(out)
+    Noch nicht versendete Angebote erhalten den ENTWURF-Aufdruck. Es wird
+    nichts archiviert.
+    """
+    quote = _load_quote(quote_id)
+    if quote is None:
+        return None
+    return render_quote_document(
+        quote, entwurf=quote.status not in _QUOTE_PDF_STATUSES
+    )
 
 
 # --- GoBD-Archivierung (content.file + content.file_link) -------------------

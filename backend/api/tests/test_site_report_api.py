@@ -304,3 +304,33 @@ def test_foto_anhang_ueber_dateien_api(client, seeded, fake_storage):
     liste = c.get(f"/api/content/files?site_report_id={rid}").json()
     assert liste["total"] == 1
     assert liste["items"][0]["original_filename"] == "vorher.png"
+
+
+# --- Bericht-PDF ------------------------------------------------------------
+
+@pytest.mark.django_db
+def test_bericht_pdf_entwurf(client, seeded, fake_storage):
+    """Das Bericht-PDF rendert im ENTWURF (mit Aufdruck) — on-the-fly, 200."""
+    c = logged_in_client("ADMINISTRATION")
+    r = c.post(
+        "/api/workflow/site_reports",
+        data={
+            "work_order_id": str(seeded["order"].id),
+            "report_date": "2026-07-11",
+            "activity_text": "Fliesen entfernt, Estrich vorbereitet.",
+        },
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    report_id = r.json()["id"]
+    pdf = c.get(f"/api/workflow/site_reports/{report_id}/pdf")
+    assert pdf.status_code == 200
+    assert pdf["Content-Type"] == "application/pdf"
+    assert pdf.content[:4] == b"%PDF"
+
+
+@pytest.mark.django_db
+def test_bericht_pdf_unbekannt_404(client, db):
+    c = logged_in_client("ADMINISTRATION")
+    r = c.get(f"/api/workflow/site_reports/{uuid.uuid4()}/pdf")
+    assert r.status_code == 404

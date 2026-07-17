@@ -849,6 +849,23 @@ def quote_pdf(request, quote_id: UUID):
     return response
 
 
+@router.get("/quotes/{quote_id}/pdf/vorschau")
+def quote_pdf_vorschau(request, quote_id: UUID):
+    """Vorschau-PDF eines Angebots in JEDEM Status (on-the-fly, unarchiviert).
+
+    Noch nicht versendete Angebote tragen einen deutlichen ENTWURF-Aufdruck.
+    Es wird bewusst NICHTS archiviert — die verbindliche Ausfertigung entsteht
+    weiterhin ausschließlich über GET /quotes/{id}/pdf ab VERSENDET (GoBD:
+    eine Ausfertigung je Beleg)."""
+    require(request, "invoicing", "LESEN")
+    pdf = beleg_pdf_service.render_quote_preview(quote_id)
+    if pdf is None:
+        raise HttpError(404, "Angebot nicht gefunden.")
+    response = HttpResponse(pdf, content_type="application/pdf")
+    response["Content-Disposition"] = 'inline; filename="vorschau.pdf"'
+    return response
+
+
 class QuoteEmailIn(Schema):
     # Optional: überschreibt die abgeleitete Empfänger-Adresse (der Nutzer darf sie
     # im Dialog bestätigen/korrigieren). Weglassen = ableiten.
@@ -1877,6 +1894,23 @@ def invoice_pdf(request, invoice_id: UUID):
     safe = "".join(ch for ch in raw if ch.isalnum() or ch in "-_")
     response = HttpResponse(pdf, content_type="application/pdf")
     response["Content-Disposition"] = f'inline; filename="{safe or "beleg"}.pdf"'
+    return response
+
+
+@router.get("/invoices/{invoice_id}/pdf/vorschau")
+def invoice_pdf_vorschau(request, invoice_id: UUID):
+    """Vorschau-PDF einer Rechnung in JEDEM Status (on-the-fly, unarchiviert).
+
+    Unveröffentlichte Belege tragen einen deutlichen ENTWURF-Aufdruck und
+    keinen Giro-Code (ein Entwurf fordert keine Zahlung). Es wird bewusst
+    NICHTS archiviert — die GoBD-Ausfertigung entsteht weiterhin
+    ausschließlich über GET /invoices/{id}/pdf ab VEROEFFENTLICHT."""
+    require(request, "invoicing", "LESEN")
+    pdf = beleg_pdf_service.render_invoice_preview(invoice_id)
+    if pdf is None:
+        raise HttpError(404, "Rechnung nicht gefunden.")
+    response = HttpResponse(pdf, content_type="application/pdf")
+    response["Content-Disposition"] = 'inline; filename="vorschau.pdf"'
     return response
 
 

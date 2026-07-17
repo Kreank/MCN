@@ -87,14 +87,15 @@
                 <span class="bericht__kicker">Bericht vom {{ datum(r.report_date) }}</span>
                 <span class="stamp {{ statusClass(r.status) }}">{{ statusLabel(r.status) }}</span>
               </div>
-              @if (r.status === 'ENTWURF' && darfAendern()) {
-                <div class="bericht__aktionen">
+              <div class="bericht__aktionen">
+                <a class="btn" [href]="pdfUrl(r.id)" target="_blank" rel="noopener" aria-label="Bericht als PDF ansehen (öffnet in neuem Tab)">PDF ansehen ↗</a>
+                @if (r.status === 'ENTWURF' && darfAendern()) {
                   <button type="button" class="btn" (click)="bearbeitenOeffnen()">Bearbeiten</button>
                   <button type="button" class="btn btn--primary" (click)="unterschriftOeffnen()">
                     Unterschreiben
                   </button>
-                </div>
-              }
+                }
+              </div>
             </header>
 
             @if (amEinsatz() && !r.work_order_id) {

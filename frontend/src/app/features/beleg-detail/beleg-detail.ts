@@ -565,6 +565,11 @@ export class BelegDetail {
     return `/api/invoicing/quotes/${id}/pdf`;
   }
 
+  /** Entwurfsvorschau (jeder Status, ENTWURF-Aufdruck, wird nie archiviert). */
+  vorschauUrl(id: string): string {
+    return `/api/invoicing/quotes/${id}/pdf/vorschau`;
+  }
+
   private fehlerText(err: unknown): string {
     if (istVerboten(err)) return fehlerDetail(err) ?? 'Keine Berechtigung für diese Aktion.';
     return fehlerDetail(err) ?? 'Die Aktion ist fehlgeschlagen. Bitte erneut versuchen.';

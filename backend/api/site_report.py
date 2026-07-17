@@ -50,11 +50,14 @@ from ninja.errors import HttpError
 from ninja.responses import Status
 from ninja.security import django_auth
 
+from django.http import HttpResponse
+
 from api.auftrag import guard_auftrag
 from api.objektgrenze import guard_objekt
 from api.permissions import require_scoped
 from db_core.models import JobAssignment, ServiceJob, WorkOrder
 from db_core.services import site_report as report_service
+from db_core.services import site_report_pdf as report_pdf_service
 
 router = Router()
 
@@ -454,6 +457,29 @@ def get_site_report(request, report_id: UUID):
         raise HttpError(404, "Bericht nicht gefunden.")
     _guard_report_lesen(report, actor, scope)
     return _detail_out(report)
+
+
+@router.get("/site_reports/{report_id}/pdf")
+def site_report_pdf(request, report_id: UUID):
+    """Bericht-PDF (Markenlayout) — on-the-fly, keine Archivierung.
+
+    ENTWURF trägt einen deutlichen ENTWURF-Aufdruck; ein unterzeichneter
+    Bericht zeigt den Unterschriftsblock. Zugriffsgrenze wie das Detail
+    (`_guard_report_lesen`): Scope 'EIGENE' sieht Berichte an eigenen
+    Objekten, fremde → 404."""
+    actor, scope = require_scoped(request, "workflow", "LESEN")
+    report = report_service.get_report(report_id)
+    if report is None:
+        raise HttpError(404, "Bericht nicht gefunden.")
+    _guard_report_lesen(report, actor, scope)
+    pdf = report_pdf_service.render_site_report_pdf(report_id)
+    if pdf is None:
+        raise HttpError(404, "Bericht nicht gefunden.")
+    response = HttpResponse(pdf, content_type="application/pdf")
+    response["Content-Disposition"] = (
+        f'inline; filename="baustellenbericht-{report.report_date}.pdf"'
+    )
+    return response
 
 
 @router.post("/site_reports", response={201: SiteReportOut}, auth=django_auth)
