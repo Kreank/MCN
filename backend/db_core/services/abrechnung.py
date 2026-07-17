@@ -1366,6 +1366,8 @@ def rechnung_aus_angebot(
                 invoice_type="RECHNUNG",
                 project_id=quote.project_id,
                 work_order_id=quote.work_order_id,
+                # Vorgangsbezug vom Angebot übernehmen (Migration 0113).
+                service_case_id=quote.service_case_id,
                 invoice_date=invoice_date,
                 due_date=due_date,
                 payment_term_days=payment_term_days,
@@ -1713,6 +1715,8 @@ def rechnung_aus_auftrag(
                 invoice_type="RECHNUNG",
                 project_id=order.project_id,
                 work_order_id=order.id,
+                # Vorgangsbezug vom Auftrag übernehmen (Migration 0113).
+                service_case_id=order.service_case_id,
                 invoice_date=invoice_date,
                 due_date=due_date,
                 payment_term_days=payment_term_days,
@@ -2257,6 +2261,8 @@ def rechnung_aus_nachtrag(
                 invoice_type="RECHNUNG",
                 project_id=order.project_id,
                 work_order_id=order.id,
+                # Vorgangsbezug vom Auftrag übernehmen (Migration 0113).
+                service_case_id=order.service_case_id,
                 invoice_date=invoice_date,
                 due_date=due_date,
                 payment_term_days=payment_term_days,

@@ -142,6 +142,10 @@ class ProjectFilter(Schema):
     q: str | None = None
     status: str | None = None
     category_id: UUID | None = None
+    # Liegenschaftsfilter: „alle Projekte dieser Liegenschaft" für die Objekt-
+    # Detailansicht. Projekte hängen über die M:N `workflow.project_property` an der
+    # Liegenschaft.
+    property_id: UUID | None = None
 
 
 # --- Zeilenbegrenzung ('EIGENE') -------------------------------------------
@@ -208,6 +212,12 @@ def list_projects(
         qs = qs.filter(status=filters.status)
     if filters.category_id:
         qs = qs.filter(category_id=filters.category_id)
+    if filters.property_id:
+        # Über die M:N zur Liegenschaft; distinct(), damit ein Projekt mit mehreren
+        # Liegenschaften nicht mehrfach in der Liste steht.
+        qs = qs.filter(
+            property_links__property_id=filters.property_id
+        ).distinct()
 
     qs = qs.order_by("-created_at", "id")
 
@@ -554,6 +564,9 @@ class ServiceCaseBoardOut(Schema):
 
 class ServiceCaseBoardFilter(Schema):
     project_id: UUID | None = None
+    # Liegenschaftsfilter: „alle Vorgänge dieser Liegenschaft" für die Objekt-
+    # Detailansicht. `service_case.property_id` ist NOT NULL — direkter Filter.
+    property_id: UUID | None = None
     status: str | None = None
     q: str | None = None
     # Endspalten-Karten mitladen (ABGESCHLOSSEN/ABGELEHNT). Default aus: das Board
@@ -589,7 +602,8 @@ def list_service_cases(
     hat. `service_case.property_id` ist NOT NULL, die Begrenzung deshalb ein direkter
     Filter (kein Coalesce nötig wie beim Einsatz).
 
-    Filter: project_id, status (exakt), q (Freitext auf Nummer/Betreff). Ohne
+    Filter: project_id, property_id (alle Vorgänge einer Liegenschaft), status
+    (exakt), q (Freitext auf Nummer/Betreff). Ohne
     expliziten status-Filter werden Endspalten-Vorgänge (ABGESCHLOSSEN/ABGELEHNT)
     per Default ausgeblendet; include_terminal=true lädt sie mit. N+1-frei über
     select_related('project'); die Spalten kommen aus einem eigenen (zeilenzahl-
@@ -601,6 +615,10 @@ def list_service_cases(
 
     if filters.project_id:
         qs = qs.filter(project_id=filters.project_id)
+    if filters.property_id:
+        # Narrowt zusätzlich zur Objektsicht-Begrenzung (die für Scope EIGENE
+        # weiterhin greift) — die Scope-Grenze bleibt unangetastet.
+        qs = qs.filter(property_id=filters.property_id)
     if filters.status:
         qs = qs.filter(status=filters.status)
     elif not filters.include_terminal:

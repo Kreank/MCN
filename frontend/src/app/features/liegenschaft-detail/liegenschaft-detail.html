@@ -189,11 +189,81 @@
       @if (tab() === 'belegung') {
         <app-belegung [propertyId]="daten()!.id" />
       }
-      @if (tab() === 'dokumente') {
-        <div class="tab-platzhalter">
-          <h2 class="tab-platzhalter__titel">Dokumente</h2>
-          <p>Objektbezogene Angebote, Rechnungen und Berichte erscheinen hier, sobald der Dokumentenbereich steht (Roadmap 05).</p>
+      @if (tab() === 'vorgaenge') {
+        <div class="objektarbeit">
+          <!-- Projekte der Liegenschaft -->
+          <section class="objektgruppe" aria-labelledby="objekt-projekte-titel">
+            <div class="objektgruppe__kopf">
+              <h3 id="objekt-projekte-titel" class="objektgruppe__titel">Projekte</h3>
+              @if (projekteState().kind === 'ready') {
+                <span class="objektgruppe__zahl">{{ $any(projekteState()).items.length }}</span>
+              }
+            </div>
+            @switch (projekteState().kind) {
+              @case ('loading') { <p class="lade-hinweis" role="status">Projekte werden geladen …</p> }
+              @case ('forbidden') { <app-kein-zugriff [detail]="$any(projekteState()).detail" /> }
+              @case ('error') { <div class="tab-platzhalter"><p>Die Projekte konnten nicht geladen werden.</p></div> }
+              @case ('ready') {
+                @if ($any(projekteState()).items.length === 0) {
+                  <div class="tab-platzhalter"><p>Dieser Liegenschaft ist noch kein Projekt zugeordnet.</p></div>
+                } @else {
+                  <ul class="objektliste">
+                    @for (p of $any(projekteState()).items; track p.id) {
+                      <li>
+                        <a class="objektzeile" [routerLink]="['/projekte', p.id]">
+                          <span class="objektzeile__name">{{ p.name }}</span>
+                          <span class="objektzeile__stamps">
+                            @if (p.category) { <span class="stamp stamp--type">{{ p.category.name }}</span> }
+                            <span class="stamp {{ projektStatusClass(p.status) }}">{{ projektStatusLabel(p.status) }}</span>
+                          </span>
+                          <span class="objektzeile__nr">{{ p.project_number }}</span>
+                        </a>
+                      </li>
+                    }
+                  </ul>
+                }
+              }
+            }
+          </section>
+
+          <!-- Vorgänge der Liegenschaft -->
+          <section class="objektgruppe" aria-labelledby="objekt-vorgaenge-titel">
+            <div class="objektgruppe__kopf">
+              <h3 id="objekt-vorgaenge-titel" class="objektgruppe__titel">Vorgänge</h3>
+              @if (vorgaengeState().kind === 'ready') {
+                <span class="objektgruppe__zahl">{{ $any(vorgaengeState()).items.length }}</span>
+              }
+            </div>
+            @switch (vorgaengeState().kind) {
+              @case ('loading') { <p class="lade-hinweis" role="status">Vorgänge werden geladen …</p> }
+              @case ('forbidden') { <app-kein-zugriff [detail]="$any(vorgaengeState()).detail" /> }
+              @case ('error') { <div class="tab-platzhalter"><p>Die Vorgänge konnten nicht geladen werden.</p></div> }
+              @case ('ready') {
+                @if ($any(vorgaengeState()).items.length === 0) {
+                  <div class="tab-platzhalter"><p>Zu dieser Liegenschaft gibt es noch keine Vorgänge.</p></div>
+                } @else {
+                  <ul class="objektliste">
+                    @for (v of $any(vorgaengeState()).items; track v.id) {
+                      <li>
+                        <a class="objektzeile" [routerLink]="['/vorgaenge', v.id]">
+                          <span class="objektzeile__name">{{ v.subject }}</span>
+                          <span class="objektzeile__stamps">
+                            <span class="stamp {{ priorityClass(v.priority) }}">{{ priorityLabel(v.priority) }}</span>
+                            <span class="stamp {{ caseStatusClass(v.status) }}">{{ caseStatusLabel(v.status) }}</span>
+                          </span>
+                          <span class="objektzeile__nr">{{ v.case_number }}</span>
+                        </a>
+                      </li>
+                    }
+                  </ul>
+                }
+              }
+            }
+          </section>
         </div>
+      }
+      @if (tab() === 'dokumente') {
+        <app-belege [kontext]="belegKontext()" />
       }
       @if (tab() === 'dateien') {
         <app-dateien [ziel]="dateienZiel()" />

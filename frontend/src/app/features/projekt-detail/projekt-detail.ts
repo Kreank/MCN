@@ -31,6 +31,7 @@ import {
 } from '../../core/projekt.model';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { Dateien } from '../../shared/dateien/dateien';
+import { Belege, BelegKontext } from '../../shared/belege/belege';
 import { ZielFilter } from '../../core/datei.model';
 import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 import { Dialog } from '../../shared/dialog/dialog';
@@ -67,7 +68,7 @@ type LazyState<T> =
 
 @Component({
   selector: 'app-projekt-detail',
-  imports: [Mappe, RouterLink, KeinZugriff, Dateien, ReactiveFormsModule, Dialog, Feld, ReferenzWahl],
+  imports: [Mappe, RouterLink, KeinZugriff, Dateien, Belege, ReactiveFormsModule, Dialog, Feld, ReferenzWahl],
   templateUrl: './projekt-detail.html',
   styleUrl: './projekt-detail.scss',
 })
@@ -107,6 +108,7 @@ export class ProjektDetail {
     { id: 'aufgaben', label: 'Aufgaben' },
     { id: 'logbuch', label: 'Logbuch' },
     { id: 'checklisten', label: 'Checklisten' },
+    { id: 'dokumente', label: 'Dokumente' },
     { id: 'dateien', label: 'Dateien' },
   ];
 
@@ -117,6 +119,11 @@ export class ProjektDetail {
 
   /** Stabile Zielreferenz fuer den Dateien-Tab (nur bei Projektwechsel neu). */
   protected readonly dateienZiel = computed<ZielFilter>(() => ({
+    project_id: this.daten()?.id ?? '',
+  }));
+
+  /** Stabiler Beleg-Kontext für den Dokumente-Tab (Belege dieses Projekts). */
+  protected readonly belegKontext = computed<BelegKontext>(() => ({
     project_id: this.daten()?.id ?? '',
   }));
 

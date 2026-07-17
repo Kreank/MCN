@@ -326,6 +326,9 @@
           }
         }
       }
+      @if (tab() === 'dokumente') {
+        <app-belege [kontext]="belegKontext()" />
+      }
       @if (tab() === 'dateien') {
         <app-dateien [ziel]="dateienZiel()" />
       }

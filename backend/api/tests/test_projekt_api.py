@@ -1227,3 +1227,156 @@ def test_internal_note_setzen_und_auslesen(admin_client, seeded):
     )
     assert r3.status_code == 200
     assert r3.json()["internal_note"] is None
+
+
+# --- Belege bei der Aufstufung mitziehen (Migration 0113) -------------------
+
+@pytest.mark.django_db
+def test_promote_haengt_belege_um(admin_client, app_user):
+    """Hochstufen zieht Belege am Vorgang UND an dessen Aufträgen ins Projekt."""
+    from db_core.models import Invoice, Quote
+    from db_core.services import auftrag as auftrag_service
+    from db_core.services import beleg as beleg_service
+
+    obj = property_service.create_property(
+        app_user.id, name="EFH", property_type="EINFAMILIENHAUS",
+        street="Weg", postal_code="10115", city="Berlin",
+    )
+    case = projekt_service.create_service_case(
+        app_user.id, property_id=obj.id, subject="Sanierung",
+    )
+    wo = auftrag_service.create_work_order(
+        app_user.id, property_id=obj.id, title="Auftrag", service_case_id=case.id,
+    )
+    line = {"line_type": "MATERIAL", "description": "P", "quantity": 1,
+            "unit_price": 100, "tax_code": "DE_19"}
+    # Angebot direkt am Vorgang, Rechnung über den Auftrag (erbt den Vorgang).
+    quote = beleg_service.create_quote(
+        app_user.id, property_id=obj.id, title="A", service_case_id=case.id, lines=[line],
+    )
+    invoice = beleg_service.create_invoice(
+        app_user.id, property_id=obj.id, work_order_id=wo.id, lines=[line],
+    )
+    assert quote.project_id is None and invoice.project_id is None
+
+    r = admin_client.post(
+        f"/api/workflow/service_cases/{case.id}/promote-to-project",
+        data={}, content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    proj_id = r.json()["id"]
+    assert str(Quote.objects.get(id=quote.id).project_id) == proj_id
+    assert str(Invoice.objects.get(id=invoice.id).project_id) == proj_id
+
+
+@pytest.mark.django_db
+def test_promote_stiehlt_keine_fremden_belege(admin_client, app_user):
+    """Belege eines anderen Projekts bleiben bei der Aufstufung unberührt."""
+    from db_core.models import Quote
+    from db_core.services import beleg as beleg_service
+
+    obj = property_service.create_property(
+        app_user.id, name="EFH", property_type="EINFAMILIENHAUS",
+        street="Weg", postal_code="10115", city="Berlin",
+    )
+    fremd = projekt_service.create_project(
+        app_user.id, name="Fremdprojekt", property_ids=[obj.id],
+    )
+    line = {"line_type": "MATERIAL", "description": "P", "quantity": 1,
+            "unit_price": 100, "tax_code": "DE_19"}
+    quote_fremd = beleg_service.create_quote(
+        app_user.id, property_id=obj.id, title="Fremd", project_id=fremd.id, lines=[line],
+    )
+    case = projekt_service.create_service_case(
+        app_user.id, property_id=obj.id, subject="Neu",
+    )
+    quote_mein = beleg_service.create_quote(
+        app_user.id, property_id=obj.id, title="Mein", service_case_id=case.id, lines=[line],
+    )
+    r = admin_client.post(
+        f"/api/workflow/service_cases/{case.id}/promote-to-project",
+        data={}, content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    proj_id = r.json()["id"]
+    assert str(Quote.objects.get(id=quote_mein.id).project_id) == proj_id
+    # Das fremde Angebot behält sein Projekt.
+    assert str(Quote.objects.get(id=quote_fremd.id).project_id) == str(fremd.id)
+
+
+# --- Liegenschaftsfilter (Objekt-Detailansicht) -----------------------------
+
+@pytest.mark.django_db
+def test_projects_filter_property_id(admin_client, app_user):
+    """GET /projects?property_id liefert nur Projekte dieser Liegenschaft."""
+    obj_a = property_service.create_property(
+        app_user.id, name="A", property_type="WEG",
+        street="A", postal_code="10115", city="Berlin",
+    )
+    obj_b = property_service.create_property(
+        app_user.id, name="B", property_type="WEG",
+        street="B", postal_code="10115", city="Berlin",
+    )
+    p_a = projekt_service.create_project(app_user.id, name="PA", property_ids=[obj_a.id])
+    projekt_service.create_project(app_user.id, name="PB", property_ids=[obj_b.id])
+    r = admin_client.get(f"/api/workflow/projects?property_id={obj_a.id}")
+    assert r.status_code == 200
+    ids = {i["id"] for i in r.json()["items"]}
+    assert ids == {str(p_a.id)}
+
+
+@pytest.mark.django_db
+def test_service_cases_filter_property_id(admin_client, app_user):
+    """GET /service_cases?property_id liefert nur Vorgänge dieser Liegenschaft."""
+    obj_a = property_service.create_property(
+        app_user.id, name="A", property_type="WEG",
+        street="A", postal_code="10115", city="Berlin",
+    )
+    obj_b = property_service.create_property(
+        app_user.id, name="B", property_type="WEG",
+        street="B", postal_code="10115", city="Berlin",
+    )
+    case_a = projekt_service.create_service_case(
+        app_user.id, property_id=obj_a.id, subject="CA",
+    )
+    projekt_service.create_service_case(
+        app_user.id, property_id=obj_b.id, subject="CB",
+    )
+    r = admin_client.get(f"/api/workflow/service_cases?property_id={obj_a.id}")
+    assert r.status_code == 200
+    ids = {i["id"] for i in r.json()["items"]}
+    assert ids == {str(case_a.id)}
+
+
+@pytest.mark.django_db
+def test_promote_laesst_versendete_belege_unberuehrt(admin_client, app_user):
+    """Ein versendetes (eingefrorenes) Angebot bricht die Aufstufung nicht ab und
+    bleibt projektlos (B-30: project_id ist nach Versand eingefroren)."""
+    from db_core.models import Quote
+    from db_core.services import auftrag as auftrag_service
+    from db_core.services import beleg as beleg_service
+
+    obj = property_service.create_property(
+        app_user.id, name="EFH", property_type="EINFAMILIENHAUS",
+        street="Weg", postal_code="10115", city="Berlin",
+    )
+    case = projekt_service.create_service_case(
+        app_user.id, property_id=obj.id, subject="Gewachsen",
+    )
+    wo = auftrag_service.create_work_order(
+        app_user.id, property_id=obj.id, title="Auftrag", service_case_id=case.id,
+    )
+    quote = beleg_service.create_quote(
+        app_user.id, property_id=obj.id, title="A", work_order_id=wo.id,
+        lines=[{"line_type": "MATERIAL", "description": "P", "quantity": 1,
+                "unit_price": 100, "tax_code": "DE_19"}],
+    )
+    beleg_service.send_quote(app_user.id, quote_id=quote.id)
+
+    r = admin_client.post(
+        f"/api/workflow/service_cases/{case.id}/promote-to-project",
+        data={}, content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    # Das versendete Angebot bleibt projektlos (kein Trigger-Abbruch).
+    assert Quote.objects.get(id=quote.id).project_id is None

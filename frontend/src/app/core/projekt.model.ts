@@ -43,6 +43,8 @@ export interface ProjectQuery {
   q?: string;
   status?: ProjectStatus | null;
   category_id?: string | null;
+  /** Nur Projekte dieser Liegenschaft (Bündelung an der Objektmappe). */
+  property_id?: string | null;
 }
 
 // --- Detail ----------------------------------------------------------------
@@ -189,6 +191,8 @@ export interface ServiceCaseBoard {
 
 export interface ServiceCaseBoardQuery {
   project_id?: string | null;
+  /** Nur Vorgänge dieser Liegenschaft (Bündelung an der Objektmappe). */
+  property_id?: string | null;
   status?: ServiceCaseStatus | null;
   q?: string;
   include_terminal?: boolean;

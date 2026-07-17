@@ -38,6 +38,12 @@ export interface Quote {
   gross_total: string | null;
   property: QuotePropertyRef;
   /**
+   * Vorgangsbezug: der Vorgang, an dem dieser Beleg hängt — direkt oder über einen
+   * Auftrag des Vorgangs. So lassen sich Belege an der Vorgangsmappe bündeln.
+   * null = keinem Vorgang zugeordnet.
+   */
+  service_case_id: string | null;
+  /**
    * Auftragsbezug: die Aussage „dieses Angebot ist das **Soll** dieser Baustelle".
    * Der Soll-Ist-Abgleich am Baustellenbericht stützt sich ausschließlich darauf.
    * null = keinem Auftrag zugeordnet.
@@ -68,6 +74,8 @@ export interface QuoteQuery {
   status?: QuoteStatus | null;
   property_id?: string | null;
   project_id?: string | null;
+  /** Belege des Vorgangs (direkt am Vorgang oder an einem seiner Aufträge). */
+  service_case_id?: string | null;
 }
 
 /**
@@ -315,6 +323,11 @@ export interface Invoice {
   net_total: string | null;
   gross_total: string | null;
   property: QuotePropertyRef;
+  /**
+   * Vorgangsbezug: der Vorgang, an dem diese Rechnung hängt — direkt oder über
+   * einen Auftrag des Vorgangs. null = keinem Vorgang zugeordnet.
+   */
+  service_case_id: string | null;
 }
 
 export interface InvoicePage {
@@ -332,6 +345,8 @@ export interface InvoiceQuery {
   invoice_type?: InvoiceType | null;
   property_id?: string | null;
   project_id?: string | null;
+  /** Rechnungen des Vorgangs (direkt am Vorgang oder an einem seiner Aufträge). */
+  service_case_id?: string | null;
 }
 
 export interface InvoiceParty {
@@ -517,6 +532,9 @@ export interface QuoteCreate {
   property_id: string;
   title: string;
   project_id?: string | null;
+  /** Vorgangsbezug: hängt das Angebot direkt an einen Vorgang. Hat der Vorgang ein
+   *  Projekt, erbt das Angebot es serverseitig automatisch. */
+  service_case_id?: string | null;
   /** Auftragsbezug (= Soll dieser Baustelle). Der Auftrag muss zur selben
    *  Liegenschaft/zum selben Projekt gehören, sonst 422. */
   work_order_id?: string | null;

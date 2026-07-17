@@ -175,3 +175,85 @@
   font-size: var(--step--1);
   color: var(--ink-muted);
 }
+
+// ======================== Projekte & Vorgänge ==============================
+.objektarbeit {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+.objektgruppe {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.objektgruppe__kopf {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.objektgruppe__titel {
+  margin: 0;
+  font-size: var(--step-1);
+}
+.objektgruppe__zahl {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.75rem;
+  height: 1.5rem;
+  padding: 0 var(--space-2);
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+.objektliste {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.objektzeile {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-1);
+  color: inherit;
+  text-decoration: none;
+  transition: border-color 0.15s ease;
+
+  &:hover {
+    border-left-color: var(--accent);
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+.objektzeile__name {
+  flex: 1;
+  min-width: 10rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+.objektzeile__stamps {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.objektzeile__nr {
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}

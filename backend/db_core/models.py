@@ -894,6 +894,17 @@ class Quote(models.Model):
         blank=True,
         related_name="quotes",
     )
+    # Vorgangsbezug (Migration 0113): der Beleg entsteht am Vorgang und wird bei der
+    # Aufstufung Vorgang→Projekt mitgezogen. Zusammengesetzter FK gegen die
+    # Liegenschaft (analog work_order). Optional.
+    service_case = models.ForeignKey(
+        "ServiceCase",
+        models.DO_NOTHING,
+        db_column="service_case_id",
+        null=True,
+        blank=True,
+        related_name="quotes",
+    )
     project = models.ForeignKey(
         Project,
         models.DO_NOTHING,
@@ -1043,6 +1054,16 @@ class Invoice(models.Model):
         "WorkOrder",
         models.DO_NOTHING,
         db_column="work_order_id",
+        null=True,
+        blank=True,
+        related_name="invoices",
+    )
+    # Vorgangsbezug (Migration 0113): siehe Quote.service_case. Optional; wird bei
+    # der Aufstufung Vorgang→Projekt mitgezogen.
+    service_case = models.ForeignKey(
+        "ServiceCase",
+        models.DO_NOTHING,
+        db_column="service_case_id",
         null=True,
         blank=True,
         related_name="invoices",

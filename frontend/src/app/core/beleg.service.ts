@@ -43,6 +43,7 @@ export class BelegService {
     if (query.status) params = params.set('status', query.status);
     if (query.property_id) params = params.set('property_id', query.property_id);
     if (query.project_id) params = params.set('project_id', query.project_id);
+    if (query.service_case_id) params = params.set('service_case_id', query.service_case_id);
     return this.http.get<QuotePage>(this.base, { params });
   }
 
@@ -66,6 +67,7 @@ export class BelegService {
     if (query.status) params = params.set('status', query.status);
     if (query.property_id) params = params.set('property_id', query.property_id);
     if (query.project_id) params = params.set('project_id', query.project_id);
+    if (query.service_case_id) params = params.set('service_case_id', query.service_case_id);
     return this.http.get<QuoteMengenPage>(`${this.base}/mengen`, { params });
   }
 
@@ -96,6 +98,7 @@ export class BelegService {
     if (query.invoice_type) params = params.set('invoice_type', query.invoice_type);
     if (query.property_id) params = params.set('property_id', query.property_id);
     if (query.project_id) params = params.set('project_id', query.project_id);
+    if (query.service_case_id) params = params.set('service_case_id', query.service_case_id);
     return this.http.get<InvoicePage>('/api/invoicing/invoices', { params });
   }
 

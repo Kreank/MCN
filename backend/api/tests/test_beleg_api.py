@@ -6,6 +6,8 @@ import pytest
 from django.contrib.auth import get_user_model
 
 from db_core.models import AppUser, Quote
+from db_core.services import abrechnung as abrechnung_service
+from db_core.services import auftrag as auftrag_service
 from db_core.services import beleg as beleg_service
 from db_core.services import projekt as projekt_service
 from db_core.services import property as property_service
@@ -317,3 +319,216 @@ def test_cover_letter_setzen_auslesen_und_freeze(client, db, app_user, seeded):
         c.get(f"/api/invoicing/quotes/{qid}").json()["cover_letter"]
         == "Sehr geehrte Damen und Herren, anbei unser Angebot."
     )
+
+
+# --- Vorgangsbezug am Beleg (Migration 0113) --------------------------------
+
+def _obj(app_user, *, name="Vorgangsobjekt", city="Berlin"):
+    return property_service.create_property(
+        app_user.id, name=name, property_type="WEG",
+        street="Weg", house_number="1", postal_code="10115", city=city,
+    )
+
+
+_LINE = {"line_type": "MATERIAL", "description": "Pos", "quantity": 1,
+         "unit_price": 100, "tax_code": "DE_19"}
+
+
+@pytest.mark.django_db
+def test_create_quote_mit_vorgang(client, db, app_user):
+    """Angebot mit service_case_id: der Vorgang steht in der Antwort."""
+    obj = _obj(app_user)
+    case = projekt_service.create_service_case(
+        app_user.id, property_id=obj.id, subject="Heizung defekt",
+    )
+    c = _logged_in_client(client, with_app_user=True)
+    r = c.post(
+        "/api/invoicing/quotes",
+        data={"property_id": str(obj.id), "title": "A", "service_case_id": str(case.id),
+              "lines": [_LINE]},
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    assert r.json()["service_case_id"] == str(case.id)
+
+
+@pytest.mark.django_db
+def test_create_quote_vorgang_fremde_liegenschaft_422(client, db, app_user):
+    """Vorgang einer ANDEREN Liegenschaft ist kein zulässiger Bezug (422)."""
+    obj1 = _obj(app_user, name="Obj1")
+    obj2 = _obj(app_user, name="Obj2")
+    case2 = projekt_service.create_service_case(
+        app_user.id, property_id=obj2.id, subject="X",
+    )
+    c = _logged_in_client(client, with_app_user=True)
+    r = c.post(
+        "/api/invoicing/quotes",
+        data={"property_id": str(obj1.id), "title": "A",
+              "service_case_id": str(case2.id), "lines": [_LINE]},
+        content_type="application/json",
+    )
+    assert r.status_code == 422
+    assert "Liegenschaft" in r.json()["detail"]
+
+
+@pytest.mark.django_db
+def test_create_quote_erbt_vorgang_vom_auftrag(app_user):
+    """Ohne service_case_id, aber mit Auftrag an einem Vorgang: Vorgang wird geerbt."""
+    obj = _obj(app_user)
+    case = projekt_service.create_service_case(
+        app_user.id, property_id=obj.id, subject="Y",
+    )
+    wo = auftrag_service.create_work_order(
+        app_user.id, property_id=obj.id, title="Auftrag", service_case_id=case.id,
+    )
+    q = beleg_service.create_quote(
+        app_user.id, property_id=obj.id, title="A", work_order_id=wo.id, lines=[_LINE],
+    )
+    assert str(q.service_case_id) == str(case.id)
+
+
+@pytest.mark.django_db
+def test_create_quote_auftrag_vorgang_mismatch_422(app_user):
+    """Auftrag und übergebener Vorgang passen nicht zusammen → Fachfehler."""
+    obj = _obj(app_user)
+    case1 = projekt_service.create_service_case(
+        app_user.id, property_id=obj.id, subject="C1",
+    )
+    case2 = projekt_service.create_service_case(
+        app_user.id, property_id=obj.id, subject="C2",
+    )
+    wo = auftrag_service.create_work_order(
+        app_user.id, property_id=obj.id, title="Auftrag", service_case_id=case1.id,
+    )
+    with pytest.raises(ValueError, match="anderen Vorgang"):
+        beleg_service.create_quote(
+            app_user.id, property_id=obj.id, title="A",
+            work_order_id=wo.id, service_case_id=case2.id, lines=[_LINE],
+        )
+
+
+@pytest.mark.django_db
+def test_create_quote_erbt_projekt_vom_vorgang(app_user):
+    """Hat der Vorgang ein Projekt und der Aufruf keins, wird es geerbt."""
+    obj = _obj(app_user)
+    projekt = projekt_service.create_project(
+        app_user.id, name="P", property_ids=[obj.id],
+    )
+    case = projekt_service.create_service_case(
+        app_user.id, property_id=obj.id, subject="Z", project_id=projekt.id,
+    )
+    q = beleg_service.create_quote(
+        app_user.id, property_id=obj.id, title="A", service_case_id=case.id, lines=[_LINE],
+    )
+    assert str(q.project_id) == str(projekt.id)
+
+
+@pytest.mark.django_db
+def test_create_quote_abweichendes_projekt_422(app_user):
+    """Vorgang trägt Projekt A, Aufruf übergibt Projekt B → Fachfehler."""
+    obj = _obj(app_user)
+    projekt_a = projekt_service.create_project(
+        app_user.id, name="A", property_ids=[obj.id],
+    )
+    projekt_b = projekt_service.create_project(
+        app_user.id, name="B", property_ids=[obj.id],
+    )
+    case = projekt_service.create_service_case(
+        app_user.id, property_id=obj.id, subject="Z", project_id=projekt_a.id,
+    )
+    with pytest.raises(ValueError, match="anderes Projekt"):
+        beleg_service.create_quote(
+            app_user.id, property_id=obj.id, title="A",
+            service_case_id=case.id, project_id=projekt_b.id, lines=[_LINE],
+        )
+
+
+@pytest.mark.django_db
+def test_filter_quotes_nach_vorgang_direkt_und_via_auftrag(admin_client, app_user):
+    """?service_case_id findet Belege DIREKT am Vorgang UND an dessen Aufträgen."""
+    obj = _obj(app_user)
+    case = projekt_service.create_service_case(
+        app_user.id, property_id=obj.id, subject="Filter",
+    )
+    wo = auftrag_service.create_work_order(
+        app_user.id, property_id=obj.id, title="Auftrag", service_case_id=case.id,
+    )
+    # direkt am Vorgang
+    q_direkt = beleg_service.create_quote(
+        app_user.id, property_id=obj.id, title="direkt",
+        service_case_id=case.id, lines=[_LINE],
+    )
+    # über den Auftrag (erbt den Vorgang)
+    q_via_auftrag = beleg_service.create_quote(
+        app_user.id, property_id=obj.id, title="via", work_order_id=wo.id, lines=[_LINE],
+    )
+    # unbeteiligtes Angebot
+    beleg_service.create_quote(
+        app_user.id, property_id=obj.id, title="fremd", lines=[_LINE],
+    )
+    r = admin_client.get(f"/api/invoicing/quotes?service_case_id={case.id}")
+    assert r.status_code == 200
+    ids = {i["id"] for i in r.json()["items"]}
+    assert ids == {str(q_direkt.id), str(q_via_auftrag.id)}
+
+
+@pytest.mark.django_db
+def test_folgebeleg_erbt_vorgang(app_user):
+    """rechnung_aus_angebot übernimmt den Vorgang vom Quell-Angebot."""
+    obj = _obj(app_user)
+    case = projekt_service.create_service_case(
+        app_user.id, property_id=obj.id, subject="Folgebeleg",
+    )
+    wo = auftrag_service.create_work_order(
+        app_user.id, property_id=obj.id, title="Auftrag", service_case_id=case.id,
+    )
+    quote = beleg_service.create_quote(
+        app_user.id, property_id=obj.id, title="A", work_order_id=wo.id,
+        lines=[{"line_type": "MATERIAL", "description": "Rohr", "quantity": 2,
+                "unit_price": 10, "tax_code": "DE_19"}],
+    )
+    assert str(quote.service_case_id) == str(case.id)
+    beleg_service.send_quote(app_user.id, quote_id=quote.id)
+    invoice = abrechnung_service.rechnung_aus_angebot(app_user.id, quote_id=quote.id)
+    assert str(invoice.service_case_id) == str(case.id)
+
+
+@pytest.mark.django_db
+def test_create_invoice_mit_vorgang(client, db, app_user):
+    """Rechnung mit service_case_id: der Vorgang steht in der Antwort."""
+    obj = _obj(app_user)
+    case = projekt_service.create_service_case(
+        app_user.id, property_id=obj.id, subject="Rechnung",
+    )
+    c = _logged_in_client(client, with_app_user=True)
+    r = c.post(
+        "/api/invoicing/invoices",
+        data={"property_id": str(obj.id), "invoice_type": "RECHNUNG",
+              "service_case_id": str(case.id), "lines": [_LINE]},
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    assert r.json()["service_case_id"] == str(case.id)
+
+
+@pytest.mark.django_db
+def test_filter_invoices_nach_vorgang(admin_client, app_user):
+    """?service_case_id filtert Rechnungen direkt am Vorgang UND via Auftrag."""
+    obj = _obj(app_user)
+    case = projekt_service.create_service_case(
+        app_user.id, property_id=obj.id, subject="Filter-RE",
+    )
+    wo = auftrag_service.create_work_order(
+        app_user.id, property_id=obj.id, title="Auftrag", service_case_id=case.id,
+    )
+    inv_direkt = beleg_service.create_invoice(
+        app_user.id, property_id=obj.id, service_case_id=case.id, lines=[_LINE],
+    )
+    inv_via = beleg_service.create_invoice(
+        app_user.id, property_id=obj.id, work_order_id=wo.id, lines=[_LINE],
+    )
+    beleg_service.create_invoice(app_user.id, property_id=obj.id, lines=[_LINE])
+    r = admin_client.get(f"/api/invoicing/invoices?service_case_id={case.id}")
+    assert r.status_code == 200
+    ids = {i["id"] for i in r.json()["items"]}
+    assert ids == {str(inv_direkt.id), str(inv_via.id)}

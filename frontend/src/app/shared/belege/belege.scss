@@ -1,0 +1,221 @@
+.belege {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.belege__block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.belege__kopf {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.belege__titel {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0;
+  font-size: var(--step-1);
+}
+
+.belege__badge {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--radius);
+  border: 1.5px solid color-mix(in srgb, var(--accent-ink) 45%, var(--line-strong));
+  color: var(--accent-ink);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+}
+.belege__badge--re {
+  border-color: color-mix(in srgb, var(--command-line) 60%, var(--line-strong));
+  color: var(--ink);
+  background: var(--surface-sunken);
+}
+
+.belege__zahl {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.75rem;
+  height: 1.5rem;
+  padding: 0 var(--space-2);
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+.belege__mehr {
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+
+  a {
+    color: var(--accent-ink);
+  }
+}
+
+// ============================ Belegliste (Zeilen) ==========================
+.rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: 3.75rem;
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-1);
+  color: inherit;
+  text-decoration: none;
+  transition: border-color 0.15s ease;
+
+  &:hover {
+    border-left-color: var(--accent);
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+
+.row__badge {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: var(--radius);
+  border: 1.5px solid color-mix(in srgb, var(--accent-ink) 45%, var(--line-strong));
+  color: var(--accent-ink);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  letter-spacing: 0.06em;
+}
+.row__badge--re {
+  border-color: color-mix(in srgb, var(--command-line) 60%, var(--line-strong));
+  color: var(--ink);
+  background: var(--surface-sunken);
+}
+
+.row__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.row__title {
+  font-size: var(--step-0);
+  font-weight: 600;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.row__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+.row__nr {
+  font-family: var(--font-mono);
+}
+
+.row__sum {
+  flex: none;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: var(--step-1);
+  color: var(--ink);
+}
+
+// ============================== Skelett =====================================
+.row--skeleton {
+  border-left-color: var(--line);
+}
+.sk-block {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.sk {
+  display: block;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  position: relative;
+  overflow: hidden;
+}
+.sk--badge {
+  flex: none;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: var(--radius);
+}
+.sk--line {
+  width: 40%;
+  height: 1rem;
+}
+.sk--chips {
+  width: 11rem;
+  height: 0.85rem;
+}
+.sk--sum {
+  flex: none;
+  width: 5rem;
+  height: 1rem;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .sk::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(
+      90deg,
+      transparent,
+      color-mix(in srgb, var(--surface) 60%, transparent),
+      transparent
+    );
+    animation: belege-sk-shimmer 1.4s ease-in-out infinite;
+  }
+}
+@keyframes belege-sk-shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@media (max-width: 560px) {
+  .row {
+    flex-wrap: wrap;
+  }
+  .row__sum {
+    width: 100%;
+    padding-left: calc(2.5rem + var(--space-4));
+  }
+}

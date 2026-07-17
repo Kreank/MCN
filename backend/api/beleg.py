@@ -77,6 +77,8 @@ class QuoteOut(Schema):
     # Auftrags-Mappe die zuordenbaren von den bereits zugeordneten Angeboten
     # unterscheiden kann, ohne jedes einzeln nachzuladen.
     work_order_id: UUID | None = None
+    # Vorgangsbezug (Migration 0113): der Vorgang, an dem der Beleg hängt.
+    service_case_id: UUID | None = None
 
 
 class QuoteListOut(Schema):
@@ -262,6 +264,10 @@ class QuoteIn(Schema):
     # darauf. Der Auftrag muss zur selben Liegenschaft (und, falls gesetzt, zum
     # selben Projekt) gehören — sonst 422.
     work_order_id: UUID | None = None
+    # Vorgangsbezug (Migration 0113): verankert das Angebot am Vorgang. Fehlt er,
+    # aber der Auftrag hängt an einem Vorgang, wird dieser geerbt. Muss zur selben
+    # Liegenschaft (und, falls der Vorgang ein Projekt trägt, zu diesem) gehören.
+    service_case_id: UUID | None = None
     quote_date: date | None = None
     valid_until_date: date | None = None
     # Anschreiben-Freitext im Belegkopf (Dokumente-9), optional.
@@ -325,6 +331,10 @@ class QuoteFilter(Schema):
     status: str | None = None
     property_id: UUID | None = None
     project_id: UUID | None = None
+    # Vorgangsbezug (Migration 0113): der Beleg hängt DIREKT am Vorgang ODER an einem
+    # Auftrag dieses Vorgangs. So findet die Vorgangsmappe beide Wege.
+    service_case_id: UUID | None = None
+    work_order_id: UUID | None = None
 
 
 def _property_ref(quote):
@@ -346,6 +356,7 @@ def _quote_out(quote):
         gross_total=quote.gross_total,
         property=_property_ref(quote),
         work_order_id=quote.work_order_id,
+        service_case_id=quote.service_case_id,
     )
 
 
@@ -371,6 +382,14 @@ def list_quotes(
         qs = qs.filter(property_id=filters.property_id)
     if filters.project_id:
         qs = qs.filter(project_id=filters.project_id)
+    if filters.service_case_id:
+        # DIREKT am Vorgang ODER an einem Auftrag dieses Vorgangs (Migration 0113).
+        qs = qs.filter(
+            Q(service_case_id=filters.service_case_id)
+            | Q(work_order__service_case_id=filters.service_case_id)
+        )
+    if filters.work_order_id:
+        qs = qs.filter(work_order_id=filters.work_order_id)
 
     qs = qs.order_by("-created_at", "id")
 
@@ -467,6 +486,7 @@ def _quote_detail(quote_id):
         property=_property_ref(quote),
         project=project,
         work_order_id=quote.work_order_id,
+        service_case_id=quote.service_case_id,
         work_order=work_order,
         sent_at=quote.sent_at,
         has_snapshot=quote.billing_snapshot is not None,
@@ -626,6 +646,7 @@ def create_quote(request, payload: QuoteIn):
             title=payload.title,
             project_id=payload.project_id,
             work_order_id=payload.work_order_id,
+            service_case_id=payload.service_case_id,
             quote_date=payload.quote_date,
             valid_until_date=payload.valid_until_date,
             cover_letter=payload.cover_letter,
@@ -929,6 +950,8 @@ class InvoiceOut(Schema):
     net_total: Decimal | None = None
     gross_total: Decimal | None = None
     property: PropertyRefOut
+    # Vorgangsbezug (Migration 0113): der Vorgang, an dem der Beleg hängt.
+    service_case_id: UUID | None = None
 
 
 class InvoiceListOut(Schema):
@@ -1070,6 +1093,8 @@ class InvoiceIn(Schema):
     invoice_type: str = "RECHNUNG"
     project_id: UUID | None = None
     work_order_id: UUID | None = None
+    # Vorgangsbezug (Migration 0113): siehe QuoteIn.service_case_id.
+    service_case_id: UUID | None = None
     reference_invoice_id: UUID | None = None
     invoice_date: date | None = None
     due_date: date | None = None
@@ -1101,6 +1126,10 @@ class InvoiceFilter(Schema):
     invoice_type: str | None = None
     property_id: UUID | None = None
     project_id: UUID | None = None
+    # Vorgangsbezug (Migration 0113): DIREKT am Vorgang ODER an einem Auftrag dieses
+    # Vorgangs.
+    service_case_id: UUID | None = None
+    work_order_id: UUID | None = None
 
 
 def _invoice_out(invoice):
@@ -1114,6 +1143,7 @@ def _invoice_out(invoice):
         net_total=invoice.net_total,
         gross_total=invoice.gross_total,
         property=_property_ref(invoice),
+        service_case_id=invoice.service_case_id,
     )
 
 
@@ -1137,6 +1167,14 @@ def list_invoices(
         qs = qs.filter(property_id=filters.property_id)
     if filters.project_id:
         qs = qs.filter(project_id=filters.project_id)
+    if filters.service_case_id:
+        # DIREKT am Vorgang ODER an einem Auftrag dieses Vorgangs (Migration 0113).
+        qs = qs.filter(
+            Q(service_case_id=filters.service_case_id)
+            | Q(work_order__service_case_id=filters.service_case_id)
+        )
+    if filters.work_order_id:
+        qs = qs.filter(work_order_id=filters.work_order_id)
     qs = qs.order_by("-created_at", "id")
 
     total = qs.count()
@@ -1270,6 +1308,7 @@ def _invoice_detail(invoice_id):
         version=invoice.version,
         property=_property_ref(invoice),
         project=project,
+        service_case_id=invoice.service_case_id,
         work_order_id=invoice.work_order_id,
         work_order_number=(
             invoice.work_order.order_number if invoice.work_order_id else None
@@ -1307,6 +1346,7 @@ def create_invoice(request, payload: InvoiceIn):
             invoice_type=payload.invoice_type,
             project_id=payload.project_id,
             work_order_id=payload.work_order_id,
+            service_case_id=payload.service_case_id,
             reference_invoice_id=payload.reference_invoice_id,
             invoice_date=payload.invoice_date,
             due_date=payload.due_date,

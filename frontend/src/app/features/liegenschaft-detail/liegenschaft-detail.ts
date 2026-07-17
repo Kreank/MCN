@@ -1,11 +1,19 @@
-import { Component, computed, inject, signal } from '@angular/core';
+import { Component, computed, effect, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Mappe, MappeTab } from '../../shared/mappe/mappe';
 import { PropertyService } from '../../core/property.service';
 import { PartyService } from '../../core/party.service';
+import { ProjektService } from '../../core/projekt.service';
 import { AuthService } from '../../core/auth.service';
+import {
+  CasePriority,
+  Project,
+  ProjectStatus,
+  ServiceCaseCard,
+  ServiceCaseStatus,
+} from '../../core/projekt.model';
 import {
   BuildingIn,
   PartyRoleIn,
@@ -18,6 +26,7 @@ import {
 } from '../../core/property.model';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { Dateien } from '../../shared/dateien/dateien';
+import { Belege, BelegKontext } from '../../shared/belege/belege';
 import { Anlagen } from '../anlagen/anlagen';
 import { Raumaufmass } from '../raumaufmass/raumaufmass';
 import { Belegung } from '../belegung/belegung';
@@ -37,6 +46,14 @@ type ViewState =
 
 type Meldung = { art: 'erfolg' | 'fehler'; text: string };
 
+/** Lazy geladene Nebenlisten (Projekte/Vorgänge der Liegenschaft). */
+type LazyState<T> =
+  | { kind: 'idle' }
+  | { kind: 'loading' }
+  | { kind: 'ready'; items: T[] }
+  | VerbotenState
+  | { kind: 'error' };
+
 @Component({
   selector: 'app-liegenschaft-detail',
   imports: [
@@ -45,6 +62,7 @@ type Meldung = { art: 'erfolg' | 'fehler'; text: string };
     ReactiveFormsModule,
     KeinZugriff,
     Dateien,
+    Belege,
     Dialog,
     Feld,
     Anlagen,
@@ -59,12 +77,14 @@ export class LiegenschaftDetail {
   private readonly route = inject(ActivatedRoute);
   private readonly svc = inject(PropertyService);
   private readonly parties = inject(PartyService);
+  private readonly projektSvc = inject(ProjektService);
   private readonly fb = inject(FormBuilder);
   private readonly auth = inject(AuthService);
 
   protected readonly tab = signal('uebersicht');
   protected readonly state = signal<ViewState>({ kind: 'loading' });
   private reqId = 0;
+  private nebenReqId = 0;
 
   protected readonly tabs: MappeTab[] = [
     { id: 'uebersicht', label: 'Übersicht' },
@@ -81,6 +101,9 @@ export class LiegenschaftDetail {
     { id: 'verwaltung', label: 'Verwaltung' },
     { id: 'eigentum', label: 'Eigentum' },
     { id: 'belegung', label: 'Belegung' },
+    // Projekte und Vorgänge dieser Liegenschaft — die Klammer über alles, was hier
+    // an Arbeit läuft. Direkt vor den Dokumenten, die aus ihnen entstehen.
+    { id: 'vorgaenge', label: 'Projekte & Vorgänge' },
     { id: 'dokumente', label: 'Dokumente' },
     { id: 'dateien', label: 'Dateien' },
   ];
@@ -112,6 +135,15 @@ export class LiegenschaftDetail {
   protected readonly dateienZiel = computed<ZielFilter>(() => ({
     property_id: this.daten()?.id ?? '',
   }));
+
+  /** Stabiler Beleg-Kontext für den Dokumente-Tab (Belege dieser Liegenschaft). */
+  protected readonly belegKontext = computed<BelegKontext>(() => ({
+    property_id: this.daten()?.id ?? '',
+  }));
+
+  // --- Projekte & Vorgänge der Liegenschaft (lazy) -------------------------
+  protected readonly projekteState = signal<LazyState<Project>>({ kind: 'idle' });
+  protected readonly vorgaengeState = signal<LazyState<ServiceCaseCard>>({ kind: 'idle' });
 
   /**
    * Kontextzeile für die Werkzeuge (Heizlast/Heizkörper): Objektname + Adresse.
@@ -200,12 +232,57 @@ export class LiegenschaftDetail {
       const id = pm.get('id');
       this.tab.set('uebersicht');
       this.meldung.set(null);
+      // Nebenlisten beim Objektwechsel zurücksetzen (lazy neu laden beim Öffnen).
+      // reqId verwirft in-flight-Antworten des vorigen Objekts — sonst würde
+      // eine späte Antwort den frisch zurückgesetzten idle-Zustand überschreiben.
+      this.nebenReqId++;
+      this.projekteState.set({ kind: 'idle' });
+      this.vorgaengeState.set({ kind: 'idle' });
       if (!id) {
         this.state.set({ kind: 'error' });
         return;
       }
       this.load(id);
     });
+
+    // Projekte/Vorgänge erst beim Öffnen des Tabs laden (lazy).
+    effect(() => {
+      const d = this.daten();
+      if (!d) return;
+      if (this.tab() !== 'vorgaenge') return;
+      if (this.projekteState().kind === 'idle') this.ladeProjekte(d.id);
+      if (this.vorgaengeState().kind === 'idle') this.ladeVorgaenge(d.id);
+    });
+  }
+
+  private ladeProjekte(propertyId: string): void {
+    const rid = this.nebenReqId;
+    this.projekteState.set({ kind: 'loading' });
+    this.projektSvc.list({ page: 1, page_size: 50, property_id: propertyId }).subscribe({
+      next: (p) => {
+        if (rid === this.nebenReqId) this.projekteState.set({ kind: 'ready', items: p.items });
+      },
+      error: (err) => {
+        if (rid === this.nebenReqId) this.projekteState.set(fehlerState(err));
+      },
+    });
+  }
+
+  private ladeVorgaenge(propertyId: string): void {
+    const rid = this.nebenReqId;
+    this.vorgaengeState.set({ kind: 'loading' });
+    // include_terminal: an der Objektmappe interessiert die volle Historie, nicht
+    // nur die offenen Vorgänge.
+    this.projektSvc
+      .listServiceCases({ page: 1, page_size: 50, property_id: propertyId, include_terminal: true })
+      .subscribe({
+        next: (b) => {
+          if (rid === this.nebenReqId) this.vorgaengeState.set({ kind: 'ready', items: b.items });
+        },
+        error: (err) => {
+          if (rid === this.nebenReqId) this.vorgaengeState.set(fehlerState(err));
+        },
+      });
   }
 
   retry(): void {
@@ -433,5 +510,45 @@ export class LiegenschaftDetail {
       CARETAKER: 'Hausmeisterei',
     };
     return map[r] ?? r;
+  }
+
+  // ---- Projekte & Vorgänge ------------------------------------------------
+  projektStatusLabel(s: ProjectStatus): string {
+    return s === 'OPEN' ? 'Offen' : 'Geschlossen';
+  }
+  projektStatusClass(s: ProjectStatus): string {
+    return s === 'OPEN' ? 'stamp--positive' : '';
+  }
+
+  caseStatusLabel(s: ServiceCaseStatus): string {
+    const map: Record<ServiceCaseStatus, string> = {
+      NEU: 'Neu',
+      IN_PRUEFUNG: 'In Prüfung',
+      RUECKFRAGE: 'Rückfrage',
+      FREIGABE_AUSSTEHEND: 'Freigabe ausstehend',
+      BEAUFTRAGT: 'Beauftragt',
+      ABGESCHLOSSEN: 'Abgeschlossen',
+      ABGELEHNT: 'Abgelehnt',
+    };
+    return map[s] ?? s;
+  }
+  caseStatusClass(s: ServiceCaseStatus): string {
+    if (s === 'ABGESCHLOSSEN') return 'stamp--positive';
+    if (s === 'ABGELEHNT') return 'stamp--warn';
+    return '';
+  }
+
+  priorityLabel(p: CasePriority): string {
+    const map: Record<CasePriority, string> = {
+      NORMAL: 'Normal',
+      DRINGEND: 'Dringend',
+      NOTFALL: 'Notfall',
+    };
+    return map[p] ?? p;
+  }
+  priorityClass(p: CasePriority): string {
+    if (p === 'NOTFALL') return 'stamp--negativ';
+    if (p === 'DRINGEND') return 'stamp--warn';
+    return '';
   }
 }

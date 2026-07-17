@@ -265,7 +265,11 @@ def test_badensche_strasse_53_findet_das_projekt_ueber_die_liegenschaft(welt):
     assert welt["projekt"].id in _ids(e, "PROJEKT")
     projekt = next(t for t in e.treffer if t.typ == "PROJEKT")
     assert projekt.rang == 3
-    assert projekt.grund == "Adresse der Liegenschaft"
+    # Nur das erste Label prüfen: Die Objektnummer stammt aus der globalen
+    # DB-Sequenz (rollt zwischen Tests nicht zurück) — enthält sie zufällig
+    # „53", matcht zusätzlich die Feldgruppe „Liegenschaft" und `grund`
+    # würde je nach Suitenreihenfolge „… · Liegenschaft" tragen.
+    assert projekt.grund.split(" · ")[0] == "Adresse der Liegenschaft"
     # Der Untertitel trägt den Kontext, der die Trefferliste erst brauchbar macht.
     assert "Badensche Straße 53" in projekt.untertitel
 

@@ -39,6 +39,7 @@ export class ProjektService {
     if (q) params = params.set('q', q);
     if (query.status) params = params.set('status', query.status);
     if (query.category_id) params = params.set('category_id', query.category_id);
+    if (query.property_id) params = params.set('property_id', query.property_id);
     return this.http.get<ProjectPage>(this.base, { params });
   }
 
@@ -71,6 +72,7 @@ export class ProjektService {
   listServiceCases(query: ServiceCaseBoardQuery = {}): Observable<ServiceCaseBoard> {
     let params = new HttpParams();
     if (query.project_id) params = params.set('project_id', query.project_id);
+    if (query.property_id) params = params.set('property_id', query.property_id);
     if (query.status) params = params.set('status', query.status);
     const q = query.q?.trim();
     if (q) params = params.set('q', q);

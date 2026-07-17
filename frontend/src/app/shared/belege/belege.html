@@ -1,0 +1,159 @@
+<section class="belege" aria-label="Belege in diesem Kontext">
+  <p class="sr-only" role="status">{{ summary() }}</p>
+
+  <!-- ============================= Angebote ============================= -->
+  <div class="belege__block">
+    <div class="belege__kopf">
+      <h3 class="belege__titel">
+        <span class="belege__badge belege__badge--an" aria-hidden="true">AN</span>
+        Angebote
+      </h3>
+      @if (quotesState().kind === 'ready') {
+        <span class="belege__zahl">{{ $any(quotesState()).total }}</span>
+      }
+    </div>
+
+    @switch (quotesState().kind) {
+      @case ('loading') {
+        <ul class="rows" aria-hidden="true">
+          @for (s of skeletons; track $index) {
+            <li class="row row--skeleton">
+              <span class="sk sk--badge"></span>
+              <span class="sk-block"><span class="sk sk--line"></span><span class="sk sk--chips"></span></span>
+              <span class="sk sk--sum"></span>
+            </li>
+          }
+        </ul>
+      }
+      @case ('forbidden') {
+        <div class="tab-platzhalter">
+          <p>{{ $any(quotesState()).detail || 'Für die Angebote fehlt die Berechtigung.' }}</p>
+        </div>
+      }
+      @case ('error') {
+        <div class="melde melde--fehler" role="alert">
+          <span class="melde__mark" aria-hidden="true">!</span>
+          <span class="melde__text"><strong>Fehler:</strong> Die Angebote konnten nicht geladen werden.</span>
+          <button type="button" class="melde__zu" (click)="neuLaden()" aria-label="Erneut versuchen">
+            <span aria-hidden="true">↻</span>
+          </button>
+        </div>
+      }
+      @case ('ready') {
+        @if ($any(quotesState()).items.length === 0) {
+          <div class="tab-platzhalter">
+            <p>Für diesen Kontext gibt es noch keine Angebote. Neue Angebote entstehen über die KI-gestützte Anlage, das Belegregister oder direkt am Vorgang.</p>
+          </div>
+        } @else {
+          <ul class="rows">
+            @for (q of $any(quotesState()).items; track q.id) {
+              <li>
+                <a class="row" [routerLink]="['/dokumente', q.id]">
+                  <span class="row__badge" aria-hidden="true">AN</span>
+                  <span class="row__body">
+                    <span class="row__title">{{ q.title }}</span>
+                    <span class="row__meta">
+                      <span class="row__nr">
+                        {{ belegNummer(q.quote_number) }}
+                        @if (!q.quote_number) { <span class="sr-only">Belegnummer noch nicht vergeben</span> }
+                      </span>
+                      <span aria-hidden="true">·</span>
+                      <span class="row__datum">{{ datum(q.quote_date) }}</span>
+                      <span class="stamp {{ quoteStatusClass(q.status) }}">{{ quoteStatusLabel(q.status) }}</span>
+                    </span>
+                  </span>
+                  <span class="row__sum">{{ euro(q.gross_total) }}</span>
+                </a>
+              </li>
+            }
+          </ul>
+          @if ($any(quotesState()).total > $any(quotesState()).items.length) {
+            <p class="belege__mehr">
+              Es werden die ersten {{ $any(quotesState()).items.length }} von
+              {{ $any(quotesState()).total }} Angeboten gezeigt.
+              <a routerLink="/dokumente">Alle im Belegregister ansehen</a>.
+            </p>
+          }
+        }
+      }
+    }
+  </div>
+
+  <!-- ============================= Rechnungen =========================== -->
+  <div class="belege__block">
+    <div class="belege__kopf">
+      <h3 class="belege__titel">
+        <span class="belege__badge belege__badge--re" aria-hidden="true">RE</span>
+        Rechnungen
+      </h3>
+      @if (invoicesState().kind === 'ready') {
+        <span class="belege__zahl">{{ $any(invoicesState()).total }}</span>
+      }
+    </div>
+
+    @switch (invoicesState().kind) {
+      @case ('loading') {
+        <ul class="rows" aria-hidden="true">
+          @for (s of skeletons; track $index) {
+            <li class="row row--skeleton">
+              <span class="sk sk--badge"></span>
+              <span class="sk-block"><span class="sk sk--line"></span><span class="sk sk--chips"></span></span>
+              <span class="sk sk--sum"></span>
+            </li>
+          }
+        </ul>
+      }
+      @case ('forbidden') {
+        <div class="tab-platzhalter">
+          <p>{{ $any(invoicesState()).detail || 'Für die Rechnungen fehlt die Berechtigung.' }}</p>
+        </div>
+      }
+      @case ('error') {
+        <div class="melde melde--fehler" role="alert">
+          <span class="melde__mark" aria-hidden="true">!</span>
+          <span class="melde__text"><strong>Fehler:</strong> Die Rechnungen konnten nicht geladen werden.</span>
+          <button type="button" class="melde__zu" (click)="neuLaden()" aria-label="Erneut versuchen">
+            <span aria-hidden="true">↻</span>
+          </button>
+        </div>
+      }
+      @case ('ready') {
+        @if ($any(invoicesState()).items.length === 0) {
+          <div class="tab-platzhalter">
+            <p>Für diesen Kontext gibt es noch keine Rechnungen. Rechnungen entstehen aus Angebot, Auftrag oder Nachtrag im Belegregister.</p>
+          </div>
+        } @else {
+          <ul class="rows">
+            @for (inv of $any(invoicesState()).items; track inv.id) {
+              <li>
+                <a class="row" [routerLink]="['/rechnungen', inv.id]">
+                  <span class="row__badge row__badge--re" aria-hidden="true">RE</span>
+                  <span class="row__body">
+                    <span class="row__title">{{ invoiceTypeLabel(inv.invoice_type) }}</span>
+                    <span class="row__meta">
+                      <span class="row__nr">
+                        {{ belegNummer(inv.invoice_number) }}
+                        @if (!inv.invoice_number) { <span class="sr-only">Belegnummer noch nicht vergeben</span> }
+                      </span>
+                      <span aria-hidden="true">·</span>
+                      <span class="row__datum">{{ datum(inv.invoice_date) }}</span>
+                      <span class="stamp {{ invoiceStatusClass(inv.status) }}">{{ invoiceStatusLabel(inv.status) }}</span>
+                    </span>
+                  </span>
+                  <span class="row__sum">{{ euro(inv.gross_total) }}</span>
+                </a>
+              </li>
+            }
+          </ul>
+          @if ($any(invoicesState()).total > $any(invoicesState()).items.length) {
+            <p class="belege__mehr">
+              Es werden die ersten {{ $any(invoicesState()).items.length }} von
+              {{ $any(invoicesState()).total }} Rechnungen gezeigt.
+              <a routerLink="/dokumente">Alle im Belegregister ansehen</a>.
+            </p>
+          }
+        }
+      }
+    }
+  </div>
+</section>

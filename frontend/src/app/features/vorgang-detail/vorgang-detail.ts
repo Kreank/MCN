@@ -21,6 +21,7 @@ import { OrderPriority, WorkOrderCreate } from '../../core/auftrag.model';
 import { ServiceJobCreate } from '../../core/einsatz.model';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { Dateien } from '../../shared/dateien/dateien';
+import { Belege, BelegKontext } from '../../shared/belege/belege';
 import { ZielFilter } from '../../core/datei.model';
 import { VerbotenState, fehlerDetail, fehlerState } from '../../shared/http-fehler';
 import { Bestaetigung } from '../../shared/bestaetigung/bestaetigung';
@@ -55,6 +56,7 @@ const SCHWER_UMKEHRBAR: ReadonlySet<ServiceCaseStatus> = new Set<ServiceCaseStat
     RouterLink,
     KeinZugriff,
     Dateien,
+    Belege,
     Bestaetigung,
     ReactiveFormsModule,
     Dialog,
@@ -82,6 +84,7 @@ export class VorgangDetail {
   protected readonly tabs: MappeTab[] = [
     { id: 'uebersicht', label: 'Übersicht' },
     { id: 'verlauf', label: 'Verlauf' },
+    { id: 'dokumente', label: 'Dokumente' },
     { id: 'dateien', label: 'Dateien' },
   ];
 
@@ -133,6 +136,11 @@ export class VorgangDetail {
 
   /** Stabile Zielreferenz fuer den Dateien-Tab (nur bei Vorgangswechsel neu). */
   protected readonly dateienZiel = computed<ZielFilter>(() => ({
+    service_case_id: this.daten()?.id ?? '',
+  }));
+
+  /** Stabiler Beleg-Kontext für den Dokumente-Tab (Belege dieses Vorgangs). */
+  protected readonly belegKontext = computed<BelegKontext>(() => ({
     service_case_id: this.daten()?.id ?? '',
   }));
 
@@ -468,6 +476,9 @@ export class VorgangDetail {
     const payload: QuoteCreate = {
       property_id: d.property.id,
       title: d.subject,
+      // Direkt am Vorgang verankern; hat der Vorgang ein Projekt, erbt das Angebot
+      // es serverseitig automatisch. project_id trotzdem mitgeben, wo bekannt.
+      service_case_id: d.id,
       project_id: d.project?.id ?? null,
       lines: [],
     };

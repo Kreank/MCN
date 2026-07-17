@@ -44,6 +44,7 @@ from db_core.models import (
     Quote,
     QuoteLine,
     SalePriceGroup,
+    ServiceCase,
     SiteReportLine,
     TaxCode,
     WorkOrder,
@@ -521,6 +522,114 @@ def _work_order_pruefen(work_order_id, *, property_id, project_id):
     return wo.id
 
 
+def _vorgang_pruefen(service_case_id, *, property_id):
+    """Der Vorgangsbezug eines Belegs: existiert und gehört zur selben Liegenschaft.
+
+    Der zusammengesetzte FK `(service_case_id, property_id)` (Migration 0113)
+    erzwingt die Liegenschaftsgleichheit ohnehin — hier wird daraus ein
+    verständlicher Fachfehler (422) statt eines 500ers. Gibt den geladenen Vorgang
+    zurück (oder None), damit der Aufrufer sein Projekt erben/abgleichen kann.
+    """
+    if service_case_id is None:
+        return None
+    case = ServiceCase.objects.filter(id=service_case_id).only(
+        "id", "property_id", "project_id"
+    ).first()
+    if case is None:
+        raise ValueError("Vorgang nicht gefunden.")
+    if str(case.property_id) != str(property_id):
+        raise ValueError(
+            "Der Vorgang gehört zu einer anderen Liegenschaft als der Beleg."
+        )
+    return case
+
+
+def _beleg_bezug_aufloesen(
+    *, property_id, service_case_id, work_order_id, project_id,
+    pruefe_auftrag_projekt=True,
+):
+    """Löst Vorgangs-, Auftrags- und Projektbezug eines Belegs auf und erbt fehlende.
+
+    Der Beleg (Angebot/Rechnung) hängt am **Vorgang** (service_case), optional
+    zusätzlich an einem **Auftrag** und einem **Projekt** (Migration 0113). Die drei
+    Bezüge müssen zueinander und zur Liegenschaft passen; wo möglich, wird der
+    fehlende geerbt:
+
+      * Der Auftrag muss existieren und zur selben Liegenschaft gehören. Nennt der
+        Beleg einen Vorgang, muss der Auftrag zu DIESEM Vorgang gehören.
+      * Ohne eigenen Vorgang, aber mit Auftrag an einem Vorgang: der Beleg ERBT den
+        Vorgang vom Auftrag.
+      * Hat der Vorgang ein Projekt und der Aufruf keins: der Beleg ERBT das Projekt.
+        Ein abweichend übergebenes Projekt ist nur beim Angebot ein Fachfehler
+        (`pruefe_auftrag_projekt`); die Rechnung lässt den Widerspruch wie vor
+        0113 durch.
+
+    `pruefe_auftrag_projekt` steuert die **Auftrag↔Projekt**-Prüfung — sie ist
+    absichtlich pro Aufrufer unterschiedlich, weil sie es historisch war (kein
+    DB-FK erzwingt sie, nur der Service):
+
+      * **Angebot** (True): Der Auftrag muss zum (ggf. geerbten) Projekt gehören —
+        wie bisher `_work_order_pruefen`.
+      * **Rechnung** (False): keine Auftrag↔Projekt-Prüfung. Eine Rechnung wird
+        regelmäßig einem Projekt zugeordnet, während ihr Auftrag (noch) projektlos
+        ist — die Auswertungen bauen genau diese Konstellation. Erzwänge man die
+        Gleichheit, bräche das die Projekt-Marge-Rechnung; die DB kennt diese Regel
+        für die Rechnung ohnehin nicht (nur den `(work_order_id, property_id)`-FK).
+
+    Gibt (service_case_id, work_order_id, project_id) mit aufgelösten Werten zurück.
+    """
+    wo = None
+    if work_order_id is not None:
+        wo = WorkOrder.objects.filter(id=work_order_id).only(
+            "id", "property_id", "project_id", "service_case_id"
+        ).first()
+        if wo is None:
+            raise ValueError("Auftrag nicht gefunden.")
+        if str(wo.property_id) != str(property_id):
+            raise ValueError(
+                "Der Auftrag gehört zu einer anderen Liegenschaft als der Beleg."
+            )
+
+    # Vorgang bestimmen: übergeben ODER vom Auftrag geerbt.
+    if service_case_id is None and wo is not None and wo.service_case_id is not None:
+        service_case_id = wo.service_case_id
+    case = _vorgang_pruefen(service_case_id, property_id=property_id)
+
+    # Auftrag und Vorgang müssen zusammenpassen — auch, wenn der Vorgang übergeben
+    # wurde und der Auftrag an einem anderen Vorgang hängt.
+    if wo is not None and service_case_id is not None:
+        if str(wo.service_case_id or "") != str(service_case_id):
+            raise ValueError(
+                "Der Auftrag gehört zu einem anderen Vorgang als der Beleg."
+            )
+
+    # Projekt: vom Vorgang erben bzw. gegen ihn abgleichen. Der Abgleich folgt
+    # demselben Schalter wie Auftrag↔Projekt: Auf dem Rechnungspfad lief vor 0113
+    # z. B. `rechnung_aus_auftrag` mit `project_id` des Auftrags durch, auch wenn
+    # dessen Vorgang (inkonsistent, aber anlegbar) ein anderes Projekt trägt —
+    # eine Rechnung darf daran nicht scheitern.
+    if case is not None and case.project_id is not None:
+        if project_id is None:
+            project_id = case.project_id
+        elif pruefe_auftrag_projekt and str(project_id) != str(case.project_id):
+            raise ValueError(
+                "Der Beleg nennt ein anderes Projekt als sein Vorgang."
+            )
+
+    # Auftrag muss zum (ggf. geerbten) Projekt gehören — nur beim Angebot (s. o.).
+    if (
+        pruefe_auftrag_projekt
+        and wo is not None
+        and project_id is not None
+        and str(wo.project_id or "") != str(project_id)
+    ):
+        raise ValueError(
+            "Der Auftrag gehört zu einem anderen Projekt als der Beleg."
+        )
+
+    return service_case_id, work_order_id, project_id
+
+
 def create_quote(
     actor_app_user_id,
     *,
@@ -528,6 +637,7 @@ def create_quote(
     title,
     project_id=None,
     work_order_id=None,
+    service_case_id=None,
     quote_date=None,
     valid_until_date=None,
     cover_letter=None,
@@ -539,13 +649,20 @@ def create_quote(
     `work_order_id` ordnet das Angebot einem **Auftrag** zu. Diese Zuordnung ist
     die Aussage „das ist das Soll dieser Baustelle" — der Soll-Ist-Abgleich am
     Bericht (0080) stützt sich ausschließlich darauf.
+
+    `service_case_id` verankert das Angebot am **Vorgang** (Migration 0113); fehlt
+    es, aber der Auftrag hängt an einem Vorgang, wird dieser geerbt. Projekt und
+    Vorgang werden gegeneinander abgeglichen bzw. geerbt (`_beleg_bezug_aufloesen`).
     """
     if not title or not title.strip():
         raise ValueError("title darf nicht leer sein.")
     ensure_exists(Property, property_id, "Liegenschaft")
     ensure_exists(Project, project_id, "Projekt")
-    work_order_id = _work_order_pruefen(
-        work_order_id, property_id=property_id, project_id=project_id
+    service_case_id, work_order_id, project_id = _beleg_bezug_aufloesen(
+        property_id=property_id,
+        service_case_id=service_case_id,
+        work_order_id=work_order_id,
+        project_id=project_id,
     )
     prepared, net_total, tax_total, gross_total = _prepare_lines(lines)
     rubriken_norm = _prepare_rubriken(rubriken, prepared)
@@ -556,6 +673,7 @@ def create_quote(
             property_id=property_id,
             project_id=project_id,
             work_order_id=work_order_id,
+            service_case_id=service_case_id,
             title=title.strip(),
             status="ENTWURF",
             quote_date=quote_date,
@@ -1796,6 +1914,7 @@ def create_invoice(
     invoice_type="RECHNUNG",
     project_id=None,
     work_order_id=None,
+    service_case_id=None,
     reference_invoice_id=None,
     invoice_date=None,
     due_date=None,
@@ -1841,7 +1960,15 @@ def create_invoice(
         )
     ensure_exists(Property, property_id, "Liegenschaft")
     ensure_exists(Project, project_id, "Projekt")
-    ensure_exists(WorkOrder, work_order_id, "Auftrag")
+    service_case_id, work_order_id, project_id = _beleg_bezug_aufloesen(
+        property_id=property_id,
+        service_case_id=service_case_id,
+        work_order_id=work_order_id,
+        project_id=project_id,
+        # Rechnung: keine Auftrag↔Projekt-Prüfung (wie vor 0113) — eine Rechnung
+        # kann einem Projekt zugeordnet sein, während ihr Auftrag projektlos ist.
+        pruefe_auftrag_projekt=False,
+    )
     ensure_exists(Invoice, reference_invoice_id, "Referenzrechnung")
     bedingungen = _zahlungsbedingungen_pruefen(
         invoice_type,
@@ -1863,6 +1990,7 @@ def create_invoice(
             property_id=property_id,
             project_id=project_id,
             work_order_id=work_order_id,
+            service_case_id=service_case_id,
             invoice_type=invoice_type,
             reference_invoice_id=reference_invoice_id,
             status="ENTWURF",

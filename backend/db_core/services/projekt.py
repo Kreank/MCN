@@ -11,22 +11,27 @@ nur der Initialzustand NEU angelegt — Statuswechsel folgen als eigener Slice.
 """
 import uuid
 
+from django.db.models import Q
+
 from db_core.db_context import business_transaction
 from db_core.gate_errors import as_business_error
 from db_core.models import (
     AppUser,
     Checklist,
     ChecklistItem,
+    Invoice,
     Project,
     ProjectCategory,
     ProjectLog,
     ProjectProperty,
     Property,
+    Quote,
     ServiceCase,
     StatusCatalog,
     StatusTransition,
     WorkOrder,
 )
+from db_core.services import beleg as beleg_service
 from db_core.services._validation import (
     ensure_all_exist,
     ensure_exists,
@@ -149,7 +154,7 @@ def set_project_internal_note(actor_app_user_id, *, project_id, internal_note):
 
 def promote_service_case_to_project(actor_app_user_id, *, service_case_id, name=None):
     """Stuft einen Vorgang zum Projekt hoch: legt ein neues Projekt an und hängt
-    den Vorgang UND alle seine Aufträge darunter (project_id setzen).
+    den Vorgang, alle seine Aufträge UND deren Belege darunter (project_id setzen).
 
     Das Projekt ist die optionale Klammer (B-09); dieser Weg fügt sie nachträglich
     hinzu, wenn ein zunächst kleiner Vorgang wächst. Nur zulässig, solange der
@@ -157,6 +162,15 @@ def promote_service_case_to_project(actor_app_user_id, *, service_case_id, name=
     Vorgangs und aller Aufträge (die abweichen können, B-10). Umgehängt werden nur
     Aufträge ohne eigenes Projekt (ein Auftrag eines anderen Projekts wird nicht
     „gestohlen").
+
+    **Belege (Migration 0113):** Zusätzlich werden alle projektlosen, noch
+    änderbaren Angebote/Rechnungen mitgezogen, die entweder DIREKT am Vorgang hängen
+    (`service_case_id = case`) ODER an einem der in diesem Aufruf umgehängten
+    (projektlosen) Aufträge. Belege fremder Projekte und die Belege von Aufträgen
+    fremder Projekte bleiben unberührt (`project_id IS NULL` filtert sie aus, und die
+    Auftragsmenge ist ausschließlich die projektlose). Versendete Angebote und
+    veröffentlichte Rechnungen sind eingefroren (B-30/GoBD) — ihr `project_id` lässt
+    sich nicht mehr ändern; sie bleiben projektlos, statt die Aufstufung abzubrechen.
 
     Alles läuft in EINER Transaktion; der interne create_project öffnet dabei einen
     Savepoint. Das Setzen von project_id ist per UPDATE erlaubt (kein Immutable-/
@@ -191,8 +205,35 @@ def promote_service_case_to_project(actor_app_user_id, *, service_case_id, name=
             )
             if umgehaengt != 1:
                 raise ValueError("Der Vorgang hängt bereits an einem Projekt.")
-            WorkOrder.objects.filter(
-                service_case_id=service_case_id, project_id__isnull=True
+            # Die projektlosen Aufträge dieses Vorgangs — ihre IDs VOR dem Umhängen
+            # festhalten, damit die daran hängenden Belege mitgezogen werden können.
+            auftrag_ids = list(
+                WorkOrder.objects.filter(
+                    service_case_id=service_case_id, project_id__isnull=True
+                ).values_list("id", flat=True)
+            )
+            WorkOrder.objects.filter(id__in=auftrag_ids).update(project_id=project.id)
+            # Belege: alle projektlosen Angebote/Rechnungen, die direkt am Vorgang
+            # ODER an einem der eben umgehängten Aufträge hängen. Fremde Projekte
+            # bleiben unberührt (project_id__isnull=True + nur die projektlose
+            # Auftragsmenge).
+            beleg_filter = Q(service_case_id=service_case_id) | Q(
+                work_order_id__in=auftrag_ids
+            )
+            # NUR noch änderbare Belege umhängen: ein versendetes Angebot
+            # (freeze_sent_quote friert alles außer status/work_order_id ein) bzw.
+            # eine veröffentlichte Rechnung (freeze_published_invoice, GoBD B-21)
+            # ließen sich physisch nicht mehr ändern — der Versuch bräche die ganze
+            # Aufstufung ab. Sie bleiben projektlos; project_id ist dort Beleghistorie.
+            Quote.objects.filter(
+                beleg_filter,
+                project_id__isnull=True,
+                status__in=beleg_service.QUOTE_EDITIERBAR,
+            ).update(project_id=project.id)
+            Invoice.objects.filter(
+                beleg_filter,
+                project_id__isnull=True,
+                status__in=beleg_service.INVOICE_EDITIERBAR,
             ).update(project_id=project.id)
     return project
 
