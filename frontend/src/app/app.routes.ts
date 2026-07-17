@@ -5,19 +5,19 @@ import { authGuard, darfAlleGuard, darfGuard } from './core/auth.guard';
 export const routes: Routes = [
   {
     path: 'login',
-    title: 'Anmeldung — MCN Leitstand',
+    title: 'Anmeldung — Mitra Sanitär',
     loadComponent: () => import('./features/login/login').then((m) => m.Login),
   },
   // Passwort-Reset — anmeldefrei (wie /login), erreichbar ohne Sitzung.
   {
     path: 'passwort-vergessen',
-    title: 'Passwort vergessen — MCN Leitstand',
+    title: 'Passwort vergessen — Mitra Sanitär',
     loadComponent: () =>
       import('./features/passwort-reset/passwort-vergessen').then((m) => m.PasswortVergessen),
   },
   {
     path: 'passwort-zuruecksetzen',
-    title: 'Passwort zurücksetzen — MCN Leitstand',
+    title: 'Passwort zurücksetzen — Mitra Sanitär',
     loadComponent: () =>
       import('./features/passwort-reset/passwort-zuruecksetzen').then(
         (m) => m.PasswortZuruecksetzen,
@@ -33,19 +33,19 @@ export const routes: Routes = [
       { path: '', pathMatch: 'full', redirectTo: 'uebersicht' },
       {
         path: 'uebersicht',
-        title: 'Übersicht — MCN Leitstand',
+        title: 'Übersicht — Mitra Sanitär',
         loadComponent: () => import('./features/uebersicht/uebersicht').then((m) => m.Uebersicht),
       },
       {
         path: 'profil',
-        title: 'Mein Profil — MCN Leitstand',
+        title: 'Mein Profil — Mitra Sanitär',
         loadComponent: () => import('./features/profil/profil').then((m) => m.Profil),
       },
       {
         // Selbstauskunft (eigene HR-Daten). Recht hr/LESEN; der Server liefert
         // nur die eigene Zeile (row_scope EIGENE ist hier zulässig).
         path: 'meine-personalakte',
-        title: 'Meine Personalakte — MCN Leitstand',
+        title: 'Meine Personalakte — Mitra Sanitär',
         canActivate: [darfGuard('hr', 'LESEN')],
         loadComponent: () =>
           import('./features/meine-personalakte/meine-personalakte').then(
@@ -57,7 +57,7 @@ export const routes: Routes = [
         // richtig: der Server bucht immer auf den Akteur und nimmt gar keine
         // fremde user_id entgegen.
         path: 'meine-zeiten',
-        title: 'Meine Zeiten — MCN Leitstand',
+        title: 'Meine Zeiten — Mitra Sanitär',
         canActivate: [darfGuard('hr', 'AENDERN')],
         loadComponent: () =>
           import('./features/meine-zeiten/meine-zeiten').then((m) => m.MeineZeiten),
@@ -68,14 +68,14 @@ export const routes: Routes = [
         // Route, die zwangsläufig auf „Kein Zugriff" führt, wird gar nicht erst
         // geöffnet (die Navigation blendet den Punkt ohnehin aus).
         path: 'zeiterfassung',
-        title: 'Zeiterfassung — MCN Leitstand',
+        title: 'Zeiterfassung — Mitra Sanitär',
         canActivate: [darfAlleGuard('hr', 'LESEN')],
         loadComponent: () =>
           import('./features/zeiterfassung/zeiterfassung').then((m) => m.Zeiterfassung),
       },
       {
         path: 'kein-zugriff',
-        title: 'Kein Zugriff — MCN Leitstand',
+        title: 'Kein Zugriff — Mitra Sanitär',
         loadComponent: () =>
           import('./shared/kein-zugriff/kein-zugriff').then((m) => m.KeinZugriff),
       },
@@ -86,7 +86,7 @@ export const routes: Routes = [
         // EIGENE bekommt 403. Der Header-CTA blendet sich für den Monteur ohnehin
         // aus; der Guard darf die Direkt-URL nicht offenlassen.
         path: 'schnellerfassung',
-        title: 'Meldung erfassen — MCN Leitstand',
+        title: 'Meldung erfassen — Mitra Sanitär',
         canActivate: [darfAlleGuard('workflow', 'ANLEGEN')],
         loadComponent: () =>
           import('./features/schnellerfassung/schnellerfassung').then((m) => m.Schnellerfassung),
@@ -98,37 +98,37 @@ export const routes: Routes = [
       {
         path: 'werkzeuge',
         pathMatch: 'full',
-        title: 'Werkzeuge — MCN Leitstand',
+        title: 'Werkzeuge — Mitra Sanitär',
         loadComponent: () => import('./features/werkzeuge/werkzeuge').then((m) => m.Werkzeuge),
       },
       {
         path: 'werkzeuge/:werkzeug',
-        title: 'Werkzeuge — MCN Leitstand',
+        title: 'Werkzeuge — Mitra Sanitär',
         loadComponent: () => import('./features/werkzeuge/werkzeuge').then((m) => m.Werkzeuge),
       },
       {
         path: 'kontakte',
-        title: 'Kontakte — MCN Leitstand',
+        title: 'Kontakte — Mitra Sanitär',
         canActivate: [darfGuard('identity', 'LESEN')],
         loadComponent: () => import('./features/kontakte/kontakte').then((m) => m.Kontakte),
       },
       {
         path: 'kontakte/:id',
-        title: 'Kontakt — MCN Leitstand',
+        title: 'Kontakt — Mitra Sanitär',
         canActivate: [darfGuard('identity', 'LESEN')],
         loadComponent: () =>
           import('./features/kontakt-detail/kontakt-detail').then((m) => m.KontaktDetail),
       },
       {
         path: 'liegenschaften',
-        title: 'Liegenschaften — MCN Leitstand',
+        title: 'Liegenschaften — Mitra Sanitär',
         canActivate: [darfGuard('property', 'LESEN')],
         loadComponent: () =>
           import('./features/liegenschaften/liegenschaften').then((m) => m.Liegenschaften),
       },
       {
         path: 'liegenschaften/:id',
-        title: 'Liegenschaft — MCN Leitstand',
+        title: 'Liegenschaft — Mitra Sanitär',
         canActivate: [darfGuard('property', 'LESEN')],
         loadComponent: () =>
           import('./features/liegenschaft-detail/liegenschaft-detail').then(
@@ -140,14 +140,14 @@ export const routes: Routes = [
         // Aufträge, Prüfungen und Fälligkeiten hängen an der Anlage und müssen
         // umgekehrt auf sie verlinken können — ein Panel hat keine Adresse.
         path: 'anlagen/:id',
-        title: 'Technische Anlage — MCN Leitstand',
+        title: 'Technische Anlage — Mitra Sanitär',
         canActivate: [darfGuard('property', 'LESEN')],
         loadComponent: () =>
           import('./features/anlage-detail/anlage-detail').then((m) => m.AnlageDetail),
       },
       {
         path: 'projekte',
-        title: 'Projekte — MCN Leitstand',
+        title: 'Projekte — Mitra Sanitär',
         canActivate: [darfGuard('workflow', 'LESEN')],
         loadComponent: () => import('./features/projekte/projekte').then((m) => m.Projekte),
       },
@@ -156,7 +156,7 @@ export const routes: Routes = [
         // 'projekte/:id' stehen, sonst schluckt der Parameter das statische
         // Segment 'vorgaenge'.
         path: 'projekte/vorgaenge',
-        title: 'Vorgänge — MCN Leitstand',
+        title: 'Vorgänge — Mitra Sanitär',
         canActivate: [darfGuard('workflow', 'LESEN')],
         loadComponent: () =>
           import('./features/vorgang-liste/vorgang-liste').then((m) => m.VorgangListe),
@@ -165,28 +165,28 @@ export const routes: Routes = [
         // Vorgangs-Kanban. MUSS vor 'projekte/:id' stehen, sonst schluckt der
         // Parameter das statische Segment 'kanban'.
         path: 'projekte/kanban',
-        title: 'Vorgang-Board — MCN Leitstand',
+        title: 'Vorgang-Board — Mitra Sanitär',
         canActivate: [darfGuard('workflow', 'LESEN')],
         loadComponent: () =>
           import('./features/vorgang-kanban/vorgang-kanban').then((m) => m.VorgangKanban),
       },
       {
         path: 'projekte/:id',
-        title: 'Projekt — MCN Leitstand',
+        title: 'Projekt — Mitra Sanitär',
         canActivate: [darfGuard('workflow', 'LESEN')],
         loadComponent: () =>
           import('./features/projekt-detail/projekt-detail').then((m) => m.ProjektDetail),
       },
       {
         path: 'vorgaenge/:id',
-        title: 'Vorgang — MCN Leitstand',
+        title: 'Vorgang — Mitra Sanitär',
         canActivate: [darfGuard('workflow', 'LESEN')],
         loadComponent: () =>
           import('./features/vorgang-detail/vorgang-detail').then((m) => m.VorgangDetail),
       },
       {
         path: 'auftraege/:id',
-        title: 'Auftrag — MCN Leitstand',
+        title: 'Auftrag — Mitra Sanitär',
         canActivate: [darfGuard('workflow', 'LESEN')],
         loadComponent: () =>
           import('./features/auftrag-detail/auftrag-detail').then((m) => m.AuftragDetail),
@@ -199,13 +199,13 @@ export const routes: Routes = [
         // nur raten. Der Server tort hart (403); die Komponente zeigt dann
         // „Kein Zugriff". Dieselbe Linie wie bei /zeiterfassung.
         path: 'dossier/:typ/:id',
-        title: 'Dossier — MCN Leitstand',
+        title: 'Dossier — Mitra Sanitär',
         loadComponent: () => import('./features/dossier/dossier').then((m) => m.Dossier),
       },
       {
         path: 'planung',
         pathMatch: 'full',
-        title: 'Planung — MCN Leitstand',
+        title: 'Planung — Mitra Sanitär',
         canActivate: [darfGuard('workflow', 'LESEN')],
         loadComponent: () => import('./features/einsaetze/einsaetze').then((m) => m.Einsaetze),
       },
@@ -217,13 +217,13 @@ export const routes: Routes = [
       // bleibt für den Monteur offen und zeigt ihm seine eigenen Einsätze.
       {
         path: 'planung/plantafel',
-        title: 'Plantafel — MCN Leitstand',
+        title: 'Plantafel — Mitra Sanitär',
         canActivate: [darfAlleGuard('workflow', 'LESEN')],
         loadComponent: () => import('./features/plantafel/plantafel').then((m) => m.Plantafel),
       },
       {
         path: 'planung/kalender',
-        title: 'Kalender — MCN Leitstand',
+        title: 'Kalender — Mitra Sanitär',
         canActivate: [darfAlleGuard('workflow', 'LESEN')],
         loadComponent: () =>
           import('./features/planung-kalender/planung-kalender').then((m) => m.PlanungKalender),
@@ -232,7 +232,7 @@ export const routes: Routes = [
         // „Wer ist gerade nicht da" — ohne Abwesenheitsart (DSGVO Art. 9).
         // Bewusst am workflow-Recht: die Disposition darf das ohne `hr`.
         path: 'planung/abwesend',
-        title: 'Wer fehlt? — MCN Leitstand',
+        title: 'Wer fehlt? — Mitra Sanitär',
         canActivate: [darfAlleGuard('workflow', 'LESEN')],
         loadComponent: () =>
           import('./features/planung-abwesend/planung-abwesend').then(
@@ -241,7 +241,7 @@ export const routes: Routes = [
       },
       {
         path: 'planung/einstellungen',
-        title: 'Kategorien & Ressourcen — MCN Leitstand',
+        title: 'Kategorien & Ressourcen — Mitra Sanitär',
         canActivate: [darfAlleGuard('workflow', 'LESEN')],
         loadComponent: () =>
           import('./features/planung-einstellungen/planung-einstellungen').then(
@@ -250,14 +250,14 @@ export const routes: Routes = [
       },
       {
         path: 'planung/:id',
-        title: 'Einsatz — MCN Leitstand',
+        title: 'Einsatz — Mitra Sanitär',
         canActivate: [darfGuard('workflow', 'LESEN')],
         loadComponent: () =>
           import('./features/einsatz-detail/einsatz-detail').then((m) => m.EinsatzDetail),
       },
       {
         path: 'dokumente',
-        title: 'Dokumente — MCN Leitstand',
+        title: 'Dokumente — Mitra Sanitär',
         canActivate: [darfGuard('invoicing', 'LESEN')],
         loadComponent: () => import('./features/dokumente/dokumente').then((m) => m.Dokumente),
       },
@@ -265,7 +265,7 @@ export const routes: Routes = [
         // Beleg-Editor (Angebot). MUSS vor 'dokumente/:id' stehen, sonst schluckt
         // der Parameter das statische Segment 'angebot'.
         path: 'dokumente/angebot/:id',
-        title: 'Angebot bearbeiten — MCN Leitstand',
+        title: 'Angebot bearbeiten — Mitra Sanitär',
         data: { belegArt: 'angebot' },
         canActivate: [darfGuard('invoicing', 'AENDERN')],
         loadComponent: () =>
@@ -274,7 +274,7 @@ export const routes: Routes = [
       {
         // Derselbe Editor im Rechnungs-Modus (Artikel-Palette für Rechnungen).
         path: 'dokumente/rechnung/:id',
-        title: 'Rechnung bearbeiten — MCN Leitstand',
+        title: 'Rechnung bearbeiten — Mitra Sanitär',
         data: { belegArt: 'rechnung' },
         canActivate: [darfGuard('invoicing', 'AENDERN')],
         loadComponent: () =>
@@ -282,21 +282,21 @@ export const routes: Routes = [
       },
       {
         path: 'dokumente/:id',
-        title: 'Beleg — MCN Leitstand',
+        title: 'Beleg — Mitra Sanitär',
         canActivate: [darfGuard('invoicing', 'LESEN')],
         loadComponent: () =>
           import('./features/beleg-detail/beleg-detail').then((m) => m.BelegDetail),
       },
       {
         path: 'rechnungen/:id',
-        title: 'Rechnung — MCN Leitstand',
+        title: 'Rechnung — Mitra Sanitär',
         canActivate: [darfAlleGuard('invoicing', 'LESEN')],
         loadComponent: () =>
           import('./features/rechnung-detail/rechnung-detail').then((m) => m.RechnungDetail),
       },
       {
         path: 'aufgaben',
-        title: 'Aufgaben — MCN Leitstand',
+        title: 'Aufgaben — Mitra Sanitär',
         canActivate: [darfGuard('workflow', 'LESEN')],
         loadComponent: () => import('./features/aufgaben/aufgaben').then((m) => m.Aufgaben),
       },
@@ -304,21 +304,21 @@ export const routes: Routes = [
         // Vier-Augen-Anträge. Die Liste verlangt nur security/LESEN; Genehmigen
         // und Ablehnen gatet der Server zusätzlich mit security/FREIGEBEN.
         path: 'freigaben',
-        title: 'Freigaben — MCN Leitstand',
+        title: 'Freigaben — Mitra Sanitär',
         canActivate: [darfGuard('security', 'LESEN')],
         loadComponent: () => import('./features/freigaben/freigaben').then((m) => m.Freigaben),
       },
       {
         path: 'mitarbeiter',
         pathMatch: 'full',
-        title: 'Mitarbeiter — MCN Leitstand',
+        title: 'Mitarbeiter — Mitra Sanitär',
         canActivate: [darfAlleGuard('hr', 'LESEN')],
         loadComponent: () =>
           import('./features/mitarbeiter/mitarbeiter').then((m) => m.Mitarbeiter),
       },
       {
         path: 'mitarbeiter/:id',
-        title: 'Mitarbeiter — MCN Leitstand',
+        title: 'Mitarbeiter — Mitra Sanitär',
         canActivate: [darfAlleGuard('hr', 'LESEN')],
         loadComponent: () =>
           import('./features/mitarbeiter-detail/mitarbeiter-detail').then(
@@ -334,7 +334,7 @@ export const routes: Routes = [
       {
         path: 'wartung',
         pathMatch: 'full',
-        title: 'Fälligkeiten — MCN Leitstand',
+        title: 'Fälligkeiten — Mitra Sanitär',
         canActivate: [darfGuard('maintenance', 'LESEN')],
         loadComponent: () =>
           import('./features/faelligkeiten/faelligkeiten').then((m) => m.Faelligkeiten),
@@ -342,14 +342,14 @@ export const routes: Routes = [
       {
         path: 'wartung/vertraege',
         pathMatch: 'full',
-        title: 'Wartungsverträge — MCN Leitstand',
+        title: 'Wartungsverträge — Mitra Sanitär',
         canActivate: [darfGuard('maintenance', 'LESEN')],
         loadComponent: () => import('./features/wartung/wartung').then((m) => m.Wartung),
       },
       {
         path: 'wartung/pruefungen',
         pathMatch: 'full',
-        title: 'Prüffristen — MCN Leitstand',
+        title: 'Prüffristen — Mitra Sanitär',
         canActivate: [darfGuard('maintenance', 'LESEN')],
         loadComponent: () =>
           import('./features/pruefungen/pruefungen').then((m) => m.Pruefungen),
@@ -357,7 +357,7 @@ export const routes: Routes = [
       {
         path: 'wartung/gewaehrleistung',
         pathMatch: 'full',
-        title: 'Gewährleistung — MCN Leitstand',
+        title: 'Gewährleistung — Mitra Sanitär',
         canActivate: [darfGuard('maintenance', 'LESEN')],
         loadComponent: () =>
           import('./features/gewaehrleistung/gewaehrleistung').then(
@@ -366,7 +366,7 @@ export const routes: Routes = [
       },
       {
         path: 'wartung/:id',
-        title: 'Wartungsvertrag — MCN Leitstand',
+        title: 'Wartungsvertrag — Mitra Sanitär',
         canActivate: [darfGuard('maintenance', 'LESEN')],
         loadComponent: () =>
           import('./features/wartung-detail/wartung-detail').then((m) => m.WartungDetail),
@@ -374,14 +374,14 @@ export const routes: Routes = [
       {
         path: 'buchhaltung',
         pathMatch: 'full',
-        title: 'Buchhaltung — MCN Leitstand',
+        title: 'Buchhaltung — Mitra Sanitär',
         canActivate: [darfAlleGuard('invoicing', 'LESEN')],
         loadComponent: () =>
           import('./features/buchhaltung/buchhaltung').then((m) => m.Buchhaltung),
       },
       {
         path: 'buchhaltung/mahnwesen',
-        title: 'Mahnwesen — MCN Leitstand',
+        title: 'Mahnwesen — Mitra Sanitär',
         canActivate: [darfAlleGuard('invoicing', 'LESEN')],
         loadComponent: () => import('./features/mahnwesen/mahnwesen').then((m) => m.Mahnwesen),
       },
@@ -389,13 +389,13 @@ export const routes: Routes = [
         // Mahnlauf (Stapel). MUSS vor 'buchhaltung/:id' stehen, sonst schluckt der
         // Parameter das statische Segment 'mahnlauf'.
         path: 'buchhaltung/mahnlauf',
-        title: 'Mahnlauf — MCN Leitstand',
+        title: 'Mahnlauf — Mitra Sanitär',
         canActivate: [darfAlleGuard('invoicing', 'LESEN')],
         loadComponent: () => import('./features/mahnlauf/mahnlauf').then((m) => m.Mahnlauf),
       },
       {
         path: 'buchhaltung/:id',
-        title: 'Rechnung — MCN Leitstand',
+        title: 'Rechnung — Mitra Sanitär',
         canActivate: [darfAlleGuard('invoicing', 'LESEN')],
         loadComponent: () =>
           import('./features/buchhaltung-detail/buchhaltung-detail').then(
@@ -407,14 +407,14 @@ export const routes: Routes = [
       {
         path: 'belegerfassung',
         pathMatch: 'full',
-        title: 'Belegerfassung — MCN Leitstand',
+        title: 'Belegerfassung — Mitra Sanitär',
         canActivate: [darfGuard('accounting', 'LESEN')],
         loadComponent: () =>
           import('./features/belegerfassung/belegerfassung').then((m) => m.Belegerfassung),
       },
       {
         path: 'belegerfassung/stammdaten',
-        title: 'Kontierung — MCN Leitstand',
+        title: 'Kontierung — Mitra Sanitär',
         canActivate: [darfGuard('accounting', 'LESEN')],
         loadComponent: () =>
           import('./features/accounting-stammdaten/accounting-stammdaten').then(
@@ -423,7 +423,7 @@ export const routes: Routes = [
       },
       {
         path: 'belegerfassung/:id',
-        title: 'Eingangsbeleg — MCN Leitstand',
+        title: 'Eingangsbeleg — Mitra Sanitär',
         canActivate: [darfGuard('accounting', 'LESEN')],
         loadComponent: () =>
           import('./features/beleg-eingang-detail/beleg-eingang-detail').then(
@@ -433,14 +433,14 @@ export const routes: Routes = [
       {
         path: 'auswertungen',
         pathMatch: 'full',
-        title: 'Auswertungen — MCN Leitstand',
+        title: 'Auswertungen — Mitra Sanitär',
         canActivate: [darfAlleGuard('invoicing', 'LESEN')],
         loadComponent: () =>
           import('./features/auswertungen/auswertungen').then((m) => m.Auswertungen),
       },
       {
         path: 'auswertungen/umsatz-projektuebersicht',
-        title: 'Umsatz- und Projektübersicht — MCN Leitstand',
+        title: 'Umsatz- und Projektübersicht — Mitra Sanitär',
         canActivate: [darfAlleGuard('invoicing', 'LESEN')],
         loadComponent: () =>
           import('./features/auswertungen-umsatz/auswertungen-umsatz').then(
@@ -449,7 +449,7 @@ export const routes: Routes = [
       },
       {
         path: 'auswertungen/kunden',
-        title: 'Kunden — MCN Leitstand',
+        title: 'Kunden — Mitra Sanitär',
         canActivate: [darfAlleGuard('invoicing', 'LESEN')],
         loadComponent: () =>
           import('./features/auswertungen-kunden/auswertungen-kunden').then(
@@ -458,7 +458,7 @@ export const routes: Routes = [
       },
       {
         path: 'auswertungen/projekte',
-        title: 'Projekte-Auswertung — MCN Leitstand',
+        title: 'Projekte-Auswertung — Mitra Sanitär',
         canActivate: [darfAlleGuard('invoicing', 'LESEN')],
         loadComponent: () =>
           import('./features/auswertungen-projekte/auswertungen-projekte').then(
@@ -467,7 +467,7 @@ export const routes: Routes = [
       },
       {
         path: 'auswertungen/artikel',
-        title: 'Artikel-Auswertung — MCN Leitstand',
+        title: 'Artikel-Auswertung — Mitra Sanitär',
         canActivate: [darfAlleGuard('invoicing', 'LESEN')],
         loadComponent: () =>
           import('./features/auswertungen-artikel/auswertungen-artikel').then(
@@ -478,7 +478,7 @@ export const routes: Routes = [
         // Personaldaten (DSGVO): eigenes hr-Recht — NUR_LESEN/DISPOSITION kommen
         // nicht rein. Die Landing blendet die Kachel serverseitig entsprechend aus.
         path: 'auswertungen/mitarbeitende',
-        title: 'Mitarbeitenden-Auswertung — MCN Leitstand',
+        title: 'Mitarbeitenden-Auswertung — Mitra Sanitär',
         // `darfAlleGuard`: Die Auswertung ist eine Sicht über ALLE Mitarbeitenden;
         // der Endpunkt verweigert row_scope EIGENE mit 403 (MONTEUR trägt hr/LESEN
         // seit 0068 für die eigene Zeiterfassung). Eine Route, die zwangsläufig auf
@@ -491,14 +491,14 @@ export const routes: Routes = [
       },
       {
         path: 'artikel',
-        title: 'Artikel & Leistungen — MCN Leitstand',
+        title: 'Artikel & Leistungen — Mitra Sanitär',
         canActivate: [darfGuard('pricing', 'LESEN')],
         loadComponent: () => import('./features/artikel/artikel').then((m) => m.Artikel),
       },
       {
         // Vor 'artikel/:id', sonst fängt der :id-Parameter 'anbindungen' ab.
         path: 'artikel/anbindungen',
-        title: 'Lieferanten-Anbindungen — MCN Leitstand',
+        title: 'Lieferanten-Anbindungen — Mitra Sanitär',
         canActivate: [darfGuard('pricing', 'LESEN')],
         loadComponent: () =>
           import('./features/haendler-anbindungen/haendler-anbindungen').then(
@@ -508,7 +508,7 @@ export const routes: Routes = [
       {
         // Vor 'artikel/:id', sonst fängt der :id-Parameter 'aufschlagsmatrix' ab.
         path: 'artikel/aufschlagsmatrix',
-        title: 'EK→VK-Aufschlagsmatrix — MCN Leitstand',
+        title: 'EK→VK-Aufschlagsmatrix — Mitra Sanitär',
         canActivate: [darfGuard('pricing', 'LESEN')],
         loadComponent: () =>
           import('./features/aufschlagsmatrix/aufschlagsmatrix').then(
@@ -517,14 +517,14 @@ export const routes: Routes = [
       },
       {
         path: 'artikel/:id',
-        title: 'Artikel — MCN Leitstand',
+        title: 'Artikel — Mitra Sanitär',
         canActivate: [darfGuard('pricing', 'LESEN')],
         loadComponent: () =>
           import('./features/artikel-detail/artikel-detail').then((m) => m.ArtikelDetail),
       },
       {
         path: 'leistungen/:id',
-        title: 'Leistung — MCN Leitstand',
+        title: 'Leistung — Mitra Sanitär',
         canActivate: [darfGuard('pricing', 'LESEN')],
         loadComponent: () =>
           import('./features/leistung-detail/leistung-detail').then((m) => m.LeistungDetail),
@@ -534,20 +534,20 @@ export const routes: Routes = [
       { path: 'einstellungen', pathMatch: 'full', redirectTo: 'einstellungen/profil' },
       {
         path: 'einstellungen/profil',
-        title: 'Firmenprofil — MCN Leitstand',
+        title: 'Firmenprofil — Mitra Sanitär',
         canActivate: [darfGuard('company', 'LESEN')],
         loadComponent: () =>
           import('./features/firmenprofil/firmenprofil').then((m) => m.Firmenprofil),
       },
       {
         path: 'einstellungen/mahnstufen',
-        title: 'Mahnstufen — MCN Leitstand',
+        title: 'Mahnstufen — Mitra Sanitär',
         canActivate: [darfAlleGuard('invoicing', 'LESEN')],
         loadComponent: () => import('./features/mahnstufen/mahnstufen').then((m) => m.Mahnstufen),
       },
       {
         path: 'einstellungen/mailversand',
-        title: 'Mailversand — MCN Leitstand',
+        title: 'Mailversand — Mitra Sanitär',
         canActivate: [darfGuard('company', 'LESEN')],
         loadComponent: () =>
           import('./features/mail-einstellungen/mail-einstellungen').then(
@@ -556,20 +556,20 @@ export const routes: Routes = [
       },
       {
         path: 'einstellungen/gewerke',
-        title: 'Gewerke — MCN Leitstand',
+        title: 'Gewerke — Mitra Sanitär',
         canActivate: [darfGuard('company', 'LESEN')],
         loadComponent: () => import('./features/gewerke/gewerke').then((m) => m.Gewerke),
       },
       {
         path: 'einstellungen/niederlassungen',
-        title: 'Niederlassungen — MCN Leitstand',
+        title: 'Niederlassungen — Mitra Sanitär',
         canActivate: [darfGuard('company', 'LESEN')],
         loadComponent: () =>
           import('./features/niederlassungen/niederlassungen').then((m) => m.Niederlassungen),
       },
       {
         path: 'einstellungen/lohngruppen',
-        title: 'Lohngruppen — MCN Leitstand',
+        title: 'Lohngruppen — Mitra Sanitär',
         canActivate: [darfGuard('pricing', 'LESEN')],
         loadComponent: () =>
           import('./features/lohngruppen/lohngruppen').then((m) => m.Lohngruppen),
@@ -579,14 +579,14 @@ export const routes: Routes = [
         // nicht an der Firma: Lesen mit property/LESEN, Anlegen/Ändern gatet der
         // Server (property/ANLEGEN bzw. AENDERN) — die Seite schaltet read-only.
         path: 'einstellungen/bauteilkatalog',
-        title: 'Bauteilkatalog — MCN Leitstand',
+        title: 'Bauteilkatalog — Mitra Sanitär',
         canActivate: [darfGuard('property', 'LESEN')],
         loadComponent: () =>
           import('./features/bauteilkatalog/bauteilkatalog').then((m) => m.Bauteilkatalog),
       },
       {
         path: 'einstellungen/akquisekanaele',
-        title: 'Akquisekanäle — MCN Leitstand',
+        title: 'Akquisekanäle — Mitra Sanitär',
         canActivate: [darfGuard('company', 'LESEN')],
         loadComponent: () => import('./features/quellen/quellen').then((m) => m.Quellen),
       },
@@ -595,7 +595,7 @@ export const routes: Routes = [
         // Anlegen/Ändern gatet der Server (hr/ANLEGEN bzw. hr/AENDERN, jeweils
         // row_scope ALLE — `require`, nicht `require_scoped`).
         path: 'einstellungen/zeiterfassung',
-        title: 'Zeiterfassung — MCN Leitstand',
+        title: 'Zeiterfassung — Mitra Sanitär',
         canActivate: [darfGuard('hr', 'LESEN')],
         loadComponent: () =>
           import('./features/zeitkategorien/zeitkategorien').then((m) => m.Zeitkategorien),
@@ -604,7 +604,7 @@ export const routes: Routes = [
         // Rechtematrix & Rollenzuordnungen. Lesen genügt für die Ansicht; das
         // Ändern gatet der Server mit security/AENDERN (UI schaltet read-only).
         path: 'einstellungen/rechte',
-        title: 'Rechte & Rollen — MCN Leitstand',
+        title: 'Rechte & Rollen — Mitra Sanitär',
         canActivate: [darfGuard('security', 'LESEN')],
         loadComponent: () =>
           import('./features/rechtematrix/rechtematrix').then((m) => m.Rechtematrix),

@@ -1837,3 +1837,20 @@ button {
   width: max-content;
   min-width: 100%;
 }
+
+/* ============== Marken-Emblem (Mitra Sanitär) ================================
+   Das Emblem-SVG traegt Navy-, Orange- und Grau-Anteile — auf der Navy-Sidebar
+   und im dunklen Theme braucht es eine helle Kachel, sonst verschwinden Teile.
+   Die Doppel-Klasse (.brand__mark/.login__mark + .brand-logo-box) gewinnt per
+   Spezifitaet gegen die Akzent-Hintergruende der Komponenten-Styles. */
+.brand__mark.brand-logo-box,
+.login__mark.brand-logo-box {
+  background: #fff;
+  padding: 0.2rem;
+}
+.brand-logo {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}

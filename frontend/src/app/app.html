@@ -10,9 +10,13 @@
   @if (auth.istAngemeldet()) {
     <aside class="sidebar" aria-label="Bereichsnavigation">
       <div class="sidebar__brand">
-        <span class="brand__mark" aria-hidden="true">M</span>
+        <!-- Firmen-Emblem auf weißer Kachel: die Navy-/Orange-Anteile des SVGs
+             blieben auf der Navy-Sidebar sonst unsichtbar. -->
+        <span class="brand__mark brand-logo-box" aria-hidden="true">
+          <img class="brand-logo" src="mitra-emblem.svg" alt="" />
+        </span>
         <span class="brand__type">
-          <span class="brand__name">MCN</span>
+          <span class="brand__name">Mitra Sanitär</span>
           <span class="brand__sub">Leitstand</span>
         </span>
       </div>
@@ -74,7 +78,7 @@
     <!-- Header: Wortmarke + Benutzer-Chip + Theme-Toggle. -->
     <header class="header">
       <div class="header__title">
-        <span class="header__product">MCN</span>
+        <span class="header__product">Mitra Sanitär</span>
         <span class="header__divider" aria-hidden="true"></span>
         <span class="header__context">Leitstand</span>
       </div>

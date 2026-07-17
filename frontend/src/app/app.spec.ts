@@ -32,11 +32,11 @@ describe('App', () => {
     expect(fixture.componentInstance).toBeTruthy();
   });
 
-  it('should render the MCN wordmark and Leitstand context', async () => {
+  it('should render the Mitra Sanitär wordmark and Leitstand context', async () => {
     const fixture = TestBed.createComponent(App);
     await fixture.whenStable();
     const compiled = fixture.nativeElement as HTMLElement;
-    expect(compiled.querySelector('.header__product')?.textContent).toContain('MCN');
+    expect(compiled.querySelector('.header__product')?.textContent).toContain('Mitra Sanitär');
     expect(compiled.querySelector('.header__context')?.textContent).toContain('Leitstand');
   });
 
