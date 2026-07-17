@@ -4777,3 +4777,35 @@ class ToolCall(models.Model):
 
     def __str__(self):
         return f"{self.capability}/{self.step_key} ({self.status})"
+
+
+class DeviceToken(models.Model):
+    """security.device_token — Bearer-Token je Gerät für die native App.
+
+    Neben der Session-Cookie-Auth des Web-Cockpits meldet sich die Android-App
+    mit einem Bearer-Token an. Gespeichert wird AUSSCHLIESSLICH der SHA-256-Hex-
+    Hash des Tokens; das Klartext-Token verlässt den Server nur einmalig in der
+    Login-Antwort. Widerruf über `revoked_at` (stilllegen statt löschen — die
+    Tabelle trägt den No-Delete-Schutz). `user` ist das Login-Konto
+    (accounts.User); `app_user_id` spiegelt die fachliche Identität für die
+    schnelle Rechteauflösung (kann NULL sein: Konto ohne app_user_id).
+    """
+
+    id = models.UUIDField(primary_key=True)
+    user = models.ForeignKey(
+        "accounts.User", models.DO_NOTHING, db_column="user_id",
+        related_name="device_tokens",
+    )
+    app_user_id = models.UUIDField(null=True, blank=True)
+    token_hash = models.TextField(unique=True)
+    device_name = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(db_default=Now())
+    last_used_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        managed = False
+        db_table = 'security"."device_token'
+
+    def __str__(self):
+        return f"device_token({self.device_name or '—'})"

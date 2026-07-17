@@ -41,8 +41,10 @@ from ninja.errors import HttpError
 from ninja.security import django_auth
 from ninja.utils import check_csrf
 
+from api.device_auth import DeviceTokenAuth
 from db_core import mail_crypto
 from db_core.models import AppUser
+from db_core.services import geraetetoken
 from db_core.services import mail as mail_service
 from db_core.services import rechte as rechte_service
 
@@ -157,6 +159,74 @@ def logout_view(request):
     """Beendet die Sitzung. Idempotent — auch ohne Sitzung ein sauberes 200."""
     _require_csrf(request)
     logout(request)
+    return {"detail": "abgemeldet"}
+
+
+# ---------------------------------------------------------------------------
+# Geräte-Login (Bearer) — Anmeldeweg der nativen App neben der Session-Cookie-Auth
+# ---------------------------------------------------------------------------
+
+
+class DeviceLoginIn(Schema):
+    email: str
+    password: str
+    device_name: str
+
+
+class DeviceLoginOut(Schema):
+    # Das Klartext-Bearer-Token — NUR in dieser Antwort, danach nie wieder.
+    token: str
+    display_name: str
+    app_user_id: UUID | None = None
+    roles: list[str]
+
+
+@router.post("/device/login", response=DeviceLoginOut, auth=None)
+def device_login(request, payload: DeviceLoginIn):
+    """Anmeldung der nativen App: E-Mail + Passwort → Bearer-Token.
+
+    KEIN CSRF (anders als der Session-Login): Es wird kein Cookie gesetzt — das
+    Token kommt im Antwort-Body und wird von der App gespeichert. Es gibt keine
+    CSRF-Angriffsfläche (kein Cookie, das ein Browser automatisch mitschickt).
+
+    Bei falschen Zugangsdaten dieselbe unspezifische 401-Meldung wie beim
+    Session-Login (keine User-Enumeration; `authenticate` filtert inaktive Konten
+    bereits heraus).
+
+    Das Klartext-Token steht AUSSCHLIESSLICH in dieser Antwort; in der DB liegt
+    nur sein SHA-256-Hash. `display_name`/`app_user_id`/`roles` werden identisch
+    zu `_me` berechnet.
+
+    OFFEN (nicht in diesem Slice): Rate-Limiting/Brute-Force-Schutz für diesen
+    Login-Endpunkt.
+    """
+    user = authenticate(request, email=payload.email, password=payload.password)
+    if user is None:
+        raise HttpError(401, "E-Mail-Adresse oder Passwort ist falsch.")
+
+    token = geraetetoken.token_ausstellen(user, payload.device_name)
+    profil = _me(user)
+    return DeviceLoginOut(
+        token=token,
+        display_name=profil.display_name,
+        app_user_id=profil.app_user_id,
+        roles=profil.roles,
+    )
+
+
+@router.post("/device/logout", auth=DeviceTokenAuth())
+def device_logout(request):
+    """Widerruft das aktuell präsentierte Geräte-Token. Idempotent (200).
+
+    Nur Bearer-Auth: der Endpunkt wirkt ausschließlich auf das Token, mit dem er
+    aufgerufen wurde (`request.device_token`, in `DeviceTokenAuth` hinterlegt) —
+    kein Zielparameter, kein Modul-Recht (analog `POST /api/auth/password`, das
+    ebenfalls nur auf das eigene Konto wirkt). Ein bereits widerrufenes Token zu
+    widerrufen ist ein sauberes 200.
+    """
+    device_token = getattr(request, "device_token", None)
+    if device_token is not None:
+        geraetetoken.token_widerrufen(device_token)
     return {"detail": "abgemeldet"}
 
 

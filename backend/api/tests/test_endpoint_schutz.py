@@ -44,6 +44,10 @@ WHITELIST = {
     # Enumeration), /confirm setzt anhand eines Einmal-Tokens ein neues Passwort.
     "/api/auth/password-reset/request",
     "/api/auth/password-reset/confirm",
+    # Geräte-Login der nativen App (auth=None, kein CSRF): muss vor jeder Sitzung
+    # erreichbar sein. Gibt bei Erfolg das Bearer-Token zurück; falsche
+    # Zugangsdaten → 401 (unspezifisch, keine Enumeration).
+    "/api/auth/device/login",
     # IDS-Connect Warenkorb-Rückgabe: der Händler-Shop POSTet hierher (aus dem
     # Browser des Handwerkers, ohne MCN-Sitzung). Autorisierung ist das Einmal-
     # Token in der URL (in der DB nur als Hash); kein Modul-Recht, auth=None.
@@ -58,6 +62,10 @@ WHITELIST = {
 # ausschließlich auf request.user wirkt und kein Zielkonto entgegennimmt.
 NO_REQUIRE_OK = {
     "/api/auth/password",
+    # Geräte-Logout der nativen App: Bearer-authentifiziert (anonym → 401, daher
+    # NICHT in WHITELIST), aber bewusst OHNE Modul-Recht — er widerruft nur das
+    # präsentierte Token, kein Zielkonto (analog /api/auth/password).
+    "/api/auth/device/logout",
 }
 
 _REQUIRE_CALL = re.compile(r"\brequire(_scoped|_create)?\s*\(")

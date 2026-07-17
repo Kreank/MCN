@@ -15,6 +15,7 @@ erreichbar sein müssen, bevor eine Sitzung besteht.
 from ninja import NinjaAPI
 from ninja.security import django_auth
 
+from api.device_auth import DeviceTokenAuth
 from api.anlage import router as anlage_router
 from api.artikel import router as artikel_router
 from api.aufgabe import router as aufgabe_router
@@ -50,7 +51,12 @@ from api.zeiterfassung import router as zeiterfassung_router
 
 # Cookie-basierte Session-Auth für die ganze API; django-ninja aktiviert damit
 # zugleich den CSRF-Schutz für unsichere Methoden.
-api = NinjaAPI(title="MCN API", version="0.1.0", auth=django_auth)
+# Zwei Auth-Wege für die ganze API: Cookie-Session (Web, aktiviert zugleich den
+# CSRF-Schutz für unsichere Methoden) UND Bearer-Token (native App). ninja
+# probiert sie in dieser Reihenfolge; der erste, der greift, gewinnt.
+api = NinjaAPI(
+    title="MCN API", version="0.1.0", auth=[django_auth, DeviceTokenAuth()]
+)
 
 
 @api.get("/health", tags=["system"], auth=None)
