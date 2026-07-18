@@ -27,6 +27,13 @@ lauf() {
     if ! python manage.py wartung_faellige_ausloesen; then
         echo "[scheduler] WARNUNG: Lauf fehlgeschlagen — nächster Versuch morgen."
     fi
+    # Den Login-Drosselzähler (security.login_throttle, Migration 0116) beschneiden.
+    # Er ist transienter Cache; ohne diesen Prune wüchse die Tabelle mit jedem je
+    # gesehenen (Konto,IP)-Paar. Eigener Fehlerpfad, damit ein Prune-Fehler den
+    # Fälligkeitslauf nicht verschluckt (und umgekehrt).
+    if ! python manage.py login_throttle_aufraeumen; then
+        echo "[scheduler] WARNUNG: login_throttle_aufraeumen fehlgeschlagen."
+    fi
 }
 
 echo "[scheduler] täglicher Lauf um ${STUNDE}:${MINUTE} (${TZ})."

@@ -153,8 +153,17 @@ CSRF_TRUSTED_ORIGINS = os.environ.get(
 # für unverschlüsselt und lässt die CSRF-Referer-Prüfung (die nur für HTTPS
 # greift) aus. Bewusst OPT-IN: den Header darf man nur trauen, wenn ein Proxy ihn
 # garantiert setzt/überschreibt — sonst könnte ihn ein Client selbst fälschen.
-if os.environ.get("MCN_BEHIND_TLS_PROXY", "0") == "1":
+_BEHIND_PROXY = os.environ.get("MCN_BEHIND_TLS_PROXY", "0") == "1"
+if _BEHIND_PROXY:
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+# Dieselbe Topologie-Aussage steuert, ob wir dem Client-IP-Header trauen: NUR
+# hinter unserem nginx ist `X-Real-IP` vertrauenswürdig (der Proxy setzt ihn
+# ÜBERSCHREIBEND auf die echte Peer-Adresse, deploy/nginx/app.conf.template). Ohne
+# Proxy (Dev/Direktbetrieb) darf KEIN Header geglaubt werden — sonst könnte ein
+# Client seine IP fälschen und den Login-Brute-Force-Schutz umgehen. Genutzt von
+# db_core/services/login_schutz.client_ip.
+MCN_TRUST_PROXY_IP = _BEHIND_PROXY
 
 # Eigener Fernet-Schlüssel für die at-rest-Verschlüsselung der KI-Werkzeug-/Geräte-
 # Zugangsdaten (db_core/cred_crypto.py). BEWUSST getrennt von MCN_MAIL_KEY, damit
@@ -235,3 +244,27 @@ PASSWORD_RESET_TIMEOUT = 43200
 MCN_FRONTEND_BASE_URL = os.environ.get(
     "MCN_FRONTEND_BASE_URL", "http://localhost:4200"
 )
+
+# --- Brute-Force-/Rate-Limit-Schutz am Login (security.login_throttle) ------
+# Fehlversuche werden pro Konto+IP und pro IP in einem gleitenden Fenster gezählt
+# (db_core/services/login_schutz.py). Erreicht ein Zähler seine Schwelle, wird der
+# Schlüssel für MCN_LOGIN_LOCKOUT_SECONDS gesperrt (429). Die Konto+IP-Schwelle ist
+# streng (Passwort-Durchprobieren), die IP-Schwelle großzügiger (Credential-
+# Spraying über viele Konten). Bewusst KEIN reiner Konto-Lockout — das wäre ein
+# Denial-of-Service gegen beliebige Nutzer. Alle env-überschreibbar.
+#
+# Betriebs-Hinweise (bewusste Trade-offs):
+# * Der IP-Zähler trifft eine GETEILTE Ausgangs-IP (NAT/CGNAT/Büro) gemeinsam —
+#   viele Nutzer hinter einer IP können die Schwelle zusammen reißen. Ein
+#   erfolgreicher Login entlastet nur den Konto+IP-Zähler, NICHT den IP-Zähler
+#   (der verfällt nur über sein Fenster). Für große Standorte ggf. IP_THRESHOLD
+#   anheben. Ohne unseren nginx (MCN_TRUST_PROXY_IP) läuft ohnehin ALLES auf eine
+#   IP (REMOTE_ADDR) — dann den IP-Schutz großzügig oder wirkungslos halten.
+# * LOCKOUT_SECONDS SOLLTE >= WINDOW_SECONDS sein. Ist die Sperre kürzer als das
+#   Fenster, lockt der erste Fehlversuch nach Ablauf sofort neu (der Zähler steht
+#   noch über der Schwelle) — die Sperre gilt faktisch bis zum Fensterende. Die
+#   Defaults sind gleich (900/900).
+MCN_LOGIN_ACCT_THRESHOLD = int(os.environ.get("MCN_LOGIN_ACCT_THRESHOLD", "5"))
+MCN_LOGIN_IP_THRESHOLD = int(os.environ.get("MCN_LOGIN_IP_THRESHOLD", "30"))
+MCN_LOGIN_WINDOW_SECONDS = int(os.environ.get("MCN_LOGIN_WINDOW_SECONDS", "900"))
+MCN_LOGIN_LOCKOUT_SECONDS = int(os.environ.get("MCN_LOGIN_LOCKOUT_SECONDS", "900"))

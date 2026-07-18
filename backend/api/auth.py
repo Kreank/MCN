@@ -45,12 +45,18 @@ from api.device_auth import DeviceTokenAuth
 from db_core import mail_crypto
 from db_core.models import AppUser
 from db_core.services import geraetetoken
+from db_core.services import login_schutz
 from db_core.services import mail as mail_service
 from db_core.services import rechte as rechte_service
 
 logger = logging.getLogger(__name__)
 
 router = Router()
+
+# Antwort bei Drosselung — bewusst ohne genaue Restdauer (kein Timing-Orakel).
+_ZU_VIELE = (
+    "Zu viele fehlgeschlagene Anmeldeversuche. Bitte versuchen Sie es später erneut."
+)
 
 
 def _require_csrf(request):
@@ -142,14 +148,21 @@ def csrf(request):
 def login_view(request, payload: LoginIn):
     """Anmeldung mit E-Mail + Passwort."""
     _require_csrf(request)
+    ip = login_schutz.client_ip(request)
+    if login_schutz.gesperrt_bis(payload.email, ip) is not None:
+        # Zu viele Fehlversuche für dieses Konto+IP bzw. diese IP — 429, ohne den
+        # Anmeldeversuch überhaupt zu prüfen (das ist der Brute-Force-Schutz).
+        raise HttpError(429, _ZU_VIELE)
     user = authenticate(request, email=payload.email, password=payload.password)
     if user is None:
         # Eine einzige, unspezifische Meldung für falsches Passwort, unbekannte
         # Adresse UND deaktiviertes Konto: `user_can_authenticate` filtert
         # inaktive Konten bereits hier heraus. Ob die Adresse existiert oder das
         # Konto gesperrt ist, geht den Anfragenden nichts an.
+        login_schutz.registriere_fehlversuch(payload.email, ip)
         raise HttpError(401, "E-Mail-Adresse oder Passwort ist falsch.")
 
+    login_schutz.erfolg(payload.email, ip)
     login(request, user)  # rotiert die Session-ID (Session Fixation)
     return _me(user)
 
@@ -197,13 +210,19 @@ def device_login(request, payload: DeviceLoginIn):
     nur sein SHA-256-Hash. `display_name`/`app_user_id`/`roles` werden identisch
     zu `_me` berechnet.
 
-    OFFEN (nicht in diesem Slice): Rate-Limiting/Brute-Force-Schutz für diesen
-    Login-Endpunkt.
+    Brute-Force-Schutz identisch zum Session-Login: dieselben Konto+IP-/IP-Zähler
+    (`security.login_throttle`), damit ein Angreifer sein Budget nicht durch das
+    Ausweichen auf den zweiten Login-Weg verdoppeln kann.
     """
+    ip = login_schutz.client_ip(request)
+    if login_schutz.gesperrt_bis(payload.email, ip) is not None:
+        raise HttpError(429, _ZU_VIELE)
     user = authenticate(request, email=payload.email, password=payload.password)
     if user is None:
+        login_schutz.registriere_fehlversuch(payload.email, ip)
         raise HttpError(401, "E-Mail-Adresse oder Passwort ist falsch.")
 
+    login_schutz.erfolg(payload.email, ip)
     token = geraetetoken.token_ausstellen(user, payload.device_name)
     profil = _me(user)
     return DeviceLoginOut(
