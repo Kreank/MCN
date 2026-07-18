@@ -11,7 +11,7 @@ Tick nicht ab (die Fehlerklassifikation der Runtime fängt ihn).
 """
 from django.core.management.base import BaseCommand, CommandError
 
-from db_core.ai import engine, runtime
+from db_core.ai import engine, proposal, runtime
 from db_core.ai import workflow_sprachmemo  # noqa: F401 — registriert den v1-Workflow
 from db_core.models import AppUser
 
@@ -28,17 +28,31 @@ class Command(BaseCommand):
         parser.add_argument(
             "--limit", type=int, default=10, help="Max. neue Calls pro Tick (Default 10)."
         )
+        parser.add_argument(
+            "--wf-stale-seconds", type=int, default=900,
+            help="Ab welcher RUNNING-Dauer ein Workflow als hängend gilt und auf "
+                 "FAILED gesetzt wird (Default 900). MUSS über der längsten "
+                 "Handler-Laufzeit — einem LLM-Aufruf — liegen.",
+        )
 
     def handle(self, *args, **opts):
         actor = self._actor(opts.get("actor"))
-        # Ein Tick treibt beides: die Werkzeug-Queue UND die Wiederaufnahme wartender
-        # Workflows (deren Schritt-Call gerade terminal wurde).
+        # Ein Tick treibt vier Dinge: die Werkzeug-Queue, die Wiederaufnahme
+        # wartender Workflows, den Reaper hängender RUNNING-Workflows und den
+        # Ablauf-Sweep offener Vorschläge.
         summary = runtime.tick(actor.id, claim_limit=opts["limit"])
         resumed = engine.resume_ready(actor.id)
-        if summary["reaped"] or summary["polled"] or summary["dispatched"] or resumed:
+        reaped_wf = engine.reap_stale_workflows(
+            actor.id, older_than_seconds=opts["wf_stale_seconds"]
+        )
+        expired = proposal.expire_stale_proposals(actor.id)
+        if (summary["reaped"] or summary["polled"] or summary["dispatched"]
+                or resumed or reaped_wf or expired):
             self.stdout.write(
                 f"Tick: {summary['dispatched']} dispatcht, {summary['polled']} gepollt, "
-                f"{summary['reaped']} reaped, {len(resumed)} Workflow(s) fortgesetzt."
+                f"{summary['reaped']} reaped, {len(resumed)} Workflow(s) fortgesetzt, "
+                f"{len(reaped_wf)} Workflow(s) abgeräumt, {len(expired)} Vorschlag/"
+                "Vorschläge abgelaufen."
             )
 
     def _actor(self, roh):

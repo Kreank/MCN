@@ -1,0 +1,406 @@
+// KI-Vorschläge — die Freigabe-Ansicht der KI. Layout wie die übrigen
+// Listenbereiche (Seitenkopf + Segmentfilter, Karten je Vorschlag). Die Stempel
+// nutzen die globalen `.stamp--*`-Varianten aus styles.scss (kein Rot in der Marke).
+.vorschlaege {
+  max-width: var(--content-w);
+  margin: 0 auto;
+}
+
+// ============================== Seitenkopf ==================================
+.page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-6);
+}
+.page-head__kicker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+}
+.page-head__scale {
+  width: 2.5rem;
+  height: 0.5rem;
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--line-strong) 0,
+    var(--line-strong) 1px,
+    transparent 1px,
+    transparent 0.5rem
+  );
+  border-bottom: 1.5px solid var(--line-strong);
+}
+.page-head__titel {
+  font-size: var(--step-3);
+}
+.page-head__hint {
+  margin: 0;
+  max-width: 32rem;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+// ============================== Steuerung ===================================
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+.segment {
+  display: inline-flex;
+  flex-wrap: wrap;
+  padding: 3px;
+  background: var(--surface-sunken);
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius);
+}
+.segment__btn {
+  min-height: 38px;
+  padding: 0 var(--space-4);
+  border: none;
+  border-radius: calc(var(--radius) - 2px);
+  background: transparent;
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+
+  &:hover {
+    color: var(--ink);
+  }
+  &.is-active {
+    background: var(--command);
+    color: var(--on-command);
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+
+// ============================== Erfolg/Fehler-Meldung =======================
+.meldung {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-5);
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-size: var(--step-0);
+}
+.meldung--erfolg {
+  border-color: color-mix(in srgb, var(--positive-ink) 55%, var(--line-strong));
+  background: var(--positive-tint);
+  color: var(--positive-ink);
+}
+.meldung--fehler {
+  border-color: color-mix(in srgb, var(--warn-ink) 45%, var(--line-strong));
+  background: var(--warn-tint);
+  color: var(--warn-ink);
+}
+.meldung__mark {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+.meldung__text {
+  flex: 1;
+}
+.meldung__link {
+  flex: none;
+  font-weight: 600;
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+}
+.meldung__zu {
+  flex: none;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+  padding: 0.25rem;
+  border-radius: var(--radius-sm);
+
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+
+// ============================== Vorschlagskarten ============================
+.karten {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.karte {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-1);
+  padding: var(--space-4) var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.karte__kopf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.karte__ident {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+.karte__aktion {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.karte__titel {
+  font-size: var(--step-1);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+// ---- Provenienz-Warnung (untrusted Quelle) --------------------------------
+// Nie nur über Farbe: Icon + fetter Text tragen die Aussage (WCAG 1.4.1).
+.quelle {
+  display: flex;
+  gap: var(--space-3);
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1.5px solid color-mix(in srgb, var(--warn-ink) 45%, var(--line-strong));
+  border-radius: var(--radius);
+  background: var(--warn-tint);
+  color: var(--warn-ink);
+  font-size: var(--step--1);
+  line-height: 1.5;
+}
+.quelle__mark {
+  flex: none;
+  font-size: 1.05rem;
+  line-height: 1.4;
+}
+
+// ---- Metadaten ------------------------------------------------------------
+.meta {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.meta__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem var(--space-3);
+}
+.meta__dt {
+  flex: 0 0 8.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  padding-top: 0.15rem;
+}
+.meta__dd {
+  flex: 1 1 14rem;
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--step-0);
+}
+.meta__zeit {
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+}
+
+// ---- Entwurf auf-/zuklappen -----------------------------------------------
+.entwurf-schalter {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0.35rem 0;
+  border: none;
+  background: transparent;
+  color: var(--accent-ink);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+
+  &:hover {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+}
+.entwurf-schalter__pfeil {
+  display: inline-block;
+  transition: transform 0.15s ease;
+
+  &.is-offen {
+    transform: rotate(90deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .entwurf-schalter__pfeil {
+    transition: none;
+  }
+}
+
+.entwurf {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  padding: var(--space-3) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.entwurf__text {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--step-0);
+  line-height: 1.5;
+}
+.entwurf__laedt,
+.entwurf__leer {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: var(--step--1);
+  font-style: italic;
+}
+.entwurf__fehler {
+  margin: 0;
+  color: var(--warn-ink);
+  font-size: var(--step--1);
+}
+.entwurf__tabelle {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--step--1);
+
+  th,
+  td {
+    text-align: left;
+    padding: 0.35rem var(--space-3);
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  th {
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+  td {
+    color: var(--ink);
+  }
+  .num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  tbody tr:last-child td {
+    border-bottom: none;
+  }
+}
+
+// ---- Aktionen -------------------------------------------------------------
+.aktionen {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+// ============================== Skelett =====================================
+.karte--skeleton {
+  gap: var(--space-3);
+}
+.sk {
+  display: block;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  position: relative;
+  overflow: hidden;
+}
+.sk--titel {
+  width: 40%;
+  height: 1.25rem;
+}
+.sk--zeile {
+  width: 60%;
+  height: 0.85rem;
+}
+.sk--block {
+  width: 100%;
+  height: 3rem;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .sk::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(
+      90deg,
+      transparent,
+      color-mix(in srgb, var(--surface) 60%, transparent),
+      transparent
+    );
+    animation: sk-shimmer 1.4s ease-in-out infinite;
+  }
+}
+@keyframes sk-shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}

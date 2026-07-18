@@ -1,0 +1,238 @@
+<section class="vorschlaege" aria-labelledby="vorschlaege-titel">
+  <header class="page-head">
+    <div>
+      <p class="page-head__kicker">
+        <span class="page-head__scale" aria-hidden="true"></span>
+        KI · schlägt vor, der Mensch entscheidet
+      </p>
+      <h1 id="vorschlaege-titel" class="page-head__titel">KI-Vorschläge</h1>
+    </div>
+    <p class="page-head__hint">
+      Entwürfe, die die KI aus Sprachmemos, Fotos oder Dokumenten erzeugt hat.
+      Sie haben keine Wirkung, bis du sie annimmst — dann entstehen sie durch
+      dieselben Tore wie von Hand (Status, Rechte, Prüfungen).
+    </p>
+  </header>
+
+  <div class="controls">
+    <div class="segment" role="group" aria-label="Nach Status filtern">
+      @for (seg of segments; track seg.value) {
+        <button
+          type="button"
+          class="segment__btn"
+          [class.is-active]="status() === seg.value"
+          [attr.aria-pressed]="status() === seg.value"
+          (click)="selectSegment(seg.value)"
+        >
+          {{ seg.label }}
+        </button>
+      }
+    </div>
+  </div>
+
+  <p class="sr-only" role="status">{{ resultSummary() }}</p>
+
+  @if (meldung(); as m) {
+    <div
+      class="meldung"
+      [class.meldung--erfolg]="m.art === 'erfolg'"
+      [class.meldung--fehler]="m.art === 'fehler'"
+      [attr.role]="m.art === 'fehler' ? 'alert' : 'status'"
+    >
+      <span class="meldung__mark" aria-hidden="true">{{ m.art === 'erfolg' ? '✓' : '!' }}</span>
+      <span class="meldung__text">{{ m.text }}</span>
+      @if (m.link) {
+        <a class="meldung__link" [routerLink]="m.link.path">{{ m.link.label }}</a>
+      }
+      <button
+        type="button"
+        class="meldung__zu"
+        (click)="meldungSchliessen()"
+        aria-label="Meldung schließen"
+      >
+        ✕
+      </button>
+    </div>
+  }
+
+  @switch (state().kind) {
+    @case ('loading') {
+      <ul class="karten" aria-hidden="true">
+        @for (s of skeletons; track $index) {
+          <li class="karte karte--skeleton">
+            <span class="sk sk--titel"></span>
+            <span class="sk sk--zeile"></span>
+            <span class="sk sk--block"></span>
+          </li>
+        }
+      </ul>
+    }
+
+    @case ('forbidden') {
+      <app-kein-zugriff [detail]="$any(state()).detail" />
+    }
+
+    @case ('error') {
+      <div class="note note--error" role="alert">
+        <h2 class="note__titel">KI-Vorschläge ließen sich nicht laden</h2>
+        <p class="note__text">Prüfe die Verbindung und lade den Bereich erneut.</p>
+        <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
+      </div>
+    }
+
+    @case ('ready') {
+      @if ($any(state()).data.length === 0) {
+        <div class="note note--empty">
+          <h2 class="note__titel">Keine Vorschläge</h2>
+          <p class="note__text">
+            Für diese Auswahl liegen keine KI-Vorschläge vor. Sobald ein Monteur
+            ein Sprachmemo aufnimmt, erscheint hier der fertige Berichtsentwurf.
+          </p>
+        </div>
+      } @else {
+        <ul class="karten">
+          @for (v of $any(state()).data; track v.id) {
+            <li class="karte">
+              <div class="karte__kopf">
+                <div class="karte__ident">
+                  <span class="karte__aktion">{{ typLabel(v.proposal_type) }}</span>
+                  <span class="karte__titel">{{ v.titel }}</span>
+                </div>
+                <span class="stamp {{ statusClass(v.status) }}">{{ statusLabel(v.status) }}</span>
+              </div>
+
+              @if (v.aus_untrusted_quelle) {
+                <p class="quelle" role="note">
+                  <span class="quelle__mark" aria-hidden="true">⚠</span>
+                  <span>
+                    <strong>Aus unsicherer Quelle abgeleitet</strong> (Sprachmemo/Foto/Dokument).
+                    Inhalt vor der Annahme prüfen — er kann Fehler oder untergeschobene
+                    Angaben enthalten.
+                  </span>
+                </p>
+              }
+
+              <dl class="meta">
+                @if (v.auftrag_titel) {
+                  <div class="meta__row">
+                    <dt class="meta__dt">Auftrag</dt>
+                    <dd class="meta__dd">{{ v.auftrag_titel }}</dd>
+                  </div>
+                }
+                <div class="meta__row">
+                  <dt class="meta__dt">Positionen</dt>
+                  <dd class="meta__dd">{{ v.anzahl_positionen }}</dd>
+                </div>
+                <div class="meta__row">
+                  <dt class="meta__dt">Erzeugt</dt>
+                  <dd class="meta__dd">
+                    {{ d(v.created_at) }}
+                    @if (v.modell) {
+                      <span class="meta__zeit">· Modell {{ v.modell }}</span>
+                    }
+                  </dd>
+                </div>
+                @if (v.status === 'PENDING') {
+                  <div class="meta__row">
+                    <dt class="meta__dt">Läuft ab</dt>
+                    <dd class="meta__dd">{{ d(v.expires_at) }}</dd>
+                  </div>
+                }
+              </dl>
+
+              <button
+                type="button"
+                class="entwurf-schalter"
+                [attr.aria-expanded]="detailOffen(v)"
+                (click)="detailUmschalten(v)"
+              >
+                <span class="entwurf-schalter__pfeil" [class.is-offen]="detailOffen(v)" aria-hidden="true">▸</span>
+                {{ detailOffen(v) ? 'Entwurf ausblenden' : 'Entwurf ansehen' }}
+              </button>
+
+              @if (detailOffen(v)) {
+                @switch (detail()!.kind) {
+                  @case ('loading') {
+                    <p class="entwurf__laedt">Entwurf wird geladen …</p>
+                  }
+                  @case ('error') {
+                    <p class="entwurf__fehler" role="alert">
+                      Der Entwurf ließ sich nicht laden.
+                    </p>
+                  }
+                  @case ('ready') {
+                    <div class="entwurf">
+                      @if ($any(detail()).data.proposed_payload.activity_text) {
+                        <p class="entwurf__text">
+                          {{ $any(detail()).data.proposed_payload.activity_text }}
+                        </p>
+                      }
+                      @if ($any(detail()).data.proposed_payload.lines?.length) {
+                        <table class="entwurf__tabelle">
+                          <caption class="sr-only">Positionen des Entwurfs (ohne Preise)</caption>
+                          <thead>
+                            <tr>
+                              <th scope="col">Art</th>
+                              <th scope="col">Bezeichnung</th>
+                              <th scope="col" class="num">Menge</th>
+                              <th scope="col">Einheit</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            @for (z of $any(detail()).data.proposed_payload.lines; track $index) {
+                              <tr>
+                                <td>{{ zeileTyp(z.line_type) }}</td>
+                                <td>{{ z.description }}</td>
+                                <td class="num">{{ z.quantity ?? '—' }}</td>
+                                <td>{{ z.unit ?? '—' }}</td>
+                              </tr>
+                            }
+                          </tbody>
+                        </table>
+                      } @else {
+                        <p class="entwurf__leer">Der Entwurf führt keine Positionen.</p>
+                      }
+                    </div>
+                  }
+                }
+              }
+
+              @if (darfAnnehmenUeber(v) || darfAblehnenUeber(v) || darfLoeschenUeber(v)) {
+                <div class="aktionen">
+                  @if (darfAnnehmenUeber(v)) {
+                    <button type="button" class="btn btn--primary" (click)="aktionOeffnen('annehmen', v)">
+                      Annehmen
+                    </button>
+                  }
+                  @if (darfAblehnenUeber(v)) {
+                    <button type="button" class="btn btn--gefahr" (click)="aktionOeffnen('ablehnen', v)">
+                      Ablehnen
+                    </button>
+                  }
+                  @if (darfLoeschenUeber(v)) {
+                    <button type="button" class="btn" (click)="aktionOeffnen('loeschen', v)">
+                      Löschen
+                    </button>
+                  }
+                </div>
+              }
+            </li>
+          }
+        </ul>
+      }
+    }
+  }
+</section>
+
+<app-bestaetigung
+  [offen]="aktion() !== null"
+  [titel]="dialogTitel()"
+  [text]="dialogText()"
+  [bestaetigenLabel]="dialogLabel()"
+  [gefahr]="dialogGefahr()"
+  [begruendungPflicht]="dialogBegruendung()"
+  begruendungLabel="Begründung der Ablehnung"
+  [laedt]="aktionLaedt()"
+  (bestaetigen)="aktionBestaetigen($event)"
+  (abbrechen)="aktionAbbrechen()"
+/>

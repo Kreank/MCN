@@ -137,6 +137,44 @@ def resume_ready(actor_id, *, workflows=None, limit=20):
     return resumed
 
 
+def reap_stale_workflows(actor_id, *, older_than_seconds=900, limit=200):
+    """Terminalisiert Workflows, die in RUNNING hängengeblieben sind (der offene
+    Reaper aus `resume_ready`).
+
+    Ein Lauf ist nur RUNNING, während sein Handler läuft — synchron im Tick, GENAU
+    EINE Worker-Instanz. Stürzt der Worker mitten im Handler ab, ODER wirft der
+    Handler eine Ausnahme, die `resume_ready` nur protokolliert (statt zu
+    terminalisieren), bleibt der Lauf für immer RUNNING: `resume_ready` sieht nur
+    WAITING, niemand nimmt ihn je wieder auf. Dieser Reaper schließt die Lücke —
+    RUNNING ohne Fortschritt seit `older_than_seconds` → FAILED (Dead-Letter,
+    sichtbar), kein stiller Retry (der könnte endlos schleifen).
+
+    Die Schwelle MUSS über der längsten erwarteten Handler-Laufzeit liegen (ein
+    LLM-Aufruf) — sonst räumte der Reaper einen legitim rechnenden Lauf ab.
+    `updated_at` setzt der Trigger `util.set_updated_at` bei jedem UPDATE; für einen
+    hängenden Lauf ist es der Zeitpunkt des RUNNING-Übergangs (danach keine
+    Änderung mehr) und liegt damit verlässlich in der Vergangenheit.
+    """
+    grenze = timezone.now() - timedelta(seconds=older_than_seconds)
+    reaped = []
+    with business_transaction(actor_id):
+        stale = list(
+            WorkflowRun.objects.select_for_update(skip_locked=True)
+            .filter(status="RUNNING", updated_at__lt=grenze)
+            .order_by("updated_at")[:limit]
+        )
+        for wf in stale:
+            wf.status = "FAILED"
+            wf.finished_at = timezone.now()
+            wf.error_message = (
+                f"Reaper: seit über {older_than_seconds}s in RUNNING ohne "
+                "Fortschritt (Worker-Abbruch?) — als fehlgeschlagen markiert."
+            )
+            wf.save(update_fields=["status", "finished_at", "error_message"])
+            reaped.append(wf.id)
+    return reaped
+
+
 def _run_handler(actor_id, wf, workflows):
     handler = workflows.get(wf.workflow_name)
     if handler is None:

@@ -33,6 +33,9 @@ export const BEREICH_RECHT: Record<string, readonly [string, string]> = {
   // Vier-Augen-Anträge: die Liste selbst verlangt nur security/LESEN; das
   // Entscheiden gatet der Server mit security/FREIGEBEN.
   freigaben: ['security', 'LESEN'],
+  // KI-Vorschläge (ai_proposal): Liste auf `require` (fail-closed) → steht auch in
+  // BEREICH_NUR_ALLE. Annehmen gatet zusätzlich workflow/ANLEGEN+AENDERN.
+  'ki-vorschlaege': ['workflow', 'LESEN'],
   // Einstellungen: Read-Zugang mit company/LESEN (alle Rollen); die einzelnen
   // Unterseiten und das Bearbeiten gaten feiner (invoicing bzw. AENDERN).
   einstellungen: ['company', 'LESEN'],
@@ -58,6 +61,8 @@ export const BEREICH_NUR_ALLE: ReadonlySet<string> = new Set([
   'rechnungen',
   'mitarbeiter',
   'zeiterfassung',
+  // KI-Vorschläge: die Liste wertet den row_scope nicht aus (`require`, 403 bei EIGENE).
+  'ki-vorschlaege',
 ]);
 
 function segmentVon(url: string): string {

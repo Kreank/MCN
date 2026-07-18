@@ -71,6 +71,22 @@ def set_bearer(actor_app_user_id, *, tool_id, bearer):
     return {"tool_id": str(tool.id), "has_bearer": cipher is not None}
 
 
+def set_status(actor_app_user_id, *, tool_id, status):
+    """Schaltet ein Werkzeug ACTIVE/INACTIVE (z. B. ausgemustertes Gerät stilllegen).
+
+    tool_key und capability sind unveränderlich (Trigger `guard_tool`); der Status
+    nicht — ein inaktives Werkzeug wird von der Queue nicht mehr angesprochen."""
+    if status not in ("ACTIVE", "INACTIVE"):
+        raise ValueError("Status muss ACTIVE oder INACTIVE sein.")
+    tool = Tool.objects.filter(id=tool_id).first()
+    if tool is None:
+        raise ValueError("Werkzeug nicht gefunden.")
+    with business_transaction(actor_app_user_id):
+        tool.status = status
+        tool.save(update_fields=["status"])
+    return tool
+
+
 def get_bearer(tool_id):
     """Entschlüsselt das Bearer für den Dispatch. None, wenn keins hinterlegt ist."""
     tool = Tool.objects.filter(id=tool_id).first()

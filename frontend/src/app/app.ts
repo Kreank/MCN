@@ -54,6 +54,16 @@ export class App {
     // Rechnungskorrektur) — sie hängen an keinem Fachbereich, stehen aber bei
     // der Arbeitsorganisation. Zwischenschritt 62 statt Renummerierung.
     { path: '/freigaben', label: 'Freigaben', mark: '62', recht: ['security', 'LESEN'] },
+    // KI-Vorschläge (ai_proposal): die Review-Queue der KI — schlägt vor, der
+    // Mensch nimmt an. `nurAlle`: die Liste steht auf `require` (fail-closed), ein
+    // Konto mit row_scope EIGENE bekommt 403. Neben den Freigaben (Governance).
+    {
+      path: '/ki-vorschlaege',
+      label: 'KI-Vorschläge',
+      mark: '63',
+      recht: ['workflow', 'LESEN'],
+      nurAlle: true,
+    },
     // Personal/HR liegt fachlich zwischen interner Arbeitsorganisation (Aufgaben)
     // und dem Stammdaten-Cluster (Artikel) → Zwischenschritt 65 statt
     // Renummerierung der Folgepunkte.

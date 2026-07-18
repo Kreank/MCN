@@ -5,6 +5,72 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 
 ---
 
+## ⚡ SESSION 2026-07-18 (b) — KI-Vorschlagskette geschlossen (Backend + Frontend)
+
+**Wichtige Richtigstellung zuerst:** Das KI-Fundament war schon **weiter** gebaut, als
+frühere Abschnitte dieses Dokuments behaupten. Der Tool-Vertrag Stufe 1–5, der v1-
+Workflow **Sprachmemo→Bericht** (`db_core/ai/`), das **Tagesbriefing** und die
+Migrationen **bis 0115** standen bereits (git log: `050bf6c`, `0f7ea0b`, `3ada6de` …).
+Der Satz „KI-Fundament = nächster Slice, null Backend-Zeilen" (weiter unten) ist
+**überholt** — er stammt vom 2026-07-15, davor.
+
+**Die echte Lücke war die Sackgasse der Vorschlagskette:** ein `ai_proposal` wurde
+erzeugt (PENDING), konnte aber **nirgends angenommen/materialisiert** werden. Das ist
+jetzt geschlossen. Alles committet auf `develop`? **NEIN — noch nicht committet**
+(der User committet/pusht bewusst selbst). Stand: im Arbeitsbaum, Tests grün.
+
+**Was gebaut wurde (4 Slices, je Opus-reviewt):**
+- **A — Vorschlagskette (Backend).** `db_core/ai/proposal.py`: `approve` materialisiert
+  einen `SITE_REPORT_ENTWURF` über die **Fach-Service-Schicht** (`site_report.create_report`
+  + `set_report_lines`) in einen echten `workflow.site_report` (ENTWURF) — dieselben
+  Tore/Rechte/Trigger wie die manuelle Anlage, **atomar** (eine `business_transaction`,
+  verschachtelte Savepoints), **idempotent/serialisiert** (`SELECT FOR UPDATE`),
+  **preisfrei**. Unvollständige Entwurfszeilen (Menge/Einheit fehlt) werden zu TEXT-
+  Notizen herabgestuft statt mit erfundener Menge durchgedrückt. Endpunkte in
+  `api/ki.py`: `GET /proposals`, `GET /proposals/{id}`, `POST /proposals/{id}/approve`,
+  `POST …/reject`, `DELETE …`. Rechte: Liste/Detail `workflow/LESEN` (fail-closed),
+  Annehmen `workflow/ANLEGEN`+`AENDERN` (spiegelt die manuelle Anlage — kein KI-Seitentor),
+  Ablehnen/Löschen `AENDERN`. **INVARIANTE:** `delete_proposal` reicht den rohen
+  DB-Löschtor-Fehler (P0001) durch; die **API-Schicht** übersetzt in 422
+  (`as_business_error`) — so erwartet es `test_ai_grundlagen`. Provenienz
+  `aus_untrusted_quelle` server-abgeleitet aus `content_item.is_untrusted`
+  (fail-safe = untrusted). Review: **sauber, keine HIGH/MEDIUM.**
+- **B — Betreiber-Enablement.** `manage.py ki_tool {list,register,set-bearer,activate,
+  deactivate}` — der User bindet ASR-Handy/Vision/OCR ohne Python-Shell an. Bearer
+  secret-sicher (`--bearer-env` bevorzugt, nie geloggt/ausgegeben). `registry.set_status`
+  neu. `deploy/.env.example`: **`MCN_AI_PROFILES`/`MCN_AI_DEFAULT_PROFILE`/`MCN_AI_KEY`**
+  dokumentiert (LLM-Anbindung; `queue-worker` bekommt sie via `env_file`). Review-Fix:
+  `set_bearer`-Fehler in `register` als `CommandError` statt Traceback.
+- **C — Frontend `/ki-vorschlaege`.** Freigabe-Queue (Liste + Segmentfilter, Entwurf-
+  Aufklapp, **„unsichere Quelle"-Warnung** bei untrusted, Annehmen→Bericht/Ablehnen/
+  Löschen via Bestätigungsdialog). Nav-Eintrag (mark 63, `nurAlle`), Route
+  `darfAlleGuard('workflow','LESEN')`, `bereiche.ts` ergänzt. Vorlage: `features/freigaben`.
+  Review: **sauber, ship-ready.** **Offen/ehrlich: noch NICHT im Live-Browser
+  durchgeklickt** (build- + review-verifiziert; API HTTP-getestet). Das **Sprachmemo-
+  *Aufnehmen*** ist bewusst ausgeklammert — gehört auf die native App/das Monteurs-Handy,
+  ohne registriertes ASR-Gerät nicht E2E-nachweisbar.
+- **D — Robustheit.** `engine.reap_stale_workflows` (hängende RUNNING → FAILED, Schwelle
+  `--wf-stale-seconds` Default 900) + `proposal.expire_stale_proposals` (PENDING→EXPIRED,
+  macht abgelaufene Vorschläge DSGVO-löschbar) — beide im `ki_tool_queue_tick`.
+
+**Verifikation:** Volle Backend-Suite **3724 passed**. Die **19 „Errors"** sind
+ausschließlich `@pytest.mark.django_db(transaction=True)`-Tests (Abrechnung/Mahnung),
+die am DB-**Flush** gegen die **No-Truncate-Schutztrigger** der geteilten Test-DB
+scheitern — Umgebungsartefakt (CLAUDE.md: solche Tests gehören auf Wegwerf-DBs),
+**unabhängig von diesem Slice** (kein Abrechnungs-/Migrations-/Trigger-Code angefasst;
+die nicht-transaktionalen Tests derselben Dateien sind grün). Neue KI-Tests: Slice A 15,
+B 8, D 5 — alle grün; KI-Gesamtfläche 182 grün. Frontend `ng build` sauber (nur die zwei
+**vorbestehenden** SCSS-Budget-Warnungen angebot-editor/plantafel).
+
+**Nächste sinnvolle Schritte:** (1) Frontend im Live-Browser durchklicken (Login
+`admin@mitra-sanitaer.de` im Dev-Stand, PW unbekannt — im Dev setzen). (2) User-Ops:
+echtes ASR-Handy per `ki_tool register` anbinden + `MCN_CRED_KEY` auf dem Server,
+LLM-Profil via `MCN_AI_PROFILES` setzen, dann läuft der volle Pfad Memo→Bericht.
+(3) Sprachmemo-Aufnahme/Upload-UI (native App). (4) `git add`/commit/`develop→main`
+liegt beim User.
+
+---
+
 ## ⚡ SESSION 2026-07-17/18 — Fresh-Reset, neuer Artikelstamm, Gerätewissen + DRINGENDER OFFENER PUNKT (DNS)
 
 ### 🔴 ZUERST: Alle Seiten waren offline — DNS zeigt auf alte IP (server-weit, nicht MCN)

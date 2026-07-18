@@ -309,6 +309,16 @@ export const routes: Routes = [
         loadComponent: () => import('./features/freigaben/freigaben').then((m) => m.Freigaben),
       },
       {
+        // KI-Vorschläge (ai_proposal). Die Liste steht auf `require` (fail-closed) →
+        // `darfAlleGuard`: ein Konto mit row_scope EIGENE bekommt 403. Annehmen
+        // materialisiert über die Fach-API und gatet zusätzlich workflow/ANLEGEN+AENDERN.
+        path: 'ki-vorschlaege',
+        title: 'KI-Vorschläge — Mitra Sanitär',
+        canActivate: [darfAlleGuard('workflow', 'LESEN')],
+        loadComponent: () =>
+          import('./features/ki-vorschlaege/ki-vorschlaege').then((m) => m.KiVorschlaege),
+      },
+      {
         path: 'mitarbeiter',
         pathMatch: 'full',
         title: 'Mitarbeiter — Mitra Sanitär',
