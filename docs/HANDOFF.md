@@ -5,6 +5,48 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 
 ---
 
+## ⚡ SESSION 2026-07-18 (c) — Brute-Force-Schutz am Login + Backup-Routine
+
+Zwei Sicherheits-/Betriebslücken geschlossen (im Arbeitsbaum, **NICHT committet**;
+Tests grün, je Opus-reviewt inkl. behobener Befunde).
+
+**1. Brute-Force-/Rate-Limit-Schutz am Login** (der Blocker fürs Device-Auth-Go-Live).
+- DB-gestützt (`security.login_throttle`, Migration **0116**; transienter Cache OHNE
+  No-Delete): zählt Fehlversuche pro **Konto+IP** (Schwelle 5) und pro **IP** (30) in
+  gleitendem Fenster, sperrt mit **429**. PL/pgSQL-UPSERT = atomar. Service
+  `db_core/services/login_schutz.py`, verdrahtet in `api/auth.py` (Session- **und**
+  Geräte-Login teilen die Zähler). Schwellen env-tunbar (`MCN_LOGIN_*` in settings).
+- **Kein reiner Konto-Lockout** (das wäre DoS gegen beliebige Nutzer) — Sperre hängt an
+  Konto+IP. Erfolg räumt den Konto+IP-Zähler ab.
+- **Review-HIGH behoben (war Deploy-Blocker):** Client-IP kam aus X-Forwarded-For
+  (erster Eintrag = **client-kontrolliert**, weil nginx via `proxy_add_x_forwarded_for`
+  hinten anhängt) → Schutz komplett umgehbar **und** gezielter Aussperr-DoS. Fix: IP nur
+  aus **`X-Real-IP`** (nginx setzt sie überschreibend) und nur wenn `MCN_TRUST_PROXY_IP`
+  (aus `MCN_BEHIND_TLS_PROXY`); sonst REMOTE_ADDR. Test beweist: ohne Proxy-Vertrauen
+  wird ein gefälschter Header ignoriert.
+- Prune-Command `login_throttle_aufraeumen` läuft jetzt **im scheduler** (sonst wüchse
+  die Tabelle unbegrenzt). 7 Throttle- + 30 Auth-Regressionstests grün.
+
+**2. Backup-Routine** (Pflicht vor der ersten echten Rechnung — jetzt gebaut).
+- Eigener Compose-Dienst `backup` (`deploy/backup.Dockerfile` = postgres:16-alpine +
+  gepinntes `mc`; `deploy/backup-entrypoint.sh` = Tages-Loop): nächtlich **pg_dump**
+  (gzip) + **MinIO-Bucket-Spiegel** + **.env/Schlüssel-Sicherung** (chmod 600) +
+  Retention. Bind-Mount `${MCN_BACKUP_DIR:-./backups}`. Restore-Runbook in
+  `docs/deployment.md` Abschnitt 8a.
+- **Review-HIGH behoben:** (H1) `pg_dump | gzip` maskierte einen abgebrochenen Dump →
+  korruptes „gültiges" Backup; Fix `set -o pipefail` + `gzip -t` + Nicht-Leer-Test.
+  (H2) `date +%H` liefert `08`/`09` → BusyBox liest das als **Oktal** → Arithmetik-Crash
+  → Loop stirbt (Backup läuft scheinbar, tut nichts); Fix: führende Nullen strippen.
+  Dazu: `--remove` am Spiegel entfernt (additiv, Löschung propagiert nicht ins Backup),
+  `umask 077` (Dump war welt-lesbar), Restore mit `ON_ERROR_STOP=1 --single-transaction`.
+- **Verifiziert:** Skript-Syntax, Oktal-/pipefail-Fix gegen echtes sh, **pg_dump gegen
+  die Dev-DB (gültiger gzip-Dump)**, `docker compose config` sauber. Voller Container-Bau
+  + Live-Compose-Backuplauf bleibt der Deploy-Schritt des Users.
+- **Offen (User/Ops):** `MCN_BACKUP_DIR` auf ANDERE Platte + off-box (rsync/S3);
+  Restore-Probelauf auf Wegwerf-Server; MinIO-Versioning gegen Objekt-Überschreibung.
+
+---
+
 ## ⚡ SESSION 2026-07-18 (b) — KI-Vorschlagskette geschlossen (Backend + Frontend)
 
 **Wichtige Richtigstellung zuerst:** Das KI-Fundament war schon **weiter** gebaut, als

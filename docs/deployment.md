@@ -2,9 +2,11 @@
 
 Diese Anleitung richtet sich an jemanden, der Docker kann, aber dieses Projekt
 nicht kennt. Sie beschreibt den **Demo-Betrieb**: ein Stand, den man
-Geschäftsführern zeigt. Sie beschreibt **kein Backup** — das ist bewusst
-verschoben (siehe „Was hier fehlt" ganz unten). **Bevor die erste echte Rechnung
-im System steht, muss Backup da sein.**
+Geschäftsführern zeigt. **Backup** ist inzwischen als Dienst gebaut (Abschnitt
+„Backup & Wiederherstellung") — er läuft mit dem Stack hoch und sichert jede
+Nacht Datenbank, MinIO-Belege und Schlüssel; **er muss aber ein Ziel auf einer
+anderen Platte bzw. off-box bekommen, bevor die erste echte Rechnung im System
+steht.**
 
 ---
 
@@ -309,13 +311,95 @@ gesamten Datenbestand. Ohne `-v` ist `down` harmlos.
 
 ---
 
+## 8a. Backup & Wiederherstellung
+
+Der `backup`-Dienst kommt mit dem Stack hoch (`docker compose up -d`) und sichert
+**jede Nacht** (Default 02:30, `MCN_BACKUP_*` in der `.env`):
+
+1. **Datenbank** — vollständiger `pg_dump` (gzip) nach `MCN_BACKUP_DIR/db/`. Ein
+   abgebrochener Dump wird erkannt (pipefail + `gzip -t`) und verworfen, statt als
+   vermeintlich gültiges Backup liegenzubleiben.
+2. **MinIO** — **additiver** Spiegel des Beleg-Buckets nach `MCN_BACKUP_DIR/minio/`.
+   Additiv heißt: im Bucket gelöschte Objekte bleiben im Backup (der Spiegel läuft
+   ohne `--remove`). Er schützt gegen Plattenverlust — gegen die böswillige/
+   versehentliche **Änderung** eines bestehenden Objekts ist MinIO-Versioning/
+   Object-Lock die Härtung (noch offen).
+3. **Schlüssel** — Kopie der `.env` (chmod 600) nach `MCN_BACKUP_DIR/env/`. **Ohne
+   `MCN_MAIL_KEY`/`MCN_CRED_KEY`/`MCN_SECRET_KEY` ist ein Restore nicht
+   entschlüsselbar** — der DB-Dump allein genügt nicht.
+
+Der DB-Dump sichert **alle Fachschemata** samt Funktionen und Triggern, aber
+**keine PG-Rollen/GRANTs** (`--no-owner --no-privileges`, `pg_dump` statt
+`pg_dumpall -g`). Das ist heute korrekt — genau ein Superuser (`MCN_DB_USER`)
+besitzt alles. Würden je PG-Rollen/RLS eingeführt, müsste `pg_dumpall -g` dazukommen.
+
+**Einrichtung — nicht optional für den Echtbetrieb:** `MCN_BACKUP_DIR` in der
+`.env` auf eine **andere Platte / ein externes Volume** legen (nicht neben
+`pgdata`) und das Verzeichnis zusätzlich **off-box** spiegeln (rsync/S3). Ein
+Backup auf derselben Platte hilft beim Plattencrash nicht. Das Backup-Verzeichnis
+enthält Klartext-Schlüssel — Zugriff beschränken.
+
+Verifikation (einmal sofort sichern statt bis nachts warten):
+
+```bash
+# In der .env: MCN_BACKUP_RUN_ON_START=1  → dann:
+docker compose up -d backup
+docker compose logs -f backup          # „[backup] DB-Dump: …", „MinIO-Spiegel: …"
+ls -lh "${MCN_BACKUP_DIR:-./backups}"/db          # der gzip-Dump liegt da
+# Danach RUN_ON_START wieder auf 0.
+```
+
+### Wiederherstellung
+
+Auf einem frischen Stack (Volumes leer). Der DB-Dump enthält Schema **und**
+Trigger; er wird in eine leere Datenbank eingespielt.
+
+```bash
+cd deploy
+
+# 0) Gesicherte .env zurückspielen (Schlüssel!) und in die Host-Shell laden, damit
+#    $MCN_DB_USER/$MCN_DB_NAME/… in den folgenden Befehlen gesetzt sind. compose
+#    exportiert die .env NICHT in die aufrufende Shell.
+cp "${MCN_BACKUP_DIR:-./backups}/env/env-<ts>.bak" .env
+set -a; . ./.env; set +a
+
+# Nur Datenspeicher hochfahren (NICHT backend — dessen Entrypoint migriert und
+# füllte damit die DB, bevor der Dump drin ist):
+docker compose up -d postgres minio minio-init
+
+# 1) Datenbank in die LEERE DB einspielen. ON_ERROR_STOP + single-transaction
+#    machen den Restore atomar: bei einem Fehler (z. B. „already exists", weil die
+#    DB doch nicht leer war) bricht er sichtbar ab, statt still halbfertig zu enden.
+gunzip -c "${MCN_BACKUP_DIR:-./backups}/db/mcn-<ts>.sql.gz" \
+  | docker compose exec -T postgres \
+      psql -v ON_ERROR_STOP=1 --single-transaction -U "$MCN_DB_USER" -d "$MCN_DB_NAME"
+
+# 2) MinIO-Belege zurückspiegeln (Backup → Bucket, ohne --remove):
+docker compose run --rm --entrypoint sh backup -c '
+  mc alias set dst "$MCN_MINIO_ENDPOINT" "$MCN_MINIO_ACCESS_KEY" "$MCN_MINIO_SECRET_KEY" &&
+  mc mirror --overwrite /backups/minio/"$MCN_MINIO_BUCKET" dst/"$MCN_MINIO_BUCKET"'
+
+# 3) Rest hochfahren:
+docker compose up -d
+```
+
+Der Restore MUSS in eine **leere** Datenbank laufen (frisches `pgdata`-Volume):
+Ist die DB schon migriert, kollidiert jedes `CREATE` — `ON_ERROR_STOP=1
+--single-transaction` macht das dann als Fehler sichtbar und rollt zurück, statt
+einen halben Restore zu hinterlassen. Ein `pg_dump`/`psql`-Restore ist nur so gut
+wie sein letzter Test: den Ablauf einmal auf einem Wegwerf-Server durchspielen,
+nicht erst im Ernstfall.
+
+---
+
 ## 9. Nachsehen, wenn etwas klemmt
 
 ```bash
 docker compose ps                       # wer ist healthy?
 docker compose logs -f backend          # migrate/Seed/gunicorn
 docker compose logs nginx | grep '\[nginx\]'   # TLS- und /admin/-Zustand
-docker compose logs scheduler           # Fälligkeiten
+docker compose logs scheduler           # Fälligkeiten + login_throttle-Prune
+docker compose logs backup              # nächtliches Backup
 ```
 
 | Symptom | Ursache |
@@ -332,15 +416,17 @@ docker compose logs scheduler           # Fälligkeiten
 
 ## 10. Was hier fehlt (bewusst)
 
-**Kein Backup.** Für Seed-Daten wäre eine Backup-Strategie Overengineering — das
-ist eine bewusste Entscheidung. **Aber: bevor die erste echte Rechnung im System
-steht, muss sie stehen.** Das System ist GoBD-relevant. Die Invarianten dafür sind
-in `docs/HANDOFF.md`, Abschnitt 10 festgehalten; die wichtigste in einem Satz:
+**Backup gibt es jetzt** (Abschnitt 8a) — die frühere Lücke ist geschlossen.
+Warum es zählt, bleibt richtig und erklärt, warum der **MinIO-Spiegel** Teil des
+Backups ist (nicht nur der DB-Dump):
 
 > Beleg-PDFs sind ersetzbar (sie werden aus dem eingefrorenen Snapshot neu
 > gerendert). **Kundenunterschriften, Baustellenfotos und Atteste existieren nur
 > als Datei in MinIO** — ist MinIO weg, bleibt ein versiegelter Bericht ohne die
 > Unterschrift, wegen der er existiert.
 
+**Offen am Backup:** die **Off-box-Spiegelung** (`MCN_BACKUP_DIR` auf externe
+Storage + rsync/S3) ist Sache des Betreibers, und ein **Restore-Probelauf** auf
+einem Wegwerf-Server sollte einmal gemacht werden, bevor echte Daten drin sind.
 Ebenfalls offen: **Benutzeranlage im Leitstand** (heute nur über `/admin/`) und
 **Monitoring**.

@@ -169,6 +169,36 @@ services:
     networks: [mcn]
 
   # -------------------------------------------------------------------------
+  # Nächtliches Backup: pg_dump + MinIO-Spiegel + Schlüsselsicherung. Ohne ihn
+  # gibt es KEIN Backup — und das merkt man erst, wenn man eines braucht. Siehe
+  # backup-entrypoint.sh und docs/deployment.md (Wiederherstellung).
+  backup:
+    build:
+      context: ..
+      dockerfile: deploy/backup.Dockerfile
+    image: mcn-backup:latest
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      MCN_DB_HOST: postgres
+      MCN_DB_PORT: "5432"
+      MCN_MINIO_ENDPOINT: http://minio:9000
+    volumes:
+      # Zielverzeichnis auf dem HOST — für echte Ausfallsicherheit auf eine andere
+      # Platte/ein externes Volume legen (MCN_BACKUP_DIR) und off-box spiegeln.
+      - "${MCN_BACKUP_DIR:-./backups}:/backups"
+      # Die .env read-only für die Schlüsselsicherung (MCN_MAIL_KEY/CRED_KEY/…).
+      - "./.env:/secrets/.env:ro"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully   # Bucket existiert, bevor gespiegelt wird
+    networks: [mcn]
+
+  # -------------------------------------------------------------------------
   nginx:
     build:
       context: ..
