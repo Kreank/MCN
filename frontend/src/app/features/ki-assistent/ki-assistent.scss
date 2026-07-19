@@ -1,0 +1,354 @@
+.assistent {
+  max-width: var(--content-w-wide);
+  margin: 0 auto;
+}
+
+.page-head__kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-family: var(--font-mono);
+  color: var(--accent-ink);
+}
+
+/* ---- Zwei-Spalten-Layout: Gespräche | Verlauf ---------------------------- */
+.layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 300px) 1fr;
+  gap: var(--space-4);
+  align-items: stretch;
+  /* Der Verlauf scrollt in sich; die ganze Ansicht bleibt im Viewport. */
+  height: calc(100vh - var(--header-h) - 12rem);
+  min-height: 26rem;
+}
+
+@media (max-width: 860px) {
+  .layout {
+    grid-template-columns: 1fr;
+    height: auto;
+  }
+}
+
+/* ---- Seitenleiste: eigene Gespräche -------------------------------------- */
+.seitenleiste {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-height: 0;
+  padding: var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  overflow-y: auto;
+}
+
+.neu {
+  width: 100%;
+  justify-content: center;
+}
+
+.liste {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.liste__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  padding-right: var(--space-1);
+}
+
+.liste__item:hover {
+  background: var(--surface-sunken);
+}
+
+.liste__item.is-aktiv {
+  background: var(--surface-sunken);
+  border-color: var(--accent);
+}
+
+/* Der Öffnen-Button trägt den größten Teil der Zeile (echtes <button>). */
+.liste__oeffnen {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  color: var(--ink-muted);
+  font: inherit;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+}
+
+.liste__item:hover .liste__oeffnen,
+.liste__item.is-aktiv .liste__oeffnen {
+  color: var(--ink);
+}
+
+.liste__oeffnen:focus-visible {
+  outline: 2.5px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.liste__titel {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--step--1);
+}
+
+.liste__loeschen {
+  flex: none;
+  border: 0;
+  background: transparent;
+  color: var(--ink-hint);
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  line-height: 1;
+}
+
+.liste__loeschen:hover {
+  color: var(--warn-ink);
+  background: var(--warn-tint);
+}
+
+.liste__loeschen:focus-visible {
+  outline: 2.5px solid var(--focus-ring);
+}
+
+.liste__skeleton {
+  height: 2.25rem;
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+}
+
+.leer-hinweis {
+  color: var(--ink-hint);
+  font-size: var(--step--1);
+  padding: var(--space-2);
+}
+
+/* ---- Gesprächsspalte ----------------------------------------------------- */
+.gespraech {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: var(--space-3);
+}
+
+.verlauf {
+  flex: 1;
+  min-height: 12rem;
+  overflow-y: auto;
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+
+@media (max-width: 860px) {
+  .verlauf {
+    max-height: 60vh;
+  }
+}
+
+.willkommen {
+  margin: auto;
+  text-align: center;
+  color: var(--ink-muted);
+}
+
+.willkommen__gross {
+  font-family: var(--font-display);
+  font-size: var(--step-2);
+  color: var(--ink);
+  margin-bottom: var(--space-3);
+}
+
+.beispiele {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: var(--step--1);
+}
+
+/* ---- Nachrichten --------------------------------------------------------- */
+.nachricht {
+  max-width: min(46rem, 88%);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--line);
+}
+
+.nachricht--ich {
+  align-self: flex-end;
+  background: var(--surface-sunken);
+  border-color: var(--line-strong);
+}
+
+.nachricht--ki {
+  align-self: flex-start;
+  background: var(--paper);
+}
+
+.nachricht__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  font-size: var(--step--1);
+  color: var(--ink-hint);
+}
+
+.nachricht__wer {
+  font-weight: 600;
+  color: var(--ink-muted);
+}
+
+.nachricht__zeit {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.nachricht__text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+
+/* ---- Quellen + Chips ----------------------------------------------------- */
+.quellen {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 0;
+}
+
+.quellen__label {
+  font-size: var(--step--1);
+  color: var(--ink-hint);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: var(--step--1);
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--ink);
+  text-decoration: none;
+  max-width: 20rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+a.chip--quelle:hover {
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+a.chip--quelle:focus-visible {
+  outline: 2.5px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.chip--statisch {
+  color: var(--ink-muted);
+}
+
+.chip__typ {
+  font-family: var(--font-mono);
+  font-size: 0.72em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-hint);
+}
+
+.chip--intent {
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  background: transparent;
+}
+
+.chip--warn {
+  border-color: var(--warn);
+  background: var(--warn-tint);
+  color: var(--warn-ink);
+}
+
+.vorschlag-hinweis {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  background: var(--positive-tint);
+  color: var(--positive-ink);
+  font-size: var(--step--1);
+}
+
+.vorschlag-hinweis a {
+  color: inherit;
+  font-weight: 600;
+}
+
+/* ---- Eingabe ------------------------------------------------------------- */
+.eingabe {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-end;
+}
+
+.eingabe__feld {
+  flex: 1;
+  resize: vertical;
+  min-height: 2.75rem;
+  max-height: 12rem;
+  padding: var(--space-3);
+  border-radius: var(--radius);
+  border: 1px solid var(--line-strong);
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  line-height: 1.4;
+}
+
+.eingabe__feld:focus-visible {
+  outline: 2.5px solid var(--focus-ring);
+  outline-offset: 1px;
+  border-color: var(--accent);
+}
+
+.eingabe__senden {
+  flex: none;
+}
+
+.note {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+}

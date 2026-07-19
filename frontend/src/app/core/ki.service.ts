@@ -3,6 +3,9 @@ import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import {
   Briefing,
+  FrageAntwort,
+  Gespraech,
+  GespraechDetail,
   KiVorschlag,
   KiVorschlagDetail,
   ProposalStatus,
@@ -51,5 +54,33 @@ export class KiService {
   /** Löscht einen abgelehnten/abgelaufenen Vorschlag (DSGVO Art. 17). */
   loeschen(id: string): Observable<{ detail: string }> {
     return this.http.delete<{ detail: string }>(`${this.base}/proposals/${id}`);
+  }
+
+  // --- Konversationeller Assistent (frag das CRM) -------------------------
+
+  /**
+   * Eine Frage stellen. Ohne `conversationId` beginnt ein neues Gespräch; sonst
+   * wird es fortgesetzt. Die Antwort ist gegroundet in dem, was der Anmelder sehen
+   * darf; fällt das Modell aus, kommt eine deterministische Trefferzusammenfassung.
+   */
+  frage(frage: string, conversationId?: string): Observable<FrageAntwort> {
+    const body: { frage: string; conversation_id?: string } = { frage };
+    if (conversationId) body.conversation_id = conversationId;
+    return this.http.post<FrageAntwort>(`${this.base}/conversations/frage`, body);
+  }
+
+  /** Meine Gespräche, neueste zuerst. */
+  gespraeche(): Observable<Gespraech[]> {
+    return this.http.get<Gespraech[]>(`${this.base}/conversations`);
+  }
+
+  /** Ein eigenes Gespräch mit allen Turns. */
+  gespraech(id: string): Observable<GespraechDetail> {
+    return this.http.get<GespraechDetail>(`${this.base}/conversations/${id}`);
+  }
+
+  /** Ein eigenes Gespräch löschen (DSGVO Art. 17). */
+  gespraechLoeschen(id: string): Observable<{ detail: string }> {
+    return this.http.delete<{ detail: string }>(`${this.base}/conversations/${id}`);
   }
 }

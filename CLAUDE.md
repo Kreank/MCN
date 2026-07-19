@@ -56,9 +56,19 @@ Eiserne Regeln daraus:
 - **Push-Gotcha:** Der Auto-Mode-Sicherheitsfilter blockiert `git push` zu einem
   **öffentlichen** Remote (Datenabfluss-Schutz). Bei einem privaten Remote sollte
   es durchlaufen; sonst pusht der User selbst via `!`-Terminal.
-- **Noch KEIN Backup, keine CI** — bewusst (siehe `docs/HANDOFF.md` Abschnitt 10:
-  Backup wird Pflicht, bevor die erste echte Rechnung im System steht; die
-  Invarianten dafür stehen dort bereit).
+- **Backup gebaut** (Session 2026-07-18: Compose-Dienst `backup`, nächtlicher
+  pg_dump + MinIO-Spiegel + Schlüssel-Sicherung; Restore-Runbook
+  `docs/deployment.md` Abschnitt 8a). Off-box-Kopie/Restore-Probelauf bleiben
+  Ops-Aufgaben des Users.
+- **Weiterhin bewusst KEINE CI** (bestätigt 2026-07-18). Solange **ein**
+  Entwickler mit disziplinierter manueller Absicherung vor jedem Deploy arbeitet
+  (`uv run python manage.py check` + `uv run pytest`, `ng build`, Opus-Review,
+  Deploy aus isoliertem Worktree), dupliziert eine CI diesen Loop nur.
+  **Auslöser, ab dem CI Pflicht wird** („wird relevanter, je mehr echt läuft"):
+  ein **zweiter Mitwirkender** am Repo, ODER Deploys werden so häufig, dass die
+  manuelle Vor-Deploy-Verifikation faktisch übersprungen wird. Erst dann:
+  GitHub Actions (Repo ist ohnehin auf GitHub) mit `check` + `pytest` gegen eine
+  Wegwerf-Postgres-16 + `ng build` als Merge-Gate `develop`→`main`.
 
 ## Design & Marke
 

@@ -319,6 +319,16 @@ export const routes: Routes = [
           import('./features/ki-vorschlaege/ki-vorschlaege').then((m) => m.KiVorschlaege),
       },
       {
+        // KI-Assistent („frag das CRM"). Die Antwort ist rechte- und objektsicht-
+        // gefiltert (der Server filtert je Aufruf mit der Sicht des Anmelders), also
+        // auch für Scope EIGENE sinnvoll → `darfGuard`, nicht `darfAlleGuard`.
+        path: 'ki-assistent',
+        title: 'KI-Assistent — Mitra Sanitär',
+        canActivate: [darfGuard('workflow', 'LESEN')],
+        loadComponent: () =>
+          import('./features/ki-assistent/ki-assistent').then((m) => m.KiAssistent),
+      },
+      {
         path: 'mitarbeiter',
         pathMatch: 'full',
         title: 'Mitarbeiter — Mitra Sanitär',

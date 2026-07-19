@@ -5,6 +5,88 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 
 ---
 
+## ⚡ SESSION 2026-07-18/19 (d) — KI Slice 5: konversationeller „frag das CRM"-Assistent
+
+Der nächste große KI-Schritt aus dem Backlog. **Im Arbeitsbaum auf `develop`, NICHT
+committet** (der User committet/pusht selbst). Neue Tests grün, zwei Opus-Reviews
+bestanden (Backend ship-ready; Frontend nach Fixes). Details Memory
+`ki-slice5-assistent`.
+
+**Was ist es:** Ein mehrturniger Chat-Assistent, der Fragen zu Kunden/Objekten/
+Projekten/Aufträgen beantwortet — gegroundet in der globalen Suche + den Dossiers,
+**mit der Sicht des fragenden Nutzers** (nie privilegiert). Umfang (User-Entscheidung
+„1+3", serverseitig persistiert): Auskunft + Kennzahlen UND aus dem Chat einen echten
+`ai_proposal` (Berichtsentwurf) anlegen; Gespräche serverseitig gespeichert, DSGVO-löschbar.
+
+**Mechanismus (kein offener Agent-Loop):** Zweitakt-Pipeline `db_core/ai/assistent.py`.
+(1) Modell wählt (constrained) Intent + Treffer-**Indizes** aus der rechtegefilterten
+Suche; (2) Code montiert kompakte Dossier-Kontexte (+ Kennzahlen); (3) Modell antwortet
+gegroundet mit Quellen. **INVARIANTE (Opus-bestätigt): das Modell darf nur Treffer wählen,
+die die Suche geliefert hat — und die ist objektsicht-gefiltert. Das ist zugleich
+Halluzinations- UND Objektgrenze; eine fremde Entität kann gar nicht in den Kontext
+geraten.** Kennzahlen fail-closed auf row_scope ALLE; VORSCHLAG nur mit workflow/ANLEGEN.
+Fällt das Modell aus → deterministischer Fallback (Trefferzusammenfassung). Vorlage:
+`leitstand_briefing.py`.
+
+**DB (Migration 0117 Hand-SQL + 0118 State-only):** `ai.conversation` +
+`ai.conversation_turn`. Rohtext (Nachrichten) **löschbar** (DSGVO Art. 17, Kaskade);
+Turns **append-only** (forbid_mutation auf UPDATE), Einzel-Löschen via REVOKE DELETE
+gesperrt (nur Kaskade). Unveränderliches Audit = `ai_run` je Antwort (nur Refs/Verbrauch,
+**nie** Rohtext; `ai_run_id` nullbar — der Fallback ohne Modell trägt keinen Lauf).
+`proposal_id` = weiche Referenz ohne FK (Vorschlag eigenständig löschbar).
+Migrationskopf jetzt **0118**.
+
+**API:** `POST /api/ai/conversations/frage` (mit optionaler conversation_id),
+`GET /conversations`, `GET/DELETE /conversations/{id}`. Eintritts-Tor wie die globale
+Suche (403 wenn kein Modul lesbar), Ownership-getort. **Frontend:** `/ki-assistent`
+(Zwei-Spalten-Chat, Nav mark '64', `darfGuard('workflow','LESEN')` — Scope EIGENE
+erlaubt, NICHT in BEREICH_NUR_ALLE). Quellen-Chips verlinken ins Dossier; „zur Freigabe"
+bei Vorschlags-Turn.
+
+**Chat→Vorschlag:** VORSCHLAG-Intent + Ziel-Auftrag + Recht → PREISFREIER Berichtsentwurf
+(BERICHT_SCHEMA) → `ai_proposal` (SITE_REPORT_ENTWURF, gleiche Form wie Sprachmemo) →
+materialisierbar über das bestehende `proposal.approve`. **Review-Fix:** Proposal wird
+ATOMAR mit den Turns in `_speichere` angelegt (keine Waise, keine Doppelanlage), +
+Conversation-Lock (`select_for_update`) gegen seq-Races.
+
+**Verifikation:** Neue Tests grün — `db_core/tests/test_ki_assistent_gespraech.py` (10,
+DB-Invarianten), `…_service.py` (9, Pipeline+Fallback+Zitat-Grenze+VORSCHLAG→approve),
+`api/tests/test_ki_assistent_api.py` (7, Wiring/Auth/Eigentum). Endpoint-Schutz-Scanner
+akzeptiert die 4 Endpunkte. `ng build` sauber (Assistent-Komponente unter Budget).
+**Frontend-Review-Fixes:** HIGH `outline: var(--focus-ring)` (nur Farbe → kein Fokusring)
+auf `outline: 2.5px solid …`; Renn-Zustände in `senden`/`neuesGespraech`; verschachtelte
+interaktive Elemente in der Gesprächsliste entschachtelt.
+⚠️ **Volle Backend-Suite (~3700 Tests) lief in dieser Umgebung NICHT durch** (Runner-
+Zeitlimit; Teillauf erreichte 32 % ohne Fehler). Die berührte Fläche (alle KI-Tests +
+Endpoint-Scanner) ist grün; die Änderungen sind rein additiv (neue Tabellen/Modul/
+Endpunkte/Frontend). **Vor dem Merge einmal die volle Suite laufen lassen.**
+
+**Offen/ehrlich:** Live-Browser-Durchklick steht aus (braucht laufenden Stack +
+`MCN_AI_PROFILES`, sonst greift der Fallback) — gleicher Stand wie die KI-Vorschläge.
+Semantische Suche/Embeddings weiter ungebaut (v1 nutzt die lexikalische Suche).
+
+**Commit-Fläche (Slice 5, noch nicht committet — der User committet selbst):**
+- *Neu:* `backend/db_core/ai/assistent.py`, `backend/db_core/migrations/0117_ki_assistent_gespraech.py`
+  + `0118_conversation_conversationturn.py`, `backend/db_core/tests/test_ki_assistent_gespraech.py`
+  + `…_service.py`, `backend/api/tests/test_ki_assistent_api.py`,
+  `frontend/src/app/features/ki-assistent/` (ts/html/scss).
+- *Geändert:* `backend/db_core/models.py` (Conversation/ConversationTurn),
+  `backend/api/ki.py` (4 Endpunkte + `_assistent_sicht`), `frontend/src/app/core/ki.model.ts`
+  + `ki.service.ts`, `frontend/src/app/app.ts` + `app.routes.ts` + `core/bereiche.ts`.
+- *Separat (die zwei Extra-Aufträge dieser Session):* `CLAUDE.md` (CI bleibt bewusst aus,
+  Backup als gebaut vermerkt — Memory `ci-entscheidung`).
+
+**Nächste Session — Startschritte:** (1) `git branch --show-current` = `develop` prüfen.
+(2) Migrationskopf ist **0118**; bei DB-Arbeit weiter dort ansetzen. (3) **Vor dem Merge
+`develop`→`main`: einmal die VOLLE Backend-Suite laufen lassen** (`cd backend && MCN_DEBUG=1
+MCN_DB_NAME=mitra_crm_test MCN_DB_PASSWORD=mcn_dev_local uv run pytest -q`) — sie lief in
+der Bau-Session nur in Teilen (Umgebungs-Zeitlimit; berührte Fläche 964 grün, Teillauf 32 %
+ohne Fehler). (4) Optional: KI-Assistent live durchklicken (`MCN_AI_PROFILES` setzen, sonst
+Fallback) und/oder als Folge-Slice die Vorschlags-Typen über `SITE_REPORT_ENTWURF` hinaus
+erweitern (nur dieser Typ ist heute chat-entwerfbar/materialisierbar).
+
+---
+
 ## ⚡ SESSION 2026-07-18 (c) — Brute-Force-Schutz am Login + Backup-Routine
 
 Zwei Sicherheits-/Betriebslücken geschlossen (im Arbeitsbaum, **NICHT committet**;

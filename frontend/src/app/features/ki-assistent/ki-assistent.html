@@ -1,0 +1,172 @@
+<section class="assistent" aria-labelledby="assistent-titel">
+  <header class="page-head">
+    <div>
+      <p class="page-head__kicker">
+        <span class="page-head__scale" aria-hidden="true"></span>
+        KI · frag das CRM
+      </p>
+      <h1 id="assistent-titel" class="page-head__titel">KI-Assistent</h1>
+    </div>
+    <p class="page-head__hint">
+      Frag in eigenen Worten nach Kunden, Objekten, Projekten oder Aufträgen. Die
+      Antwort stützt sich nur auf das, was du sehen darfst, und nennt ihre Quellen.
+    </p>
+  </header>
+
+  <p class="sr-only" role="status">{{ listenText() }}</p>
+
+  @switch (state().kind) {
+    @case ('forbidden') {
+      <app-kein-zugriff [detail]="$any(state()).detail" />
+    }
+    @case ('error') {
+      <div class="note note--error" role="alert">
+        <span>Die Gespräche konnten nicht geladen werden.</span>
+        <button type="button" class="btn btn--ghost" (click)="retry()">Erneut versuchen</button>
+      </div>
+    }
+    @default {
+      <div class="layout">
+        <!-- Linke Spalte: eigene Gespräche -->
+        <aside class="seitenleiste" aria-label="Meine Gespräche">
+          <button type="button" class="btn btn--primary neu" (click)="neuesGespraech()">
+            <span aria-hidden="true">＋</span> Neues Gespräch
+          </button>
+
+          @if (state().kind === 'loading') {
+            <ul class="liste" aria-hidden="true">
+              @for (s of [1, 2, 3]; track s) {
+                <li class="liste__skeleton"></li>
+              }
+            </ul>
+          } @else if (gespraeche().length === 0) {
+            <p class="leer-hinweis">Noch keine Gespräche. Stell unten deine erste Frage.</p>
+          } @else {
+            <ul class="liste">
+              @for (g of gespraeche(); track g.id) {
+                <li class="liste__item" [class.is-aktiv]="istAktiv(g)">
+                  <button
+                    type="button"
+                    class="liste__oeffnen"
+                    [attr.aria-current]="istAktiv(g) ? 'true' : null"
+                    (click)="oeffne(g)"
+                  >
+                    <span class="liste__titel">{{ g.title || 'Ohne Titel' }}</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="liste__loeschen"
+                    [attr.aria-label]="'Gespräch „' + (g.title || 'Ohne Titel') + '“ löschen'"
+                    (click)="loeschenOeffnen(g, $event)"
+                  >
+                    ✕
+                  </button>
+                </li>
+              }
+            </ul>
+          }
+        </aside>
+
+        <!-- Rechte Spalte: Verlauf + Eingabe -->
+        <div class="gespraech">
+          <div class="verlauf" #verlauf role="log" aria-live="polite" aria-label="Gesprächsverlauf">
+            @if (detailLaedt()) {
+              <p class="leer-hinweis">Gespräch wird geladen …</p>
+            } @else if (!aktiv()) {
+              <div class="willkommen">
+                <p class="willkommen__gross">Was möchtest du wissen?</p>
+                <ul class="beispiele">
+                  <li>„Was ist der Stand bei Familie Borm?"</li>
+                  <li>„Welche Aufträge laufen in der Badenschen Straße?"</li>
+                  <li>„Wie viele offene Aufgaben gibt es?"</li>
+                </ul>
+              </div>
+            } @else {
+              @for (t of aktiv()!.turns; track t.id) {
+                <article
+                  class="nachricht"
+                  [class.nachricht--ich]="t.role === 'USER'"
+                  [class.nachricht--ki]="t.role === 'ASSISTANT'"
+                >
+                  <p class="nachricht__meta">
+                    <span class="nachricht__wer">{{ t.role === 'USER' ? 'Du' : 'KI-Assistent' }}</span>
+                    @if (intentText(t.intent); as label) {
+                      <span class="chip chip--intent">{{ label }}</span>
+                    }
+                    @if (t.aus_untrusted_quelle) {
+                      <span class="chip chip--warn">Quelle ungeprüft</span>
+                    }
+                    <time class="nachricht__zeit" [attr.datetime]="t.created_at">{{ zeit(t.created_at) }}</time>
+                  </p>
+                  <p class="nachricht__text">{{ t.content }}</p>
+
+                  @if (t.sources.length > 0) {
+                    <p class="quellen">
+                      <span class="quellen__label">Quellen:</span>
+                      @for (q of t.sources; track q.id) {
+                        @if (quellePfad(q); as pfad) {
+                          <a class="chip chip--quelle" [routerLink]="pfad">
+                            <span class="chip__typ">{{ quelleTyp(q.typ) }}</span> {{ q.titel }}
+                          </a>
+                        } @else {
+                          <span class="chip chip--quelle chip--statisch">
+                            <span class="chip__typ">{{ quelleTyp(q.typ) }}</span> {{ q.titel }}
+                          </span>
+                        }
+                      }
+                    </p>
+                  }
+
+                  @if (t.proposal_id) {
+                    <p class="vorschlag-hinweis">
+                      <span aria-hidden="true">📝</span>
+                      Ein Vorschlag wurde angelegt.
+                      <a routerLink="/ki-vorschlaege">Zur Freigabe</a>
+                    </p>
+                  }
+                </article>
+              }
+            }
+          </div>
+
+          @if (fehler(); as f) {
+            <p class="note note--error" role="alert">{{ f }}</p>
+          }
+
+          <form class="eingabe" (submit)="$event.preventDefault(); senden()">
+            <label class="sr-only" for="frage-feld">Deine Frage</label>
+            <textarea
+              id="frage-feld"
+              #feld
+              class="eingabe__feld"
+              rows="2"
+              placeholder="Frag das CRM … (Enter sendet, Umschalt+Enter für neue Zeile)"
+              [value]="eingabe()"
+              (input)="eingabe.set(feld.value)"
+              (keydown)="tastatur($event)"
+              [disabled]="sendet()"
+            ></textarea>
+            <button
+              type="submit"
+              class="btn btn--primary eingabe__senden"
+              [disabled]="sendet() || !eingabe().trim()"
+            >
+              {{ sendet() ? 'Fragt …' : 'Fragen' }}
+            </button>
+          </form>
+        </div>
+      </div>
+    }
+  }
+</section>
+
+<app-bestaetigung
+  [offen]="loeschAktion() !== null"
+  titel="Gespräch löschen?"
+  text="Das Gespräch und sein Verlauf werden endgültig gelöscht (DSGVO). Das lässt sich nicht rückgängig machen."
+  bestaetigenLabel="Löschen"
+  [gefahr]="true"
+  [laedt]="loeschLaedt()"
+  (bestaetigen)="loeschenBestaetigen()"
+  (abbrechen)="loeschenAbbrechen()"
+/>

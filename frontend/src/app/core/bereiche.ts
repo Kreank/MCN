@@ -36,6 +36,9 @@ export const BEREICH_RECHT: Record<string, readonly [string, string]> = {
   // KI-Vorschläge (ai_proposal): Liste auf `require` (fail-closed) → steht auch in
   // BEREICH_NUR_ALLE. Annehmen gatet zusätzlich workflow/ANLEGEN+AENDERN.
   'ki-vorschlaege': ['workflow', 'LESEN'],
+  // KI-Assistent („frag das CRM"): rechte-/objektsicht-gefiltert je Aufruf, daher
+  // KEIN nurAlle (Scope EIGENE ist erlaubt) — steht bewusst NICHT in BEREICH_NUR_ALLE.
+  'ki-assistent': ['workflow', 'LESEN'],
   // Einstellungen: Read-Zugang mit company/LESEN (alle Rollen); die einzelnen
   // Unterseiten und das Bearbeiten gaten feiner (invoicing bzw. AENDERN).
   einstellungen: ['company', 'LESEN'],

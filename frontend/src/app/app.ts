@@ -64,6 +64,11 @@ export class App {
       recht: ['workflow', 'LESEN'],
       nurAlle: true,
     },
+    // KI-Assistent („frag das CRM"): konversationelle Auskunft, serverseitig
+    // gegroundet in Suche + Dossier mit den Rechten des Anmelders. KEIN `nurAlle`:
+    // die Antwort ist rechte-/objektsicht-gefiltert, also auch für Scope EIGENE
+    // sinnvoll (der Monteur fragt nach seinen Objekten).
+    { path: '/ki-assistent', label: 'KI-Assistent', mark: '64', recht: ['workflow', 'LESEN'] },
     // Personal/HR liegt fachlich zwischen interner Arbeitsorganisation (Aufgaben)
     // und dem Stammdaten-Cluster (Artikel) → Zwischenschritt 65 statt
     // Renummerierung der Folgepunkte.

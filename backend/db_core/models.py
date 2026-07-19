@@ -4779,6 +4779,74 @@ class ToolCall(models.Model):
         return f"{self.capability}/{self.step_key} ({self.status})"
 
 
+class Conversation(models.Model):
+    """ai.conversation — ein Gesprächsfaden des „frag das CRM"-Assistenten (0117).
+
+    Persönliche, durable Ressource: nur der Ersteller (`created_by_user`) sieht,
+    führt und löscht sie (API-getort, kein Rechte-Modul-Scope). Anders als die
+    übrigen ai-Operationstabellen ist das Gespräch **löschbar** (DSGVO Art. 17) —
+    der personenbezogene Rohtext lebt in den `turns`, das unveränderliche Audit ist
+    der `ai_run` je Antwort. `created_by_user`/`created_at` sind unveränderlich
+    (Trigger `guard_conversation`); No-Truncate bleibt.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    created_by_user = models.ForeignKey(
+        AppUser, models.DO_NOTHING, db_column="created_by_user_id",
+        related_name="conversations",
+    )
+    title = models.TextField(db_default="")
+    status = models.TextField(db_default="ACTIVE")   # ACTIVE|ARCHIVED
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'ai"."conversation'
+        ordering = ["-updated_at"]
+
+    def __str__(self):
+        return self.title or f"Gespräch {self.id}"
+
+
+class ConversationTurn(models.Model):
+    """ai.conversation_turn — eine Nachricht im Gespräch, append-only (0117).
+
+    Frage (USER) oder Antwort (ASSISTANT). `content` ist personenbezogener Rohtext
+    — löschbar, nur per CASCADE des Elterngesprächs (kein Einzel-Löschen). Der
+    Turn ist unveränderlich (Trigger auf UPDATE). `ai_run` ist die harte Provenance
+    der Antwort (unlöschbar); `proposal_id` ist eine WEICHE Referenz ohne FK (der
+    Vorschlag ist eigenständig DSGVO-löschbar). `sources` = zitierte Entitäten fürs UI.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    conversation = models.ForeignKey(
+        Conversation, models.DO_NOTHING, db_column="conversation_id",
+        related_name="turns",
+    )
+    seq = models.IntegerField()
+    role = models.TextField()                # USER|ASSISTANT
+    content = models.TextField()
+    sources = models.JSONField(default=list)
+    intent = models.TextField(null=True, blank=True)   # AUSKUNFT|KENNZAHL|VORSCHLAG
+    ai_run = models.ForeignKey(
+        AiRun, models.DO_NOTHING, db_column="ai_run_id",
+        null=True, blank=True, related_name="assistant_turns",
+    )
+    # Weiche Referenz (kein FK): der Vorschlag ist eigenständig löschbar (0110).
+    proposal_id = models.UUIDField(null=True, blank=True)
+    aus_untrusted_quelle = models.BooleanField(db_default=models.Value(False))
+    created_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'ai"."conversation_turn'
+        ordering = ["seq"]
+
+    def __str__(self):
+        return f"{self.role} #{self.seq}"
+
+
 class DeviceToken(models.Model):
     """security.device_token — Bearer-Token je Gerät für die native App.
 

@@ -119,3 +119,91 @@ export function zeileTypLabel(t: string): string {
   };
   return map[t] ?? t;
 }
+
+// --- Konversationeller Assistent (frag das CRM) — Slice 5 ------------------
+
+export type TurnRolle = 'USER' | 'ASSISTANT';
+export type AssistentIntent = 'AUSKUNFT' | 'KENNZAHL' | 'VORSCHLAG';
+
+/** Eine zitierte Entität (Grundlage der Antwort) — verlinkbar aufs Dossier. */
+export interface Quelle {
+  typ: string; // KONTAKT|LIEGENSCHAFT|PROJEKT|AUFTRAG|VORGANG|EINSATZ|ANGEBOT|RECHNUNG|ARTIKEL|LEISTUNG|MITARBEITER
+  id: string;
+  titel: string;
+}
+
+/** Eine Nachricht im Gespräch (Frage oder Antwort). */
+export interface GespraechTurn {
+  id: string;
+  seq: number;
+  role: TurnRolle;
+  content: string;
+  intent: AssistentIntent | null;
+  sources: Quelle[];
+  /** Gesetzt, wenn die Antwort einen Vorschlag angelegt hat (→ Freigabe). */
+  proposal_id: string | null;
+  ai_run_id: string | null;
+  /** Nutzte die Antwort untrusted Inhalte? (dann Hinweis im UI). */
+  aus_untrusted_quelle: boolean;
+  created_at: string;
+}
+
+export interface Gespraech {
+  id: string;
+  title: string;
+  status: 'ACTIVE' | 'ARCHIVED';
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GespraechDetail extends Gespraech {
+  turns: GespraechTurn[];
+}
+
+/** Antwort auf eine gestellte Frage (POST /conversations/frage). */
+export interface FrageAntwort {
+  conversation_id: string;
+  frage: GespraechTurn;
+  antwort: GespraechTurn;
+}
+
+/** Pfad ins Dossier für eine zitierte Quelle — oder null, wenn es keins gibt. */
+export function quelleDossierPfad(q: Quelle): string | null {
+  const map: Record<string, string> = {
+    KONTAKT: 'kontakt',
+    LIEGENSCHAFT: 'liegenschaft',
+    PROJEKT: 'projekt',
+    AUFTRAG: 'auftrag',
+  };
+  const seg = map[q.typ];
+  return seg ? `/dossier/${seg}/${q.id}` : null;
+}
+
+const QUELLE_TYP_LABELS: Record<string, string> = {
+  KONTAKT: 'Kontakt',
+  LIEGENSCHAFT: 'Liegenschaft',
+  PROJEKT: 'Projekt',
+  VORGANG: 'Vorgang',
+  AUFTRAG: 'Auftrag',
+  EINSATZ: 'Einsatz',
+  ANGEBOT: 'Angebot',
+  RECHNUNG: 'Rechnung',
+  ARTIKEL: 'Artikel',
+  LEISTUNG: 'Leistung',
+  MITARBEITER: 'Mitarbeiter',
+};
+
+export function quelleTypLabel(typ: string): string {
+  return QUELLE_TYP_LABELS[typ] ?? typ;
+}
+
+export function intentLabel(i: AssistentIntent | null): string | null {
+  switch (i) {
+    case 'KENNZAHL':
+      return 'Kennzahl';
+    case 'VORSCHLAG':
+      return 'Vorschlag';
+    default:
+      return null; // AUSKUNFT trägt kein Extra-Label
+  }
+}
