@@ -746,7 +746,12 @@ def board_daten(*, date_from, date_to, q=None, category_id=None, backlog_q=None)
             Q(scheduled_end__gt=fenster_start)
             | Q(scheduled_end__isnull=True, scheduled_start__gte=fenster_start)
         )
-        .select_related("work_order__property", "property", "appointment_category")
+        .select_related(
+            "work_order__property__address", "property__address",
+            "appointment_category",
+            "building__address", "unit",
+            "work_order__building__address", "work_order__unit",
+        )
         .prefetch_related("assignments__assignee", "resource_links__resource")
         .order_by("scheduled_start", "id")
     )
@@ -853,7 +858,12 @@ def board_daten(*, date_from, date_to, q=None, category_id=None, backlog_q=None)
     bqs = (
         ServiceJob.objects.filter(scheduled_start__isnull=True)
         .exclude(status__in=("ABGESCHLOSSEN", "AUSGEFALLEN"))
-        .select_related("work_order__property", "property", "appointment_category")
+        .select_related(
+            "work_order__property__address", "property__address",
+            "appointment_category",
+            "building__address", "unit",
+            "work_order__building__address", "work_order__unit",
+        )
         .order_by("-created_at", "id")
     )
     if backlog_q:
@@ -1036,6 +1046,8 @@ def create_termin(
     work_order_id=None,
     title=None,
     property_id=None,
+    building_id=None,
+    unit_id=None,
     scheduled_start=None,
     scheduled_end=None,
     on_site_contact_party_id=None,
@@ -1063,6 +1075,8 @@ def create_termin(
                 work_order_id=work_order_id,
                 title=title,
                 property_id=property_id,
+                building_id=building_id,
+                unit_id=unit_id,
                 scheduled_start=scheduled_start,
                 scheduled_end=scheduled_end,
                 on_site_contact_party_id=on_site_contact_party_id,
@@ -1093,6 +1107,8 @@ def update_termin(
     service_job_id,
     title=_UNSET_TERMIN,
     property_id=_UNSET_TERMIN,
+    building_id=_UNSET_TERMIN,
+    unit_id=_UNSET_TERMIN,
     scheduled_start=_UNSET_TERMIN,
     scheduled_end=_UNSET_TERMIN,
     on_site_contact_party_id=_UNSET_TERMIN,
@@ -1152,6 +1168,8 @@ def update_termin(
             for name, wert in (
                 ("title", title),
                 ("property_id", property_id),
+                ("building_id", building_id),
+                ("unit_id", unit_id),
                 ("on_site_contact_party_id", on_site_contact_party_id),
                 ("access_instructions", access_instructions),
             ):
@@ -1353,8 +1371,8 @@ def serie_anlegen(
     Jedes Vorkommen ist ein **eigenständiger Einsatz** mit eigener Nummer, eigenem
     Status und eigenen Zuweisungen (kein virtuelles Vorkommen, keine Serienregel in
     der DB — siehe Migration 0077). Kopiert werden Auftrag/Titel/Liegenschaft,
-    Kategorie, Vor-Ort-Kontakt, Zutrittshinweise, Mitarbeiter und Ressourcen; die
-    **Dauer** des Ausgangstermins bleibt erhalten.
+    Gebäude/Einheit, Kategorie, Vor-Ort-Kontakt, Zutrittshinweise, Mitarbeiter und
+    Ressourcen; die **Dauer** des Ausgangstermins bleibt erhalten.
 
     Der Ausgangstermin bekommt dieselbe `series_id` — er IST das erste Vorkommen.
     Trägt er schon eine, wird die bestehende Serie fortgesetzt.
@@ -1458,6 +1476,8 @@ def serie_anlegen(
                     work_order_id=job.work_order_id,
                     title=job.title,
                     property_id=job.property_id,
+                    building_id=job.building_id,
+                    unit_id=job.unit_id,
                     scheduled_start=start,
                     scheduled_end=(start + dauer) if dauer is not None else None,
                     on_site_contact_party_id=job.on_site_contact_party_id,

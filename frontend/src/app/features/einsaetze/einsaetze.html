@@ -120,6 +120,9 @@
                     </span>
                     @if (e.property) {
                       <span class="row__prop">▤ {{ e.property.name }} · {{ e.property.city }}</span>
+                      @if (ortDetail(e.property); as ort) {
+                        <span class="row__prop row__prop--ziel">▸ {{ ort }}</span>
+                      }
                     }
                     @if (e.assignee_count > 0) {
                       <span class="row__assignees">◍ {{ e.assignee_count }} zugewiesen</span>
@@ -207,6 +210,34 @@
           platzhalter="Liegenschaft suchen"
           [suche]="liegenschaftSuche"
         />
+        <!-- Zielort innerhalb der Liegenschaft: der Monteur muss WOHIN GENAU
+             wissen. Eine Einheit setzt ihr Gebäude voraus (Gebäudewechsel leert
+             die Einheit). -->
+        @if (gebaeude().length) {
+          <app-feld
+            [control]="neuForm.controls.building_id"
+            label="Gebäude"
+            typ="select"
+            platzhalter="Ganze Liegenschaft"
+            [optionen]="gebaeudeOptionen()"
+            hinweis="Wohin genau? Leer = der Termin gilt für die ganze Liegenschaft."
+          />
+          @if (einheitOptionen().length) {
+            <app-feld
+              [control]="neuForm.controls.unit_id"
+              label="Einheit"
+              typ="select"
+              platzhalter="Keine bestimmte Einheit"
+              [optionen]="einheitOptionen()"
+              hinweis="Z. B. „3. OG rechts“. Eine Einheit setzt ein Gebäude voraus."
+            />
+          }
+        } @else if (neuForm.controls.property_id.value) {
+          <p class="note note--info">
+            Für diese Liegenschaft sind keine <strong>Gebäude/Einheiten</strong> hinterlegt —
+            der Termin gilt für das Objekt als Ganzes.
+          </p>
+        }
       }
 
       <!-- Hinweis steht UNTER dem Feld (Feldflucht) — siehe shared/formular/feld.html. -->

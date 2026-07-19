@@ -61,6 +61,17 @@
   margin: 0.15rem 0 0;
   color: var(--ink-muted);
 }
+/* Genauer Ort (Gebäude/Einheit): etwas kräftiger als die Adresszeile, damit der
+   präzise Zielort auffällt — aber weiterhin als Text mit vorangestelltem Label
+   (nie nur über Farbe/Position, WCAG 1.4.1). */
+.einsatz-hero__ziel {
+  color: var(--ink);
+  font-weight: 600;
+}
+.einsatz-hero__ziel-label {
+  font-weight: 500;
+  color: var(--ink-muted);
+}
 .einsatz-hero__aktionen {
   display: flex;
   flex-wrap: wrap;

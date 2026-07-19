@@ -1884,8 +1884,9 @@ class WorkOrder(models.Model):
     veröffentlichte Rechnungen entstehen aus KAUFMAENNISCH_GEPRUEFT-Aufträgen
     (B-08).
 
-    building_id/unit_id/asset_id sind zusammengesetzte FKs auf property; hier als
-    reine UUIDs geführt (kein ORM-FK, da Composite-Ziel).
+    building/unit/asset sind DB-seitig zusammengesetzte FKs auf property; building
+    und unit werden als einspaltige ORM-FKs geführt (für select_related der
+    Ortsauflösung, 0119), asset bleibt reine UUID.
     """
 
     id = models.UUIDField(primary_key=True)
@@ -1911,8 +1912,25 @@ class WorkOrder(models.Model):
     property = models.ForeignKey(
         Property, models.DO_NOTHING, db_column="property_id", related_name="work_orders"
     )
-    building_id = models.UUIDField(null=True, blank=True)
-    unit_id = models.UUIDField(null=True, blank=True)
+    # building/unit sind DB-seitig zusammengesetzte FKs (mit property_id); hier als
+    # einspaltige ORM-FKs geführt, damit die Ortsauflösung am Einsatz (0119) den
+    # Auftrags-Ort per select_related mitladen kann. asset bleibt reine UUID.
+    building = models.ForeignKey(
+        Building,
+        models.DO_NOTHING,
+        db_column="building_id",
+        null=True,
+        blank=True,
+        related_name="work_orders",
+    )
+    unit = models.ForeignKey(
+        Unit,
+        models.DO_NOTHING,
+        db_column="unit_id",
+        null=True,
+        blank=True,
+        related_name="work_orders",
+    )
     asset_id = models.UUIDField(null=True, blank=True)
     # UNKNOWN | COMMON_PROPERTY | PRIVATE_UNIT | MIXED
     responsibility_scope = models.TextField()
@@ -2026,6 +2044,27 @@ class ServiceJob(models.Model):
         Property,
         models.DO_NOTHING,
         db_column="property_id",
+        null=True,
+        blank=True,
+        related_name="service_jobs",
+    )
+    # Präziser Ort (Migration 0119): Gebäude/Einheit des Einsatzes. Beim freien
+    # Termin die einzige Möglichkeit, „Steglitzer Damm 12, 3. OG rechts" zu
+    # treffen; beim auftragsgebundenen Einsatz erbt die Anzeige den Ort sonst vom
+    # Auftrag. DB-seitig zusammengesetzte FKs (building→property, unit→building)
+    # plus CHECK building⇒property; hier als einspaltige ORM-FKs für select_related.
+    building = models.ForeignKey(
+        Building,
+        models.DO_NOTHING,
+        db_column="building_id",
+        null=True,
+        blank=True,
+        related_name="service_jobs",
+    )
+    unit = models.ForeignKey(
+        Unit,
+        models.DO_NOTHING,
+        db_column="unit_id",
         null=True,
         blank=True,
         related_name="service_jobs",

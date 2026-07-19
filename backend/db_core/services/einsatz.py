@@ -32,12 +32,14 @@ from db_core.gate_errors import as_business_error
 from db_core.models import (
     AppointmentCategory,
     AppUser,
+    Building,
     JobAssignment,
     MaterialEntry,
     Property,
     ServiceJob,
     TimeCategory,
     TimeEntry,
+    Unit,
     WorkOrder,
 )
 from db_core.services._validation import ensure_exists, ensure_party_usable
@@ -116,12 +118,51 @@ def _clean_title(title):
     return cleaned or None
 
 
+def _check_building_unit(property_id, building_id, unit_id):
+    """Gebäude/Einheit müssen zur Liegenschaft bzw. zum Gebäude passen (Migration 0119).
+
+    Vorabprüfung, damit ein Verstoß als klarer 422 statt als IntegrityError (500)
+    endet — die DB erzwingt dasselbe über zusammengesetzte FKs und CHECKs. Es wird
+    der ZIELZUSTAND geprüft (die bereits aufgelösten effektiven Werte), nicht ein
+    Teil-Payload: wer nur die Einheit setzt, muss sich am vorhandenen Gebäude
+    messen lassen.
+    """
+    if unit_id is not None and building_id is None:
+        raise ValueError("Eine Einheit setzt ein Gebäude voraus.")
+    if building_id is not None and property_id is None:
+        raise ValueError(
+            "Ein Gebäude/eine Einheit am Einsatz setzt eine Liegenschaft voraus."
+        )
+    if building_id is not None:
+        b_property_id = (
+            Building.objects.filter(id=building_id)
+            .values_list("property_id", flat=True)
+            .first()
+        )
+        if b_property_id is None:
+            raise ValueError("Gebäude existiert nicht.")
+        if b_property_id != property_id:
+            raise ValueError("Das Gebäude gehört nicht zur angegebenen Liegenschaft.")
+    if unit_id is not None:
+        u_building_id = (
+            Unit.objects.filter(id=unit_id)
+            .values_list("building_id", flat=True)
+            .first()
+        )
+        if u_building_id is None:
+            raise ValueError("Einheit existiert nicht.")
+        if u_building_id != building_id:
+            raise ValueError("Die Einheit gehört nicht zum angegebenen Gebäude.")
+
+
 def create_service_job(
     actor_app_user_id,
     *,
     work_order_id=None,
     title=None,
     property_id=None,
+    building_id=None,
+    unit_id=None,
     scheduled_start=None,
     scheduled_end=None,
     on_site_contact_party_id=None,
@@ -150,6 +191,7 @@ def create_service_job(
         raise ValueError("Ein freier Termin ohne Auftrag braucht einen Titel.")
     ensure_exists(WorkOrder, work_order_id, "Auftrag")
     _check_property_matches_order(work_order_id, property_id)
+    _check_building_unit(property_id, building_id, unit_id)
     ensure_party_usable(on_site_contact_party_id, "Ansprechpartner vor Ort")
     _check_category(appointment_category_id)
     with as_business_error():
@@ -159,6 +201,8 @@ def create_service_job(
                 work_order_id=work_order_id,
                 title=title,
                 property_id=property_id,
+                building_id=building_id,
+                unit_id=unit_id,
                 status="UNGEPLANT",
                 scheduled_start=scheduled_start,
                 scheduled_end=scheduled_end,
@@ -177,6 +221,8 @@ def update_service_job(
     on_site_contact_party_id=_UNSET,
     title=_UNSET,
     property_id=_UNSET,
+    building_id=_UNSET,
+    unit_id=_UNSET,
     access_instructions=_UNSET,
 ):
     """Trägt Stammangaben eines Einsatzes nach (Teil-Update, Sentinel-basiert).
@@ -207,7 +253,22 @@ def update_service_job(
         felder["title"] = neuer_titel
     if property_id is not _UNSET:
         _check_property_matches_order(job.work_order_id, property_id)
+    # Ort (Liegenschaft/Gebäude/Einheit): den ZIELZUSTAND prüfen. Nicht
+    # mitgeschickte Teile behalten den Bestandswert; ändert sich einer, muss die
+    # ganze Hierarchie zueinander passen (DB: zusammengesetzte FKs + CHECK). So
+    # scheitert z. B. „Liegenschaft wechseln, Gebäude stehen lassen" hier als
+    # klarer 422 statt als IntegrityError.
+    if any(w is not _UNSET for w in (property_id, building_id, unit_id)):
+        eff_property = job.property_id if property_id is _UNSET else property_id
+        eff_building = job.building_id if building_id is _UNSET else building_id
+        eff_unit = job.unit_id if unit_id is _UNSET else unit_id
+        _check_building_unit(eff_property, eff_building, eff_unit)
+    if property_id is not _UNSET:
         felder["property_id"] = property_id
+    if building_id is not _UNSET:
+        felder["building_id"] = building_id
+    if unit_id is not _UNSET:
+        felder["unit_id"] = unit_id
     if on_site_contact_party_id is not _UNSET:
         ensure_party_usable(on_site_contact_party_id, "Ansprechpartner vor Ort")
         felder["on_site_contact_party_id"] = on_site_contact_party_id

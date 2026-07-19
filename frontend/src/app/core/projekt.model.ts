@@ -56,9 +56,18 @@ export interface PropertyRef {
   // Optionale Adressteile — nur manche Endpunkte liefern sie mit (z. B. der
   // Einsatz/Termin, damit die Zieladresse angezeigt werden kann). Wo nicht
   // gesetzt, bleibt es bei Name · Stadt.
+  //
+  // Bei Terminen sind `street/house_number/postal_code/city` bereits die des
+  // GEBÄUDES, falls es eine eigene Anschrift hat — sonst die der Liegenschaft.
   street?: string | null;
   house_number?: string | null;
   postal_code?: string | null;
+  // Präziser Zielort innerhalb der Liegenschaft (nur am Termin/Einsatz gesetzt):
+  // `building` = Gebäudelabel (z. B. „Steglitzer Damm 12"), `unit` = Einheit
+  // (z. B. „3. OG rechts"). Server-aufgelöst; beim auftragsgebundenen Termin ggf.
+  // vom Auftrag geerbt. Null, wenn nicht zutreffend.
+  building?: string | null;
+  unit?: string | null;
 }
 
 export type ServiceCaseStatus =

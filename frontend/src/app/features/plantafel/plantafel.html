@@ -542,6 +542,7 @@
                             b.job.title + ', ' + spanneText(b.job) + ', ' +
                             statusLabel(b.job.status) +
                             (b.job.property_name ? ', ' + b.job.property_name : '') +
+                            (b.job.property_address ? ', ' + b.job.property_address : '') +
                             (b.job.is_free ? ', freier Termin ohne Auftrag' : '') +
                             (b.job.series_id ? ', Serientermin' : '') +
                             (b.job.category ? ', Kategorie ' + b.job.category.name : '') +
@@ -591,7 +592,12 @@
                             <span class="tile__ort">{{ b.job.property_name }}</span>
                           }
                           @if (b.job.property_address) {
-                            <span class="tile__adresse">{{ b.job.property_address }}</span>
+                            <!-- Die Kachel kürzt den Ort per Ellipse; die volle,
+                                 jetzt gebäude-/einheitsgenaue Angabe steht im
+                                 Tooltip und im aria-label. -->
+                            <span class="tile__adresse" [attr.title]="b.job.property_address">{{
+                              b.job.property_address
+                            }}</span>
                           }
                           @if (b.job.is_free) {
                             <span class="tile__frei">Freier Termin</span>
@@ -766,6 +772,37 @@
         </p>
       }
 
+      <!-- Zielort innerhalb der Liegenschaft (nur beim freien Termin): der Monteur
+           muss WOHIN GENAU wissen. Eine Einheit setzt ihr Gebäude voraus — der
+           Gebäudewechsel leert die Einheit (siehe plantafel.ts). -->
+      @if (zeigtOrt() && !dialogLaedt()) {
+        @if (gebaeude().length) {
+          <app-feld
+            [control]="form.controls.building_id"
+            label="Gebäude"
+            typ="select"
+            platzhalter="Ganze Liegenschaft"
+            [optionen]="gebaeudeOptionen()"
+            hinweis="Wohin genau? Leer = der Termin gilt für die ganze Liegenschaft."
+          />
+          @if (einheitOptionen().length) {
+            <app-feld
+              [control]="form.controls.unit_id"
+              label="Einheit"
+              typ="select"
+              platzhalter="Keine bestimmte Einheit"
+              [optionen]="einheitOptionen()"
+              hinweis="Z. B. „3. OG rechts“. Eine Einheit setzt ein Gebäude voraus."
+            />
+          }
+        } @else if (ortHatLiegenschaft()) {
+          <p class="note note--info">
+            Für diese Liegenschaft sind keine <strong>Gebäude/Einheiten</strong> hinterlegt —
+            der Termin gilt für das Objekt als Ganzes.
+          </p>
+        }
+      }
+
       <app-feld
         [control]="form.controls.title"
         label="Titel"
@@ -935,9 +972,15 @@
         type="button"
         class="btn btn--primary"
         (click)="speichern()"
-        [disabled]="dialogBusy() || dialogLaedt()"
+        [disabled]="dialogBusy() || dialogLaedt() || ortLaedt()"
       >
-        {{ dialogBusy() ? 'Wird gespeichert …' : dialogLaedt() ? 'Lädt …' : 'Übernehmen' }}
+        {{
+          dialogBusy()
+            ? 'Wird gespeichert …'
+            : dialogLaedt() || ortLaedt()
+              ? 'Lädt …'
+              : 'Übernehmen'
+        }}
       </button>
     </div>
   </app-dialog>

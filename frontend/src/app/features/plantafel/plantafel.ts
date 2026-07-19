@@ -8,6 +8,7 @@ import {
   signal,
   viewChild,
 } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { map } from 'rxjs';
@@ -33,6 +34,7 @@ import {
 } from '../../core/einsatz.model';
 import { AuftragService } from '../../core/auftrag.service';
 import { PropertyService } from '../../core/property.service';
+import { Building, gebaeudeLabel } from '../../core/property.model';
 import { PartyService } from '../../core/party.service';
 import { AuthService } from '../../core/auth.service';
 import { PlanungNav } from '../planung-nav/planung-nav';
@@ -380,6 +382,31 @@ export class Plantafel {
       next: (v) => this.vorlagen.set(v),
       error: () => this.vorlagen.set([]),
     });
+
+    // Liegenschaft gewechselt (freier Termin): der bisherige Zielort passt nicht
+    // mehr, die Gebäude der neuen Liegenschaft werden nachgeladen. Beim Bearbeiten
+    // bleibt das property_id-Control leer (die Liegenschaft ist unveränderlich) —
+    // dieser Zweig feuert dort also nicht; der Ort wird in `dialogOeffnen` aus den
+    // `own_*`-IDs vorbelegt.
+    this.form.controls.property_id.valueChanges
+      .pipe(takeUntilDestroyed())
+      .subscribe((id) => {
+        this.form.controls.building_id.setValue('', { emitEvent: false });
+        this.form.controls.unit_id.setValue('', { emitEvent: false });
+        this.gewaehltesGebaeude.set('');
+        this.ladeGebaeude(id || null);
+      });
+
+    // Gebäude gewechselt: die Einheit gehört laut DB (zusammengesetzter FK) zu
+    // GENAU einem Gebäude — sie wird geleert statt mitgeschleift (Vorbild
+    // anlage-dialog). Sonst wiese der Server sie mit 422 ab.
+    this.form.controls.building_id.valueChanges
+      .pipe(takeUntilDestroyed())
+      .subscribe((b) => {
+        if (b === this.gewaehltesGebaeude()) return;
+        this.gewaehltesGebaeude.set(b);
+        this.form.controls.unit_id.setValue('', { emitEvent: false });
+      });
   }
 
   // =========================================================================
@@ -1547,6 +1574,10 @@ export class Plantafel {
     work_order_id: this.fb.control('', { nonNullable: true }),
     title: this.fb.control('', { nonNullable: true }),
     property_id: this.fb.control('', { nonNullable: true }),
+    /** Präziser Zielort innerhalb der Liegenschaft (nur beim freien Termin). Die
+     * Einheit setzt ihr Gebäude voraus — ein Gebäudewechsel leert die Einheit. */
+    building_id: this.fb.control('', { nonNullable: true }),
+    unit_id: this.fb.control('', { nonNullable: true }),
     appointment_category_id: this.fb.control('', { nonNullable: true }),
     on_site_contact_party_id: this.fb.control('', { nonNullable: true }),
     access_instructions: this.fb.control('', { nonNullable: true }),
@@ -1562,6 +1593,105 @@ export class Plantafel {
     { wert: '', label: 'Ohne Kategorie' },
     ...this.kategorien().map((k) => ({ wert: k.id, label: k.name })),
   ]);
+
+  // ---- Gebäude/Einheit am freien Termin -----------------------------------
+  /**
+   * Der Monteur muss WOHIN GENAU wissen: eine Liegenschaft „WEG Albrechtstraße 22"
+   * umfasst mehrere Häuser mit je eigenen Wohnungen. Der freie Termin darf deshalb
+   * Gebäude und Einheit tragen. Sie hängen an der gewählten Liegenschaft — es gibt
+   * keinen eigenen Endpunkt, die Gebäude kommen aus dem Liegenschafts-Detail.
+   */
+  protected readonly gebaeude = signal<Building[]>([]);
+  /** Gewähltes Gebäude (Signal, damit die Einheitsliste darauf reagiert). */
+  private readonly gewaehltesGebaeude = signal('');
+  /** Die Liegenschaft, für die zuletzt Gebäude geladen wurden (Rennschutz). */
+  private gebaeudePropertyId: string | null = null;
+  /**
+   * Ob überhaupt eine Liegenschaft am Ort hängt (für die Anzeige). Im
+   * Bearbeiten-Modus steht die Liegenschaft NICHT im `property_id`-Control
+   * (unveränderlich) — dieses Signal unterscheidet „Liegenschaft ohne Gebäude"
+   * (Hinweis zeigen) von „gar keine Liegenschaft" (nichts zeigen).
+   */
+  protected readonly ortHatLiegenschaft = signal(false);
+  /**
+   * Ob die Gebäude einer Liegenschaft gerade nachgeladen werden (und beim
+   * Bearbeiten das Gebäude-/Einheit-Preset aus `own_*` noch NICHT gesetzt ist).
+   *
+   * **Speichern muss so lange gesperrt bleiben.** Sonst baute `speichern()` für
+   * einen freien Termin `ort = { building_id: null, unit_id: null }`, noch bevor
+   * das Preset stand — und der PATCH LÖSCHTE den bestehenden Gebäude-/Einheitsort
+   * still. `dialogLaedt` deckt nur den Einsatz-`GET` ab, nicht dieses zweite,
+   * eigenständige Nachladen der Gebäude (Review-Fund W3).
+   */
+  protected readonly ortLaedt = signal(false);
+
+  protected readonly gebaeudeOptionen = computed<FeldOption[]>(() =>
+    this.gebaeude().map((b) => ({ wert: b.id, label: gebaeudeLabel(b) })),
+  );
+
+  protected readonly einheitOptionen = computed<FeldOption[]>(() => {
+    const b = this.gebaeude().find((g) => g.id === this.gewaehltesGebaeude());
+    if (!b) return [];
+    return b.units.map((u) => ({ wert: u.id, label: u.unit_number }));
+  });
+
+  /** Ob der Ortsblock (Gebäude/Einheit) überhaupt gezeigt wird: nur beim freien
+   *  Termin — beim auftragsgebundenen bleibt der Ort am Auftrag. */
+  protected readonly zeigtOrt = computed(() => this.art() === 'frei');
+
+  /**
+   * Gebäude einer Liegenschaft nachladen — mit optionalem Vorbelegen von
+   * Gebäude/Einheit beim Bearbeiten (`own_*`-IDs, nie die Labels). Ein
+   * Rennschutz verhindert, dass eine späte Antwort einer inzwischen abgewählten
+   * Liegenschaft die Liste überschreibt.
+   */
+  private ladeGebaeude(
+    propertyId: string | null,
+    presetBuilding = '',
+    presetUnit = '',
+  ): void {
+    this.gebaeudePropertyId = propertyId;
+    this.ortHatLiegenschaft.set(!!propertyId);
+    if (!propertyId) {
+      this.gebaeude.set([]);
+      this.ortLaedt.set(false);
+      return;
+    }
+    // Ab hier lädt der Ort — Speichern bleibt gesperrt, bis Liste UND (beim
+    // Bearbeiten) das Preset stehen. Synchron gesetzt, damit kein Fenster
+    // entsteht, in dem weder `dialogLaedt` noch `ortLaedt` greift.
+    this.ortLaedt.set(true);
+    this.propertySvc.get(propertyId).subscribe({
+      next: (d) => {
+        if (this.gebaeudePropertyId !== propertyId) return;
+        this.gebaeude.set(d.buildings);
+        if (presetBuilding) {
+          this.form.controls.building_id.setValue(presetBuilding, { emitEvent: false });
+          this.gewaehltesGebaeude.set(presetBuilding);
+        }
+        if (presetUnit) {
+          this.form.controls.unit_id.setValue(presetUnit, { emitEvent: false });
+        }
+        this.ortLaedt.set(false);
+      },
+      error: () => {
+        if (this.gebaeudePropertyId !== propertyId) return;
+        this.gebaeude.set([]);
+        this.ortLaedt.set(false);
+      },
+    });
+  }
+
+  /** Ort (Gebäude/Einheit + geladene Liste) zurücksetzen. */
+  private ortZuruecksetzen(): void {
+    this.form.controls.building_id.setValue('', { emitEvent: false });
+    this.form.controls.unit_id.setValue('', { emitEvent: false });
+    this.gewaehltesGebaeude.set('');
+    this.gebaeude.set([]);
+    this.gebaeudePropertyId = null;
+    this.ortHatLiegenschaft.set(false);
+    this.ortLaedt.set(false);
+  }
 
   /**
    * Ende aus der üblichen Dauer der gewählten Kategorie vorbelegen (Migration
@@ -1687,6 +1817,10 @@ export class Plantafel {
   artWaehlen(art: TerminArt): void {
     if (this.auftragGesperrt() || this.art() === art) return;
     this.art.set(art);
+    // Beim Auftragstermin bleibt der Ort am Auftrag — Gebäude/Einheit werden
+    // gar nicht angeboten und darum hier geleert. Die Liegenschaft selbst leert
+    // `pflichtfelderSetzen` nicht; `speichern` sendet sie ohnehin nur bei 'frei'.
+    if (art === 'auftrag') this.ortZuruecksetzen();
     this.pflichtfelderSetzen();
   }
 
@@ -1717,13 +1851,15 @@ export class Plantafel {
     this.art.set('auftrag');
     this.rueckstandModus.set(false);
     this.form.reset({
-      work_order_id: '', title: '', property_id: '', appointment_category_id: '',
+      work_order_id: '', title: '', property_id: '', building_id: '', unit_id: '',
+      appointment_category_id: '',
       on_site_contact_party_id: '', access_instructions: '', rueckstand_grund: '',
       start_datum: slot.dayIso,
       start_zeit: `${`${stunde}`.padStart(2, '0')}:00`,
       end_datum: slot.dayIso,
       end_zeit: `${`${Math.min(stunde + 2, 23)}`.padStart(2, '0')}:00`,
     });
+    this.ortZuruecksetzen();
     this.form.controls.rueckstand_grund.clearValidators();
     this.form.controls.rueckstand_grund.updateValueAndValidity();
     this.gewaehlteMitarbeiter.set(lane?.kind === 'USER' ? [lane.id] : []);
@@ -1771,12 +1907,15 @@ export class Plantafel {
       work_order_id: '',
       title: '',
       property_id: '',
+      building_id: '',
+      unit_id: '',
       appointment_category_id: job.category?.id ?? '',
       on_site_contact_party_id: '',
       access_instructions: '',
       rueckstand_grund: '',
       ...zeiten,
     });
+    this.ortZuruecksetzen();
     this.form.controls.work_order_id.clearValidators();
     this.form.controls.title.clearValidators();
     this.form.controls.work_order_id.updateValueAndValidity();
@@ -1804,6 +1943,16 @@ export class Plantafel {
         this.aktuellerKontakt.set(d.on_site_contact);
         this.gewaehlteMitarbeiter.set(d.assignments.map((a) => a.assignee_id));
         this.gewaehlteRessourcen.set(d.resources.map((r) => r.id));
+        // Zielort NUR beim freien Termin bearbeitbar (beim auftragsgebundenen
+        // bleibt er am Auftrag). Vorbelegt wird IMMER aus den rohen `own_*`-IDs,
+        // nie aus den aufgelösten Labels — die können vom Auftrag geerbt sein.
+        if (this.art() === 'frei' && d.own_property_id) {
+          this.ladeGebaeude(
+            d.own_property_id,
+            d.own_building_id ?? '',
+            d.own_unit_id ?? '',
+          );
+        }
       },
       error: () => {
         if (this.bearbeitet()?.id !== job.id) return;
@@ -2018,8 +2167,10 @@ export class Plantafel {
 
   speichern(): void {
     // Solange die gespeicherten Werte nicht geladen sind, kennt das Formular sie
-    // nicht — es dürfte sie also auch nicht zurückschreiben.
-    if (this.dialogBusy() || this.dialogLaedt()) return;
+    // nicht — es dürfte sie also auch nicht zurückschreiben. `ortLaedt` deckt das
+    // zweite Nachladen (Gebäude/Einheit-Preset) ab: sonst schriebe ein Speichern
+    // hier `building_id/unit_id: null` und löschte den bestehenden Zielort (W3).
+    if (this.dialogBusy() || this.dialogLaedt() || this.ortLaedt()) return;
     this.form.markAllAsTouched();
     if (this.form.invalid) return;
     const v = this.form.getRawValue();
@@ -2034,6 +2185,14 @@ export class Plantafel {
     this.dialogFehler.set(null);
 
     const ziel = this.bearbeitet();
+    // Zielort nur beim freien Termin — beim auftragsgebundenen bleibt er am
+    // Auftrag, dort werden Gebäude/Einheit gar nicht erst angeboten. Ein leeres
+    // Feld geht als `null` (löscht bzw. lässt den Ort weg); die Einheit setzt ihr
+    // Gebäude voraus, was die gekoppelten Dropdowns sicherstellen.
+    const ort =
+      this.art() === 'frei'
+        ? { building_id: v.building_id || null, unit_id: v.unit_id || null }
+        : {};
     const gemeinsam = {
       title: v.title.trim() || null,
       appointment_category_id: v.appointment_category_id || null,
@@ -2043,6 +2202,7 @@ export class Plantafel {
       resource_ids: this.gewaehlteRessourcen(),
       on_site_contact_party_id: v.on_site_contact_party_id || null,
       access_instructions: v.access_instructions.trim() || null,
+      ...ort,
     };
 
     const ruf = ziel

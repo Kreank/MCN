@@ -139,6 +139,11 @@ export interface ServiceJobCreate {
   work_order_id?: string | null;
   title?: string | null;
   property_id?: string | null;
+  /** Präziser Zielort innerhalb der Liegenschaft (freier Termin). Regeln wie bei
+   * `TerminCreate`: `unit_id` setzt `building_id` voraus, `building_id` setzt
+   * `property_id` voraus (der Server prüft, 422). */
+  building_id?: string | null;
+  unit_id?: string | null;
   scheduled_start?: string | null;
   scheduled_end?: string | null;
   on_site_contact_party_id?: string | null;
@@ -321,6 +326,11 @@ export interface TerminCreate {
   work_order_id?: string | null;
   title?: string | null;
   property_id?: string | null;
+  /** Präziser Zielort innerhalb der Liegenschaft (freier Termin). Der Server
+   * prüft: `unit_id` setzt `building_id` voraus, `building_id` setzt
+   * `property_id` voraus; Gebäude gehört zur Liegenschaft, Einheit zum Gebäude. */
+  building_id?: string | null;
+  unit_id?: string | null;
   scheduled_start?: string | null;
   scheduled_end?: string | null;
   on_site_contact_party_id?: string | null;
@@ -336,6 +346,11 @@ export interface TerminCreate {
 export interface TerminUpdate {
   title?: string | null;
   property_id?: string | null;
+  /** Zielort innerhalb der Liegenschaft ändern/entfernen (freier Termin). Ein
+   * ausdrückliches `null` löscht Gebäude bzw. Einheit. Es gelten dieselben
+   * Voraussetzungsregeln wie beim Anlegen (`TerminCreate`). */
+  building_id?: string | null;
+  unit_id?: string | null;
   /** Ausdrückliches `null` legt den Termin ZURÜCK IN DEN RÜCKSTAND (Zeitraum weg,
    * Status GEPLANT → UNGEPLANT). Dieser Wechsel ist begründungspflichtig — dann
    * ist `reason` Pflicht. */
@@ -391,6 +406,12 @@ export interface ServiceJobDetail extends ServiceJob {
    * beim Auftragstermin der Auftragstitel. Wer den zurückschriebe, brennte ihn in
    * den Einsatz ein — er folgte einer späteren Auftragsumbenennung nicht mehr. */
   own_title: string | null;
+  /** Die ROHEN eigenen Ortsangaben — zum Vorbefüllen der Bearbeiten-Dropdowns.
+   * IMMER diese IDs nehmen, nie die aufgelösten Labels aus `property.building`/
+   * `.unit`: die können beim auftragsgebundenen Termin vom Auftrag GEERBT sein. */
+  own_property_id: string | null;
+  own_building_id: string | null;
+  own_unit_id: string | null;
   created_at: string;
   assignments: JobAssignment[];
   resources: ResourceRef[];

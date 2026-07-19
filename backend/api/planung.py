@@ -74,6 +74,13 @@ class PropertyRefOut(Schema):
     house_number: str | None = None
     postal_code: str | None = None
     city: str
+    # Präziser Ort innerhalb der Liegenschaft (Migration 0119). Bei mehreren
+    # Adressen/Häusern je Liegenschaft benennt `building` das Haus, `unit` die
+    # Wohnung/Einheit („3. OG rechts"). Beide als TEXT — WCAG: nie nur über
+    # Farbe/Position. street/house_number oben sind dann die des Gebäudes, falls
+    # es eine eigene Anschrift trägt.
+    building: str | None = None
+    unit: str | None = None
 
 
 class CategoryRefOut(Schema):
@@ -186,6 +193,15 @@ class ServiceJobDetailOut(ServiceJobOut):
     #   eigene Titel und darf NULL sein.
     on_site_contact_party_id: UUID | None = None
     own_title: str | None = None
+    # Die ROHEN eigenen Ortsangaben des Einsatzes (0119) — Gegenstück zu den
+    # aufgelösten Labels in `property`. Das Bearbeiten-Formular MUSS sie kennen:
+    # `property.building`/`property.unit` sind Anzeigetexte und beim
+    # auftragsgebundenen Termin ggf. vom AUFTRAG geerbt; wer das Formular damit
+    # zurückschriebe, brennte einen geerbten Ort in den Einsatz ein. Diese Felder
+    # sind der eigene Ort des Einsatzes (NULL, wenn er vom Auftrag erbt).
+    own_property_id: UUID | None = None
+    own_building_id: UUID | None = None
+    own_unit_id: UUID | None = None
     created_at: datetime
     assignments: list[AssignmentOut]
     resources: list[ResourceRefOut] = []
@@ -209,6 +225,11 @@ class ServiceJobCreateIn(Schema):
     work_order_id: UUID | None = None
     title: str | None = None
     property_id: UUID | None = None
+    # Präziser Ort (0119): Gebäude/Einheit setzen eine Liegenschaft voraus und
+    # müssen zu ihr passen (Service prüft vorab, 422). Beim freien Termin die
+    # einzige Möglichkeit, das konkrete Haus/die Wohnung zu treffen.
+    building_id: UUID | None = None
+    unit_id: UUID | None = None
     scheduled_start: datetime | None = None
     scheduled_end: datetime | None = None
     on_site_contact_party_id: UUID | None = None
@@ -228,6 +249,8 @@ class ServiceJobUpdateIn(Schema):
     on_site_contact_party_id: UUID | None = None
     title: str | None = None
     property_id: UUID | None = None
+    building_id: UUID | None = None
+    unit_id: UUID | None = None
     access_instructions: str | None = None
 
 
@@ -278,19 +301,61 @@ def _job_property(job):
     return getattr(order, "property", None) if order is not None else None
 
 
-def _property_ref(job):
+def _job_ort(job):
+    """Ort des Einsatzes als Tripel (Liegenschaft, Gebäude, Einheit).
+
+    Der Einsatz kann selbst ein Gebäude/eine Einheit tragen (freier Termin oder
+    präzisierter Ort, Migration 0119). Trägt er keines, erbt die Anzeige den
+    präzisen Ort vom Auftrag. Alle Wege sind per select_related geladen (kein N+1);
+    wo Werte gesetzt sind, sind sie laut DB-FK konsistent zur Liegenschaft.
+    """
     p = _job_property(job)
-    if p is None:
+    if job.building_id is not None:
+        return p, job.building, job.unit
+    order = job.work_order
+    if order is not None and order.building_id is not None:
+        return p, order.building, order.unit
+    return p, None, None
+
+
+def _ort_address(prop, building):
+    """Die anzuzeigende Anschrift: die des Gebäudes, sonst die der Liegenschaft.
+
+    `building.address` ist NULL-fähig (0004) — mehrere Gebäude einer Liegenschaft
+    ohne je eigene Anschrift teilen dann die Liegenschaftsadresse.
+    """
+    if building is not None and building.address_id is not None:
+        return building.address
+    return prop.address if prop is not None else None
+
+
+def _building_label(building):
+    if building is None:
         return None
-    a = p.address
+    return building.name or f"Gebäude {building.building_number}"
+
+
+def _unit_label(unit):
+    return unit.unit_number if unit is not None else None
+
+
+def _property_ref(job):
+    prop, building, unit = _job_ort(job)
+    if prop is None:
+        return None
+    a = _ort_address(prop, building)
     return PropertyRefOut(
-        id=p.id,
-        property_number=p.property_number,
-        name=p.name,
-        street=a.street,
-        house_number=a.house_number,
-        postal_code=a.postal_code,
-        city=a.city,
+        id=prop.id,
+        property_number=prop.property_number,
+        name=prop.name,
+        # Straße/PLZ/Ort stammen aus der GEBÄUDEadresse, falls das Gebäude eine
+        # eigene hat — sonst aus der Liegenschaft. So zeigt die Karte „wohin".
+        street=a.street if a else None,
+        house_number=a.house_number if a else None,
+        postal_code=a.postal_code if a else None,
+        city=a.city if a else "",
+        building=_building_label(building),
+        unit=_unit_label(unit),
     )
 
 
@@ -365,7 +430,9 @@ def list_einsaetze(
         raise HttpError(422, f"Unbekannter Status '{filters.status}'.")
 
     qs = ServiceJob.objects.select_related(
-        "work_order__property__address", "property__address", "appointment_category"
+        "work_order__property__address", "property__address", "appointment_category",
+        "building__address", "unit",
+        "work_order__building__address", "work_order__unit",
     )
     if scope == "EIGENE":
         qs = qs.filter(assignments__assignee_id=actor).distinct()
@@ -425,6 +492,10 @@ def _einsatz_detail(job_id):
             "property__address",
             "on_site_contact_party",
             "appointment_category",
+            "building__address",
+            "unit",
+            "work_order__building__address",
+            "work_order__unit",
         )
         .prefetch_related("assignments__assignee", "resource_links__resource")
         .first()
@@ -505,6 +576,9 @@ def _einsatz_detail(job_id):
         on_site_contact=contact,
         on_site_contact_party_id=job.on_site_contact_party_id,
         own_title=job.title,
+        own_property_id=job.property_id,
+        own_building_id=job.building_id,
+        own_unit_id=job.unit_id,
         created_at=job.created_at,
         assignments=assignments,
         resources=resources,
@@ -572,6 +646,10 @@ def _reload_job(job_id):
             "work_order__property__address",
             "property__address",
             "appointment_category",
+            "building__address",
+            "unit",
+            "work_order__building__address",
+            "work_order__unit",
         )
         .first()
     )
@@ -624,6 +702,8 @@ def create_einsatz(request, payload: ServiceJobCreateIn):
             work_order_id=payload.work_order_id,
             title=payload.title,
             property_id=payload.property_id,
+            building_id=payload.building_id,
+            unit_id=payload.unit_id,
             scheduled_start=payload.scheduled_start,
             scheduled_end=payload.scheduled_end,
             on_site_contact_party_id=payload.on_site_contact_party_id,
@@ -921,16 +1001,28 @@ class KonfliktOut(Schema):
     text: str
 
 
-def _property_adresse_kurz(p):
+def _ort_adresse_kurz(prop, building, unit):
     """Kompakte Zieladresse für die Board-/Rückstands-Kachel: „Straße Hausnr,
-    Stadt" (ohne PLZ, damit die Kachel schmal bleibt). HERO zeigt die Adresse fest
-    auf der Terminkachel — der Disponent sieht so ohne Klick, wo der Einsatz ist."""
-    if p is None:
+    Stadt" (ohne PLZ, damit die Kachel schmal bleibt), plus präziser Ort. HERO
+    zeigt die Adresse fest auf der Terminkachel — der Disponent sieht so ohne Klick,
+    wo der Einsatz ist.
+
+    Straße/Ort stammen aus der Gebäudeadresse, falls das Gebäude eine eigene hat
+    (0119). Das Gebäude wird nur EXTRA genannt, wenn es KEINE eigene Anschrift hat
+    (sonst steckt es schon in der Straße); die Einheit („3. OG rechts") immer.
+    """
+    a = _ort_address(prop, building)
+    if a is None:
         return None
-    a = p.address
     strasse = " ".join(t for t in (a.street, a.house_number) if t and t.strip())
     teile = [t for t in (strasse, a.city) if t and t.strip()]
-    return ", ".join(teile) or a.city
+    basis = ", ".join(teile) or a.city
+    extra = []
+    if building is not None and building.address_id is None:
+        extra.append(_building_label(building))
+    if unit is not None:
+        extra.append(_unit_label(unit))
+    return f"{basis} · {' · '.join(extra)}" if extra else basis
 
 
 class BoardJobOut(Schema):
@@ -956,7 +1048,7 @@ class BoardJobOut(Schema):
 
 def _board_job_out(j, *, konflikte=()):
     """Eine Board-Kachel. Einzige Abbildungsstelle — Board und Serie nutzen sie."""
-    p = _job_property(j)
+    prop, building, unit = _job_ort(j)
     return BoardJobOut(
         id=j.id,
         job_number=j.job_number,
@@ -965,8 +1057,8 @@ def _board_job_out(j, *, konflikte=()):
         is_free=j.work_order_id is None,
         scheduled_start=j.scheduled_start,
         scheduled_end=j.scheduled_end,
-        property_name=p.name if p else None,
-        property_address=_property_adresse_kurz(p),
+        property_name=prop.name if prop else None,
+        property_address=_ort_adresse_kurz(prop, building, unit),
         category=_category_ref(j),
         assignee_ids=[a.assignee_id for a in j.assignments.all()],
         resource_ids=[link.resource_id for link in j.resource_links.all()],
@@ -1072,7 +1164,7 @@ def plantafel(
 
     backlog = []
     for j in board.backlog:
-        p = _job_property(j)
+        prop, building, unit = _job_ort(j)
         backlog.append(
             BacklogJobOut(
                 id=j.id,
@@ -1080,8 +1172,8 @@ def plantafel(
                 title=_job_title(j),
                 status=j.status,
                 is_free=j.work_order_id is None,
-                property_name=p.name if p else None,
-                property_address=_property_adresse_kurz(p),
+                property_name=prop.name if prop else None,
+                property_address=_ort_adresse_kurz(prop, building, unit),
                 category=_category_ref(j),
                 order_number=(
                     j.work_order.order_number if j.work_order_id else None
@@ -1164,6 +1256,8 @@ class TerminCreateIn(Schema):
     work_order_id: UUID | None = None
     title: str | None = None
     property_id: UUID | None = None
+    building_id: UUID | None = None
+    unit_id: UUID | None = None
     scheduled_start: datetime | None = None
     scheduled_end: datetime | None = None
     on_site_contact_party_id: UUID | None = None
@@ -1187,6 +1281,8 @@ class TerminUpdateIn(Schema):
 
     title: str | None = None
     property_id: UUID | None = None
+    building_id: UUID | None = None
+    unit_id: UUID | None = None
     scheduled_start: datetime | None = None
     scheduled_end: datetime | None = None
     on_site_contact_party_id: UUID | None = None
@@ -1223,6 +1319,8 @@ def create_termin(request, payload: TerminCreateIn):
             work_order_id=payload.work_order_id,
             title=payload.title,
             property_id=payload.property_id,
+            building_id=payload.building_id,
+            unit_id=payload.unit_id,
             scheduled_start=payload.scheduled_start,
             scheduled_end=payload.scheduled_end,
             on_site_contact_party_id=payload.on_site_contact_party_id,
@@ -1327,7 +1425,10 @@ class SerieOut(Schema):
 
 
 def _serien_termin_out(j):
-    p = _job_property(j)
+    # Nur der Liegenschaftsname wird gezeigt — bewusst _job_property (nicht
+    # _job_ort): die Serien-Query lädt building/unit nicht, ein _job_ort-Zugriff
+    # auf order.building/unit löste je Termin eine Lazy-Query aus.
+    prop = _job_property(j)
     return SerienTerminOut(
         id=j.id,
         job_number=j.job_number,
@@ -1336,7 +1437,7 @@ def _serien_termin_out(j):
         is_free=j.work_order_id is None,
         scheduled_start=j.scheduled_start,
         scheduled_end=j.scheduled_end,
-        property_name=p.name if p else None,
+        property_name=prop.name if prop else None,
         category=_category_ref(j),
         series_id=j.series_id,
     )

@@ -618,6 +618,16 @@ export class EinsatzDetail {
     return [strasse, ort].filter((t) => t).join(', ') || p.city;
   }
 
+  /**
+   * Präziser Zielort innerhalb der Liegenschaft: Gebäude und/oder Einheit, mit
+   * „ · " verbunden (z. B. „Steglitzer Damm 12 · 3. OG rechts"). Leerer String,
+   * wenn weder Gebäude noch Einheit gesetzt sind — dann gilt der Termin fürs
+   * Objekt als Ganzes. Als TEXT, nicht nur über Position (WCAG 1.4.1).
+   */
+  ortDetail(p: PropertyRef): string {
+    return [p.building, p.unit].filter((t) => !!t && t.trim()).join(' · ');
+  }
+
   /** Karten-Link für die Navigation zum Einsatzort (öffnet in neuem Tab). Null,
    *  wenn keine brauchbare Adresse vorliegt. */
   mapsUrl(p: PropertyRef): string | null {

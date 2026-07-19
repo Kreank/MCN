@@ -15,11 +15,13 @@ import {
   serviceJobStatusClass,
   serviceJobStatusLabel,
 } from '../../core/einsatz.model';
+import { PropertyRef } from '../../core/projekt.model';
+import { Building, gebaeudeLabel } from '../../core/property.model';
 import { PlanungNav } from '../planung-nav/planung-nav';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 import { Dialog } from '../../shared/dialog/dialog';
-import { Feld } from '../../shared/formular/feld';
+import { Feld, FeldOption } from '../../shared/formular/feld';
 import { ReferenzWahl, RefSuche } from '../../shared/formular/referenz-wahl';
 import { apiFehlerZuweisen } from '../../shared/formular/api-fehler';
 import {
@@ -76,11 +78,56 @@ export class Einsaetze {
     work_order_id: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
     title: this.fb.control('', { nonNullable: true }),
     property_id: this.fb.control('', { nonNullable: true }),
+    /** Zielort innerhalb der Liegenschaft (freier Termin) — die Einheit setzt ihr
+     * Gebäude voraus, der Gebäudewechsel leert die Einheit. */
+    building_id: this.fb.control('', { nonNullable: true }),
+    unit_id: this.fb.control('', { nonNullable: true }),
     scheduled_start: this.fb.control('', { nonNullable: true }),
     scheduled_end: this.fb.control('', { nonNullable: true }),
     on_site_contact_party_id: this.fb.control('', { nonNullable: true }),
     access_instructions: this.fb.control('', { nonNullable: true }),
   });
+
+  // ---- Gebäude/Einheit am freien Termin (Muster wie in der Plantafel) ------
+  /** Gebäude der gewählten Liegenschaft — Quelle: das Liegenschafts-Detail
+   *  (`PropertyService.get`), es gibt keinen eigenen Endpunkt. */
+  protected readonly gebaeude = signal<Building[]>([]);
+  private readonly gewaehltesGebaeude = signal('');
+  private gebaeudePropertyId: string | null = null;
+
+  protected readonly gebaeudeOptionen = computed<FeldOption[]>(() =>
+    this.gebaeude().map((b) => ({ wert: b.id, label: gebaeudeLabel(b) })),
+  );
+  protected readonly einheitOptionen = computed<FeldOption[]>(() => {
+    const b = this.gebaeude().find((g) => g.id === this.gewaehltesGebaeude());
+    if (!b) return [];
+    return b.units.map((u) => ({ wert: u.id, label: u.unit_number }));
+  });
+
+  /** Gebäude einer Liegenschaft nachladen (mit Rennschutz gegen späte Antworten). */
+  private ladeGebaeude(propertyId: string | null): void {
+    this.gebaeudePropertyId = propertyId;
+    if (!propertyId) {
+      this.gebaeude.set([]);
+      return;
+    }
+    this.propertySvc.get(propertyId).subscribe({
+      next: (d) => {
+        if (this.gebaeudePropertyId === propertyId) this.gebaeude.set(d.buildings);
+      },
+      error: () => {
+        if (this.gebaeudePropertyId === propertyId) this.gebaeude.set([]);
+      },
+    });
+  }
+
+  private ortZuruecksetzen(): void {
+    this.neuForm.controls.building_id.setValue('', { emitEvent: false });
+    this.neuForm.controls.unit_id.setValue('', { emitEvent: false });
+    this.gewaehltesGebaeude.set('');
+    this.gebaeude.set([]);
+    this.gebaeudePropertyId = null;
+  }
 
   /** Umschalten: die Pflichtfelder wandern mit der Terminart. */
   artWaehlen(art: TerminArt): void {
@@ -94,6 +141,9 @@ export class Einsaetze {
       titel.setValue('');
       // Die Liegenschaft kommt beim auftragsgebundenen Termin vom Auftrag.
       this.neuForm.controls.property_id.setValue('');
+      // Beim Auftragstermin bleibt der Ort am Auftrag — Gebäude/Einheit werden
+      // nicht angeboten und darum verworfen.
+      this.ortZuruecksetzen();
     } else {
       auftrag.clearValidators();
       auftrag.setValue('');
@@ -168,6 +218,28 @@ export class Einsaetze {
         this.page.set(1);
         this.fetch();
       });
+
+    // Liegenschaft gewechselt: den Zielort verwerfen und die Gebäude der neuen
+    // Liegenschaft laden.
+    this.neuForm.controls.property_id.valueChanges
+      .pipe(takeUntilDestroyed())
+      .subscribe((id) => {
+        this.neuForm.controls.building_id.setValue('', { emitEvent: false });
+        this.neuForm.controls.unit_id.setValue('', { emitEvent: false });
+        this.gewaehltesGebaeude.set('');
+        this.ladeGebaeude(id || null);
+      });
+
+    // Gebäude gewechselt: die Einheit gehört laut DB zu genau einem Gebäude —
+    // sie wird geleert statt mitgeschleift (sonst 422).
+    this.neuForm.controls.building_id.valueChanges
+      .pipe(takeUntilDestroyed())
+      .subscribe((b) => {
+        if (b === this.gewaehltesGebaeude()) return;
+        this.gewaehltesGebaeude.set(b);
+        this.neuForm.controls.unit_id.setValue('', { emitEvent: false });
+      });
+
     this.fetch();
   }
 
@@ -224,11 +296,14 @@ export class Einsaetze {
       work_order_id: '',
       title: '',
       property_id: '',
+      building_id: '',
+      unit_id: '',
       scheduled_start: '',
       scheduled_end: '',
       on_site_contact_party_id: '',
       access_instructions: '',
     });
+    this.ortZuruecksetzen();
     // Regelfall zurücksetzen: Termin zu einem Auftrag.
     this.art.set('frei');
     this.artWaehlen('auftrag');
@@ -250,12 +325,17 @@ export class Einsaetze {
 
     const v = this.neuForm.getRawValue();
     const frei = this.art() === 'frei';
+    // Freier Termin: kein Auftrag, dafür Titel (Pflicht) und optional Liegenschaft
+    // + präziser Zielort (Gebäude/Einheit). Auftragstermin: Auftrag; Titel/Ort
+    // kommen von dort. Über `create` (POST /einsaetze) — bewahrt den Startzustand
+    // UNGEPLANT-mit-Zeit und die reine ANLEGEN-Semantik; der Endpunkt nimmt
+    // building_id/unit_id ebenfalls entgegen.
     const payload: ServiceJobCreate = {
-      // Freier Termin: kein Auftrag, dafür Titel (Pflicht) und optional eine
-      // Liegenschaft. Auftragstermin: Auftrag; Titel/Ort kommen von dort.
       work_order_id: frei ? null : v.work_order_id,
       title: frei ? v.title.trim() : null,
       property_id: frei ? v.property_id || null : null,
+      building_id: frei ? v.building_id || null : null,
+      unit_id: frei ? v.unit_id || null : null,
       scheduled_start: v.scheduled_start || null,
       scheduled_end: v.scheduled_end || null,
       on_site_contact_party_id: v.on_site_contact_party_id || null,
@@ -295,5 +375,11 @@ export class Einsaetze {
   planLabel(iso: string | null): string {
     if (!iso) return 'ungeplant';
     return this.dateFmt.format(new Date(iso));
+  }
+
+  /** Präziser Zielort (Gebäude/Einheit) als Text, mit „ · " verbunden. Leer,
+   *  wenn nichts gesetzt ist. */
+  ortDetail(p: PropertyRef): string {
+    return [p.building, p.unit].filter((t) => !!t && t.trim()).join(' · ');
   }
 }

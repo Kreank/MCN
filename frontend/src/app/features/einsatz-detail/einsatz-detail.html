@@ -56,6 +56,14 @@
             @if (daten()!.property; as p) {
               <p class="einsatz-hero__wert"><strong>{{ p.name }}</strong></p>
               <p class="einsatz-hero__sub">{{ adresseZeile(p) }}</p>
+              @if (ortDetail(p); as ort) {
+                <!-- WOHIN GENAU: Gebäude/Einheit als eigener, benannter Ort —
+                     der Monteur soll das Haus und die Wohnung sehen, nicht nur
+                     die Liegenschaft. -->
+                <p class="einsatz-hero__sub einsatz-hero__ziel">
+                  <span class="einsatz-hero__ziel-label">Genauer Ort:</span> {{ ort }}
+                </p>
+              }
               <div class="einsatz-hero__aktionen">
                 @if (mapsUrl(p); as url) {
                   <a class="btn btn--primary" [href]="url" target="_blank" rel="noopener">Route <span aria-hidden="true">↗</span></a>
