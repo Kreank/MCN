@@ -182,6 +182,21 @@ export const routes: Routes = [
           import('./features/auftrag-liste/auftrag-liste').then((m) => m.AuftragListe),
       },
       {
+        // Arbeitsliste der Entscheider: Aufträge in FREIGABE_AUSSTEHEND, also
+        // das, was die Disposition erfasst, aber bewusst nicht entschieden hat.
+        //
+        // `workflow/FREIGEBEN` statt `LESEN`: Das ist keine Auskunftsansicht,
+        // sondern eine Aufgabenliste — wer nicht freigeben darf, kann darin nichts
+        // erledigen. Für ihn bleibt derselbe Ausschnitt als Statusfilter
+        // „Freigabe" in der Auftragsliste erreichbar.
+        path: 'entscheidungen',
+        pathMatch: 'full',
+        title: 'Zur Entscheidung — Mitra Sanitär',
+        canActivate: [darfGuard('workflow', 'FREIGEBEN')],
+        loadComponent: () =>
+          import('./features/entscheidungen/entscheidungen').then((m) => m.Entscheidungen),
+      },
+      {
         path: 'auftraege/:id',
         title: 'Auftrag — Mitra Sanitär',
         canActivate: [darfGuard('workflow', 'LESEN')],

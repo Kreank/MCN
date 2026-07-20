@@ -43,6 +43,17 @@ export class App {
     // nach der Übersicht. `workflow/LESEN` (scope-aware, wie /projekte), NICHT
     // `nurAlle`: die Liste ist scope-gefiltert, auch der Monteur sieht seine.
     { path: '/auftraege', label: 'Aufträge', mark: '05', recht: ['workflow', 'LESEN'] },
+    // Vorgelegte Aufträge (FREIGABE_AUSSTEHEND) — der Schreibtisch der technischen
+    // Leitung, direkt neben den Aufträgen, weil er ein Ausschnitt davon ist.
+    // `workflow/FREIGEBEN`: Der Punkt gehört dem, der entscheiden kann; für alle
+    // anderen wäre er eine Liste, an der sie nichts tun können. Zwischenschritt 06
+    // statt Renummerierung der Folgepunkte.
+    {
+      path: '/entscheidungen',
+      label: 'Zur Entscheidung',
+      mark: '06',
+      recht: ['workflow', 'FREIGEBEN'],
+    },
     // Der Eingang (Vorgangs-Eingangskorb) ist der optionale Feeder direkt unter
     // den Aufträgen: hier landen Meldungen und werden angenommen (→ Auftrag) oder
     // abgelehnt.

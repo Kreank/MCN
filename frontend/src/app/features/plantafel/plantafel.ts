@@ -1900,13 +1900,28 @@ export class Plantafel {
     this.anrufOffen.set(true);
   }
 
-  /** Der Durchstich hat Kunde, Auftrag und Termin angelegt. */
+  /**
+   * Der Durchstich hat Kunde, Auftrag und Termin angelegt.
+   *
+   * Die Meldung nennt den Status beim Namen, statt pauschal „freigegeben" zu
+   * behaupten: Auf dem Vorlege-Weg steht der Auftrag in FREIGABE_AUSSTEHEND, und
+   * der Termin ist zwar geplant, aber noch nicht ausführbar — der Monteur darf
+   * erst nach der Entscheidung losfahren. Wer das aus der Meldung nicht erfährt,
+   * hält den Vorgang für erledigt und wundert sich am Termintag.
+   */
   anrufFertig(res: AnrufResult): void {
     this.anrufOffen.set(false);
+    const vorgelegt = res.order_status === 'FREIGABE_AUSSTEHEND';
+    const abschluss = vorgelegt
+      ? 'angelegt und zur Entscheidung vorgelegt'
+      : 'angelegt und freigegeben';
+    const nachsatz = res.im_rueckstand
+      ? 'Der Termin liegt im Rückstand.'
+      : `Termin ${res.job_number} geplant.`;
     this.sagen(
-      res.im_rueckstand
-        ? `Auftrag ${res.order_number} angelegt und freigegeben. Der Termin liegt im Rückstand.`
-        : `Auftrag ${res.order_number} angelegt und freigegeben, Termin ${res.job_number} geplant.`,
+      vorgelegt
+        ? `Auftrag ${res.order_number} ${abschluss} — er wartet auf Freigabe. ${nachsatz}`
+        : `Auftrag ${res.order_number} ${abschluss}. ${nachsatz}`,
     );
     this.refresh();
   }

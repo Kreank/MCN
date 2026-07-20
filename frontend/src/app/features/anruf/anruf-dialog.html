@@ -161,6 +161,25 @@
           [optionen]="bereiche"
         />
       }
+
+      <!-- Erscheint erst, wenn der Vorlege-Weg gewählt wurde: Im Normalfall
+           (freigeben) wäre das Feld nur Ballast in einer ohnehin langen Maske. -->
+      @if (vorlegen()) {
+        <app-feld
+          [control]="form.controls.vorlage_frage"
+          label="Frage an den Entscheider"
+          typ="textarea"
+          [pflicht]="true"
+          platzhalter="Was soll entschieden werden?"
+          hinweis="Steht als Begründung im Statusverlauf des Auftrags — z. B. „Kunde will das Bad komplett saniert. Nehmen wir den Auftrag an?“."
+          class="anruf__voll"
+        />
+        <p class="note">
+          <strong>Der Auftrag wird nicht freigegeben.</strong> Er entsteht mit
+          Termin, wartet aber auf die Entscheidung — losfahren darf der Monteur
+          erst danach. Den Verantwortungsbereich ergänzt der Entscheider.
+        </p>
+      }
     </section>
 
     <!-- 4. Wann -->
@@ -182,8 +201,9 @@
       @if (imRueckstand()) {
         <p class="note">
           <strong>Ohne Datum und Uhrzeit</strong> landet der Termin im Rückstand.
-          Der Auftrag wird trotzdem angelegt und freigegeben — terminieren lässt
-          er sich später per Ziehen aus der Rückstandsspalte.
+          Der Auftrag wird trotzdem angelegt
+          {{ vorlegen() ? 'und vorgelegt' : 'und freigegeben' }} — terminieren
+          lässt er sich später per Ziehen aus der Rückstandsspalte.
         </p>
       }
 
@@ -214,6 +234,17 @@
     <button type="button" class="btn" (click)="schliessen()" [disabled]="laedt()">
       Abbrechen
     </button>
+    <!-- Sekundär, nicht primär: Freigeben bleibt der Normalfall. Der erste Klick
+         holt bei noch leerer Frage nur das Feld hervor — deshalb die Ellipse. -->
+    <button
+      type="button"
+      class="btn"
+      (click)="absenden(true)"
+      [disabled]="laedt()"
+      [attr.aria-busy]="laedt()"
+    >
+      {{ vorlegen() ? 'Jetzt vorlegen' : 'Zur Entscheidung vorlegen …' }}
+    </button>
     <button
       type="button"
       class="btn btn--primary"
@@ -221,7 +252,7 @@
       [disabled]="laedt()"
       [attr.aria-busy]="laedt()"
     >
-      {{ laedt() ? 'Wird angelegt …' : 'Auftrag und Termin anlegen' }}
+      {{ laedt() ? 'Wird angelegt …' : 'Anlegen und freigeben' }}
     </button>
   </div>
 </app-dialog>

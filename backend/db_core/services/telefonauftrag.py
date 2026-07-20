@@ -26,6 +26,30 @@ PRINCIPAL. Alle drei werden hier **erfüllt, nicht umgangen** — das Telefonat
 *ist* der Nachweis (A-26 verlangt Textform, nicht Schriftform), der Anrufer *ist*
 der Auftraggeber. Der Weg durch die Tore ist derselbe wie beim manuellen
 Anlegen; er wird nur nicht über vier Bildschirme verteilt.
+
+## Der zweite Ausgang: vorlegen statt freigeben
+
+Freigeben setzt voraus, dass die Disposition die Beauftragung fachlich
+entscheiden *kann*. Beim Wasserrohrbruch trifft das zu; bei „der Kunde will sein
+Bad komplett saniert haben" nicht — ob der Betrieb so einen Auftrag überhaupt
+annimmt, entscheidet die technische Leitung, nicht das Telefon.
+
+Ohne einen zweiten Ausgang hätte die Disposition an dieser Stelle nur die Wahl
+zwischen Freigeben (entscheidet etwas, das ihr nicht zusteht) und Liegenlassen
+(der Anruf verpufft). `vorlegen=True` führt den Auftrag deshalb nach
+FREIGABE_AUSSTEHEND statt nach FREIGEGEBEN — erfasst, aber bewusst nicht
+entschieden.
+
+Der Status ist kein neuer: Die Übergangstabelle kennt ENTWURF →
+FREIGABE_AUSSTEHEND und verlangt dafür kein FREIGEBEN. Die DB-Tore feuern erst
+ab FREIGEGEBEN, also ist der Verantwortungsbereich auf diesem Weg noch nicht
+Pflicht — wer den Auftrag fachlich nicht beurteilen kann, kann meist auch die
+Zuordnung Sonder-/Gemeinschaftseigentum nicht treffen. Der Entscheider ergänzt
+beides und läuft beim Freigeben durch dieselben Tore wie jeder andere.
+
+Nachweis und PRINCIPAL werden trotzdem gesetzt: Beide sind aus dem Telefonat
+bekannt, und sie später nachzutragen hieße, den Entscheider Arbeit machen zu
+lassen, die schon getan war.
 """
 
 import uuid
@@ -107,6 +131,8 @@ def anruf_durchstich(
     responsibility_scope=None,
     order_evidence_reference=None,
     trade_id=None,
+    vorlegen=False,
+    vorlage_frage=None,
     # --- Termin ---
     scheduled_start=None,
     scheduled_end=None,
@@ -132,6 +158,13 @@ def anruf_durchstich(
     UNGEPLANT) — der Kunde will einen Termin „nächste Woche irgendwann", die
     Disposition legt ihn später ins Raster. Der Auftrag wird trotzdem
     freigegeben; die Freigabe hängt nicht am Termin.
+
+    Mit `vorlegen=True` endet der Durchstich stattdessen in FREIGABE_AUSSTEHEND
+    und `vorlage_frage` wird Pflicht (Begründung des Übergangs, sichtbar im
+    Statusverlauf). Ein Termin darf auch dann schon entstehen — geplant werden
+    kann er, nur losfahren darf der Monteur nicht: `trg_service_job_execution_gate`
+    verlangt für UNTERWEGS einen Auftrag ab FREIGEGEBEN. Genau das ist gewollt,
+    wenn am Telefon ein Wunschtermin fällt, die Annahme aber noch offen ist.
     """
     if not title or not title.strip():
         raise ValueError("Für den Auftrag ist ein Titel Pflicht.")
@@ -173,10 +206,25 @@ def anruf_durchstich(
     # an einer Formalie scheitern zu lassen. Ist der Bereich bekannt, wird er
     # trotzdem gesetzt — die Ausnahme erlaubt das Weglassen, sie verbietet die
     # Angabe nicht.
-    if scope is None and not is_emergency:
+    # Beim Vorlegen entfällt die Pflicht: Der Auftrag geht nach
+    # FREIGABE_AUSSTEHEND, und dort feuert recheck_work_order_gates noch nicht.
+    # Den Bereich hier trotzdem zu verlangen hieße, den Vorlege-Weg genau in dem
+    # Fall zu versperren, für den es ihn gibt — wer die Beauftragung fachlich
+    # nicht beurteilen kann, kann sie meist auch nicht zuordnen.
+    if scope is None and not is_emergency and not vorlegen:
         raise ValueError(
             "Der Verantwortungsbereich lässt sich nicht ableiten und ist für die "
             "Freigabe Pflicht (Sondereigentum, Gemeinschaftseigentum oder gemischt)."
+        )
+
+    # Die Frage ist beim Vorlegen der eigentliche Inhalt: Ein Auftrag, der ohne
+    # sie in der Entscheider-Liste landet, zwingt den Entscheider, den Fall aus
+    # Titel und Beschreibung zu rekonstruieren — dann hätte die Disposition ihn
+    # auch gleich liegenlassen können.
+    if vorlegen and not (vorlage_frage and vorlage_frage.strip()):
+        raise ValueError(
+            "Zum Vorlegen gehört die Frage an den Entscheider — was soll "
+            "entschieden werden?"
         )
 
     anzeigename = anrufer_anzeigename or _personenname(
@@ -276,9 +324,22 @@ def anruf_durchstich(
             auftrag_service.confirm_responsibility(
                 actor_app_user_id, work_order_id=order.id, scope=scope
             )
-        order = auftrag_service.advance_status(
-            actor_app_user_id, work_order_id=order.id, to_status="FREIGEGEBEN"
-        )
+        # Die Frage wandert als `reason` in den Statusverlauf statt in ein
+        # eigenes Feld: Sie gehört zu genau diesem Übergang („warum liegt das
+        # hier?"), und der Statusverlauf steht in der Detailansicht ohnehin schon
+        # da, wo der Entscheider hinschaut. Ein separates Feld hätte eine
+        # Migration gekostet und dieselbe Information an einen zweiten Ort gelegt.
+        if vorlegen:
+            order = auftrag_service.advance_status(
+                actor_app_user_id,
+                work_order_id=order.id,
+                to_status="FREIGABE_AUSSTEHEND",
+                reason=vorlage_frage.strip(),
+            )
+        else:
+            order = auftrag_service.advance_status(
+                actor_app_user_id, work_order_id=order.id, to_status="FREIGEGEBEN"
+            )
 
         job = planung_service.create_termin(
             actor_app_user_id,

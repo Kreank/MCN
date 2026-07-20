@@ -72,6 +72,11 @@ class AnrufAuftragIn(Schema):
     # Elektro wird. Ist es bekannt, bekommt der Auftrag eine sprechende Nummer
     # (AU-SHK-26-0001 statt AU-26-0001), und der Einsatz erbt das Gewerk.
     trade_id: UUID | None = None
+    # Vorlegen statt freigeben: Der Auftrag endet in FREIGABE_AUSSTEHEND, die
+    # Entscheidung trifft jemand anderes. `vorlage_frage` ist dann Pflicht (der
+    # Service weist es sonst mit 422 ab) und landet im Statusverlauf.
+    vorlegen: bool = False
+    vorlage_frage: str | None = None
 
 
 class AnrufTerminIn(Schema):
@@ -115,13 +120,23 @@ class AnrufOut(Schema):
     # explizit, was sonst nur aus dem Status zu erschließen wäre — sie muss die
     # Statuscodes nicht kennen, um den richtigen Hinweis anzuzeigen.
     im_rueckstand: bool
+    # Aus demselben Grund: Der Dialog muss „freigegeben" und „wartet auf
+    # Entscheidung" unterschiedlich zurückmelden, soll dafür aber nicht auf
+    # FREIGABE_AUSSTEHEND vergleichen müssen.
+    vorgelegt: bool
 
 
 @router.post("/anruf", response={201: AnrufOut}, auth=django_auth)
 def anruf_durchstich(request, payload: AnrufIn):
     """Kunde + Ort + Auftrag + Termin aus einem Telefonat — atomar.
 
-    Der Auftrag entsteht direkt als FREIGEGEBEN: Das Telefonat wird als
+    Mit `auftrag.vorlegen` endet der Durchstich in FREIGABE_AUSSTEHEND statt in
+    FREIGEGEBEN — für Beauftragungen, die die Disposition nicht selbst entscheiden
+    kann („will der Betrieb diese Badsanierung überhaupt?"). Dieser Weg verlangt
+    kein FREIGEBEN-Recht und keinen Verantwortungsbereich; die Begründung
+    (`vorlage_frage`) ist dafür Pflicht. Alles Weitere im Service.
+
+    Im Normalfall entsteht der Auftrag direkt als FREIGEGEBEN: Das Telefonat wird als
     Beauftragungsnachweis hinterlegt, der Anrufer als PRINCIPAL eingetragen, der
     Verantwortungsbereich bestätigt. Ohne diese drei würde der DB-Trigger
     `trg_service_job_execution_gate` den Monteur am Termintag blockieren — der
@@ -154,9 +169,16 @@ def anruf_durchstich(request, payload: AnrufIn):
     # FREIGEBEN ist ein eigenes Recht, kein Sonderfall von AENDERN — der reguläre
     # Pfad (api/auftrag.py, Statuswechsel) trennt das ausdrücklich. Ohne diese
     # Zeile wäre der Durchstich eine Rechte-Umgehung: Wer nur AENDERN hat, könnte
-    # über /anruf freigeben, was ihm über /status verwehrt bleibt. Betrifft real
-    # die Rolle DISPOSITION (0026), die AENDERN hat, FREIGEBEN aber nicht.
-    require(request, "workflow", "FREIGEBEN")
+    # über /anruf freigeben, was ihm über /status verwehrt bleibt.
+    #
+    # Beim Vorlegen gilt das NICHT: ENTWURF → FREIGABE_AUSSTEHEND verlangt in der
+    # Übergangstabelle kein FREIGEBEN, und der Sinn des Weges ist gerade, dass ihn
+    # jemand ohne dieses Recht gehen kann. Die Prüfung hier trotzdem zu verlangen
+    # hieße, den Ausgang genau für sein Publikum zu verschließen. AENDERN (oben)
+    # deckt den Übergang ab; die Freigabe selbst trifft später ein Berechtigter
+    # über den regulären Pfad und läuft dort durch die vollen Tore.
+    if not payload.auftrag.vorlegen:
+        require(request, "workflow", "FREIGEBEN")
 
     termin = payload.termin or AnrufTerminIn()
 
@@ -183,6 +205,8 @@ def anruf_durchstich(request, payload: AnrufIn):
             responsibility_scope=payload.auftrag.responsibility_scope,
             order_evidence_reference=payload.auftrag.order_evidence_reference,
             trade_id=payload.auftrag.trade_id,
+            vorlegen=payload.auftrag.vorlegen,
+            vorlage_frage=payload.auftrag.vorlage_frage,
             scheduled_start=termin.scheduled_start,
             scheduled_end=termin.scheduled_end,
             building_id=termin.building_id,
@@ -208,5 +232,6 @@ def anruf_durchstich(request, payload: AnrufIn):
             job_status=job.status,
             scheduled_start=job.scheduled_start,
             im_rueckstand=job.scheduled_start is None,
+            vorgelegt=order.status == "FREIGABE_AUSSTEHEND",
         ),
     )

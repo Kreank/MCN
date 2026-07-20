@@ -15,6 +15,13 @@
  * Muster „bestehenden wählen ODER neu anlegen" samt Dublettenwarnung schon
  * gelöst. Abweichung: Hier ist es ein Dialog (die Plantafel bleibt sichtbar
  * dahinter), und am Ende steht ein Termin statt einer Meldung.
+ *
+ * Zwei Ausgänge, ein Formular: Der Normalfall gibt den Auftrag frei — das
+ * Telefonat ist der Beauftragungsnachweis. Übersteigt die Beauftragung aber die
+ * Kompetenz der Disposition („will der Chef die Komplettsanierung überhaupt
+ * annehmen?"), bliebe sonst nur Freigeben (entscheidet etwas, das ihr nicht
+ * zusteht) oder Auflegen (der Anruf verpufft). Der zweite Ausgang legt den
+ * Auftrag deshalb VOR: erfasst, terminiert, aber bewusst nicht entschieden.
  */
 import { HttpErrorResponse } from '@angular/common/http';
 import { Component, computed, effect, inject, input, output, signal, viewChild } from '@angular/core';
@@ -108,6 +115,15 @@ export class AnrufDialog {
   protected readonly laedt = signal(false);
   protected readonly formularMeldung = signal<string | null>(null);
 
+  /**
+   * Welcher Ausgang gewählt ist: `false` = freigeben (Normalfall), `true` =
+   * dem Entscheider vorlegen. Ein Signal statt eines Formularfelds, weil es
+   * nicht der Auftrag ist, der eine Eigenschaft bekommt, sondern der Abschluss,
+   * der einen Weg nimmt — und weil davon Sichtbarkeit UND Pflichtfelder
+   * abhängen, nicht nur der Payload.
+   */
+  protected readonly vorlegen = signal(false);
+
   /** Gewählter BESTEHENDER Kontakt — leer = neuen anlegen. */
   protected readonly bestehenderKontaktId = signal<string>('');
   /** Gewählte BESTEHENDE Liegenschaft — leer = neue anlegen. */
@@ -167,6 +183,8 @@ export class AnrufDialog {
     priority: this.fb.control('NORMAL', { nonNullable: true }),
     is_emergency: this.fb.control(false, { nonNullable: true }),
     responsibility_scope: this.fb.control('', { nonNullable: true }),
+    // Pflicht nur im Vorlege-Weg — siehe `pflichtfelderSynchronisieren()`.
+    vorlage_frage: this.fb.control('', { nonNullable: true }),
 
     start_datum: this.fb.control('', { nonNullable: true }),
     start_zeit: this.fb.control('', { nonNullable: true }),
@@ -199,6 +217,12 @@ export class AnrufDialog {
    * Im Notfall entfällt die Frage ganz: Die DB lässt die Freigabe dann ohne
    * bestätigte Verantwortung zu (A-23, Gefahrenabwehr) — beim Wasserrohrbruch
    * wird nicht erst geklärt, wem das Rohr gehört.
+   *
+   * Beim Vorlegen entfällt sie ebenso: Der Auftrag endet in FREIGABE_AUSSTEHEND,
+   * und die Tore prüfen erst ab FREIGEGEBEN. Wer die Beauftragung fachlich nicht
+   * beurteilen kann, kann die Zuordnung Sonder-/Gemeinschaftseigentum meist auch
+   * nicht treffen — hier zu raten hieße, einen falschen Kostenträger in die
+   * Rechnung zu schreiben. Der Entscheider ergänzt beides in einem Zug.
    */
   protected readonly bereichNoetig = computed(() => {
     // `bestehendeObjektId()` zuerst lesen: Bei einem frühen `return` darunter
@@ -207,6 +231,7 @@ export class AnrufDialog {
     // abhängen, welchen Zweig der Wert gerade nimmt.
     const bestehend = !!this.bestehendeObjektId();
     const v = this.werte();
+    if (this.vorlegen()) return false;
     if (v.is_emergency) return false;
     if (bestehend) return true;
     return v.property_type !== 'EINFAMILIENHAUS';
@@ -257,17 +282,9 @@ export class AnrufDialog {
         }
       });
 
-    // Der Verantwortungsbereich ist Pflicht, sobald er nicht ableitbar ist —
-    // sonst scheitert die Freigabe erst am Server (422 nach dem Absenden).
-    this.form.valueChanges.pipe(takeUntilDestroyed()).subscribe(() => {
-      const f = this.form.controls.responsibility_scope;
-      const noetig = this.bereichNoetig();
-      const hatPflicht = f.hasValidator(Validators.required);
-      if (noetig === hatPflicht) return; // nichts zu tun — kein Rekursionsrisiko
-      if (noetig) f.setValidators([Validators.required]);
-      else f.clearValidators();
-      f.updateValueAndValidity({ emitEvent: false });
-    });
+    this.form.valueChanges
+      .pipe(takeUntilDestroyed())
+      .subscribe(() => this.pflichtfelderSynchronisieren());
 
     adressDublettenStrom(
       this.propertySvc,
@@ -284,6 +301,7 @@ export class AnrufDialog {
       if (!this.offen()) return;
       this.formularMeldung.set(null);
       this.dubletten.set([]);
+      this.vorlegen.set(false);
       this.form.reset({
         property_type: 'EINFAMILIENHAUS',
         priority: 'NORMAL',
@@ -291,9 +309,39 @@ export class AnrufDialog {
         start_datum: this.startDatum(),
         start_zeit: this.startZeit(),
       });
+      // Nach `reset` von Hand: Der Weg steht wieder auf „freigeben", und `reset`
+      // allein räumt die Validatoren des Vorlege-Wegs nicht ab.
+      this.pflichtfelderSynchronisieren();
       this.gewaehlteMitarbeiter.set([...this.mitarbeiterVorauswahl()]);
       this.stammdatenLaden();
     });
+  }
+
+  /**
+   * Hält die wegabhängigen Pflichtfelder an ihren Controls aktuell.
+   *
+   * Zwei Felder wechseln je nach Ausgang die Pflicht: Der Verantwortungsbereich
+   * ist beim Freigeben nötig (sonst scheitert die Freigabe erst am Server mit
+   * 422), beim Vorlegen nicht. Die Frage an den Entscheider ist umgekehrt nur
+   * beim Vorlegen Pflicht — ohne sie weiß der Chef nicht, worüber er entscheiden
+   * soll, und der Server weist es ohnehin ab.
+   *
+   * Bewusst eine Methode statt einer reinen `valueChanges`-Reaktion: Der Wechsel
+   * des Wegs ändert KEINEN Formularwert, würde also nie einfeuern. Beide Aufrufer
+   * (Wertstrom und Weg-Umschaltung) müssen dieselbe Wahrheit herstellen.
+   */
+  private pflichtfelderSynchronisieren(): void {
+    const paare: [typeof this.form.controls.responsibility_scope, boolean][] = [
+      [this.form.controls.responsibility_scope, this.bereichNoetig()],
+      [this.form.controls.vorlage_frage, this.vorlegen()],
+    ];
+    for (const [f, noetig] of paare) {
+      const hatPflicht = f.hasValidator(Validators.required);
+      if (noetig === hatPflicht) continue; // nichts zu tun — kein Rekursionsrisiko
+      if (noetig) f.setValidators([Validators.required]);
+      else f.clearValidators();
+      f.updateValueAndValidity({ emitEvent: false });
+    }
   }
 
   /**
@@ -351,8 +399,24 @@ export class AnrufDialog {
     this.abbrechen.emit();
   }
 
-  protected absenden(): void {
+  /**
+   * Abschluss auf einem der beiden Wege.
+   *
+   * Der Weg wird ZUERST gesetzt und die Pflichtfelder daran ausgerichtet, erst
+   * danach validiert. Sonst prüfte die Validierung gegen den alten Weg: Der erste
+   * Klick auf „Zur Entscheidung vorlegen" liefe gegen einen noch geforderten
+   * Verantwortungsbereich, dessen Feld in diesem Moment schon ausgeblendet ist —
+   * genau der wortlose Abbruch an einem unsichtbaren Feld, den die Umschaltung
+   * bei Kontakt und Objekt oben vermeidet (WCAG 3.3.1).
+   *
+   * Ist die Frage an den Entscheider noch leer, ist der erste Klick deshalb kein
+   * Fehlschlag, sondern die Aufforderung: Das Feld erscheint, wird rot markiert,
+   * und die Meldung sagt, was fehlt.
+   */
+  protected absenden(vorlegen = false): void {
     if (this.laedt()) return;
+    this.vorlegen.set(vorlegen);
+    this.pflichtfelderSynchronisieren();
     serverFehlerZuruecksetzen(this.form);
     this.formularMeldung.set(null);
     felderAlsBeruehrtMarkieren(this.form);
@@ -361,7 +425,9 @@ export class AnrufDialog {
       // Erklärung. Sollte der Fehler an einem gerade ausgeblendeten Control
       // hängen, bliebe der Knopf sonst wirkungslos ohne jede Rückmeldung.
       this.formularMeldung.set(
-        'Bitte die rot markierten Felder prüfen — es fehlt noch eine Angabe.',
+        vorlegen && !this.form.controls.vorlage_frage.value.trim()
+          ? 'Bitte kurz formulieren, was entschieden werden soll — sonst weiß der Entscheider nicht, worum es geht.'
+          : 'Bitte die rot markierten Felder prüfen — es fehlt noch eine Angabe.',
       );
       return;
     }
@@ -417,6 +483,10 @@ export class AnrufDialog {
         // Leer lassen, wo ableitbar — der Server setzt beim EFH selbst.
         responsibility_scope: v.responsibility_scope || null,
         trade_id: v.trade_id || null,
+        vorlegen,
+        // Nur auf dem Vorlege-Weg mitschicken: Eine Frage an einem freigegebenen
+        // Auftrag hätte keinen Statuswechsel, an dem sie hängen könnte.
+        vorlage_frage: vorlegen ? v.vorlage_frage.trim() : null,
       },
       termin: {
         scheduled_start: start,

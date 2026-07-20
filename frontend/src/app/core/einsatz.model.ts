@@ -376,6 +376,11 @@ export interface TerminResult extends ServiceJob {
 // Anders als TerminCreate setzt das keinen bestehenden Auftrag voraus — der
 // Auftrag entsteht mit und wird direkt freigegeben (das Telefonat ist der
 // Beauftragungsnachweis), damit der Monteur am Termintag losfahren darf.
+//
+// Zweiter Ausgang: `auftrag.vorlegen`. Freigeben setzt voraus, dass die
+// Disposition die Beauftragung fachlich entscheiden KANN — beim Rohrbruch ja,
+// bei „Bad komplett sanieren" nicht. Dann endet der Durchstich in
+// FREIGABE_AUSSTEHEND statt FREIGEGEBEN, und der Anruf verpufft trotzdem nicht.
 
 /** Der Anrufer. Mit `existing_party_id` wird ein bestehender Kontakt
  * referenziert und NICHT neu angelegt — dann bleiben die Namensfelder leer. */
@@ -408,11 +413,20 @@ export interface AnrufAuftrag {
   priority?: string | null;
   is_emergency?: boolean;
   /** Beim Einfamilienhaus ableitbar, sonst für die Freigabe Pflicht. Im Notfall
-   * (`is_emergency`) entbehrlich — dann lässt die DB die Freigabe ohne zu. */
+   * (`is_emergency`) entbehrlich — dann lässt die DB die Freigabe ohne zu.
+   * Beim Vorlegen ebenfalls entbehrlich: Die Tore feuern erst ab FREIGEGEBEN,
+   * und wer die Beauftragung nicht beurteilen kann, kann meist auch Sonder- und
+   * Gemeinschaftseigentum nicht auseinanderhalten. Der Entscheider ergänzt es. */
   responsibility_scope?: string | null;
   order_evidence_reference?: string | null;
   /** Gewerk. Optional — am Telefon oft noch offen. Der Einsatz erbt es. */
   trade_id?: string | null;
+  /** Vorlegen statt freigeben → der Auftrag entsteht in FREIGABE_AUSSTEHEND. */
+  vorlegen?: boolean;
+  /** Die Frage an den Entscheider. Bei `vorlegen` Pflicht (der Server weist es
+   * sonst mit 422 ab); sie wird Begründung des Statuswechsels und ist damit im
+   * Statusverlauf der Auftragsmappe nachlesbar. */
+  vorlage_frage?: string | null;
 }
 
 /** Ohne `scheduled_start` landet der Termin im Rückstand — gewollt. */

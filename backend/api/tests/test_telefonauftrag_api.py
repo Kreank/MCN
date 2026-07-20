@@ -367,6 +367,187 @@ def test_ohne_freigabe_recht_403(client_with_role, db):
     assert "FREIGEBEN" in detail and "workflow" in detail, detail
 
 
+# --- Vorlegen statt freigeben ----------------------------------------------
+#
+# Der zweite Ausgang aus dem Telefonat: Nicht jede Beauftragung kann die
+# Disposition entscheiden. Ohne ihn bliebe nur Freigeben (maßt sich etwas an)
+# oder Liegenlassen (der Anruf verpufft).
+
+
+@pytest.mark.django_db
+def test_vorlegen_endet_in_freigabe_ausstehend(admin_client, db):
+    """Der Auftrag entsteht erfasst, aber unentschieden — und die Frage an den
+    Entscheider steht im Statusverlauf, wo er ohnehin hinschaut."""
+    from db_core.models import StatusChange, WorkOrder, WorkOrderParty
+
+    r = admin_client.post(
+        "/api/planung/anruf",
+        data=_anruf_payload(
+            auftrag={
+                "title": "Bad komplett sanieren",
+                "vorlegen": True,
+                "vorlage_frage": "Nehmen wir Komplettsanierungen überhaupt an?",
+            }
+        ),
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    body = r.json()
+    assert body["vorgelegt"] is True
+    assert body["order_status"] == "FREIGABE_AUSSTEHEND"
+
+    order = WorkOrder.objects.get(id=body["work_order_id"])
+    assert order.status == "FREIGABE_AUSSTEHEND"
+
+    wechsel = StatusChange.objects.get(
+        entity="work_order", entity_id=order.id, to_status="FREIGABE_AUSSTEHEND"
+    )
+    assert wechsel.reason == "Nehmen wir Komplettsanierungen überhaupt an?"
+
+    # Was schon bekannt war, ist trotzdem gesetzt: Der Entscheider soll die
+    # Arbeit nicht ein zweites Mal machen müssen.
+    assert order.order_evidence_reference
+    assert WorkOrderParty.objects.filter(
+        work_order_id=order.id, role="PRINCIPAL"
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_vorlegen_ohne_frage_422(admin_client, db):
+    """Ein vorgelegter Auftrag ohne Frage zwingt den Entscheider, den Fall aus
+    Titel und Beschreibung zu rekonstruieren — dann hätte man ihn auch
+    liegenlassen können."""
+    from db_core.models import Party
+
+    parties_vorher = Party.objects.count()
+
+    r = admin_client.post(
+        "/api/planung/anruf",
+        data=_anruf_payload(
+            auftrag={"title": "Bad komplett sanieren", "vorlegen": True}
+        ),
+        content_type="application/json",
+    )
+    assert r.status_code == 422, r.content
+    assert "entschieden" in r.json()["detail"]
+    assert Party.objects.count() == parties_vorher
+
+
+@pytest.mark.django_db
+def test_vorlegen_ohne_freigabe_recht(client_with_role, db):
+    """Der Kern des Slices — Gegenstück zu `test_ohne_freigabe_recht_403`.
+
+    Derselbe Aufruf, dieselbe Rolle ohne FREIGEBEN: Freigeben bleibt 403,
+    Vorlegen muss durchgehen. Genau dafür existiert der Weg. Verlangte der
+    Endpunkt auch hier FREIGEBEN, wäre er für sein Publikum verschlossen und der
+    Slice wirkungslos — ohne dass irgendein anderer Test rot würde.
+    """
+    from django.db import connection
+
+    from db_core.models import WorkOrder
+
+    c = client_with_role("DISPOSITION")
+    with connection.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE security.role_permission
+               SET allowed = false
+             WHERE role_code = 'DISPOSITION'
+               AND module    = 'workflow'
+               AND action    = 'FREIGEBEN'
+            """
+        )
+
+    # Gegenprobe zuerst: Ohne das Recht ist Freigeben zu.
+    r_frei = c.post(
+        "/api/planung/anruf",
+        data=_anruf_payload(),
+        content_type="application/json",
+    )
+    assert r_frei.status_code == 403, r_frei.content
+
+    r = c.post(
+        "/api/planung/anruf",
+        data=_anruf_payload(
+            auftrag={
+                "title": "Bad komplett sanieren",
+                "vorlegen": True,
+                "vorlage_frage": "Übersteigt meine Kompetenz — annehmen?",
+            }
+        ),
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    order = WorkOrder.objects.get(id=r.json()["work_order_id"])
+    assert order.status == "FREIGABE_AUSSTEHEND"
+
+
+@pytest.mark.django_db
+def test_vorlegen_ohne_scope_geht_durch(admin_client, db):
+    """Beim WEG ist der Verantwortungsbereich für die FREIGABE Pflicht — beim
+    Vorlegen nicht: Die DB-Tore feuern erst ab FREIGEGEBEN, und wer die
+    Beauftragung fachlich nicht beurteilen kann, kann sie meist auch nicht
+    zuordnen. Der Entscheider ergänzt ihn."""
+    from db_core.models import WorkOrder
+
+    r = admin_client.post(
+        "/api/planung/anruf",
+        data=_anruf_payload(
+            property=_weg_property(),
+            auftrag={
+                "title": "Fassade streichen",
+                "vorlegen": True,
+                "vorlage_frage": "Gemeinschaft oder Eigentümer — und wollen wir das?",
+            },
+        ),
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    order = WorkOrder.objects.get(id=r.json()["work_order_id"])
+    assert order.status == "FREIGABE_AUSSTEHEND"
+    assert order.responsibility_scope == "UNKNOWN"
+
+
+@pytest.mark.django_db
+def test_vorgelegt_haelt_den_monteur_zurueck(admin_client, db, app_user):
+    """Die Kehrseite von `test_monteur_kann_losfahren`, und der Grund, warum der
+    Vorlege-Weg keine Lücke ist.
+
+    Der Termin darf schon entstehen (am Telefon fällt ein Wunschtermin), aber
+    losfahren darf niemand, solange nicht entschieden ist: Der DB-Trigger
+    `trg_service_job_execution_gate` verlangt für UNTERWEGS einen Auftrag ab
+    FREIGEGEBEN. Ginge das trotzdem, hätte der Vorlege-Weg die Freigabe nicht
+    aufgeschoben, sondern umgangen.
+    """
+    from django.db.utils import InternalError, ProgrammingError
+
+    from db_core.models import ServiceJob
+
+    r = admin_client.post(
+        "/api/planung/anruf",
+        data=_anruf_payload(
+            auftrag={
+                "title": "Bad komplett sanieren",
+                "vorlegen": True,
+                "vorlage_frage": "Annehmen?",
+            }
+        ),
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    job_id = r.json()["service_job_id"]
+
+    einsatz_service.advance_status(
+        app_user.id, service_job_id=job_id, to_status="BESTAETIGT"
+    )
+    with pytest.raises((InternalError, ProgrammingError, ValueError)):
+        einsatz_service.advance_status(
+            app_user.id, service_job_id=job_id, to_status="UNTERWEGS"
+        )
+
+    assert ServiceJob.objects.get(id=job_id).status == "BESTAETIGT"
+
+
 @pytest.mark.django_db
 def test_rollback_bei_fehler_im_termin(admin_client, db):
     """Atomarität: Scheitert der letzte Schritt, bleiben keine Waisen zurück.

@@ -1,0 +1,119 @@
+<section class="entscheidungen" aria-labelledby="entscheidungen-titel">
+  <header class="page-head">
+    <div class="page-head__text">
+      <p class="page-head__kicker">
+        <span class="page-head__scale" aria-hidden="true"></span>
+        Auftragszentrale
+      </p>
+      <h1 id="entscheidungen-titel" class="page-head__titel">Zur Entscheidung</h1>
+      <p class="page-head__hint">
+        Aufträge, die erfasst, aber bewusst nicht freigegeben wurden — die
+        Disposition konnte die Beauftragung fachlich nicht entscheiden. Die
+        Rückfrage steht im Statusverlauf des jeweiligen Auftrags.
+      </p>
+    </div>
+  </header>
+
+  <div class="controls">
+    <div class="search">
+      <label class="search__label" for="entscheidungen-suche">Vorlagen durchsuchen</label>
+      <div class="search__field">
+        <span class="search__icon" aria-hidden="true">⌕</span>
+        <input
+          id="entscheidungen-suche"
+          class="search__input"
+          type="search"
+          inputmode="search"
+          autocomplete="off"
+          placeholder="Auftragsnummer oder Titel"
+          (input)="onSearch($any($event.target).value)"
+        />
+      </div>
+    </div>
+  </div>
+
+  <p class="sr-only" role="status">{{ resultSummary() }}</p>
+
+  @switch (state().kind) {
+    @case ('loading') {
+      <ul class="rows" aria-hidden="true">
+        @for (s of skeletons; track $index) {
+          <li class="row row--skeleton">
+            <span class="sk-block">
+              <span class="sk sk--line"></span>
+              <span class="sk sk--chips"></span>
+            </span>
+            <span class="sk sk--box"></span>
+          </li>
+        }
+      </ul>
+    }
+
+    @case ('forbidden') {
+      <app-kein-zugriff [detail]="$any(state()).detail" />
+    }
+
+    @case ('error') {
+      <div class="note note--error" role="alert">
+        <h2 class="note__titel">Vorlagen nicht erreichbar</h2>
+        <p class="note__text">
+          Die Liste der offenen Entscheidungen ließ sich nicht laden. Prüfe die
+          Verbindung und lade den Bereich erneut.
+        </p>
+        <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
+      </div>
+    }
+
+    @case ('ready') {
+      @if ($any(state()).data.items.length === 0) {
+        <!-- Leerer Posteingang ist hier der Normalzustand und keine Panne —
+             deshalb kein Handlungsaufruf, sondern eine Entwarnung. -->
+        <div class="note note--empty">
+          <h2 class="note__titel">Nichts zu entscheiden</h2>
+          <p class="note__text">
+            Kein Auftrag wartet auf eine Freigabe. Vorgelegt wird aus dem
+            Anruf-Dialog der Planung, wenn die Beauftragung über die Disposition
+            hinausgeht — etwa bei einer Komplettsanierung.
+          </p>
+        </div>
+      } @else {
+        <ul class="rows">
+          @for (o of $any(state()).data.items; track o.id) {
+            <li class="row">
+              <a class="row__link" [routerLink]="['/auftraege', o.id]">
+                <span class="row__body">
+                  <span class="row__title">{{ o.title }}</span>
+                  <span class="row__meta">
+                    <span class="row__num">{{ o.order_number }}</span>
+                    <span class="row__prop">▤ {{ o.property.name }} · {{ o.property.city }}</span>
+                    @if (o.desired_date) {
+                      <span class="row__termin">◷ {{ datum(o.desired_date) }}</span>
+                    }
+                    @if (o.project) {
+                      <span class="row__projekt">▦ {{ o.project.name }}</span>
+                    }
+                  </span>
+                </span>
+                <span class="row__stamps">
+                  @if (o.is_emergency) {
+                    <span class="stamp stamp--negativ">Notfall</span>
+                  }
+                  <span class="stamp {{ priorityClass(o.priority) }}">{{ priorityLabel(o.priority) }}</span>
+                  <span class="stamp {{ wartezeitClass(o.created_at) }}">
+                    Wartet {{ wartezeitLabel(o.created_at) }}
+                  </span>
+                </span>
+              </a>
+            </li>
+          }
+        </ul>
+
+        <nav class="pager" aria-label="Blättern">
+          <button type="button" class="btn" (click)="prev()" [disabled]="page() <= 1">Zurück</button>
+          <span class="pager__pos" aria-hidden="true">Seite {{ page() }} von {{ totalPages() }}</span>
+          <button type="button" class="btn" (click)="next()" [disabled]="page() >= totalPages()">Weiter</button>
+        </nav>
+      }
+    }
+  }
+</section>
