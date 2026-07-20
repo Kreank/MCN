@@ -1,0 +1,227 @@
+<app-dialog
+  [offen]="offen()"
+  titel="Anruf annehmen"
+  [escapeSchliesst]="!laedt()"
+  [backdropSchliesst]="false"
+  (schliessen)="schliessen()"
+>
+  <form class="anruf" [formGroup]="form" (ngSubmit)="absenden()" novalidate>
+    @if (formularMeldung(); as fm) {
+      <div class="melde melde--fehler" role="alert">
+        <span class="melde__mark" aria-hidden="true">!</span>
+        <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+      </div>
+    }
+
+    <!-- 1. Wer ruft an -->
+    <section class="anruf__block">
+      <h3 class="anruf__titel">Wer ruft an?</h3>
+
+      <app-referenz-wahl
+        [control]="form.controls.existing_party_id"
+        label="Schon Kunde?"
+        hinweis="Name, Telefonnummer oder Adresse genügt. Nicht gefunden? Feld leer lassen und unten erfassen."
+        platzhalter="Name, Telefon oder Adresse"
+        [suche]="kontaktSuche"
+      />
+
+      @if (bestehenderKontaktId()) {
+        <p class="note">
+          <strong>Bestehender Kunde gewählt.</strong> Er wird Auftraggeber und
+          Ansprechpartner vor Ort. Zum Neuanlegen die Auswahl oben leeren.
+        </p>
+      } @else {
+        <div class="anruf__raster">
+          <app-feld [control]="form.controls.salutation" label="Anrede" autocomplete="honorific-prefix" />
+          <app-feld
+            [control]="form.controls.first_name"
+            label="Vorname"
+            [pflicht]="true"
+            autocomplete="given-name"
+          />
+          <app-feld
+            [control]="form.controls.last_name"
+            label="Nachname"
+            [pflicht]="true"
+            autocomplete="family-name"
+          />
+          <app-feld [control]="form.controls.phone" label="Telefon" typ="tel" autocomplete="tel" />
+          <app-feld [control]="form.controls.email" label="E-Mail" typ="email" autocomplete="email" />
+        </div>
+      }
+    </section>
+
+    <!-- 2. Wo -->
+    <section class="anruf__block">
+      <h3 class="anruf__titel">Wo ist es?</h3>
+
+      <app-referenz-wahl
+        #objektWahl
+        [control]="form.controls.existing_property_id"
+        label="Objekt schon erfasst?"
+        hinweis="Auch die genannte Straße führt zum Treffer. Nicht gefunden? Feld leer lassen."
+        platzhalter="Name, Objektnummer oder Adresse"
+        [suche]="objektSuche"
+      />
+
+      @if (bestehendeObjektId()) {
+        <p class="note">
+          <strong>Bestehendes Objekt gewählt.</strong> Zum Neuanlegen die Auswahl
+          oben leeren.
+        </p>
+      } @else {
+        <div class="anruf__raster">
+          <app-feld
+            [control]="form.controls.property_type"
+            label="Objektart"
+            typ="select"
+            [pflicht]="true"
+            [optionen]="objekttypen"
+          />
+          <app-feld
+            [control]="form.controls.street"
+            label="Straße"
+            [pflicht]="true"
+            autocomplete="address-line1"
+          />
+          <app-feld [control]="form.controls.house_number" label="Hausnummer" />
+          <app-feld
+            [control]="form.controls.postal_code"
+            label="PLZ"
+            [pflicht]="true"
+            autocomplete="postal-code"
+          />
+          <app-feld
+            [control]="form.controls.city"
+            label="Ort"
+            [pflicht]="true"
+            autocomplete="address-level2"
+          />
+        </div>
+
+        <!-- Hinweis, kein Blocker: Wer keinen Treffer übernimmt, legt neu an. -->
+        <app-adress-dubletten
+          [treffer]="dubletten()"
+          modus="uebernehmen"
+          (uebernehmen)="uebernehmen($event)"
+        />
+      }
+    </section>
+
+    <!-- 3. Was -->
+    <section class="anruf__block">
+      <h3 class="anruf__titel">Was ist zu tun?</h3>
+
+      <div class="anruf__raster">
+        <app-feld
+          [control]="form.controls.title"
+          label="Kurz beschrieben"
+          [pflicht]="true"
+          hinweis="Wie der Kunde es sagt — z. B. „Therme heizt nicht“."
+          class="anruf__voll"
+        />
+        <app-feld
+          [control]="form.controls.description"
+          label="Weitere Angaben"
+          typ="textarea"
+          class="anruf__voll"
+        />
+        @if (gewerkOptionen().length) {
+          <app-feld
+            [control]="form.controls.trade_id"
+            label="Gewerk"
+            typ="select"
+            platzhalter="Noch offen"
+            hinweis="Optional — bestimmt die Auftragsnummer."
+            [optionen]="gewerkOptionen()"
+          />
+        }
+        <app-feld
+          [control]="form.controls.priority"
+          label="Dringlichkeit"
+          typ="select"
+          [optionen]="prioritaeten"
+        />
+        <app-feld
+          [control]="form.controls.is_emergency"
+          label="Notfall (Gefahr im Verzug)"
+          typ="checkbox"
+          hinweis="Wasserrohrbruch, Gasgeruch, Stromausfall — geht ohne Klärung des Verantwortungsbereichs durch."
+        />
+      </div>
+
+      @if (bereichNoetig()) {
+        <app-feld
+          [control]="form.controls.responsibility_scope"
+          label="Verantwortungsbereich"
+          typ="select"
+          [pflicht]="true"
+          platzhalter="Bitte wählen"
+          hinweis="Wird für die Freigabe gebraucht und entscheidet, wer die Rechnung bekommt. Beim Einfamilienhaus entfällt die Frage."
+          [optionen]="bereiche"
+        />
+      }
+    </section>
+
+    <!-- 4. Wann -->
+    <section class="anruf__block">
+      <h3 class="anruf__titel">Wann kommen wir?</h3>
+
+      <div class="anruf__raster">
+        <app-feld [control]="form.controls.start_datum" label="Datum" typ="datum" />
+        <app-feld [control]="form.controls.start_zeit" label="Von" typ="zeit" />
+        <app-feld [control]="form.controls.end_zeit" label="Bis" typ="zeit" />
+        <app-feld
+          [control]="form.controls.access_instructions"
+          label="Zutritt"
+          hinweis="Schlüssel, Code, Klingel — was der Monteur wissen muss."
+          class="anruf__voll"
+        />
+      </div>
+
+      @if (imRueckstand()) {
+        <p class="note">
+          <strong>Ohne Datum und Uhrzeit</strong> landet der Termin im Rückstand.
+          Der Auftrag wird trotzdem angelegt und freigegeben — terminieren lässt
+          er sich später per Ziehen aus der Rückstandsspalte.
+        </p>
+      }
+
+      @if (mitarbeiter().length) {
+        <fieldset class="wahl">
+          <legend class="wahl__legend">
+            Wer fährt hin?
+            <span class="wahl__zahl">{{ gewaehlteMitarbeiter().length }} gewählt</span>
+          </legend>
+          <div class="wahl__liste">
+            @for (m of mitarbeiter(); track m.id) {
+              <label class="wahl__opt">
+                <input
+                  type="checkbox"
+                  [checked]="istGewaehlt(m.id)"
+                  (change)="mitarbeiterUmschalten(m.id)"
+                />
+                <span>{{ m.name }}</span>
+              </label>
+            }
+          </div>
+        </fieldset>
+      }
+    </section>
+  </form>
+
+  <div dialog-aktionen class="dialog__aktionen">
+    <button type="button" class="btn" (click)="schliessen()" [disabled]="laedt()">
+      Abbrechen
+    </button>
+    <button
+      type="button"
+      class="btn btn--primary"
+      (click)="absenden()"
+      [disabled]="laedt()"
+      [attr.aria-busy]="laedt()"
+    >
+      {{ laedt() ? 'Wird angelegt …' : 'Auftrag und Termin anlegen' }}
+    </button>
+  </div>
+</app-dialog>

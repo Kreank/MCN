@@ -45,6 +45,7 @@ from api.raum import router as raum_router
 from api.security import router as security_router
 from api.site_report import router as site_report_router
 from api.suche import router as suche_router
+from api.telefonauftrag import router as telefonauftrag_router
 from api.verwaltung import router as verwaltung_router
 from api.zeiterfassung import hr_router as zeit_stammdaten_router
 from api.zeiterfassung import router as zeiterfassung_router
@@ -88,6 +89,11 @@ api.add_router("/planung", planung_router, tags=["planung"])
 # Planungswerkzeuge sind — die NACHWEISE am Mitarbeiter hängen darin aber am
 # `hr`-Recht (Personalakte), nicht an `workflow`.
 api.add_router("/planung", qualifikation_router, tags=["planung"])
+# Anruf-Durchstich (Kunde + Ort + Auftrag + Termin aus einem Telefonat). Liegt
+# unter /planung, weil das Ergebnis ein Termin am Board ist; er schreibt aber
+# quer durch identity/property/workflow und prüft die Rechte entsprechend
+# einzeln.
+api.add_router("/planung", telefonauftrag_router, tags=["planung"])
 api.add_router("/invoicing", beleg_router, tags=["invoicing"])
 api.add_router("/buchhaltung", buchhaltung_router, tags=["buchhaltung"])
 api.add_router("/maintenance", maintenance_router, tags=["maintenance"])

@@ -377,9 +377,17 @@ def test_status_unbekannter_vorgang_404(admin_client, seeded):
 def test_status_freigabe_uebergang_ohne_freigeben_recht_403(
     client_with_role, app_user
 ):
-    """FREIGABE_AUSSTEHEND → BEAUFTRAGT verlangt workflow.FREIGEBEN. DISPOSITION
-    hat AENDERN (Scope ALLE), aber kein FREIGEBEN → 403, obwohl der Übergang
-    fachlich gültig wäre."""
+    """FREIGABE_AUSSTEHEND → BEAUFTRAGT verlangt workflow.FREIGEBEN: AENDERN
+    allein genügt nicht, obwohl der Übergang fachlich gültig wäre.
+
+    DISPOSITION diente hier als Beispielrolle „AENDERN ja, FREIGEBEN nein" —
+    seit Migration 0122 hat sie FREIGEBEN (der Anruf-Durchstich legt Aufträge
+    telefonisch an und gibt sie frei). Statt die Rolle zu tauschen, wird das
+    Recht hier gezielt entzogen: Der Test prüft dann genau eine Variable und
+    bleibt gültig, egal wie die Startmatrix künftig aussieht.
+    """
+    from django.db import connection
+
     case = _neuer_vorgang(app_user)
     # Als Akteur mit vollen Rechten in FREIGABE_AUSSTEHEND bringen.
     projekt_service.advance_service_case_status(
@@ -389,6 +397,16 @@ def test_status_freigabe_uebergang_ohne_freigeben_recht_403(
         app_user.id, service_case_id=case.id, to_status="FREIGABE_AUSSTEHEND"
     )
     c = client_with_role("DISPOSITION")
+    with connection.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE security.role_permission
+               SET allowed = false
+             WHERE role_code = 'DISPOSITION'
+               AND module    = 'workflow'
+               AND action    = 'FREIGEBEN'
+            """
+        )
     r = c.post(
         f"/api/workflow/service_cases/{case.id}/status",
         data={"to_status": "BEAUFTRAGT"},

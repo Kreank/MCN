@@ -3,6 +3,8 @@ import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import {
   Abwesend,
+  AnrufIn,
+  AnrufResult,
   AssignableUser,
   BoardJob,
   JobAssignmentInput,
@@ -101,6 +103,19 @@ export class EinsatzService {
    */
   createTermin(payload: TerminCreate): Observable<TerminResult> {
     return this.http.post<TerminResult>('/api/planung/termine', payload);
+  }
+
+  /**
+   * Anruf-Durchstich: Kunde, Ort, Auftrag und Termin aus einem Telefonat — in
+   * EINER Transaktion. Der Auftrag entsteht direkt freigegeben (das Telefonat
+   * ist der Beauftragungsnachweis), damit der Monteur am Termintag losfahren
+   * darf; ohne `termin.scheduled_start` landet der Termin im Rückstand.
+   *
+   * Erfordert workflow.ANLEGEN + AENDERN + FREIGEBEN und, je nachdem ob Kontakt
+   * und Liegenschaft neu sind, identity/property ANLEGEN statt nur LESEN.
+   */
+  anruf(payload: AnrufIn): Observable<AnrufResult> {
+    return this.http.post<AnrufResult>('/api/planung/anruf', payload);
   }
 
   /** Termin ändern (Vollersetzung der Zuweisungs-/Ressourcenlisten). */
