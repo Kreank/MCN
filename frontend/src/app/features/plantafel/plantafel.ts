@@ -1312,7 +1312,7 @@ export class Plantafel {
     const lane = bahnen.includes(laneIdx) ? laneIdx : (bahnen[0] ?? 0);
     this.zielzelle.set({ laneIdx: lane, slotIdx });
     this.sagen(
-      `Einsatz ${q.job.job_number}, ${q.job.title}, aufgenommen. ` +
+      `Termin ${q.job.job_number}, ${q.job.title}, aufgenommen. ` +
         'Pfeiltasten bewegen das Ziel, Enter legt ab, Escape bricht ab.',
     );
     this.zielFokussieren();
@@ -1330,7 +1330,7 @@ export class Plantafel {
     this.zielzelle.set(null);
     this.griffAusloeser = null;
     if (!q) return;
-    this.sagen(`Verschieben abgebrochen. Einsatz ${q.job.job_number} bleibt, wo er war.`);
+    this.sagen(`Verschieben abgebrochen. Termin ${q.job.job_number} bleibt, wo er war.`);
     // Fokus zurück auf GENAU den Auslöser (ein Einsatz mit mehreren Zuweisungen
     // erscheint in jeder Bahn — eine DOM-ID wäre mehrdeutig).
     setTimeout(() => {
@@ -1456,7 +1456,7 @@ export class Plantafel {
     if (!ziel || !slot) return;
     if (!this.bahnErlaubt(q, ziel)) {
       this.melden(
-        'Ein Einsatz wechselt nur zwischen Bahnen derselben Art. ' +
+        'Ein Termin wechselt nur zwischen Bahnen derselben Art. ' +
           'Mitarbeiter und Betriebsmittel änderst du im Termin-Dialog.',
       );
       return;
@@ -1485,13 +1485,13 @@ export class Plantafel {
         q.job.scheduled_start === zeit.start && (q.job.scheduled_end ?? null) === zeit.end;
       const gleicheBahn = q.lane.id === ziel.id;
       if (gleicheZeit && gleicheBahn) {
-        this.sagen('Abgelegt, wo der Einsatz schon war — nichts geändert.');
+        this.sagen('Abgelegt, wo der Termin schon war — nichts geändert.');
         return;
       }
     }
 
     this.busy.set(true);
-    this.sagen(`Einsatz ${q.job.job_number} wird verschoben …`);
+    this.sagen(`Termin ${q.job.job_number} wird verschoben …`);
     this.svc
       .updateTermin(q.job.id, {
         scheduled_start: zeit.start,
@@ -1503,7 +1503,7 @@ export class Plantafel {
         next: (res) => {
           this.busy.set(false);
           this.warnungen.set(res.warnings ?? []);
-          const kern = `Einsatz ${q.job.job_number} abgelegt auf ${zielText}.`;
+          const kern = `Termin ${q.job.job_number} abgelegt auf ${zielText}.`;
           this.sagen(
             res.warnings?.length
               ? `${kern} ${res.warnings.length} Hinweis(e): ${res.warnings.join(' ')}`
@@ -1524,7 +1524,7 @@ export class Plantafel {
           // Der Server schreibt den Umzug in EINER Transaktion — schlägt er fehl,
           // ist NICHTS geschrieben. Diese Aussage ist deshalb belastbar.
           this.melden(
-            `${kopf}${detail ? ' ' + detail : ''} Der Einsatz ${q.job.job_number} steht ` +
+            `${kopf}${detail ? ' ' + detail : ''} Der Termin ${q.job.job_number} steht ` +
               'unverändert an seinem alten Platz.',
           );
           this.refresh();
@@ -2229,7 +2229,7 @@ export class Plantafel {
             : '';
           this.ansage.set(
             `${r.anzahl} Folgetermin${r.anzahl === 1 ? '' : 'e'} angelegt. ` +
-              'Jeder ist ein eigener Einsatz und lässt sich einzeln umplanen.' +
+              'Jeder ist ein eigener Termin und lässt sich einzeln umplanen.' +
               hinweise,
           );
           this.laden(true);
@@ -2391,7 +2391,7 @@ export class Plantafel {
     const k = this.konfliktZahl();
     return (
       `${s.data.jobs.length} Termine auf ${s.data.lanes.length} Bahnen im Zeitraum ` +
-      `${this.zeitraumLabel()}. ${s.data.backlog_total} ungeplante Einsätze im Rückstand. ` +
+      `${this.zeitraumLabel()}. ${s.data.backlog_total} ungeplante Termine im Rückstand. ` +
       (k ? `${k} Termine mit Konflikt.` : 'Keine Konflikte.')
     );
   });

@@ -125,7 +125,7 @@
     <div class="griff-leiste">
       <p class="griff-leiste__text">
         <span aria-hidden="true">⠿</span>
-        <strong>Einsatz {{ g.job.job_number }} aufgenommen.</strong>
+        <strong>Termin {{ g.job.job_number }} aufgenommen.</strong>
         Pfeiltasten bewegen das Ziel · Enter legt ab · Escape bricht ab.
       </p>
       <button type="button" class="btn" (click)="abbrechen()">Abbrechen</button>
@@ -177,7 +177,7 @@
       <div class="note note--error" role="alert">
         <h2 class="note__titel">Verbindung zur Plantafel unterbrochen</h2>
         <p class="note__text">
-          Die Einsätze ließen sich nicht laden. Prüfe die Verbindung und lade den Bereich erneut.
+          Die Termine ließen sich nicht laden. Prüfe die Verbindung und lade den Bereich erneut.
         </p>
         <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
       </div>
@@ -216,7 +216,7 @@
 
           @if (poolOffen()) {
             <p class="pool__hinweis">
-              Ungeplante Einsätze. Mit der Maus ins Raster <strong>ziehen</strong> — oder ohne
+              Ungeplante Termine. Mit der Maus ins Raster <strong>ziehen</strong> — oder ohne
               Maus: <strong>„Aufnehmen“</strong>, mit den <strong>Pfeiltasten</strong> die Zelle
               wählen, <strong>Enter</strong> legt ab. Umgekehrt geht es auch: eine Kachel
               <strong>hierher ziehen</strong> (oder „In den Rückstand“ an der Kachel) nimmt
@@ -236,9 +236,9 @@
             @if (backlog().length === 0) {
               <p class="pool__leer">
                 @if (backlogSuche()) {
-                  Kein ungeplanter Einsatz passt zur Suche.
+                  Kein ungeplanter Termin passt zur Suche.
                 } @else {
-                  Kein ungeplanter Einsatz — alles ist terminiert.
+                  Kein ungeplanter Termin — alles ist terminiert.
                 }
               </p>
             } @else {
@@ -283,7 +283,7 @@
                             [disabled]="busy()"
                             (click)="ausPoolAufnehmen(job, $event)"
                             [attr.aria-label]="
-                              'Einsatz ' + job.job_number + ', ' + job.title +
+                              'Termin ' + job.job_number + ', ' + job.title +
                               ', aufnehmen und mit den Pfeiltasten im Raster ablegen'
                             "
                           >
@@ -655,7 +655,7 @@
                               [disabled]="busy()"
                               (click)="aufnehmen({ art: 'board', job: b.job, lane }, li, b.von, $event)"
                               [attr.aria-label]="
-                                'Einsatz ' + b.job.job_number + ', ' + b.job.title +
+                                'Termin ' + b.job.job_number + ', ' + b.job.title +
                                 ', verschieben: aufnehmen, mit den Pfeiltasten bewegen, mit Enter ablegen'
                               "
                             >
@@ -773,7 +773,7 @@
         }
       } @else {
         <p class="note note--info">
-          Der Auftragsbezug eines Einsatzes ist <strong>unveränderlich</strong> (er wird beim
+          Der Auftragsbezug eines Termins ist <strong>unveränderlich</strong> (er wird beim
           Anlegen festgelegt). Alles andere lässt sich hier ändern.
         </p>
       }
@@ -856,7 +856,7 @@
           <app-feld [control]="form.controls.end_zeit" label="Ende (Uhrzeit)" typ="zeit" />
         </div>
         <p class="termin-form__hinweis">
-          Ohne Beginn landet der Termin im <strong>Rückstand</strong>. Ein mehrtägiger Einsatz
+          Ohne Beginn landet der Termin im <strong>Rückstand</strong>. Ein mehrtägiger Termin
           bekommt einfach ein späteres Enddatum — er wird im Raster als durchgehender Balken
           gezeigt.
         </p>

@@ -175,6 +175,45 @@
               }
             </p>
           </div>
+        } @else if (einzelTermin(); as t) {
+          <!-- Genau EIN Termin — der 1:1-Normalfall. Eine Liste mit einem
+               Eintrag wäre hier nur eine Klick-Steuer vor der Detailseite, also
+               steht gleich hier, was dort stünde. Erreichbar bleibt sie über
+               „Zum Termin“: nichts wird versteckt, nur vorgezogen. Fehlt das
+               Detail (Nachladen gescheitert), greift der `@else` mit der Liste. -->
+          <div class="termin-karte">
+            <div class="termin-karte__kopf">
+              <span class="termin-karte__nr">{{ t.job_number }}</span>
+              <span class="stamp">{{ jobStatusLabel(t.status) }}</span>
+            </div>
+            <dl class="feld-raster">
+              <div class="feld">
+                <dt class="feld__label">Zeitraum</dt>
+                <dd class="feld__wert" [class.feld__wert--leer]="!t.scheduled_start">
+                  {{ terminZeitraum(t) }}
+                </dd>
+              </div>
+              <div class="feld">
+                <dt class="feld__label">Zugewiesen</dt>
+                <dd class="feld__wert" [class.feld__wert--leer]="t.assignments.length === 0">
+                  {{ t.assignments.length ? zugewieseneNamen(t) : 'Niemand zugewiesen' }}
+                </dd>
+              </div>
+              <div class="feld">
+                <dt class="feld__label">Kategorie</dt>
+                <dd class="feld__wert" [class.feld__wert--leer]="!t.category">
+                  {{ t.category?.name || '—' }}
+                </dd>
+              </div>
+              <div class="feld">
+                <dt class="feld__label">Ort</dt>
+                <dd class="feld__wert" [class.feld__wert--leer]="!t.property">
+                  @if (t.property; as p) { {{ ortZeile(p) }} } @else { — }
+                </dd>
+              </div>
+            </dl>
+            <a class="btn termin-karte__weg" [routerLink]="['/planung', t.id]">Zum Termin</a>
+          </div>
         } @else {
           <ul class="termine" role="list">
             @for (t of termine(); track t.id) {
@@ -398,7 +437,7 @@
           label="Titel"
           hinweis="Optional — ohne Angabe erbt der Termin den Auftragstitel."
         />
-        <!-- Hinweis steht UNTER dem Feld (Feldflucht) — wie in der Einsätze-Liste. -->
+        <!-- Hinweis steht UNTER dem Feld (Feldflucht) — wie in der Termine-Liste. -->
         <div class="feld-gruppe">
           <label class="feld-gruppe__label" for="termin-start">Planbeginn</label>
           <input
@@ -422,7 +461,7 @@
         <app-referenz-wahl
           [control]="terminForm.controls.on_site_contact_party_id"
           label="Ansprechpartner vor Ort"
-          hinweis="Optional — lässt sich später am Einsatz nachtragen."
+          hinweis="Optional — lässt sich später am Termin nachtragen."
           platzhalter="Kontakt suchen"
           [suche]="partySuche"
         />

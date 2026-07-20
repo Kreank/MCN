@@ -93,7 +93,7 @@ export const SUCHE_KATEGORIE: Readonly<Record<SucheEntityTyp, string>> = {
   PROJEKT: 'Projekte',
   VORGANG: 'Vorgänge',
   AUFTRAG: 'Aufträge',
-  EINSATZ: 'Einsätze',
+  EINSATZ: 'Termine',
   ANGEBOT: 'Angebote',
   RECHNUNG: 'Rechnungen',
   ARTIKEL: 'Artikel',

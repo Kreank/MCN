@@ -57,7 +57,7 @@
     <a class="laufend" [routerLink]="['/planung', k.job.id]">
       <span class="laufend__marke" aria-hidden="true">▶</span>
       <span class="laufend__text">
-        <strong class="laufend__titel">Laufender Einsatz: {{ k.job.title }}</strong>
+        <strong class="laufend__titel">Laufender Termin: {{ k.job.title }}</strong>
         <span class="laufend__sub">
           {{ statusLabel(k.job.status) }} · {{ k.job.property?.name ?? 'ohne Objekt' }} —
           Baustellenbericht schreiben, Zeiten und Material buchen
@@ -70,23 +70,23 @@
   <!-- ========================= Einsätze heute ============================= -->
   <section class="block" aria-labelledby="heute-titel">
     <header class="block__kopf">
-      <h2 id="heute-titel" class="block__titel">Meine Einsätze heute</h2>
-      <a class="block__link" routerLink="/planung">Alle Einsätze →</a>
+      <h2 id="heute-titel" class="block__titel">Meine Termine heute</h2>
+      <a class="block__link" routerLink="/planung">Alle Termine →</a>
     </header>
 
     @switch (heute().kind) {
       @case ('loading') {
-        <p class="leer" role="status">Einsätze werden geladen …</p>
+        <p class="leer" role="status">Termine werden geladen …</p>
       }
       @case ('error') {
         <div class="note note--error" role="alert">
-          <p>Die Einsätze ließen sich nicht laden.</p>
+          <p>Die Termine ließen sich nicht laden.</p>
           <button type="button" class="btn" (click)="laden()">Erneut versuchen</button>
         </div>
       }
       @case ('ready') {
         @if ($any(heute()).daten.length === 0) {
-          <p class="leer">Für heute ist dir kein Einsatz zugewiesen.</p>
+          <p class="leer">Für heute ist dir kein Termin zugewiesen.</p>
         } @else {
           <ul class="einsaetze">
             @for (k of $any(heute()).daten; track k.job.id) {
@@ -147,8 +147,8 @@
                        Primärknopf auf dieser Karte hätte keinen sichtbaren Rand
                        (WCAG 1.4.11 verlangt 3:1 für Bedienelemente). Der Rand von
                        `.btn` trägt in beiden Designs. Der Akzent gehört dem einen
-                       CTA oben (laufender Einsatz). -->
-                  <a class="btn" [routerLink]="['/planung', k.job.id]"> Einsatz öffnen </a>
+                       CTA oben (laufender Termin). -->
+                  <a class="btn" [routerLink]="['/planung', k.job.id]"> Termin öffnen </a>
                 </p>
               </li>
             }

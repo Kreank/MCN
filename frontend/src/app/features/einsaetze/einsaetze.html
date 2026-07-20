@@ -3,16 +3,16 @@
     <div class="page-head__text">
       <p class="page-head__kicker">
         <span class="page-head__scale" aria-hidden="true"></span>
-        Planung · Einsätze
+        Planung · Termine
       </p>
-      <h1 id="einsaetze-titel" class="page-head__titel">Einsätze</h1>
+      <h1 id="einsaetze-titel" class="page-head__titel">Termine</h1>
       <p class="page-head__hint">
-        Termine und Einsätze zu den Aufträgen — mit Zuweisung, Planzeitraum und Status.
+        Termine zu den Aufträgen — mit Zuweisung, Planzeitraum und Status.
       </p>
     </div>
     @if (darfAnlegen()) {
       <button type="button" class="btn btn--primary page-head__neu" (click)="neuOeffnen()">
-        <span aria-hidden="true">＋</span> Neuer Einsatz
+        <span aria-hidden="true">＋</span> Neuer Termin
       </button>
     }
   </header>
@@ -21,7 +21,7 @@
 
   <div class="controls">
     <div class="search">
-      <label class="search__label" for="einsaetze-suche">Einsätze durchsuchen</label>
+      <label class="search__label" for="einsaetze-suche">Termine durchsuchen</label>
       <div class="search__field">
         <span class="search__icon" aria-hidden="true">⌕</span>
         <input
@@ -30,7 +30,7 @@
           type="search"
           inputmode="search"
           autocomplete="off"
-          placeholder="Einsatz- oder Auftragsnummer, Auftragstitel"
+          placeholder="Termin- oder Auftragsnummer, Auftragstitel"
           (input)="onSearch($any($event.target).value)"
         />
       </div>
@@ -90,7 +90,7 @@
     @case ('error') {
       <div class="note note--error" role="alert">
         <h2 class="note__titel">Verbindung zur Planungsschnittstelle unterbrochen</h2>
-        <p class="note__text">Die Einsätze ließen sich nicht laden. Prüfe die Verbindung und lade den Bereich erneut.</p>
+        <p class="note__text">Die Termine ließen sich nicht laden. Prüfe die Verbindung und lade den Bereich erneut.</p>
         <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
       </div>
     }
@@ -98,8 +98,8 @@
     @case ('ready') {
       @if (state().kind === 'ready' && $any(state()).data.items.length === 0) {
         <div class="note note--empty">
-          <h2 class="note__titel">Keine Einsätze für diese Auswahl</h2>
-          <p class="note__text">Neue Einsätze entstehen über die KI-gestützte Disposition und die API.</p>
+          <h2 class="note__titel">Keine Termine für diese Auswahl</h2>
+          <p class="note__text">Neue Termine entstehen über die KI-gestützte Disposition und die API.</p>
         </div>
       } @else {
         <ul class="rows">
@@ -145,7 +145,7 @@
   }
 
   <!-- ------------------------------ Anlage-Dialog ------------------------- -->
-  <app-dialog [offen]="neuOffen()" titel="Neuer Einsatz" (schliessen)="neuSchliessen()">
+  <app-dialog [offen]="neuOffen()" titel="Neuer Termin" (schliessen)="neuSchliessen()">
     <form id="neu-einsatz-form" class="dialog-form" (submit)="$event.preventDefault(); neuAbsenden()" novalidate>
       @if (formularMeldung(); as fm) {
         <div class="melde melde--fehler" role="alert">
@@ -265,7 +265,7 @@
       <app-referenz-wahl
         [control]="neuForm.controls.on_site_contact_party_id"
         label="Ansprechpartner vor Ort"
-        hinweis="Optional — noch nicht angelegte Kontakte lassen sich später im Einsatz nachtragen."
+        hinweis="Optional — noch nicht angelegte Kontakte lassen sich später im Termin nachtragen."
         platzhalter="Kontakt suchen"
         [suche]="partySuche"
       />
@@ -286,7 +286,7 @@
         [disabled]="neuLaedt()"
         [attr.aria-busy]="neuLaedt()"
       >
-        {{ neuLaedt() ? 'Wird angelegt …' : 'Einsatz anlegen' }}
+        {{ neuLaedt() ? 'Wird angelegt …' : 'Termin anlegen' }}
       </button>
     </div>
   </app-dialog>

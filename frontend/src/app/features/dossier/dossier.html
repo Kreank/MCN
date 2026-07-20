@@ -211,7 +211,7 @@
 <!-- Einsätze -->
 <ng-template #einsatzListe let-liste="liste">
   @if (liste.length === 0) {
-    <ng-container [ngTemplateOutlet]="leer" [ngTemplateOutletContext]="{ text: 'Keine Einsätze/Termine.' }" />
+    <ng-container [ngTemplateOutlet]="leer" [ngTemplateOutletContext]="{ text: 'Keine Termine.' }" />
   } @else {
     <ul class="ds-liste">
       @for (e of liste; track e.id) {
@@ -673,7 +673,7 @@
           </section>
 
           <section class="ds-abschnitt" id="ds-workflow" tabindex="-1" aria-labelledby="ds-wf-t">
-            <h2 class="ds-abschnitt__titel" id="ds-wf-t">Vorgänge, Aufträge &amp; Einsätze</h2>
+            <h2 class="ds-abschnitt__titel" id="ds-wf-t">Vorgänge, Aufträge &amp; Termine</h2>
             @if (!l.vorgaenge_sichtbar) {
               <ng-container [ngTemplateOutlet]="gesperrt" [ngTemplateOutletContext]="{ recht: 'workflow/LESEN', was: 'Vorgänge und Aufträge' }" />
             } @else {
@@ -681,7 +681,7 @@
               <ng-container [ngTemplateOutlet]="vorgangsListe" [ngTemplateOutletContext]="{ liste: l.vorgaenge! }" />
               <h3 class="ds-unter">Aufträge</h3>
               <ng-container [ngTemplateOutlet]="auftragsListe" [ngTemplateOutletContext]="{ liste: l.auftraege! }" />
-              <h3 class="ds-unter">Einsätze</h3>
+              <h3 class="ds-unter">Termine</h3>
               <ng-container [ngTemplateOutlet]="einsatzListe" [ngTemplateOutletContext]="{ liste: l.einsaetze! }" />
             }
           </section>
@@ -690,13 +690,13 @@
             <h2 class="ds-abschnitt__titel" id="ds-zt-t">Zutrittshinweise</h2>
             <p class="ds-abschnitt__hinweis">
               Es gibt kein Zutrittsfeld an der Liegenschaft. Jeder Hinweis stammt von einem
-              <strong>Einsatz</strong> und wird deshalb mit seiner Herkunft und seinem Termin
+              <strong>Termin</strong> und wird deshalb mit seiner Herkunft und seinem Datum
               gezeigt — Sie sehen, woher die Angabe kommt und wie alt sie ist.
             </p>
             @if (!l.vorgaenge_sichtbar) {
               <ng-container [ngTemplateOutlet]="gesperrt" [ngTemplateOutletContext]="{ recht: 'workflow/LESEN', was: 'Vorgänge und Aufträge' }" />
             } @else if (l.zutrittshinweise!.length === 0) {
-              <ng-container [ngTemplateOutlet]="leer" [ngTemplateOutletContext]="{ text: 'Kein Einsatz an dieser Liegenschaft trägt einen Zutrittshinweis.' }" />
+              <ng-container [ngTemplateOutlet]="leer" [ngTemplateOutletContext]="{ text: 'Kein Termin an dieser Liegenschaft trägt einen Zutrittshinweis.' }" />
             } @else {
               <ul class="ds-liste">
                 @for (z of l.zutrittshinweise!; track z.service_job_id) {
@@ -706,7 +706,7 @@
                     </div>
                     <p class="ds-zeile__meta">
                       Quelle:
-                      <a class="ds-mini" [routerLink]="['/planung', z.service_job_id]">Einsatz {{ z.job_number }}</a>
+                      <a class="ds-mini" [routerLink]="['/planung', z.service_job_id]">Termin {{ z.job_number }}</a>
                       vom {{ zeitpunkt(z.scheduled_start) }}
                       @if (z.work_order_number) { · Auftrag {{ z.work_order_number }} }
                     </p>
@@ -1076,7 +1076,7 @@
           </section>
 
           <section class="ds-abschnitt" id="ds-einsaetze" tabindex="-1" aria-labelledby="ds-es-t">
-            <h2 class="ds-abschnitt__titel" id="ds-es-t">Einsätze</h2>
+            <h2 class="ds-abschnitt__titel" id="ds-es-t">Termine</h2>
             <ng-container [ngTemplateOutlet]="einsatzListe" [ngTemplateOutletContext]="{ liste: a.einsaetze }" />
           </section>
 

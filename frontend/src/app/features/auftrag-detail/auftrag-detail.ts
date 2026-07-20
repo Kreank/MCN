@@ -22,6 +22,7 @@ import {
 import {
   ServiceJob,
   ServiceJobCreate,
+  ServiceJobDetail,
   ServiceJobStatus,
   serviceJobStatusLabel,
 } from '../../core/einsatz.model';
@@ -171,7 +172,7 @@ export class AuftragDetail {
     this.aktualisieren(d);
   }
 
-  // --- Termine-Tab (Einsätze des Auftrags + Kundenhistorie) -----------------
+  // --- Termine-Tab (Termine des Auftrags + Kundenhistorie) ------------------
   // Lazy: erst beim Öffnen des Reiters laden; je Auftrag einmal.
   protected readonly termineLaden = signal(false);
   protected readonly termineFehler = signal(false);
@@ -179,6 +180,21 @@ export class AuftragDetail {
   protected readonly historie = signal<Kundenhistorie | null>(null);
   private termineFuer: string | null = null;
   private termineReqId = 0;
+
+  /**
+   * Der EINE Termin des Auftrags — 1:1 ist der Normalfall, und dort ist die
+   * einzeilige Liste nur eine Klick-Steuer vor der Detailseite. Gesetzt, zeigt
+   * der Reiter die Daten sofort.
+   *
+   * Warum ein zweiter Request: die Listen-Antwort (`ServiceJobOut`) führt nur
+   * `assignee_count`, nicht die NAMEN der Zugewiesenen — die stehen erst im
+   * Detail. Für genau einen Termin ist das der ersparte Seitenwechsel wert.
+   *
+   * Bleibt `null` — auch wenn das Nachladen scheitert —, rendert der Reiter die
+   * gewohnte Liste. Ein Fehler ist hier also kein Fehlerzustand, sondern nur der
+   * Verzicht auf die Zusatzansicht; die Listendaten liegen ja bereits vor.
+   */
+  protected readonly einzelTermin = signal<ServiceJobDetail | null>(null);
 
   protected readonly daten = computed(() => {
     const s = this.state();
@@ -268,6 +284,7 @@ export class AuftragDetail {
       this.termineFuer = null;
       this.termine.set([]);
       this.historie.set(null);
+      this.einzelTermin.set(null);
       if (!id) {
         this.state.set({ kind: 'error' });
         return;
@@ -291,6 +308,7 @@ export class AuftragDetail {
     const rid = ++this.termineReqId;
     this.termine.set([]);
     this.historie.set(null);
+    this.einzelTermin.set(null);
     this.termineLaden.set(true);
     this.termineFehler.set(false);
     this.einsatzSvc.list({ page: 1, page_size: 100, work_order_id: id }).subscribe({
@@ -298,6 +316,8 @@ export class AuftragDetail {
         if (rid !== this.termineReqId) return;
         this.termine.set(p.items);
         this.termineLaden.set(false);
+        // Genau einer? Dann lohnt das Detail (siehe `einzelTermin`).
+        if (p.items.length === 1) this.ladeEinzelTermin(rid, p.items[0].id);
       },
       error: () => {
         if (rid !== this.termineReqId) return;
@@ -308,6 +328,17 @@ export class AuftragDetail {
     this.svc.kundenhistorie(id).subscribe({
       next: (h) => {
         if (rid === this.termineReqId) this.historie.set(h);
+      },
+      error: () => {},
+    });
+  }
+
+  /** Detail des einzigen Termins nachladen. Scheitert es (403/404/offline),
+   *  bleibt `einzelTermin` leer und der Reiter zeigt die Liste — kein Fehler. */
+  private ladeEinzelTermin(rid: number, id: string): void {
+    this.einsatzSvc.get(id).subscribe({
+      next: (d) => {
+        if (rid === this.termineReqId) this.einzelTermin.set(d);
       },
       error: () => {},
     });
@@ -574,9 +605,38 @@ export class AuftragDetail {
   private readonly terminFmt = new Intl.DateTimeFormat('de-DE', {
     day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
   });
-  /** Geplanter Termin-Zeitpunkt eines Einsatzes (oder „ohne Termin"). */
+  private readonly uhrFmt = new Intl.DateTimeFormat('de-DE', {
+    hour: '2-digit', minute: '2-digit',
+  });
+  /** Geplanter Zeitpunkt eines Termins (oder „ohne Termin"). */
   terminZeit(iso: string | null): string {
     return iso ? this.terminFmt.format(new Date(iso)) : 'ohne Termin';
+  }
+  /**
+   * Planzeitraum als eine Zeile. Beim Ein-Tages-Termin genügt hinten die
+   * Uhrzeit — das Datum zweimal zu schreiben, verrauscht die Angabe; ein
+   * mehrtägiger Termin braucht es dagegen, sonst sähe er eintägig aus.
+   */
+  terminZeitraum(t: ServiceJob): string {
+    if (!t.scheduled_start) return 'ohne Termin';
+    const von = new Date(t.scheduled_start);
+    const text = this.terminFmt.format(von);
+    if (!t.scheduled_end) return text;
+    const bis = new Date(t.scheduled_end);
+    const gleicherTag = von.toDateString() === bis.toDateString();
+    return `${text} – ${gleicherTag ? this.uhrFmt.format(bis) : this.terminFmt.format(bis)}`;
+  }
+  /** Zugewiesene Mitarbeiter als Namensliste (nur das Detail führt die Namen). */
+  zugewieseneNamen(t: ServiceJobDetail): string {
+    return t.assignments.map((a) => a.display_name).join(', ');
+  }
+  /** Liegenschaft als eine Zeile: „Name · Straße Hausnr, PLZ Stadt". Die
+   *  Adressteile sind optional — dann bleibt es bei Name · Stadt. */
+  ortZeile(p: NonNullable<ServiceJobDetail['property']>): string {
+    const strasse = [p.street, p.house_number].filter((s) => !!s?.trim()).join(' ');
+    const ort = [p.postal_code, p.city].filter((s) => !!s?.trim()).join(' ');
+    const adresse = [strasse, ort].filter((s) => s).join(', ') || p.city;
+    return [p.name, adresse].filter((s) => s).join(' · ');
   }
   jobStatusLabel(s: ServiceJobStatus): string {
     return serviceJobStatusLabel(s);

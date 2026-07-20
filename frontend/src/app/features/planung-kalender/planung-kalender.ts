@@ -127,7 +127,7 @@ export class PlanungKalender {
     if (s.kind === 'loading') return 'Kalender wird geladen.';
     if (s.kind === 'forbidden') return 'Keine Berechtigung für den Kalender.';
     if (s.kind === 'error') return 'Kalender konnte nicht geladen werden.';
-    return `${s.jobs.length} Einsätze im ${this.monthLabel()}.`;
+    return `${s.jobs.length} Termine im ${this.monthLabel()}.`;
   });
 
   constructor() {

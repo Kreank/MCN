@@ -235,3 +235,29 @@ a.bezug__item:focus-visible {
 .termine__status {
   margin-left: auto;
 }
+
+/* Der EINE Termin, direkt im Reiter. Bewusst dieselbe Karten-Optik wie
+   `.termine__link` — nur ohne Klick-Fläche: die Karte ist Inhalt, kein Ziel.
+   Der Weg ins Detail liegt im Knopf darunter. */
+.termin-karte {
+  display: grid;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.termin-karte__kopf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+.termin-karte__nr {
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+.termin-karte__weg {
+  justify-self: start;
+}

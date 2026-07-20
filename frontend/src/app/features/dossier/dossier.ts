@@ -114,7 +114,7 @@ const ABSCHNITTE: Record<DossierTyp, Abschnitt[]> = {
     { id: 'struktur', label: 'Gebäude & Einheiten' },
     { id: 'anlagen', label: 'Anlagen' },
     { id: 'beteiligte', label: 'Beteiligte' },
-    { id: 'workflow', label: 'Vorgänge, Aufträge & Einsätze' },
+    { id: 'workflow', label: 'Vorgänge, Aufträge & Termine' },
     { id: 'zutritt', label: 'Zutrittshinweise' },
     { id: 'wartung', label: 'Wartung & Fristen' },
     { id: 'posten', label: 'Offene Posten' },
@@ -135,7 +135,7 @@ const ABSCHNITTE: Record<DossierTyp, Abschnitt[]> = {
   auftrag: [
     { id: 'stamm', label: 'Stammdaten & Status' },
     { id: 'beteiligte', label: 'Beteiligte' },
-    { id: 'einsaetze', label: 'Einsätze' },
+    { id: 'einsaetze', label: 'Termine' },
     { id: 'zeiten', label: 'Zeiten' },
     { id: 'material', label: 'Material' },
     { id: 'berichte', label: 'Baustellenberichte' },

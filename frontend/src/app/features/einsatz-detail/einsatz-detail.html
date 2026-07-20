@@ -1,6 +1,6 @@
 @switch (state().kind) {
   @case ('loading') {
-    <p class="lade-hinweis" role="status">Einsatz wird geladen …</p>
+    <p class="lade-hinweis" role="status">Termin wird geladen …</p>
   }
 
   @case ('forbidden') {
@@ -9,11 +9,11 @@
 
   @case ('error') {
     <div class="note note--error" role="alert">
-      <h2 class="note__titel">Einsatz konnte nicht geladen werden</h2>
-      <p class="note__text">Die Schnittstelle war nicht erreichbar oder der Einsatz existiert nicht.</p>
+      <h2 class="note__titel">Termin konnte nicht geladen werden</h2>
+      <p class="note__text">Die Schnittstelle war nicht erreichbar oder der Termin existiert nicht.</p>
       <div class="note__aktionen">
         <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
-        <a class="btn" routerLink="/planung">Zu den Einsätzen</a>
+        <a class="btn" routerLink="/planung">Zu den Terminen</a>
       </div>
     </div>
   }
@@ -34,10 +34,10 @@
       </div>
     }
     <app-mappe
-      kicker="{{ daten()!.is_free ? 'Freier Termin' : 'Einsatz' }} {{ daten()!.job_number }}"
+      kicker="{{ daten()!.is_free ? 'Freier Termin' : 'Termin' }} {{ daten()!.job_number }}"
       [titel]="daten()!.title"
       backLink="/planung"
-      backLabel="Einsätze"
+      backLabel="Termine"
       [tabs]="tabs"
       [(aktiv)]="tab"
     >
@@ -52,7 +52,7 @@
              zuerst und groß — nicht in der Feldwüste weiter unten vergraben. -->
         <div class="einsatz-hero">
           <div class="einsatz-hero__block einsatz-hero__block--ort">
-            <p class="einsatz-hero__label">Einsatzort</p>
+            <p class="einsatz-hero__label">Ort</p>
             @if (daten()!.property; as p) {
               <p class="einsatz-hero__wert"><strong>{{ p.name }}</strong></p>
               <p class="einsatz-hero__sub">{{ adresseZeile(p) }}</p>
@@ -115,7 +115,7 @@
           <p class="note">
             <strong>Freier Termin:</strong> Dieser Termin gehört zu keinem Auftrag
             (Begehung/Besichtigung/Beratung). Der Auftragsbezug lässt sich nachträglich
-            nicht setzen — entsteht daraus ein Auftrag, wird dafür ein eigener Einsatz
+            nicht setzen — entsteht daraus ein Auftrag, wird dafür ein eigener Termin
             angelegt.
           </p>
         }
@@ -156,7 +156,7 @@
               <span class="bezug__wert">Kein Auftrag (freier Termin)</span>
             </div>
           }
-          <!-- Die Liegenschaft steht prominent im „Einsatzort"-Block oben; hier
+          <!-- Die Liegenschaft steht prominent im „Ort"-Block oben; hier
                nicht doppeln (weniger ist mehr). -->
         </div>
       }
@@ -170,7 +170,7 @@
           </div>
         }
         @if (daten()!.assignments.length === 0) {
-          <div class="tab-platzhalter"><p>Diesem Einsatz sind noch keine Mitarbeiter zugewiesen.@if (!darfDispo()) { Zuweisungen laufen über die Disposition (KI/API). }</p></div>
+          <div class="tab-platzhalter"><p>Diesem Termin sind noch keine Mitarbeiter zugewiesen.@if (!darfDispo()) { Zuweisungen laufen über die Disposition (KI/API). }</p></div>
         } @else {
           <ul class="ref-liste">
             @for (a of daten()!.assignments; track a.assignee_id) {
@@ -210,7 +210,7 @@
           </div>
         }
         @if (daten()!.resources.length === 0) {
-          <div class="tab-platzhalter"><p>Diesem Einsatz sind noch keine Ressourcen (Fahrzeuge/Geräte/Räume) zugeordnet.</p></div>
+          <div class="tab-platzhalter"><p>Diesem Termin sind noch keine Ressourcen (Fahrzeuge/Geräte/Räume) zugeordnet.</p></div>
         } @else {
           <ul class="ref-liste">
             @for (r of daten()!.resources; track r.id) {
@@ -250,7 +250,7 @@
           </div>
         }
         @if (daten()!.time_entries.length === 0 && daten()!.material_entries.length === 0) {
-          <div class="tab-platzhalter"><p>Für diesen Einsatz sind noch keine Zeiten oder Materialien erfasst.</p></div>
+          <div class="tab-platzhalter"><p>Für diesen Termin sind noch keine Zeiten oder Materialien erfasst.</p></div>
         } @else {
           @if (daten()!.time_entries.length > 0) {
             <h3 class="erfassung__titel">Zeiten</h3>
@@ -297,7 +297,7 @@
 
       @if (tab() === 'verlauf') {
         @if (daten()!.history.length === 0) {
-          <div class="tab-platzhalter"><p>Für diesen Einsatz ist noch kein Statusverlauf protokolliert.</p></div>
+          <div class="tab-platzhalter"><p>Für diesen Termin ist noch kein Statusverlauf protokolliert.</p></div>
         } @else {
           <ol class="verlauf">
             @for (h of daten()!.history; track $index) {

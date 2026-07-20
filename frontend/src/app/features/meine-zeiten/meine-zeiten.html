@@ -47,7 +47,7 @@
           <p class="uhr__zeit">{{ dauerText(laufendeSekunden()) }}</p>
           <p class="uhr__detail">
             {{ e.kategorie }} · seit {{ uhrzeit(e.started_at) }}
-            @if (e.einsatz) { · Einsatz {{ e.einsatz }} }
+            @if (e.einsatz) { · Termin {{ e.einsatz }} }
           </p>
         } @else {
           <p class="uhr__zeit">{{ dauerText(0) }}</p>
@@ -192,7 +192,7 @@
                     </span>
                   }
                   @if (e.einsatz) {
-                    <span class="eintrag__einsatz">Einsatz {{ e.einsatz }}</span>
+                    <span class="eintrag__einsatz">Termin {{ e.einsatz }}</span>
                   }
                 </span>
                 <span class="eintrag__dauer">{{ dauerText(e.dauer_sekunden) }}</span>

@@ -203,12 +203,12 @@ export class Einsaetze {
 
   protected readonly resultSummary = computed(() => {
     const s = this.state();
-    if (s.kind === 'loading') return 'Einsätze werden geladen.';
-    if (s.kind === 'forbidden') return 'Keine Berechtigung für die Einsätze.';
-    if (s.kind === 'error') return 'Einsätze konnten nicht geladen werden.';
+    if (s.kind === 'loading') return 'Termine werden geladen.';
+    if (s.kind === 'forbidden') return 'Keine Berechtigung für die Termine.';
+    if (s.kind === 'error') return 'Termine konnten nicht geladen werden.';
     const t = s.data.total;
-    if (t === 0) return 'Keine Einsätze gefunden.';
-    return `${t} ${t === 1 ? 'Einsatz' : 'Einsätze'} gefunden, Seite ${s.data.page} von ${this.totalPages()}.`;
+    if (t === 0) return 'Keine Termine gefunden.';
+    return `${t} ${t === 1 ? 'Termin' : 'Termine'} gefunden, Seite ${s.data.page} von ${this.totalPages()}.`;
   });
 
   constructor() {
@@ -350,7 +350,7 @@ export class Einsaetze {
         this.neuOffen.set(false);
         this.meldung.set({
           art: 'erfolg',
-          text: frei ? 'Freier Termin angelegt.' : 'Einsatz angelegt.',
+          text: frei ? 'Freier Termin angelegt.' : 'Termin angelegt.',
         });
         this.page.set(1);
         this.fetch();

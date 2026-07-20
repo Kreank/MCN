@@ -3,9 +3,9 @@ import { RouterLink, RouterLinkActive } from '@angular/router';
 import { AuthService } from '../../core/auth.service';
 
 /**
- * Unternavigation des Planung-Bereichs (Einsätze · Plantafel · Kalender · …).
+ * Unternavigation des Planung-Bereichs (Termine · Plantafel · Kalender · …).
  *
- * **Nur „Einsätze" ist für alle da.** Plantafel, Kalender, „Wer fehlt?" und die
+ * **Nur „Termine" ist für alle da.** Plantafel, Kalender, „Wer fehlt?" und die
  * Kategorien-/Ressourcenpflege stehen auf fail-closed-Endpunkten (`require` in
  * `planung.py` / `qualifikation.py`): Ein Konto mit row_scope EIGENE — der
  * Monteur — bekommt dort 403. Es sind Dispositionssichten über *alle*
@@ -25,7 +25,7 @@ import { AuthService } from '../../core/auth.service';
         routerLink="/planung"
         routerLinkActive="is-active"
         [routerLinkActiveOptions]="{ exact: true }"
-        >Einsätze</a
+        >Termine</a
       >
       @if (darfDispo()) {
         <a routerLink="/planung/plantafel" routerLinkActive="is-active">Plantafel</a>

@@ -185,7 +185,7 @@ const QUELLE_TYP_LABELS: Record<string, string> = {
   PROJEKT: 'Projekt',
   VORGANG: 'Vorgang',
   AUFTRAG: 'Auftrag',
-  EINSATZ: 'Einsatz',
+  EINSATZ: 'Termin',
   ANGEBOT: 'Angebot',
   RECHNUNG: 'Rechnung',
   ARTIKEL: 'Artikel',

@@ -280,7 +280,7 @@ export const routes: Routes = [
       },
       {
         path: 'planung/:id',
-        title: 'Einsatz — Mitra Sanitär',
+        title: 'Termin — Mitra Sanitär',
         canActivate: [darfGuard('workflow', 'LESEN')],
         loadComponent: () =>
           import('./features/einsatz-detail/einsatz-detail').then((m) => m.EinsatzDetail),
