@@ -136,6 +136,8 @@ class ProjectIn(Schema):
     property_ids: list[UUID] = []
     start_date: date | None = None
     target_end_date: date | None = None
+    # Gewerk (0120) — bestimmt das Kürzel in der Projektnummer (P-HZG-26-0142).
+    trade_id: UUID | None = None
 
 
 class ProjectFilter(Schema):
@@ -442,6 +444,7 @@ def create_project(request, payload: ProjectIn):
             property_ids=payload.property_ids,
             start_date=payload.start_date,
             target_end_date=payload.target_end_date,
+            trade_id=payload.trade_id,
         )
     except ValueError as exc:
         raise HttpError(422, str(exc))
@@ -967,6 +970,8 @@ class ServiceCaseIn(Schema):
     description: str | None = None
     reported_by_party_id: UUID | None = None
     priority: str = "NORMAL"
+    # Gewerk (0120) — bestimmt das Kürzel in der Vorgangsnummer (V-HZG-26-0142).
+    trade_id: UUID | None = None
 
 
 def _require_project(project_id):
@@ -1076,6 +1081,7 @@ def create_service_case(request, project_id: UUID, payload: ServiceCaseIn):
             description=payload.description,
             reported_by_party_id=payload.reported_by_party_id,
             priority=payload.priority,
+            trade_id=payload.trade_id,
         )
     except ValueError as exc:
         raise HttpError(422, str(exc))
@@ -1116,6 +1122,7 @@ def create_service_case_standalone(request, payload: ServiceCaseIn):
             description=payload.description,
             reported_by_party_id=payload.reported_by_party_id,
             priority=payload.priority,
+            trade_id=payload.trade_id,
         )
     except ValueError as exc:
         raise HttpError(422, str(exc))

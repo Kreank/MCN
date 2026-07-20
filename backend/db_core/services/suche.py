@@ -511,11 +511,21 @@ def _fenster(qs):
 #
 # Nummernformate (von der DB vergeben):
 #   OBJ-#####  MA-#####            → Präfix + Zähler
-#   P|V|AU|E|AN|RE|GS -JJJJ-NNNNNN → Präfix + Jahr + Zähler
+#   AN|RE|GS -JJJJ-NNNNNN          → Belegnummer: Präfix + Jahr + Zähler
+#   P|V|AU|E [-KUERZEL] -JJ-NNNN   → interne Nummer, ab Migration 0120 mit
+#                                    Gewerk-Kürzel (AU-HZG-26-0142)
+#   P|V|AU|E -JJJJ-NNNNNN          → interne Nummer im Bestandsformat
 # Toleranz: Groß/Klein egal, Trennzeichen egal, führende Nullen egal.
 # „an 2026 42", „AN-2026-42", „an2026000042" → AN-2026-000042.
+# „au hzg 26 142", „AU-HZG-26-142"           → AU-HZG-26-0142.
+#
+# Alt und neu sind am JAHR unterscheidbar: vierstellig = Bestandsformat,
+# zweistellig = neues Format. Deshalb dürfen beide nebeneinander bestehen,
+# ohne dass eine Eingabe mehrdeutig wird.
 
 _KENNUNG_EINFACH = {"OBJ": "LIEGENSCHAFT", "MA": "MITARBEITER"}
+# Die vier internen Nummern, die ein Gewerk-Kürzel tragen können (0120).
+_KENNUNG_GEWERK = {"P": "PROJEKT", "V": "VORGANG", "AU": "AUFTRAG", "E": "EINSATZ"}
 _KENNUNG_JAHR = {
     "P": "PROJEKT",
     "V": "VORGANG",
@@ -548,16 +558,32 @@ def kennung_parsen(begriff):
     if len(teile) < 2:
         return None
     praefix = teile[0].upper()
-    zahlen = teile[1:]
-    if not all(z.isdigit() for z in zahlen):
+    rest = teile[1:]
+
+    # Gewerk-Kürzel (0120): steht als einziger nicht-numerischer Teil zwischen
+    # Präfix und Jahr. Nur bei den vier internen Nummern möglich — eine
+    # Belegnummer trägt nie ein Gewerk.
+    kuerzel = None
+    if praefix in _KENNUNG_GEWERK and rest and not rest[0].isdigit():
+        kuerzel = rest[0].upper()
+        rest = rest[1:]
+
+    if not rest or not all(z.isdigit() for z in rest):
         return None
 
-    if praefix in _KENNUNG_EINFACH and len(zahlen) == 1:
-        return _KENNUNG_EINFACH[praefix], f"{praefix}-{int(zahlen[0]):05d}"
-    if praefix in _KENNUNG_JAHR and len(zahlen) == 2:
-        jahr, zaehler = zahlen
-        if len(jahr) != 4:
-            return None
+    if kuerzel is None and praefix in _KENNUNG_EINFACH and len(rest) == 1:
+        return _KENNUNG_EINFACH[praefix], f"{praefix}-{int(rest[0]):05d}"
+
+    if len(rest) != 2:
+        return None
+    jahr, zaehler = rest
+
+    # Zweistelliges Jahr = neues Format (vierstellige Zählerpolsterung),
+    # vierstelliges = Bestandsformat. Die Länge trennt beide eindeutig.
+    if len(jahr) == 2 and praefix in _KENNUNG_GEWERK:
+        mitte = "" if kuerzel is None else f"-{kuerzel}"
+        return _KENNUNG_GEWERK[praefix], f"{praefix}{mitte}-{jahr}-{int(zaehler):04d}"
+    if len(jahr) == 4 and kuerzel is None and praefix in _KENNUNG_JAHR:
         return _KENNUNG_JAHR[praefix], f"{praefix}-{jahr}-{int(zaehler):06d}"
     return None
 

@@ -1266,6 +1266,9 @@ class TerminCreateIn(Schema):
     appointment_category_id: UUID | None = None
     assignee_ids: list[UUID] = []
     resource_ids: list[UUID] = []
+    # Gewerk (0120). Ohne Angabe erbt der auftragsgebundene Termin das Gewerk
+    # seines Auftrags — ein Termin zum Heizungsauftrag ist ein Heizungstermin.
+    trade_id: UUID | None = None
 
 
 class TerminUpdateIn(Schema):
@@ -1329,6 +1332,7 @@ def create_termin(request, payload: TerminCreateIn):
             appointment_category_id=payload.appointment_category_id,
             assignee_ids=payload.assignee_ids,
             resource_ids=payload.resource_ids,
+            trade_id=payload.trade_id,
         )
     except ValueError as exc:
         raise HttpError(422, str(exc))

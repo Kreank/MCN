@@ -26,7 +26,7 @@ def test_create_project_basis(app_user):
     assert p.name == "Dachsanierung Nord"
     assert p.status == "OPEN"
     assert p.version == 1
-    assert re.match(r"^P-[0-9]{4}-[0-9]{6,}$", p.project_number)
+    assert re.match(r"^P-[0-9]{2}-[0-9]{4,}$", p.project_number)
 
 
 @pytest.mark.django_db
@@ -56,7 +56,7 @@ def test_create_service_case_startet_neu(app_user):
     assert case.subject == "Heizung defekt"
     assert case.status == "NEU"
     assert case.responsibility_scope == "UNKNOWN"
-    assert re.match(r"^V-[0-9]{4}-[0-9]{6,}$", case.case_number)
+    assert re.match(r"^V-[0-9]{2}-[0-9]{4,}$", case.case_number)
 
 
 @pytest.mark.django_db

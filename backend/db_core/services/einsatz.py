@@ -3,9 +3,9 @@ zuweisen, Statuswechsel durchführen und Zeiten/Materialien erfassen.
 
 Wie die übrigen Services laufen alle Writes über business_transaction (setzt
 app.current_user_id für Audit/Statusprotokoll; bei begründungspflichtigen
-Übergängen zusätzlich app.status_reason). Die Einsatznummer (E-…) vergibt die DB
-über workflow.next_number; das Model lässt die Spalte ungesetzt (db_default) und
-lädt frisch nach.
+Übergängen zusätzlich app.status_reason). Die Einsatznummer (E-HZG-26-…) vergibt
+die DB per BEFORE-INSERT-Trigger aus dem Gewerk (Migration 0120); das Model
+lässt die Spalte ungesetzt und lädt frisch nach.
 
 Seit Migration 0062 gibt es zwei Spielarten: den auftragsgebundenen Einsatz und
 den **freien Termin** (work_order_id IS NULL — Begehung/Besichtigung/Beratung vor
@@ -39,6 +39,7 @@ from db_core.models import (
     ServiceJob,
     TimeCategory,
     TimeEntry,
+    Trade,
     Unit,
     WorkOrder,
 )
@@ -168,6 +169,7 @@ def create_service_job(
     on_site_contact_party_id=None,
     access_instructions=None,
     appointment_category_id=None,
+    trade_id=None,
 ):
     """Legt einen workflow.service_job (Einsatz) im Initialstatus UNGEPLANT an.
 
@@ -194,6 +196,17 @@ def create_service_job(
     _check_building_unit(property_id, building_id, unit_id)
     ensure_party_usable(on_site_contact_party_id, "Ansprechpartner vor Ort")
     _check_category(appointment_category_id)
+    ensure_exists(Trade, trade_id, "Gewerk")
+    # Gewerk erben (0120): Ein Einsatz zum Heizungsauftrag ist ein
+    # Heizungseinsatz — das soll niemand zweimal eingeben. Ausdrücklich
+    # mitgegebenes `trade_id` gewinnt; der freie Termin (ohne Auftrag) hat
+    # nichts zu erben und bleibt ohne Gewerk, bis jemand eines wählt.
+    if trade_id is None and work_order_id is not None:
+        trade_id = (
+            WorkOrder.objects.filter(id=work_order_id)
+            .values_list("trade_id", flat=True)
+            .first()
+        )
     with as_business_error():
         with business_transaction(actor_app_user_id):
             job = ServiceJob.objects.create(
@@ -209,7 +222,10 @@ def create_service_job(
                 on_site_contact_party_id=on_site_contact_party_id,
                 access_instructions=access_instructions,
                 appointment_category_id=appointment_category_id,
+                trade_id=trade_id,
             )
+            # Die Einsatznummer vergibt erst der BEFORE-INSERT-Trigger aus dem
+            # Gewerk (0120) — vor dem Nachladen steht sie nicht in der Instanz.
             job.refresh_from_db()
     return job
 

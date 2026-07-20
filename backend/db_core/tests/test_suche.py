@@ -238,6 +238,40 @@ def test_kennung_wird_tolerant_erkannt():
     assert suche_service.kennung_parsen("AN-2026") is None  # ohne Zähler
 
 
+def test_kennung_erkennt_das_gewerk_format():
+    """Migration 0120: interne Nummern tragen ein Gewerk-Kürzel und ein
+    zweistelliges Jahr. Beide Formate müssen nebeneinander funktionieren —
+    Bestandsnummern werden nicht umgeschrieben."""
+    k = suche_service.kennung_parsen
+
+    # Neues Format, mit und ohne Kürzel
+    assert k("AU-HZG-26-0142") == ("AUFTRAG", "AU-HZG-26-0142")
+    assert k("au hzg 26 142") == ("AUFTRAG", "AU-HZG-26-0142")
+    assert k("E-SAN-26-88") == ("EINSATZ", "E-SAN-26-0088")
+    assert k("AU-26-0143") == ("AUFTRAG", "AU-26-0143")
+    assert k("p-tro-26-7") == ("PROJEKT", "P-TRO-26-0007")
+    assert k("V-MAL-26-0001") == ("VORGANG", "V-MAL-26-0001")
+
+    # Bestandsformat unverändert erkannt — das ist der Kern der Koexistenz.
+    assert k("AU-2026-000142") == ("AUFTRAG", "AU-2026-000142")
+    assert k("au 2026 42") == ("AUFTRAG", "AU-2026-000042")
+
+    # Zählerüberlauf jenseits der Polsterbreite bleibt lesbar.
+    assert k("AU-HZG-26-10000") == ("AUFTRAG", "AU-HZG-26-10000")
+
+    # Belege tragen NIE ein Gewerk und haben kein Kurzformat — beides muss
+    # abgewiesen werden, sonst entstünde eine Kennung, die es nicht gibt.
+    assert k("AN-HZG-26-0001") is None
+    assert k("RE-26-0001") is None
+    assert k("GS-SAN-26-0001") is None
+
+    # Mischformen aus altem und neuem Format sind keine gültigen Nummern.
+    assert k("AU-HZG-2026-000142") is None
+
+    # OBJ/MA kennen kein Kürzel.
+    assert k("OBJ-HZG-1") is None
+
+
 # ---------------------------------------------------------------------------
 # 1. „Wir finden Projekte nicht, obwohl wir den genauen Straßennamen angeben."
 # ---------------------------------------------------------------------------

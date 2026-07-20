@@ -466,14 +466,43 @@ BEGIN
         ---------------------------------------------------------------------------
         -- Test 22 (WF-03): Nummernüberlauf polstert nicht mehr, keine Kollision
         ---------------------------------------------------------------------------
+        -- Der Konfliktschlüssel trägt seit 0120 den Gewerk-Bereich (scope);
+        -- `scope = ''` ist der ungewerkte Kreis, in dem next_number() zählt.
         INSERT INTO workflow.number_range (prefix, year, last_value)
         VALUES ('E', extract(year FROM (now() AT TIME ZONE 'UTC'))::integer, 999999)
-        ON CONFLICT (prefix, year) DO UPDATE SET last_value = 999999;
+        ON CONFLICT (prefix, scope, year) DO UPDATE SET last_value = 999999;
         v_num := workflow.next_number('E');
         IF v_num !~ '^E-[0-9]{4}-1000000$' THEN
             RAISE EXCEPTION 'TEST FEHLGESCHLAGEN: Test 22: Überlaufnummer falsch (%)', v_num;
         END IF;
         RAISE NOTICE 'OK  Test 22: Nummernüberlauf ohne Kollision (%)', v_num;
+
+        ---------------------------------------------------------------------------
+        -- Test 22b (0120): Gewerk-Kreise zählen getrennt und laufen sauber über
+        ---------------------------------------------------------------------------
+        DECLARE
+            v_trade uuid;
+            v_a text; v_b text; v_c text;
+        BEGIN
+            SELECT id INTO v_trade FROM company.trade WHERE code = 'HZG';
+            v_a := workflow.next_number_gewerk('E', v_trade);
+            v_b := workflow.next_number_gewerk('E', v_trade);
+            v_c := workflow.next_number_gewerk('E', NULL);
+            IF v_a !~ '^E-HZG-[0-9]{2}-[0-9]{4,}$'
+               OR v_b !~ '^E-HZG-[0-9]{2}-[0-9]{4,}$'
+               OR v_c !~ '^E-[0-9]{2}-[0-9]{4,}$' THEN
+                RAISE EXCEPTION
+                    'TEST FEHLGESCHLAGEN: Test 22b: Gewerknummer falsch (%, %, %)',
+                    v_a, v_b, v_c;
+            END IF;
+            -- Aufeinanderfolgend im selben Kreis
+            IF (split_part(v_b, '-', 4))::integer
+               <> (split_part(v_a, '-', 4))::integer + 1 THEN
+                RAISE EXCEPTION
+                    'TEST FEHLGESCHLAGEN: Test 22b: Gewerkzähler springt (% -> %)', v_a, v_b;
+            END IF;
+            RAISE NOTICE 'OK  Test 22b: Gewerk-Nummernkreise getrennt (%, %, %)', v_a, v_b, v_c;
+        END;
 
         ---------------------------------------------------------------------------
         -- Test 23 (WF-10): Gewährleistung nur auf abgerechneten Ursprung

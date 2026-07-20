@@ -81,6 +81,15 @@ class _NextNumber(Func):
     output_field = models.TextField()
 
 
+class MaintenanceContractNumberDefault(_NextNumber):
+    template = "workflow.next_number('W')"
+
+
+# NUR NOCH HISTORIE: Diese vier werden von keinem Model mehr benutzt (siehe
+# unten), aber die eingecheckten State-Migrationen 0011/0012/0013/0014
+# referenzieren sie beim Import. Entfernen bricht `makemigrations` und jedes
+# `migrate` von Null. Sie verschwinden erst, wenn die Historie einmal
+# zusammengefasst wird.
 class ProjectNumberDefault(_NextNumber):
     template = "workflow.next_number('P')"
 
@@ -97,8 +106,14 @@ class ServiceJobNumberDefault(_NextNumber):
     template = "workflow.next_number('E')"
 
 
-class MaintenanceContractNumberDefault(_NextNumber):
-    template = "workflow.next_number('W')"
+# Projekt, Vorgang, Auftrag und Einsatz haben hier bewusst KEINEN db_default
+# mehr (Migration 0120): Ihre Nummern tragen das Gewerk-Kürzel
+# (AU-HZG-26-0142), und ein Spalten-Default kann die übrigen Spalten derselben
+# Zeile nicht sehen — er wüsste also nichts vom Gewerk. Die Vergabe läuft
+# stattdessen über einen BEFORE-INSERT-Trigger
+# (workflow.assign_gewerk_number), wie bei Angebot und Rechnung seit jeher.
+# Folge für den Aufrufer: Nach `objects.create()` steht die Nummer erst nach
+# `refresh_from_db()` in der Instanz.
 
 
 class AppUser(models.Model):
@@ -524,7 +539,19 @@ class Project(models.Model):
 
     id = models.UUIDField(primary_key=True)
     # Nummernvergabe bleibt in der DB (workflow.next_number), siehe Default.
-    project_number = models.TextField(db_default=ProjectNumberDefault())
+    project_number = models.TextField(blank=True)
+    # Gewerk (0120): NULL-faehig — beim Annehmen eines Anrufs ist oft noch
+    # unklar, ob es Heizung oder Sanitaer wird; die Erfassung soll daran nicht
+    # scheitern. Bestimmt zugleich das Kuerzel in der Nummer (P-HZG-26-0142);
+    # ohne Gewerk greift das Ersatzformat ohne Kuerzel.
+    trade = models.ForeignKey(
+        "Trade",
+        models.DO_NOTHING,
+        db_column="trade_id",
+        null=True,
+        blank=True,
+        related_name="projects",
+    )
     name = models.TextField()
     status = models.TextField()  # OPEN | CLOSED
     start_date = models.DateField(null=True, blank=True)
@@ -589,7 +616,19 @@ class ServiceCase(models.Model):
     """
 
     id = models.UUIDField(primary_key=True)
-    case_number = models.TextField(db_default=ServiceCaseNumberDefault())
+    case_number = models.TextField(blank=True)
+    # Gewerk (0120): NULL-faehig — beim Annehmen eines Anrufs ist oft noch
+    # unklar, ob es Heizung oder Sanitaer wird; die Erfassung soll daran nicht
+    # scheitern. Bestimmt zugleich das Kuerzel in der Nummer (V-HZG-26-0142);
+    # ohne Gewerk greift das Ersatzformat ohne Kuerzel.
+    trade = models.ForeignKey(
+        "Trade",
+        models.DO_NOTHING,
+        db_column="trade_id",
+        null=True,
+        blank=True,
+        related_name="service_cases",
+    )
     project = models.ForeignKey(
         Project,
         models.DO_NOTHING,
@@ -1880,7 +1919,8 @@ class WorkOrder(models.Model):
     STORNIERT). Übergänge validiert workflow.validate_status_change; die
     Freigabe-/Abrechnungs-Tore (Beauftragungsnachweis, bestätigter
     Verantwortungsbereich, PRINCIPAL, INVOICE_DEBTOR) prüft die DB als deferred
-    Constraint-Trigger. Auftragsnummer (AU-…) vergibt die DB (db_default), erst
+    Constraint-Trigger. Auftragsnummer (AU-HZG-26-…) vergibt die DB per BEFORE-INSERT-Trigger aus dem
+    Gewerk (0120) — sie steht erst nach `refresh_from_db()` in der Instanz; erst
     veröffentlichte Rechnungen entstehen aus KAUFMAENNISCH_GEPRUEFT-Aufträgen
     (B-08).
 
@@ -1890,7 +1930,19 @@ class WorkOrder(models.Model):
     """
 
     id = models.UUIDField(primary_key=True)
-    order_number = models.TextField(db_default=WorkOrderNumberDefault())
+    order_number = models.TextField(blank=True)
+    # Gewerk (0120): NULL-faehig — beim Annehmen eines Anrufs ist oft noch
+    # unklar, ob es Heizung oder Sanitaer wird; die Erfassung soll daran nicht
+    # scheitern. Bestimmt zugleich das Kuerzel in der Nummer (AU-HZG-26-0142);
+    # ohne Gewerk greift das Ersatzformat ohne Kuerzel.
+    trade = models.ForeignKey(
+        "Trade",
+        models.DO_NOTHING,
+        db_column="trade_id",
+        null=True,
+        blank=True,
+        related_name="work_orders",
+    )
     project = models.ForeignKey(
         Project,
         models.DO_NOTHING,
@@ -2029,7 +2081,19 @@ class ServiceJob(models.Model):
     """
 
     id = models.UUIDField(primary_key=True)
-    job_number = models.TextField(db_default=ServiceJobNumberDefault())
+    job_number = models.TextField(blank=True)
+    # Gewerk (0120): NULL-faehig — beim Annehmen eines Anrufs ist oft noch
+    # unklar, ob es Heizung oder Sanitaer wird; die Erfassung soll daran nicht
+    # scheitern. Bestimmt zugleich das Kuerzel in der Nummer (E-HZG-26-0142);
+    # ohne Gewerk greift das Ersatzformat ohne Kuerzel.
+    trade = models.ForeignKey(
+        "Trade",
+        models.DO_NOTHING,
+        db_column="trade_id",
+        null=True,
+        blank=True,
+        related_name="service_jobs",
+    )
     work_order = models.ForeignKey(
         WorkOrder,
         models.DO_NOTHING,
@@ -3196,6 +3260,38 @@ class Trade(models.Model):
 
     def __str__(self):
         return f"{self.code} — {self.label}"
+
+
+class EmployeeTrade(models.Model):
+    """hr.employee_trade — welches Gewerk kann wer (Migration 0120).
+
+    n:m, weil ein Monteur Sanitär UND Heizung können darf. Bewusst getrennt von
+    hr.employee_qualification (kind='GEWERK'): dort stehen Zertifikate und
+    Herstellerschulungen mit Gültigkeit und Nachweis, hier die schlichte
+    betriebliche Einsetzbarkeit. Wie überall im Haus wird deaktiviert statt
+    gelöscht (`active`) — die Tabelle verbietet DELETE, und „konnte damals
+    Heizung" bleibt wahr, auch wenn es heute nicht mehr gilt.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    employee = models.ForeignKey(
+        "Employee", models.DO_NOTHING, db_column="employee_id", related_name="trades"
+    )
+    trade = models.ForeignKey(
+        Trade, models.DO_NOTHING, db_column="trade_id", related_name="employees"
+    )
+    active = models.BooleanField(db_default=True)
+    version = models.IntegerField(db_default=models.Value(1))
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'hr"."employee_trade'
+        unique_together = (("employee", "trade"),)
+
+    def __str__(self):
+        return f"{self.employee_id} → {self.trade_id}"
 
 
 class AcquisitionSource(models.Model):
