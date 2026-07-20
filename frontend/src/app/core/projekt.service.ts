@@ -77,6 +77,7 @@ export class ProjektService {
     const q = query.q?.trim();
     if (q) params = params.set('q', q);
     if (query.include_terminal) params = params.set('include_terminal', 'true');
+    if (query.nur_offen) params = params.set('nur_offen', 'true');
     if (query.page) params = params.set('page', query.page);
     if (query.page_size) params = params.set('page_size', query.page_size);
     return this.http.get<ServiceCaseBoard>('/api/workflow/service_cases', { params });

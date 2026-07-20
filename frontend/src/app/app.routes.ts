@@ -151,25 +151,11 @@ export const routes: Routes = [
         canActivate: [darfGuard('workflow', 'LESEN')],
         loadComponent: () => import('./features/projekte/projekte').then((m) => m.Projekte),
       },
-      {
-        // Flache Vorgangsliste (chronologisch, „zuletzt erfasst"). MUSS vor
-        // 'projekte/:id' stehen, sonst schluckt der Parameter das statische
-        // Segment 'vorgaenge'.
-        path: 'projekte/vorgaenge',
-        title: 'Vorgänge — Mitra Sanitär',
-        canActivate: [darfGuard('workflow', 'LESEN')],
-        loadComponent: () =>
-          import('./features/vorgang-liste/vorgang-liste').then((m) => m.VorgangListe),
-      },
-      {
-        // Vorgangs-Kanban. MUSS vor 'projekte/:id' stehen, sonst schluckt der
-        // Parameter das statische Segment 'kanban'.
-        path: 'projekte/kanban',
-        title: 'Vorgang-Board — Mitra Sanitär',
-        canActivate: [darfGuard('workflow', 'LESEN')],
-        loadComponent: () =>
-          import('./features/vorgang-kanban/vorgang-kanban').then((m) => m.VorgangKanban),
-      },
+      // Die Vorgänge sind in den „Eingang" umgezogen. Alte Deeplinks bleiben
+      // gültig (Redirect). MUSS vor 'projekte/:id' stehen, sonst schluckt der
+      // Parameter die statischen Segmente 'vorgaenge'/'kanban'.
+      { path: 'projekte/vorgaenge', pathMatch: 'full', redirectTo: 'eingang' },
+      { path: 'projekte/kanban', pathMatch: 'full', redirectTo: 'eingang/board' },
       {
         path: 'projekte/:id',
         title: 'Projekt — Mitra Sanitär',
@@ -185,11 +171,40 @@ export const routes: Routes = [
           import('./features/vorgang-detail/vorgang-detail').then((m) => m.VorgangDetail),
       },
       {
+        // Globale Auftragsliste — der Auftrag als Navigations-Bürger. MUSS vor
+        // 'auftraege/:id' stehen, sonst schluckt der Parameter das Listen-Segment
+        // nicht (leerer Rest), aber die Reihenfolge bleibt der sichere Weg.
+        path: 'auftraege',
+        pathMatch: 'full',
+        title: 'Aufträge — Mitra Sanitär',
+        canActivate: [darfGuard('workflow', 'LESEN')],
+        loadComponent: () =>
+          import('./features/auftrag-liste/auftrag-liste').then((m) => m.AuftragListe),
+      },
+      {
         path: 'auftraege/:id',
         title: 'Auftrag — Mitra Sanitär',
         canActivate: [darfGuard('workflow', 'LESEN')],
         loadComponent: () =>
           import('./features/auftrag-detail/auftrag-detail').then((m) => m.AuftragDetail),
+      },
+      // Eingang (Vorgangs-Eingangskorb): die flache Vorgangsliste + das Board.
+      // Der Vorgang ist der optionale Eingang, aus dem Aufträge entstehen. Das
+      // spezifische Segment 'board' steht VOR 'eingang' (Konvention im Repo).
+      {
+        path: 'eingang/board',
+        title: 'Eingang · Board — Mitra Sanitär',
+        canActivate: [darfGuard('workflow', 'LESEN')],
+        loadComponent: () =>
+          import('./features/vorgang-kanban/vorgang-kanban').then((m) => m.VorgangKanban),
+      },
+      {
+        path: 'eingang',
+        pathMatch: 'full',
+        title: 'Eingang — Mitra Sanitär',
+        canActivate: [darfGuard('workflow', 'LESEN')],
+        loadComponent: () =>
+          import('./features/vorgang-liste/vorgang-liste').then((m) => m.VorgangListe),
       },
       {
         // Entitäts-Dossier: alles zu EINER Entität in EINEM Aufruf.

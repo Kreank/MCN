@@ -1,0 +1,214 @@
+<section class="auftraege" aria-labelledby="auftraege-titel">
+  <header class="page-head">
+    <div class="page-head__text">
+      <p class="page-head__kicker">
+        <span class="page-head__scale" aria-hidden="true"></span>
+        Auftragszentrale
+      </p>
+      <h1 id="auftraege-titel" class="page-head__titel">Aufträge</h1>
+      <p class="page-head__hint">
+        Alle Aufträge über Liegenschaften und Projekte hinweg — das zentrale
+        Arbeitsobjekt. Nach Nummer oder Titel durchsuchbar und nach Status
+        gefiltert.
+      </p>
+    </div>
+    @if (darfAnlegen()) {
+      <button type="button" class="btn btn--primary page-head__neu" (click)="neuOeffnen()">
+        <span aria-hidden="true">＋</span> Neuer Auftrag
+      </button>
+    }
+  </header>
+
+  <div class="controls">
+    <div class="search">
+      <label class="search__label" for="auftraege-suche">Aufträge durchsuchen</label>
+      <div class="search__field">
+        <span class="search__icon" aria-hidden="true">⌕</span>
+        <input
+          id="auftraege-suche"
+          class="search__input"
+          type="search"
+          inputmode="search"
+          autocomplete="off"
+          placeholder="Auftragsnummer oder Titel"
+          (input)="onSearch($any($event.target).value)"
+        />
+      </div>
+    </div>
+
+    <div class="segment" role="group" aria-label="Nach Status filtern">
+      @for (seg of segments; track seg.label) {
+        <button
+          type="button"
+          class="segment__btn"
+          [class.is-active]="status() === seg.value"
+          [attr.aria-pressed]="status() === seg.value"
+          (click)="selectSegment(seg.value)"
+        >
+          {{ seg.label }}
+        </button>
+      }
+    </div>
+  </div>
+
+  <p class="sr-only" role="status">{{ resultSummary() }}</p>
+
+  @if (meldung(); as m) {
+    <div
+      class="melde melde--{{ m.art === 'erfolg' ? 'erfolg' : 'fehler' }} auftraege__melde"
+      [attr.role]="m.art === 'fehler' ? 'alert' : 'status'"
+    >
+      <span class="melde__mark" aria-hidden="true">{{ m.art === 'fehler' ? '!' : '✓' }}</span>
+      <span class="melde__text">
+        <strong>{{ m.art === 'fehler' ? 'Fehler:' : 'Erledigt:' }}</strong> {{ m.text }}
+      </span>
+      <button type="button" class="melde__zu" (click)="meldungSchliessen()" aria-label="Meldung schließen">
+        <span aria-hidden="true">✕</span>
+      </button>
+    </div>
+  }
+
+  @switch (state().kind) {
+    @case ('loading') {
+      <ul class="rows" aria-hidden="true">
+        @for (s of skeletons; track $index) {
+          <li class="row row--skeleton">
+            <span class="sk-block">
+              <span class="sk sk--line"></span>
+              <span class="sk sk--chips"></span>
+            </span>
+            <span class="sk sk--box"></span>
+          </li>
+        }
+      </ul>
+    }
+
+    @case ('forbidden') {
+      <app-kein-zugriff [detail]="$any(state()).detail" />
+    }
+
+    @case ('error') {
+      <div class="note note--error" role="alert">
+        <h2 class="note__titel">Aufträge nicht erreichbar</h2>
+        <p class="note__text">
+          Die Auftragsliste ließ sich nicht laden. Prüfe die Verbindung und lade
+          den Bereich erneut.
+        </p>
+        <button type="button" class="btn btn--primary" (click)="retry()">Erneut versuchen</button>
+      </div>
+    }
+
+    @case ('ready') {
+      @if ($any(state()).data.items.length === 0) {
+        <div class="note note--empty">
+          <h2 class="note__titel">Keine Aufträge für diese Auswahl</h2>
+          <p class="note__text">
+            Passe Suche oder Statusfilter an — oder lege mit „＋ Neuer Auftrag"
+            einen neuen an. Aufträge entstehen zudem aus dem Eingang (Vorgang
+            annehmen) und der KI-gestützten Disposition.
+          </p>
+        </div>
+      } @else {
+        <ul class="rows">
+          @for (o of $any(state()).data.items; track o.id) {
+            <li class="row">
+              <a class="row__link" [routerLink]="['/auftraege', o.id]">
+                <span class="row__body">
+                  <span class="row__title">{{ o.title }}</span>
+                  <span class="row__meta">
+                    <span class="row__num">{{ o.order_number }}</span>
+                    <span class="row__prop">▤ {{ o.property.name }} · {{ o.property.city }}</span>
+                    @if (o.desired_date) {
+                      <span class="row__termin">◷ {{ termin(o.desired_date) }}</span>
+                    }
+                    @if (o.project) {
+                      <span class="row__projekt">▦ {{ o.project.name }}</span>
+                    }
+                  </span>
+                </span>
+                <span class="row__stamps">
+                  @if (o.is_emergency) {
+                    <span class="stamp stamp--negativ">Notfall</span>
+                  }
+                  <span class="stamp {{ priorityClass(o.priority) }}">{{ priorityLabel(o.priority) }}</span>
+                  <span class="stamp {{ statusClass(o.status) }}">{{ statusLabel(o.status) }}</span>
+                </span>
+              </a>
+            </li>
+          }
+        </ul>
+
+        <nav class="pager" aria-label="Blättern">
+          <button type="button" class="btn" (click)="prev()" [disabled]="page() <= 1">Zurück</button>
+          <span class="pager__pos" aria-hidden="true">Seite {{ page() }} von {{ totalPages() }}</span>
+          <button type="button" class="btn" (click)="next()" [disabled]="page() >= totalPages()">Weiter</button>
+        </nav>
+      }
+    }
+  }
+
+  <!-- ------------------------------ Anlage-Dialog ------------------------- -->
+  <app-dialog [offen]="neuOffen()" titel="Neuer Auftrag" (schliessen)="neuSchliessen()">
+    <form id="neu-auftrag-form" class="dialog-form" (submit)="$event.preventDefault(); neuAbsenden()" novalidate>
+      @if (formularMeldung(); as fm) {
+        <div class="melde melde--fehler" role="alert">
+          <span class="melde__mark" aria-hidden="true">!</span>
+          <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+        </div>
+      }
+
+      <app-referenz-wahl
+        [control]="neuForm.controls.property_id"
+        label="Liegenschaft"
+        [pflicht]="true"
+        hinweis="Pflicht — an welcher Liegenschaft der Auftrag ausgeführt wird."
+        platzhalter="Name oder Objektnummer suchen"
+        [suche]="liegenschaftSuche"
+      />
+      <app-feld
+        [control]="neuForm.controls.title"
+        label="Titel"
+        [pflicht]="true"
+        platzhalter="z. B. Heizung ausfall — Vor-Ort-Prüfung"
+      />
+      <app-feld
+        [control]="neuForm.controls.priority"
+        label="Priorität"
+        typ="select"
+        [pflicht]="true"
+        [optionen]="prioOptionen"
+      />
+      <app-feld
+        [control]="neuForm.controls.desired_date"
+        label="Wunschtermin"
+        typ="datum"
+        hinweis="Optional."
+      />
+      <app-feld
+        [control]="neuForm.controls.customer_reference"
+        label="Kundenreferenz"
+        hinweis="Optional — z. B. Bestell- oder Aktenzeichen des Auftraggebers."
+      />
+      <app-feld
+        [control]="neuForm.controls.description"
+        label="Beschreibung"
+        typ="textarea"
+        hinweis="Optional."
+      />
+      <app-feld [control]="neuForm.controls.is_emergency" label="Notfall" typ="checkbox" />
+    </form>
+
+    <div dialog-aktionen class="dialog__aktionen">
+      <button type="button" class="btn" [disabled]="neuLaedt()" (click)="neuSchliessen()">Abbrechen</button>
+      <button
+        type="submit"
+        form="neu-auftrag-form"
+        class="btn btn--primary"
+        [disabled]="neuLaedt()"
+        [attr.aria-busy]="neuLaedt()"
+      >
+        {{ neuLaedt() ? 'Wird angelegt …' : 'Auftrag anlegen' }}
+      </button>
+    </div>
+  </app-dialog>
+</section>

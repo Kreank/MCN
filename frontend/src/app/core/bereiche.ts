@@ -9,6 +9,9 @@ export const BEREICH_RECHT: Record<string, readonly [string, string]> = {
   liegenschaften: ['property', 'LESEN'],
   projekte: ['workflow', 'LESEN'],
   vorgaenge: ['workflow', 'LESEN'],
+  // Eingang = Vorgangs-Eingangskorb (flache Liste + Board), workflow/LESEN wie
+  // die Vorgänge selbst.
+  eingang: ['workflow', 'LESEN'],
   auftraege: ['workflow', 'LESEN'],
   planung: ['workflow', 'LESEN'],
   // Wartung/Fälligkeiten hat seit Migration 0071 ein eigenes Rechtemodul

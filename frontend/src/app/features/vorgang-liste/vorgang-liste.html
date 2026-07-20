@@ -3,17 +3,18 @@
     <div class="page-head__text">
       <p class="page-head__kicker">
         <span class="page-head__scale" aria-hidden="true"></span>
-        Projektassistent
+        Eingangskorb
       </p>
-      <h1 id="vorgaenge-titel" class="page-head__titel">Vorgänge</h1>
+      <h1 id="vorgaenge-titel" class="page-head__titel">Eingang</h1>
       <p class="page-head__hint">
-        Alle Vorgänge über die Projekte hinweg — neueste zuerst. Nach Nummer oder
+        Eingegangene Vorgänge — wartet auf Entscheidung, neueste zuerst. In der
+        Vorgangsmappe annehmen (Auftrag anlegen) oder ablehnen. Nach Nummer oder
         Betreff durchsuchbar und nach Status gefiltert.
       </p>
     </div>
   </header>
 
-  <app-projekte-nav />
+  <app-eingang-nav />
 
   <div class="controls">
     <div class="search">
@@ -48,7 +49,7 @@
 
     <label class="toggle">
       <input type="checkbox" [checked]="includeTerminal()" (change)="terminalUmschalten()" />
-      <span>Abgeschlossene einschließen</span>
+      <span>Alle anzeigen (auch beauftragte &amp; erledigte)</span>
     </label>
   </div>
 
@@ -87,10 +88,12 @@
     @case ('ready') {
       @if ($any(state()).data.items.length === 0) {
         <div class="note note--empty">
-          <h2 class="note__titel">Keine Vorgänge für diese Auswahl</h2>
+          <h2 class="note__titel">Eingang leer — nichts wartet auf Entscheidung</h2>
           <p class="note__text">
-            Passe Suche oder Statusfilter an. Neue Vorgänge entstehen über die
-            Meldungserfassung, die Projektakte oder die KI-gestützte Disposition.
+            Für diese Auswahl gibt es keine offenen Vorgänge. Passe Suche oder
+            Statusfilter an, oder schalte „Alle anzeigen" ein. Neue Vorgänge
+            entstehen über die Meldungserfassung, die Projektakte oder die
+            KI-gestützte Disposition.
           </p>
         </div>
       } @else {

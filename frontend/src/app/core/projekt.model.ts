@@ -205,6 +205,8 @@ export interface ServiceCaseBoardQuery {
   status?: ServiceCaseStatus | null;
   q?: string;
   include_terminal?: boolean;
+  /** Eingangskorb-Modus: nur wartet-auf-Entscheidung (ohne BEAUFTRAGT/terminal). */
+  nur_offen?: boolean;
   page?: number;
   page_size?: number;
 }

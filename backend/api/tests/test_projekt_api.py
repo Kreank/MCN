@@ -512,6 +512,47 @@ def test_board_terminal_default_ausgeblendet(admin_client, app_user):
 
 
 @pytest.mark.django_db
+def test_board_nur_offen_blendet_beauftragt_aus(admin_client, app_user):
+    """Eingangskorb (nur_offen): ein zum Auftrag gemachter (BEAUFTRAGT) Vorgang hat
+    den Eingang verlassen — anders als der Default, der ihn noch zeigt. Das Kanban
+    (ohne nur_offen) behält BEAUFTRAGT als Spalte."""
+    _p, offen = _vorgang_unter_projekt(app_user, subject="Wartet auf Entscheidung")
+    _p2, beauftragt = _vorgang_unter_projekt(app_user, subject="Schon beauftragt")
+    for to_status in ("IN_PRUEFUNG", "FREIGABE_AUSSTEHEND"):
+        projekt_service.advance_service_case_status(
+            app_user.id, service_case_id=beauftragt.id, to_status=to_status
+        )
+    rb = admin_client.post(
+        f"/api/workflow/service_cases/{beauftragt.id}/status",
+        data={"to_status": "BEAUFTRAGT"},
+        content_type="application/json",
+    )
+    assert rb.status_code == 200, rb.content
+
+    # Default (Kanban): BEAUFTRAGT bleibt sichtbar.
+    ids_default = {
+        i["id"] for i in admin_client.get("/api/workflow/service_cases").json()["items"]
+    }
+    assert str(beauftragt.id) in ids_default
+
+    # nur_offen=true (Eingang): BEAUFTRAGT ist raus, der offene bleibt.
+    ids_offen = {
+        i["id"]
+        for i in admin_client.get(
+            "/api/workflow/service_cases?nur_offen=true"
+        ).json()["items"]
+    }
+    assert str(offen.id) in ids_offen
+    assert str(beauftragt.id) not in ids_offen
+
+    # Expliziter Status-Filter hat Vorrang — BEAUFTRAGT sichtbar trotz nur_offen.
+    r3 = admin_client.get(
+        "/api/workflow/service_cases?nur_offen=true&status=BEAUFTRAGT"
+    )
+    assert {i["id"] for i in r3.json()["items"]} == {str(beauftragt.id)}
+
+
+@pytest.mark.django_db
 def test_board_zeigt_dem_monteur_ohne_objekt_keine_zeile(client_with_role, app_user):
     """Objektsicht (0099): Das Board wertet den row_scope jetzt aus — es zeigt die
     Vorgänge **meiner Objekte**. Ein MONTEUR ohne jeden Einsatz hat kein Objekt und

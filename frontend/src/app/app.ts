@@ -39,6 +39,14 @@ export class App {
   // blendet aus, was ohnehin mit 403 abgelehnt würde. Übersicht bleibt frei.
   protected readonly nav: NavItem[] = [
     { path: '/uebersicht', label: 'Übersicht', mark: '00' },
+    // Der Auftrag ist das zentrale Arbeitsobjekt — prominent ganz oben, direkt
+    // nach der Übersicht. `workflow/LESEN` (scope-aware, wie /projekte), NICHT
+    // `nurAlle`: die Liste ist scope-gefiltert, auch der Monteur sieht seine.
+    { path: '/auftraege', label: 'Aufträge', mark: '05', recht: ['workflow', 'LESEN'] },
+    // Der Eingang (Vorgangs-Eingangskorb) ist der optionale Feeder direkt unter
+    // den Aufträgen: hier landen Meldungen und werden angenommen (→ Auftrag) oder
+    // abgelehnt.
+    { path: '/eingang', label: 'Eingang', mark: '08', recht: ['workflow', 'LESEN'] },
     { path: '/kontakte', label: 'Kontakte', mark: '10', recht: ['identity', 'LESEN'] },
     { path: '/liegenschaften', label: 'Liegenschaften', mark: '20', recht: ['property', 'LESEN'] },
     // Begriffe an Hero angelehnt (Wiedererkennung): Projekte/Dokumente statt
@@ -141,6 +149,17 @@ export class App {
    * Tore vorliegen (der Server würde sonst mit 403 abbrechen und alles
    * zurückrollen). Spiegelt die Server-Durchsetzung, setzt sie nicht durch.
    */
+  /**
+   * Header-CTA „＋ Neuer Auftrag" — der globale Schnelleinstieg legt jetzt einen
+   * Auftrag an (nicht mehr nur einen Vorgang). `darfAlle`, nicht `darf`:
+   * `POST /api/workflow/work_orders` ist fail-closed (`permissions.require`) —
+   * ein Konto mit row_scope EIGENE bekommt 403. Der CTA springt auf die
+   * Auftragsliste und öffnet dort den Anlage-Dialog (Query `neu=1`).
+   */
+  protected readonly darfNeuerAuftrag = computed(() =>
+    this.auth.darfAlle('workflow', 'ANLEGEN'),
+  );
+
   protected readonly darfSchnellerfassung = computed(
     () =>
       // `darfAlle`: `quick-intake` ist an allen vier Toren fail-closed (`require`)

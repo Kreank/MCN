@@ -19,7 +19,7 @@ import {
 } from '../../core/projekt.model';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { Bestaetigung } from '../../shared/bestaetigung/bestaetigung';
-import { ProjekteNav } from '../projekte-nav/projekte-nav';
+import { EingangNav } from '../eingang-nav/eingang-nav';
 import { VerbotenState, fehlerDetail, fehlerState } from '../../shared/http-fehler';
 
 type ViewState =
@@ -50,7 +50,7 @@ interface PendingMove {
  */
 @Component({
   selector: 'app-vorgang-kanban',
-  imports: [RouterLink, DragDropModule, KeinZugriff, Bestaetigung, ProjekteNav],
+  imports: [RouterLink, DragDropModule, KeinZugriff, Bestaetigung, EingangNav],
   templateUrl: './vorgang-kanban.html',
   styleUrl: './vorgang-kanban.scss',
 })

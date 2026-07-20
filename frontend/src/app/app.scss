@@ -313,6 +313,22 @@
     outline-offset: 2px;
   }
 }
+// „Neuer Auftrag" ist der primäre globale Neu-Fall (orange gefüllt); die
+// Meldungserfassung tritt daneben als sekundärer, ungefüllter CTA auf — damit
+// nicht zwei gleich starke Flächen um Aufmerksamkeit konkurrieren.
+.header__cta--sekundaer {
+  background: transparent;
+  border-color: var(--line-strong);
+  color: var(--accent-ink);
+
+  &:hover {
+    filter: none;
+    border-color: var(--accent);
+  }
+  &:focus-visible {
+    outline-color: var(--focus-ring);
+  }
+}
 .header__cta-plus {
   font-size: 1rem;
   line-height: 1;

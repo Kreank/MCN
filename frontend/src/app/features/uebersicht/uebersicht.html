@@ -55,7 +55,7 @@
             <p class="kachel__zahl">{{ $any(serviceCases()).total }}</p>
           }
         </div>
-        <a class="kachel__link" routerLink="/projekte/vorgaenge">Alle →</a>
+        <a class="kachel__link" routerLink="/eingang">Alle →</a>
       </header>
       @switch (serviceCases().kind) {
         @case ('loading') { <p class="kachel__leer">Wird geladen …</p> }

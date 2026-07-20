@@ -29,7 +29,7 @@ type BriefingState =
 /** Bereich → Route der zugehörigen Kachel (jeder Briefing-Punkt ist klickbar). */
 const BEREICH_ROUTE: Record<BriefingBereich, string> = {
   aufgaben: '/aufgaben',
-  vorgaenge: '/projekte/vorgaenge',
+  vorgaenge: '/eingang',
   wartung: '/wartung',
   angebote: '/dokumente',
 };

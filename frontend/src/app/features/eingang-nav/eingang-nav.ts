@@ -1,25 +1,24 @@
 import { Component } from '@angular/core';
 import { RouterLink, RouterLinkActive } from '@angular/router';
 
-/** Unternavigation des Projekte-Bereichs (Register · Vorgänge · Vorgang-Board). */
+/** Unternavigation des Eingangs (Liste · Board) — der Vorgangs-Eingangskorb. */
 @Component({
-  selector: 'app-projekte-nav',
+  selector: 'app-eingang-nav',
   imports: [RouterLink, RouterLinkActive],
   template: `
-    <nav class="projekte-nav" aria-label="Projekte-Ansichten">
+    <nav class="eingang-nav" aria-label="Eingang-Ansichten">
       <a
-        routerLink="/projekte"
+        routerLink="/eingang"
         routerLinkActive="is-active"
         [routerLinkActiveOptions]="{ exact: true }"
-        >Register</a
+        >Eingang</a
       >
-      <a routerLink="/projekte/vorgaenge" routerLinkActive="is-active">Vorgänge</a>
-      <a routerLink="/projekte/kanban" routerLinkActive="is-active">Vorgang-Board</a>
+      <a routerLink="/eingang/board" routerLinkActive="is-active">Board</a>
     </nav>
   `,
   styles: [
     `
-      .projekte-nav {
+      .eingang-nav {
         display: flex;
         flex-wrap: wrap;
         gap: var(--space-1);
@@ -52,4 +51,4 @@ import { RouterLink, RouterLinkActive } from '@angular/router';
     `,
   ],
 })
-export class ProjekteNav {}
+export class EingangNav {}

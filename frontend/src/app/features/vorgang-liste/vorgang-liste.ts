@@ -8,7 +8,7 @@ import {
   ServiceCaseBoard,
   ServiceCaseStatus,
 } from '../../core/projekt.model';
-import { ProjekteNav } from '../projekte-nav/projekte-nav';
+import { EingangNav } from '../eingang-nav/eingang-nav';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 
@@ -21,18 +21,20 @@ type ViewState =
 type Segment = { value: ServiceCaseStatus | null; label: string };
 
 /**
- * Flache, chronologische Vorgangsliste (service_case) — die „Wo ist mein eben
- * erfasster Vorgang?"-Ansicht. Serverseitig nach received_at desc sortiert; die
- * neuesten stehen oben. Ergänzt das Board (/projekte/kanban) um eine
- * durchsuchbare, seitenweise Liste über alle Projekte hinweg.
+ * Der Eingang (Vorgangs-Eingangskorb): die flache, chronologische Vorgangsliste
+ * (service_case), neueste zuerst. Hier landen Meldungen und warten auf eine
+ * Entscheidung — annehmen (Auftrag anlegen / zum Projekt hochstufen) oder
+ * ablehnen geschieht in der Vorgangsmappe. Board unter /eingang/board.
  *
- * Ohne Statusfilter blendet der Endpunkt terminale Vorgänge
- * (ABGESCHLOSSEN/ABGELEHNT) aus; der Umschalter „Abgeschlossene einschließen"
- * schaltet include_terminal. Ein konkret gewählter Status filtert direkt darauf.
+ * Default = **wartet-auf-Entscheidung**: der Endpunkt blendet im nur_offen-Modus
+ * terminale (ABGESCHLOSSEN/ABGELEHNT) UND BEAUFTRAGT aus — ein zum Auftrag
+ * gemachter Vorgang hat den Eingang verlassen. Der Umschalter „Alle anzeigen"
+ * zeigt beauftragte und erledigte mit; ein konkret gewählter Status filtert
+ * direkt darauf (dann greift nur_offen nicht).
  */
 @Component({
   selector: 'app-vorgang-liste',
-  imports: [RouterLink, ProjekteNav, KeinZugriff],
+  imports: [RouterLink, EingangNav, KeinZugriff],
   templateUrl: './vorgang-liste.html',
   styleUrl: './vorgang-liste.scss',
 })
@@ -41,7 +43,7 @@ export class VorgangListe {
 
   protected readonly pageSize = 20;
   protected readonly segments: Segment[] = [
-    { value: null, label: 'Alle' },
+    { value: null, label: 'Offen' },
     { value: 'NEU', label: 'Neu' },
     { value: 'IN_PRUEFUNG', label: 'In Prüfung' },
     { value: 'FREIGABE_AUSSTEHEND', label: 'Freigabe' },
@@ -136,6 +138,10 @@ export class VorgangListe {
         page_size: this.pageSize,
         q: this.query(),
         status: this.status(),
+        // Default: nur der offene Eingang (ohne BEAUFTRAGT/terminal). „Alle
+        // anzeigen" kehrt beides um. Bei explizitem Status ignoriert der Server
+        // beide Flags.
+        nur_offen: !this.includeTerminal(),
         include_terminal: this.includeTerminal(),
       })
       .subscribe({

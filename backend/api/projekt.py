@@ -572,6 +572,12 @@ class ServiceCaseBoardFilter(Schema):
     # Endspalten-Karten mitladen (ABGESCHLOSSEN/ABGELEHNT). Default aus: das Board
     # zeigt die offenen Vorgänge. Ein expliziter status-Filter hat Vorrang.
     include_terminal: bool = False
+    # Eingangskorb-Modus: nur Vorgänge, die auf eine Entscheidung WARTEN. Blendet
+    # zusätzlich zu den terminalen auch BEAUFTRAGT aus — ein zum Auftrag gemachter
+    # Vorgang hat den Eingang verlassen. Opt-in (die Eingang-Liste setzt es); das
+    # Kanban-Board lässt es aus und behält BEAUFTRAGT als Spalte. Ein expliziter
+    # status-Filter hat weiter Vorrang.
+    nur_offen: bool = False
 
 
 def _service_case_card(case):
@@ -621,6 +627,11 @@ def list_service_cases(
         qs = qs.filter(property_id=filters.property_id)
     if filters.status:
         qs = qs.filter(status=filters.status)
+    elif filters.nur_offen:
+        # „Eingang": wartet-auf-Entscheidung. Terminal UND BEAUFTRAGT raus.
+        qs = qs.exclude(
+            status__in=projekt_service.TERMINAL_SERVICE_CASE_STATUSES + ("BEAUFTRAGT",)
+        )
     elif not filters.include_terminal:
         qs = qs.exclude(status__in=projekt_service.TERMINAL_SERVICE_CASE_STATUSES)
     if filters.q:
