@@ -7,6 +7,17 @@ export interface Party {
   party_type: PartyType;
   display_name: string;
   status: PartyStatus;
+
+  // --- Entscheidungsmerkmale (Dublettenvermeidung) --------------------------
+  // Nur in LISTEN-Antworten gefüllt (Suche); darum optional typisiert.
+  /** Primäre Telefonnummer. */
+  telefon?: string | null;
+  /** Primäre E-Mail-Adresse. */
+  email?: string | null;
+  /** Einzeilige Primäradresse. */
+  address_line?: string | null;
+  /** Objektbezüge, z. B. „WEG Albrechtstr. 30 (Eigentümer)". */
+  objekte?: string[];
 }
 
 export interface PartyPage {

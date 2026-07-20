@@ -165,8 +165,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from django.core.exceptions import ObjectDoesNotExist
-from django.db.models import Count, Exists, F, Func, OuterRef, Q, TextField, Value
-from django.db.models.functions import Coalesce, Lower, Replace
+from django.db.models import Count, Exists, OuterRef, Q
 
 from db_core.models import (
     Article,
@@ -190,6 +189,27 @@ from db_core.models import (
 )
 from db_core.services import objektsicht
 from db_core.services.artikel import build_article_search_q
+from db_core.services.textsuche import (
+    MAX_TOKENS,
+    NORM_SQL,
+    UMLAUTE,
+    Normalisiert,
+    adresse_annotationen as _adresse_annotationen,
+    feld_q as _feld_q,
+    kontaktwege_q as _kontaktwege_q,
+    norm as _norm,
+    normalisieren,
+    nur_ziffern,
+    tokenisieren,
+    tokens_q as _tokens_q,
+    ziffern as _ziffern,
+)
+
+# Die Normalisierung wohnt seit dem Dubletten-Slice in `services/textsuche.py` —
+# dieselbe Regel benutzen jetzt auch die Listen (`api/property.py`,
+# `api/identity.py`) und der Adress-Dublettenabgleich. Die hiesigen (privaten)
+# Namen bleiben als Aliase bestehen, damit die Kategorie-Querys unten und
+# `tests/test_suche_index.py` unverändert lesen.
 
 # Zeilen, die je Kategorie aus der DB geholt werden, bevor in Python gerangt und
 # auf `pro_kategorie` gekürzt wird. Größer als die Ausgabemenge, damit das Ranking
@@ -203,19 +223,12 @@ GESAMT_MAX = 30
 # eine Liste — dafür gibt es die Listen.
 MIN_LAENGE = 2
 
-# Obergrenze der Tokenzahl. Jedes Token erzeugt eine eigene UND-Gruppe aus
-# LIKE-Prädikaten und korrelierten EXISTS — ohne Grenze könnte ein einziger
-# GET mit 500 Wörtern einen Worker minutenlang binden (die Ausdrücke sind nicht
-# indexierbar). Mehr als acht Tokens grenzen keine Suche mehr ein, sie quälen nur
-# die Datenbank; die überzähligen werden verworfen.
-MAX_TOKENS = 8
+# (MAX_TOKENS und UMLAUTE kommen aus `textsuche` — siehe Import oben.)
 
 # Ein Suchbegriff ist eine Eingabe, kein Dokument. Wer einen ganzen Absatz
 # hineinkopiert, bekommt ihn stillschweigend gekürzt statt eines 422 — die Suche
 # soll nicht meckern, sondern suchen.
 MAX_BEGRIFF = 200
-
-UMLAUTE = (("ä", "ae"), ("ö", "oe"), ("ü", "ue"), ("ß", "ss"))
 
 # Feste Kategoriereihenfolge bei gleichem Rang (Leitstand-Logik: erst die Akte,
 # dann der Beleg, dann der Stamm).
@@ -248,73 +261,6 @@ MODUL_JE_TYP = {
     "LEISTUNG": "pricing",
     "MITARBEITER": "hr",
 }
-
-
-# ---------------------------------------------------------------------------
-# Normalisierung — dieselbe Regel in Python und in SQL
-# ---------------------------------------------------------------------------
-
-def normalisieren(text):
-    """Kleinschreibung, Umlaute/ß entfaltet, alles Nicht-Alphanumerische raus."""
-    t = (text or "").lower()
-    for umlaut, ersatz in UMLAUTE:
-        t = t.replace(umlaut, ersatz)
-    return re.sub(r"[^a-z0-9]", "", t)
-
-
-def nur_ziffern(text):
-    """Reine Ziffernform (Telefonnummern: „030 790-853" → „030790853")."""
-    return re.sub(r"\D", "", text or "")
-
-
-# Der Normalisierungsausdruck als EIN Template mit ausschließlich literalen
-# Konstanten — kein Bind-Parameter, keine verschachtelten Func-Objekte.
-#
-# Das ist kein Stil, sondern die Bedingung dafür, dass der GIN-Trigramm-Index aus
-# Migration 0098 überhaupt greifen kann: PostgreSQL erkennt einen
-# Ausdrucksindex nur wieder, wenn der Ausdruck in der WHERE-Klausel **derselbe
-# Parsebaum** ist. Steht in `NORM_SQL` etwas anderes als im Index, fällt die
-# Artikelsuche stillschweigend auf einen Seq-Scan über 800.000 Zeilen zurück —
-# und keiner merkt es, weil die Tests mit 20 Zeilen grün bleiben.
-#
-# ==> Ändert jemand diesen String, MUSS er die Migration 0098 mitziehen.
-#     `db_core/tests/test_suche_index.py` schlägt sonst fehl (EXPLAIN-Prüfung).
-NORM_SQL = (
-    "regexp_replace("
-    "replace(replace(replace(replace("
-    "lower(coalesce(%(expressions)s, ''))"
-    ", 'ä', 'ae'), 'ö', 'oe'), 'ü', 'ue'), 'ß', 'ss')"
-    ", '[^a-z0-9]', '', 'g')"
-)
-
-
-class Normalisiert(Func):
-    """SQL-Ausdruck: `normalisieren()` auf einer Spalte (auch über Joins).
-
-    NULL wird zu '' (coalesce) — ein Angebot im ENTWURF trägt keine quote_number,
-    und daran darf die Suche nicht scheitern.
-    """
-
-    template = NORM_SQL
-    output_field = TextField()
-
-
-def _norm(pfad):
-    return Normalisiert(F(pfad))
-
-
-def _ziffern(pfad):
-    """SQL-Ausdruck: reine Ziffernform einer Spalte."""
-    return Func(
-        Coalesce(F(pfad), Value("")), Value(r"\D"), Value(""), Value("g"),
-        function="regexp_replace", output_field=TextField(),
-    )
-
-
-def tokenisieren(begriff):
-    """Begriff → Liste normalisierter Tokens (leere fallen weg, gekappt bei MAX_TOKENS)."""
-    tokens = [t for t in (normalisieren(w) for w in (begriff or "").split()) if t]
-    return tokens[:MAX_TOKENS]
 
 
 # ---------------------------------------------------------------------------
@@ -521,40 +467,6 @@ def _rang_und_grund(gruppen, tokens):
 # Bausteine für die Querys
 # ---------------------------------------------------------------------------
 
-def _feld_q(felder, token):
-    """ODER über alle (annotierten) Felder einer Entität für EIN Token."""
-    q = Q()
-    for feld in felder:
-        q |= Q(**{f"{feld}__contains": token})
-    return q
-
-
-def _tokens_q(felder, tokens, exists_je_token=None):
-    """UND über Tokens, ODER über Felder — plus optionale Exists-Zweige.
-
-    `exists_je_token` ist eine Funktion token → Liste von Exists()-Ausdrücken;
-    sie hängt die Beziehungssuche (Kontaktwege, Beteiligte, Liegenschaften) in
-    denselben ODER-Zweig, ohne die Ergebnismenge durch Joins zu vervielfachen.
-    """
-    gesamt = None
-    for token in tokens:
-        oder = _feld_q(felder, token)
-        for exists in (exists_je_token(token) if exists_je_token else []):
-            oder |= exists
-        gesamt = oder if gesamt is None else (gesamt & oder)
-    return gesamt if gesamt is not None else Q(pk__isnull=True)
-
-
-def _adresse_annotationen(praefix, alias):
-    """Normalisierte Adressfelder über einen Pfad (Liegenschaft → Adresse)."""
-    return {
-        f"{alias}_street": _norm(f"{praefix}street"),
-        f"{alias}_hn": _norm(f"{praefix}house_number"),
-        f"{alias}_plz": _norm(f"{praefix}postal_code"),
-        f"{alias}_city": _norm(f"{praefix}city"),
-    }
-
-
 def _adresse_text(adresse, sicht):
     """Adresse für den Untertitel — **getort auf `property/LESEN`**.
 
@@ -586,16 +498,6 @@ def _adresse_text(adresse, sicht):
 
 def _untertitel(*teile):
     return " · ".join(str(t) for t in teile if t)
-
-
-def _kontaktwege_q(pfad, token):
-    """Exists über Kontaktwege einer Party (Text- UND Ziffernform)."""
-    sub = (
-        ContactPoint.objects.filter(**{pfad: OuterRef("pk")})
-        .annotate(n_wert=_norm("value"), z_wert=_ziffern("value"))
-        .filter(Q(n_wert__contains=token) | Q(z_wert__contains=token))
-    )
-    return Exists(sub)
 
 
 def _fenster(qs):

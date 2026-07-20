@@ -21,7 +21,7 @@ from datetime import date
 from decimal import Decimal
 from uuid import UUID
 
-from django.db.models import Q
+from django.db.models import Case, Exists, IntegerField, OuterRef, Q, Value, When
 from ninja import Query, Router, Schema
 from ninja.errors import HttpError
 from ninja.responses import Status
@@ -32,6 +32,17 @@ from api.permissions import require, require_scoped
 from db_core.models import Building, Property, PropertyPartyRole, Unit
 from db_core.services import objektsicht
 from db_core.services import property as property_service
+from db_core.services import property_steckbrief
+from db_core.services.textsuche import (
+    adresse_annotationen,
+    feld_q,
+    norm,
+    normalisieren,
+    normalisieren_strasse,
+    strassen_norm,
+    tokenisieren,
+    tokens_q,
+)
 
 router = Router()
 
@@ -47,6 +58,20 @@ class PropertyOut(Schema):
     # Aus der verknüpften identity.address; in den Endpoints explizit gesetzt
     # (kein from_orm-Resolver, damit Liste und Detail denselben Pfad nutzen).
     city: str
+
+    # --- Steckbrief (Dublettenvermeidung) ---------------------------------
+    # Alle Felder tragen einen Default. Das ist kein Stilmittel, sondern die
+    # Bedingung dafür, dass `PropertyDetailOut(PropertyOut)` unverändert
+    # weiterläuft: Die Detailroute füllt den Steckbrief NICHT (sie zeigt
+    # Adresse, Gebäude und Rollen ohnehin vollständig) und dürfte sonst gar
+    # nicht mehr serialisieren.
+    address_line: str | None = None
+    eigentuemer: list[str] = []
+    verwaltung: str | None = None
+    telefon: str | None = None
+    telefon_quelle: str | None = None
+    einheiten_anzahl: int = 0
+    gebaeude_adressen: list[str] = []
 
 
 class PropertyListOut(Schema):
@@ -122,10 +147,25 @@ def list_properties(
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=100),
 ):
-    """Liegenschaften auflisten: Suche (Name/Nummer), Typ-/Statusfilter, Seiten.
+    """Liegenschaften auflisten: Suche **über die Adresse**, Filter, Seiten.
 
-    Die Ortsangabe stammt aus der verknüpften identity.address; sie wird per
-    select_related mitgeladen, damit die Liste ohne N+1 auskommt.
+    **Die Suche geht über die Adresse, nicht nur über Name und Nummer.** Das war
+    die Dublettenquelle Nummer eins: Ein Mieter ruft an und nennt seine Adresse;
+    der Mitarbeiter tippt „Albrechtstraße 30", findet nichts (weil die
+    Liegenschaft „WEG Albrechtstr." heißt) und legt sie neu an. Gesucht wird
+    deshalb in `property_number`, `name` und allen Feldern der
+    Liegenschaftsadresse — **plus** den Adressen der **Gebäude**: Bei einer WEG
+    trägt die Liegenschaft eine Hausnummer und das gesuchte Gebäude eine andere.
+
+    Normalisiert und tokenweise (`services/textsuche.py`): **jedes** Token muss
+    irgendwo vorkommen (UND), innerhalb eines Tokens zählt jedes Feld (ODER). Nur
+    so findet „Albrechtstr 30" die Liegenschaft — „albrechtstr" trifft die Straße,
+    „30" die Hausnummer, kein einzelnes Feld enthält beides.
+
+    Jede Zeile trägt ihren **Steckbrief** (Eigentümer, Verwaltung, Telefon,
+    Einheitenzahl) — ohne diesen Kontext ist eine Trefferliste gleichnamiger
+    Objekte keine Entscheidungshilfe. Er wird gebündelt geladen
+    (`services/property_steckbrief.py`), nicht je Zeile.
 
     Scope 'EIGENE': nur die Objekte, an denen der Akteur je einen Einsatz hatte
     (`objektsicht.begrenzen` auf dem Primärschlüssel).
@@ -135,10 +175,7 @@ def list_properties(
     qs = objektsicht.begrenzen(qs, scope, actor, "id")
 
     if filters.q:
-        needle = filters.q.strip()
-        qs = qs.filter(
-            Q(name__icontains=needle) | Q(property_number__icontains=needle)
-        )
+        qs = _adresssuche(qs, filters.q)
     if filters.property_type:
         qs = qs.filter(property_type=filters.property_type)
     if filters.status:
@@ -148,20 +185,276 @@ def list_properties(
 
     total = qs.count()
     start = (page - 1) * page_size
-    items = [
-        PropertyOut(
+    seite = list(qs[start:start + page_size])
+    return PropertyListOut(
+        items=_property_outs(seite), total=total, page=page, page_size=page_size
+    )
+
+
+# Normalisierte Adressfelder der Liegenschaft (Aliasse der Annotationen).
+_ADRESSFELDER = ("n_street", "n_hn", "n_plz", "n_city")
+# Dieselben Felder am Gebäude (eigene Aliasse, damit die Subquery nicht mit den
+# gleichnamigen Annotationen der äußeren Query kollidiert).
+_GEBAEUDEFELDER = ("b_street", "b_hn", "b_plz", "b_city")
+
+
+def _adresssuche(qs, begriff):
+    """Tokensuche über Nummer, Name, Liegenschafts- UND Gebäudeadresse.
+
+    **Die Straße wird zusätzlich in ihrer Suffixform verglichen** (`strassen_norm`
+    gegen `normalisieren_strasse(token)`). Ohne das ist die Suche
+    richtungsabhängig, und zwar im Hauptfall: Gespeichert ist „Albrechtstr.", der
+    Anrufer sagt „Albrechtstraße 30", der Mitarbeiter tippt die ausgeschriebene
+    Form — und `albrechtstrasse` steckt nicht in `albrechtstr`. Die Trefferliste
+    bleibt leer, und er legt genau die Dublette an, die dieser Slice verhindern
+    soll. Beide Formen normalisieren sich auf `albrechtstr` und treffen damit in
+    **beide** Richtungen.
+
+    Die allgemeine Normalform bleibt zusätzlich stehen: Sie trägt die Teilstring-
+    suche über Hausnummer, PLZ, Ort, Name und Nummer, und sie findet „albrecht"
+    als Wortanfang, was die Suffixform allein nicht leistet.
+
+    Beides sind Annotationen und ein korreliertes EXISTS — die Zahl der Abfragen
+    ändert sich dadurch nicht.
+    """
+    tokens = tokenisieren(begriff)
+    if not tokens:
+        return qs
+    qs = qs.annotate(
+        n_nummer=norm("property_number"),
+        n_name=norm("name"),
+        **adresse_annotationen("address__", "n"),
+        s_street=strassen_norm("address__street"),
+    )
+    felder = ("n_nummer", "n_name", *_ADRESSFELDER)
+
+    def zusatzzweige(token):
+        """Straßenform der Liegenschaft + die Gebäudeadresse (beides ODER)."""
+        s_token = normalisieren_strasse(token)
+        sub = (
+            Building.objects.filter(property_id=OuterRef("pk"))
+            .annotate(
+                **adresse_annotationen("address__", "b"),
+                b_sstreet=strassen_norm("address__street"),
+            )
+            .filter(
+                feld_q(_GEBAEUDEFELDER, token)
+                | Q(b_sstreet__contains=s_token)
+            )
+        )
+        # „Albrechtstr. 22" muss die WEG finden, die dieses Gebäude trägt.
+        return [Q(s_street__contains=s_token), Exists(sub)]
+
+    return qs.filter(tokens_q(felder, tokens, zusatzzweige))
+
+
+def _property_outs(properties):
+    """`PropertyOut` je Zeile MIT Steckbrief — gebündelt geladen, kein N+1."""
+    briefe = property_steckbrief.steckbriefe([p.id for p in properties])
+    leer = property_steckbrief.Steckbrief()
+    ergebnis = []
+    for p in properties:
+        s = briefe.get(p.id, leer)
+        ergebnis.append(PropertyOut(
             id=p.id,
             property_number=p.property_number,
             name=p.name,
             property_type=p.property_type,
             status=p.status,
             city=p.address.city,
-        )
-        for p in qs[start:start + page_size]
-    ]
-    return PropertyListOut(
-        items=items, total=total, page=page, page_size=page_size
+            address_line=s.address_line,
+            eigentuemer=s.eigentuemer,
+            verwaltung=s.verwaltung,
+            telefon=s.telefon,
+            telefon_quelle=s.telefon_quelle,
+            einheiten_anzahl=s.einheiten_anzahl,
+            gebaeude_adressen=s.gebaeude_adressen,
+        ))
+    return ergebnis
+
+
+# --- Adress-Dublettenabgleich ----------------------------------------------
+# Vor der {property_id}-Detailroute registriert: Diese Reihenfolge ist die
+# Absicherung dagegen, dass ein späterer Konverterwechsel den literalen Pfad
+# `/properties/adress-dubletten` an die Detailroute verfüttert.
+
+class AdressTreffer(Schema):
+    art: str    # 'EXAKT' | 'GEBAEUDE' | 'STRASSE'
+    grund: str  # menschenlesbar, deutsch
+    property: PropertyOut
+
+
+class AdressDublettenOut(Schema):
+    treffer: list[AdressTreffer]
+
+
+#: Reihenfolge der Trefferarten — je näher an der eingegebenen Adresse, desto weiter oben.
+_ART_RANG = {"EXAKT": 0, "GEBAEUDE": 1, "STRASSE": 2}
+
+#: Zeilen, die je Zweig aus der DB geholt werden, bevor in Python bewertet und auf
+#: `limit` gekürzt wird (Muster: `services/suche.py::_FENSTER`). Eine Straße mit
+#: PLZ hat in der Praxis eine Handvoll Liegenschaften; ohne Ortsangabe könnte
+#: „Hauptstraße" aber jede Zeile des Hauses ziehen — und der Abgleich läuft bei
+#: jedem Tastendruck im Erfassungsformular.
+#:
+#: Ein `EXAKT`-Treffer kann dabei **nicht** aus dem Fenster fallen: Die Abfrage
+#: sortiert Zeilen mit passender Hausnummer ausdrücklich nach vorn.
+_FENSTER = 200
+
+
+@router.get("/properties/adress-dubletten", response=AdressDublettenOut)
+def adress_dubletten(
+    request,
+    street: str | None = Query(None),
+    house_number: str | None = Query(None),
+    postal_code: str | None = Query(None),
+    city: str | None = Query(None),
+    limit: int = Query(10, ge=1, le=25),
+):
+    """Gibt es diese Adresse schon? — der Abgleich VOR dem Anlegen.
+
+    **Warum das mehr können muss als „gleiche Adresse suchen" (der WEG-Fall):**
+    Eine Wohnungseigentümergemeinschaft ist *eine* Liegenschaft, die sich über
+    *mehrere Hausnummern* erstreckt. Die WEG steht als „Albrechtstraße 30" im
+    System; ihre Gebäude liegen in der 22, 24, 26 und 30. Ruft der Mieter aus der
+    **22** an und sucht der Mitarbeiter nach „Albrechtstraße 22", findet ein
+    Gleichheitsabgleich **nichts** — und er legt eine zweite Liegenschaft an
+    derselben WEG an. Genau diese Dublette ist danach nicht mehr sauber
+    auflösbar: An ihr hängen Vorgänge, Aufträge und Belege.
+
+    Deshalb antwortet dieser Endpunkt in **drei Stufen**:
+
+    | Art | Bedeutung |
+    |---|---|
+    | `EXAKT` | Die Liegenschaftsadresse selbst stimmt (Hausnummer gleich oder beide leer). |
+    | `GEBAEUDE` | Ein **Gebäude** dieser Liegenschaft trägt genau diese Straße + Hausnummer. |
+    | `STRASSE` | Gleiche Straße, **andere** Hausnummer — der WEG-Fall. Er ist kein Rauschen, er ist der Zweck. |
+
+    Verglichen wird **normalisiert** (`services/textsuche.py`): Kleinschreibung,
+    Umlaute entfaltet, Nicht-Alphanumerisches raus — und das Straßen-Suffix
+    vereinheitlicht. „Albrechtstr." und „Albrechtstraße" sind damit **gleich**,
+    nicht bloß ähnlich.
+
+    Eingrenzung auf den Ort: Ist eine PLZ angegeben, muss sie stimmen; sonst
+    entscheidet der Ort, falls angegeben. Fehlt beides, zählt nur die Straße —
+    dann ist die Antwort bewusst weit, denn eine Straße ohne Ort ist keine Adresse.
+
+    Rechte wie die Liste: `property/LESEN`, Scope 'EIGENE' begrenzt auf die
+    eigenen Objekte. Der Abgleich ist damit **kein Nebeneingang**: Wer eine
+    Liegenschaft nicht sehen darf, erfährt hier auch nicht, dass es sie gibt.
+
+    `street` ist **fachlich Pflicht**, im Schema aber optional: Die Prüfung steht
+    bewusst **hinter** `require_scoped`, damit ein Konto ohne Recht 403 bekommt
+    und nicht 422 — sonst verriete die Fehlermeldung, dass hier eine Straße
+    erwartet wird, an jemanden, der den Endpunkt gar nicht aufrufen darf.
+
+    Das gilt **nur für `street`**, nicht für die Parameter allgemein: `limit`
+    trägt seine Grenzen im Schema, und ninja validiert sie, bevor die View
+    überhaupt läuft — `?limit=99` antwortet deshalb mit 422, auch ohne Recht.
+    Wer die Reihenfolge über alle Felder ziehen wollte, müsste sämtliche
+    Validierung von Hand in die View holen; der Gewinn wäre die Information
+    „es gibt hier ein limit", der Preis die halbe Schemaprüfung.
+    """
+    actor, scope = require_scoped(request, "property", "LESEN")
+
+    q_street = normalisieren_strasse(street)
+    if not q_street:
+        raise HttpError(422, "Für den Adressabgleich wird eine Straße benötigt.")
+    q_hn = normalisieren(house_number)
+    q_plz = normalisieren(postal_code)
+    q_city = normalisieren(city)
+
+    basis = objektsicht.begrenzen(
+        Property.objects.select_related("address"), scope, actor, "id"
     )
+
+    def ort_eingrenzen(qs, plz_feld, ort_feld):
+        """PLZ schlägt Ort; ohne beides bleibt es bei der Straße."""
+        if q_plz:
+            return qs.filter(**{plz_feld: q_plz})
+        if q_city:
+            return qs.filter(**{ort_feld: q_city})
+        return qs
+
+    # (1) Liegenschaften, deren EIGENE Adresse in dieser Straße liegt. Zeilen mit
+    #     passender Hausnummer zuerst — damit der EXAKT-Treffer das Fenster nie
+    #     verlässt, auch nicht in einer Straße mit hunderten Objekten.
+    an_der_strasse = ort_eingrenzen(
+        basis.annotate(
+            s_street=strassen_norm("address__street"),
+            s_hn=norm("address__house_number"),
+            s_plz=norm("address__postal_code"),
+            s_city=norm("address__city"),
+        ).filter(s_street=q_street),
+        "s_plz", "s_city",
+    ).annotate(
+        hn_rang=Case(When(s_hn=q_hn, then=Value(0)), default=Value(1),
+                     output_field=IntegerField())
+    ).order_by("hn_rang", "property_number", "id")[:_FENSTER]
+
+    # (2) Gebäude mit genau dieser Straße + Hausnummer — auch an Liegenschaften,
+    #     deren eigene Adresse in einer anderen Straße liegt.
+    gebaeude_qs = ort_eingrenzen(
+        Building.objects.filter(
+            property_id__in=basis.values("id"), address__isnull=False
+        ).annotate(
+            s_street=strassen_norm("address__street"),
+            s_hn=norm("address__house_number"),
+            s_plz=norm("address__postal_code"),
+            s_city=norm("address__city"),
+        ).filter(s_street=q_street, s_hn=q_hn),
+        "s_plz", "s_city",
+    ).select_related("address", "property__address").order_by(
+        "property__property_number", "building_number", "id"
+    )[:_FENSTER]
+
+    gebaeude_je_objekt = {}
+    for b in gebaeude_qs:
+        gebaeude_je_objekt.setdefault(b.property_id, b)
+
+    # Kandidaten zusammenführen: Straßentreffer + Objekte mit passendem Gebäude.
+    kandidaten = {}
+    for p in an_der_strasse:
+        kandidaten[p.id] = p
+    for b in gebaeude_je_objekt.values():
+        kandidaten.setdefault(b.property_id, b.property)
+
+    bewertet = []
+    for p in kandidaten.values():
+        gebaeude = gebaeude_je_objekt.get(p.id)
+        eigene_strasse = normalisieren_strasse(p.address.street) == q_street
+        if eigene_strasse and normalisieren(p.address.house_number) == q_hn:
+            art = "EXAKT"
+            grund = (
+                "Diese Adresse ist bereits erfasst "
+                f"({property_steckbrief.adresszeile(p.address)})."
+            )
+        elif gebaeude is not None:
+            art = "GEBAEUDE"
+            grund = (
+                f"Gebäude {gebaeude.building_number} dieser Liegenschaft liegt an "
+                f"{property_steckbrief.adresszeile(gebaeude.address)}."
+            )
+        else:
+            art = "STRASSE"
+            nummer = (p.address.house_number or "").strip()
+            grund = (
+                f"Gleiche Straße, andere Hausnummer (Nr. {nummer})."
+                if nummer else "Gleiche Straße, keine Hausnummer erfasst."
+            )
+        bewertet.append((art, grund, p))
+
+    bewertet.sort(key=lambda t: (_ART_RANG[t[0]], t[2].property_number))
+    bewertet = bewertet[:limit]
+
+    treffer_objekte = [p for _, _, p in bewertet]
+    outs = dict(zip(
+        (p.id for p in treffer_objekte), _property_outs(treffer_objekte)
+    ))
+    return AdressDublettenOut(treffer=[
+        AdressTreffer(art=art, grund=grund, property=outs[p.id])
+        for art, grund, p in bewertet
+    ])
 
 
 def _property_detail(property_id):

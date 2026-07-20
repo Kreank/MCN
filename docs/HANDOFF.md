@@ -5,6 +5,60 @@ dann `docs/roadmap/README.md` + `docs/roadmap/00-informationsarchitektur.md`.
 
 ---
 
+## ⚡ SESSION 2026-07-20 — Dublettenvermeidung bei der Erfassung
+
+**Auslöser (Fall des Users, wörtlich nachstellbar):** WEG Albrechtstraße 30 existiert,
+darin das Gebäude Albrechtstraße 22. Mieter Klaus (EG links, Eigentümer Braun) ruft an.
+Der Mitarbeiter sucht „Klaus" → nichts. Er sucht im Liegenschafts-Picker „Albrechtstraße 22"
+→ **ebenfalls nichts**, weil `list_properties` nur `name`/`property_number` durchsuchte.
+Also legt er eine zweite Liegenschaft an — stillschweigend, ohne Warnung. Zusätzlich trug
+`quick_intake` ihn pauschal als `PROPERTY_OWNER` ein, obwohl er Mieter ist.
+
+**Gebaut in diesem Slice:** Adresssuche in `list_properties` (inkl. Gebäudeadressen per
+Exists-Subquery), Steckbrief je Treffer (Adresse/Eigentümer/Verwaltung/Telefon+Quelle/
+Einheitenzahl), neuer Endpoint `GET /api/property/properties/adress-dubletten`
+(Trefferarten `EXAKT` | `GEBAEUDE` | `STRASSE`), Telefon-/Adresssuche bei `list_parties`,
+Merkmalzeilen im `ReferenzWahl`-Picker, Live-Dublettenpanel in Schnellerfassung und
+Liegenschaften-Dialog. Das Panel ist bewusst **Hinweis, kein Blocker**.
+
+**Stand:** zwei Opus-Review-Runden bestanden (Runde 1: 1 Blocker + 3 wichtig, alle behoben;
+Runde 2: ship-ready, keine Regression). Verifiziert in einem **isolierten Worktree** gegen
+einen Wegwerf-Postgres-16 (Port 55439), weil parallel zwei weitere Agenten auf
+`mitra-crm-test` arbeiteten: `check` sauber, `makemigrations --check` „No changes detected",
+volle Suite **3832 passed, 15 skipped, 19 errors, 0 failed**; die 19 Fehler sind das bekannte
+`CommandError: flush`-Artefakt und wurden per Gegenprobe mit gestashten Änderungen als
+vorbestehend **nachgewiesen**. `ng build` grün.
+
+### ⚠️ COMMIT-HYGIENE — vor dem Commit entscheiden
+
+`backend/db_core/services/suche.py` trägt im Arbeitsbaum **zwei Slices gleichzeitig**: die
+`textsuche`-Extraktion (dieser Slice) UND die Gewerk-Kürzel-Erweiterung von `kennung_parsen`
+(`_KENNUNG_GEWERK`, Format `AU-HZG-26-0142`, gehört zu den Migrationen 0120/0121 des parallel
+laufenden Gewerk-Slice). `backend/db_core/tests/test_suche.py` (+34 Zeilen) gehört ganz zum
+Gewerk-Slice. Wer `suche.py` pauschal `git add`t, zieht fremde halbfertige Arbeit mit in den
+Commit. Entweder `git add -p` und nur die `textsuche`-Hunks nehmen — oder bewusst
+entscheiden, dass beide Slices gemeinsam gehen.
+
+### 🔴 BEWUSST VERTAGT — im Folge-Slice nachziehen (Zusage an den User, 2026-07-20)
+
+1. **`building.address_id` ist über die API nicht befüllbar.** Die Spalte existiert seit
+   `0004_property.sql:57` und der Anzeige-Fallback „Gebäudeadresse, sonst Liegenschaftsadresse"
+   ist in `backend/api/planung.py:322` implementiert — aber `BuildingIn`
+   (`backend/api/property.py`) kennt kein Adressfeld, `add_building` übergibt kein
+   `address_id`, und `frontend/src/app/core/property.model.ts` hat es am `Building` nicht.
+   Der Service-Parameter ist da (`db_core/services/property.py`), wird aber nur aus Tests
+   benutzt. **Folge:** Die WEG-über-mehrere-Adressen-Struktur, die dieser Slice suchbar
+   macht, lässt sich im UI gar nicht erfassen. Ohne diesen Punkt greift die
+   `GEBAEUDE`-Trefferart nur bei Datensätzen, die per SQL entstanden sind.
+2. **`quick_intake` kennt keine Mieter.** `backend/api/projekt.py:1302` trägt den Melder
+   bei neuer Liegenschaft immer als `PROPERTY_OWNER` ein; `tenure.occupancy` /
+   `occupancy_party` werden nie angefasst. Der Anrufer muss im Intake als **Mieter oder
+   Eigentümer** erfassbar sein. Zieht nach sich: `tenure.ownership_period` /
+   `ownership_interest` haben bis heute **kein ORM-Modell und keinen Endpoint** (die
+   Eigentums-Ansicht in `liegenschaft-detail.html:180` ist ein Platzhalter).
+
+---
+
 ## ⚡ SESSION 2026-07-18/19 (d) — KI Slice 5: konversationeller „frag das CRM"-Assistent
 
 Der nächste große KI-Schritt aus dem Backlog. **Im Arbeitsbaum auf `develop`, NICHT

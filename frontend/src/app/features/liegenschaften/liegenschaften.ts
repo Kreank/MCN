@@ -2,16 +2,22 @@ import { Component, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { RouterLink } from '@angular/router';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
-import { Subject, debounceTime, distinctUntilChanged } from 'rxjs';
+import { Subject, debounceTime, distinctUntilChanged, map, startWith } from 'rxjs';
 import { PropertyService } from '../../core/property.service';
 import { AuthService } from '../../core/auth.service';
 import {
+  AdressDublettenQuery,
+  AdressTreffer,
   Property,
   PropertyIn,
   PropertyPage,
   PropertyStatus,
   PropertyType,
 } from '../../core/property.model';
+import {
+  AdressDublettenHinweis,
+  adressDublettenStrom,
+} from '../../shared/adress-dubletten/adress-dubletten';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 import { Dialog } from '../../shared/dialog/dialog';
@@ -33,7 +39,14 @@ type Meldung = { art: 'erfolg' | 'fehler'; text: string };
 
 @Component({
   selector: 'app-liegenschaften',
-  imports: [RouterLink, ReactiveFormsModule, KeinZugriff, Dialog, Feld],
+  imports: [
+    RouterLink,
+    ReactiveFormsModule,
+    KeinZugriff,
+    Dialog,
+    Feld,
+    AdressDublettenHinweis,
+  ],
   templateUrl: './liegenschaften.html',
   styleUrl: './liegenschaften.scss',
 })
@@ -115,6 +128,9 @@ export class Liegenschaften {
     }),
   });
 
+  /** Treffer der Live-Dublettenprüfung im Anlagedialog. */
+  protected readonly dubletten = signal<AdressTreffer[]>([]);
+
   private readonly searchInput$ = new Subject<string>();
   private reqId = 0;
 
@@ -142,7 +158,38 @@ export class Liegenschaften {
         this.page.set(1);
         this.fetch();
       });
+
+    // Dublettenwarnung im Anlagedialog. Anders als in der Schnellerfassung gibt
+    // es hier kein Zielfeld — der Treffer führt per Link zur bestehenden
+    // Liegenschaft. Anlegen bleibt erlaubt; der Hinweis blockiert nichts.
+    adressDublettenStrom(
+      this.svc,
+      this.neuForm.valueChanges.pipe(
+        startWith(null),
+        map(() => this.dublettenAbfrage()),
+      ),
+    )
+      .pipe(takeUntilDestroyed())
+      .subscribe((t) => this.dubletten.set(t));
+
     this.fetch();
+  }
+
+  /** Abfrageparameter der Dublettenprüfung — `null`, wenn nicht geprüft wird. */
+  private dublettenAbfrage(): AdressDublettenQuery | null {
+    if (!this.neuOffen()) return null;
+    const v = this.neuForm.getRawValue();
+    const street = v.street.trim();
+    const postal_code = v.postal_code.trim();
+    const city = v.city.trim();
+    // Straße allein träfe quer durch die Republik — PLZ oder Ort muss dazu.
+    if (!street || (!postal_code && !city)) return null;
+    return {
+      street,
+      house_number: v.house_number.trim() || null,
+      postal_code: postal_code || null,
+      city: city || null,
+    };
   }
 
   onSearch(value: string): void {
@@ -189,12 +236,20 @@ export class Liegenschaften {
       country_code: 'DE',
     });
     this.formularMeldung.set(null);
+    this.dubletten.set([]);
     this.neuOffen.set(true);
   }
 
   neuSchliessen(): void {
     if (this.neuLaedt()) return;
     this.neuOffen.set(false);
+    this.dubletten.set([]);
+  }
+
+  /** „Öffnen" an einem Treffer: Dialog zu, danach navigiert der RouterLink. */
+  protected dubletteGeoeffnet(): void {
+    this.neuOffen.set(false);
+    this.dubletten.set([]);
   }
 
   neuAbsenden(): void {
@@ -221,6 +276,7 @@ export class Liegenschaften {
       next: (prop) => {
         this.neuLaedt.set(false);
         this.neuOffen.set(false);
+        this.dubletten.set([]);
         this.meldung.set({
           art: 'erfolg',
           text: `Liegenschaft „${prop.name}“ (Nr. ${prop.property_number}) wurde angelegt.`,

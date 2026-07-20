@@ -2,6 +2,8 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import {
+  AdressDubletten,
+  AdressDublettenQuery,
   Building,
   BuildingIn,
   PartyRole,
@@ -35,6 +37,23 @@ export class PropertyService {
       params = params.set('status', query.status);
     }
     return this.http.get<PropertyPage>(this.base, { params });
+  }
+
+  /**
+   * Liegenschaften suchen, die zu einer eingetippten Adresse passen könnten —
+   * Grundlage der Dublettenwarnung bei der Erfassung. Reine Leseabfrage; das
+   * Ergebnis ist ein HINWEIS, kein Blocker (Anlegen bleibt immer erlaubt).
+   */
+  adressDubletten(query: AdressDublettenQuery): Observable<AdressDubletten> {
+    let params = new HttpParams().set('street', query.street.trim());
+    const haus = query.house_number?.trim();
+    if (haus) params = params.set('house_number', haus);
+    const plz = query.postal_code?.trim();
+    if (plz) params = params.set('postal_code', plz);
+    const ort = query.city?.trim();
+    if (ort) params = params.set('city', ort);
+    if (query.limit) params = params.set('limit', query.limit);
+    return this.http.get<AdressDubletten>(`${this.base}/adress-dubletten`, { params });
   }
 
   get(id: string): Observable<PropertyDetail> {

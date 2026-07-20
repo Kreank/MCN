@@ -29,8 +29,8 @@
       <app-referenz-wahl
         [control]="form.controls.existing_party_id"
         label="Schon Kontakt?"
-        hinweis="Anrufer suchen — ist er schon erfasst, hier wählen (kein Duplikat). Neu? Feld leer lassen."
-        platzhalter="Kontakt suchen (Name)"
+        hinweis="Anrufer suchen — Name, Telefonnummer, E-Mail oder Adresse genügen. Ist er schon erfasst, hier wählen (kein Duplikat). Neu? Feld leer lassen."
+        platzhalter="Name, Telefon, E-Mail oder Adresse"
         [suche]="kontaktSuche"
       />
 
@@ -93,10 +93,11 @@
       <!-- Dedup: zuerst prüfen, ob das Objekt schon erfasst ist. Wird eins
            gewählt, entfallen die Adressfelder — es entsteht kein Duplikat. -->
       <app-referenz-wahl
+        #liegenschaftWahl
         [control]="form.controls.existing_property_id"
         label="Schon erfasst?"
-        hinweis="Objekt suchen — ist es schon im System, hier wählen (verhindert Duplikate). Neu? Feld leer lassen und unten anlegen."
-        platzhalter="Liegenschaft suchen (Name, Nummer, Ort)"
+        hinweis="Objekt suchen — auch die genannte Straße oder Hausnummer führt zum Treffer. Ist es schon im System, hier wählen (verhindert Duplikate). Neu? Feld leer lassen und unten anlegen."
+        platzhalter="Name, Objektnummer oder Adresse"
         [suche]="liegenschaftSuche"
       />
 
@@ -138,6 +139,15 @@
             autocomplete="address-level2"
           />
         </div>
+
+        <!-- Hinweis, kein Blocker: Wer keinen der Treffer übernimmt, legt ganz
+             normal neu an. Steht direkt unter den Adressfeldern, damit der
+             Bezug ohne Suchen klar ist. -->
+        <app-adress-dubletten
+          [treffer]="dubletten()"
+          modus="uebernehmen"
+          (uebernehmen)="uebernehmen($event)"
+        />
       }
     </fieldset>
 

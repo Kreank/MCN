@@ -1,15 +1,24 @@
-import { Component, inject, signal } from '@angular/core';
+import { Component, inject, signal, viewChild } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { Router, RouterLink } from '@angular/router';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
-import { map } from 'rxjs';
+import { map, startWith } from 'rxjs';
 import { ProjektService } from '../../core/projekt.service';
 import { PropertyService } from '../../core/property.service';
 import { PartyService } from '../../core/party.service';
 import { CasePriority, QuickIntakeIn } from '../../core/projekt.model';
-import { PropertyType } from '../../core/property.model';
+import {
+  AdressDublettenQuery,
+  AdressTreffer,
+  PropertyType,
+} from '../../core/property.model';
 import { Feld, FeldOption } from '../../shared/formular/feld';
 import { ReferenzWahl, RefSuche } from '../../shared/formular/referenz-wahl';
+import { partyRefOption, propertyRefOption } from '../../shared/formular/ref-merkmale';
+import {
+  AdressDublettenHinweis,
+  adressDublettenStrom,
+} from '../../shared/adress-dubletten/adress-dubletten';
 import { apiFehlerZuweisen } from '../../shared/formular/api-fehler';
 import {
   felderAlsBeruehrtMarkieren,
@@ -26,7 +35,7 @@ import {
  */
 @Component({
   selector: 'app-schnellerfassung',
-  imports: [RouterLink, ReactiveFormsModule, Feld, ReferenzWahl],
+  imports: [RouterLink, ReactiveFormsModule, Feld, ReferenzWahl, AdressDublettenHinweis],
   templateUrl: './schnellerfassung.html',
   styleUrl: './schnellerfassung.scss',
 })
@@ -63,23 +72,30 @@ export class Schnellerfassung {
   /** ID des gewählten BESTEHENDEN Kontakts — leer = neuen anlegen. */
   protected readonly bestehenderKontaktId = signal<string>('');
 
-  /** Suche über bestehende Liegenschaften (Name/Nummer/Ort). */
+  /**
+   * Suche über bestehende Liegenschaften. Der Server sucht auch über
+   * Straße/Hausnummer/PLZ/Ort und über abweichende Gebäudeadressen — der
+   * Mitarbeiter am Telefon tippt die genannte Adresse ein, nicht den
+   * Objektnamen, den er nicht kennt.
+   */
   protected readonly liegenschaftSuche: RefSuche = (q) =>
-    this.propertySvc.list({ page: 1, page_size: 20, q }).pipe(
-      map((p) =>
-        p.items.map((x) => ({
-          id: x.id,
-          label: x.name,
-          sub: `${x.property_number} · ${x.city}`,
-        })),
-      ),
-    );
+    this.propertySvc
+      .list({ page: 1, page_size: 20, q })
+      .pipe(map((p) => p.items.map(propertyRefOption)));
 
-  /** Suche über bestehende Kontakte (Name). */
+  /** Suche über bestehende Kontakte — Name, Telefon, E-Mail, Adresse. */
   protected readonly kontaktSuche: RefSuche = (q) =>
-    this.partySvc.list({ page: 1, page_size: 20, q }).pipe(
-      map((p) => p.items.map((x) => ({ id: x.id, label: x.display_name }))),
-    );
+    this.partySvc
+      .list({ page: 1, page_size: 20, q })
+      .pipe(map((p) => p.items.map(partyRefOption)));
+
+  /** Liegenschafts-Picker, um eine Übernahme aus der Warnung anzuzeigen. */
+  // `read` ist Pflicht: Eine Suche nach dem Typ fände die ERSTE `ReferenzWahl`
+  // im Template — das ist der Kontakt-Picker, nicht der für die Liegenschaft.
+  private readonly liegenschaftWahl = viewChild('liegenschaftWahl', { read: ReferenzWahl });
+
+  /** Treffer der Live-Dublettenprüfung an den Adressfeldern. */
+  protected readonly dubletten = signal<AdressTreffer[]>([]);
 
   protected readonly form = this.fb.group({
     // Bestehende Liegenschaft (Dedup) — leer = neue anlegen (Felder unten).
@@ -165,6 +181,52 @@ export class Schnellerfassung {
           f.updateValueAndValidity({ emitEvent: false });
         }
       });
+
+    // Live-Dublettenwarnung: Wer die Adresse eintippt, sieht sofort, ob es das
+    // Objekt schon gibt — auch dann, wenn er es über den Picker nicht gefunden
+    // hätte (WEG unter anderem Namen, andere Hausnummer derselben Gemeinschaft).
+    adressDublettenStrom(
+      this.propertySvc,
+      this.form.valueChanges.pipe(
+        startWith(null),
+        map(() => this.dublettenAbfrage()),
+      ),
+    )
+      .pipe(takeUntilDestroyed())
+      .subscribe((t) => this.dubletten.set(t));
+  }
+
+  /**
+   * Abfrageparameter der Dublettenprüfung — `null`, wenn nicht geprüft wird.
+   *
+   * Vorbedingungen: Es ist KEINE bestehende Liegenschaft gewählt (dann sind die
+   * Adressfelder ohnehin ausgeblendet und die Frage beantwortet), Straße ist
+   * gefüllt UND PLZ oder Ort ist gefüllt. Eine Straße allein träfe quer durch
+   * die Republik.
+   */
+  private dublettenAbfrage(): AdressDublettenQuery | null {
+    const v = this.form.getRawValue();
+    if (v.existing_property_id) return null;
+    const street = v.street.trim();
+    const postal_code = v.postal_code.trim();
+    const city = v.city.trim();
+    if (!street || (!postal_code && !city)) return null;
+    return {
+      street,
+      house_number: v.house_number.trim() || null,
+      postal_code: postal_code || null,
+      city: city || null,
+    };
+  }
+
+  /**
+   * Treffer übernehmen: Die bestehende Liegenschaft wird zur Auswahl, die
+   * Adressfelder entfallen (die Validator-Umschaltung oben greift automatisch)
+   * und die Warnung räumt sich weg, weil `dublettenAbfrage()` jetzt `null`
+   * liefert.
+   */
+  protected uebernehmen(t: AdressTreffer): void {
+    this.liegenschaftWahl()?.auswahlSetzen(propertyRefOption(t.property));
   }
 
   absenden(): void {

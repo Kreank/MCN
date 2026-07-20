@@ -1,0 +1,89 @@
+<!--
+  Die Ansage-Region steht IMMER im DOM und wird nur BEFÜLLT. Ein role="status",
+  das gemeinsam mit seinem Inhalt eingefügt wird, verschlucken etliche
+  Screenreader — die Region muss vor ihrer Änderung existieren. Sie ist off-
+  screen (`sr-only`, position:absolute) und damit weder sichtbar noch ein
+  Flex-Element im Formular: kein Leerraum, wenn es keine Treffer gibt.
+
+  Die Ansage trägt nur Trefferzahl + Kernfrage. Das sichtbare Panel selbst ist
+  bewusst KEINE Live-Region: Bei jeder Änderung würde sonst die komplette
+  Trefferliste samt Merkmalen erneut vorgelesen.
+-->
+<p class="sr-only" role="status" aria-live="polite">{{ ansage() }}</p>
+
+@if (treffer().length) {
+  <div class="dublett" role="group" [attr.aria-label]="kopfzeile()">
+    <p class="dublett__kopf">
+      <!-- Status nie nur über Farbe: Zeichen + Zahl + Klartext. -->
+      <span class="dublett__mark" aria-hidden="true">!</span>
+      <span class="dublett__kopf-text">
+        <strong class="dublett__kopf-zahl">{{ kopfzeile() }}</strong>
+        <span class="dublett__kopf-frage">{{ frage() }}</span>
+      </span>
+    </p>
+
+    <ul class="dublett__liste">
+      @for (t of treffer(); track t.property.id) {
+        @let ms = merkmale(t.property);
+        <li class="dublett__eintrag">
+          <p class="dublett__grund">
+            <span class="dublett__art">{{ artLabel(t.art) }}</span>
+            <span class="dublett__grund-text">{{ t.grund }}</span>
+          </p>
+
+          @if (t.art === 'STRASSE') {
+            <p class="dublett__weg">
+              Die Hausnummer weicht ab — eine WEG kann mehrere Hausnummern
+              umfassen. Es kann trotzdem die richtige Liegenschaft sein.
+            </p>
+          }
+
+          <p class="dublett__name">{{ t.property.name }}</p>
+          <p class="dublett__adresse">
+            <span class="dublett__nummer">Nr. {{ t.property.property_number }}</span>
+            @if (t.property.address_line) {
+              <span>{{ t.property.address_line }}</span>
+            } @else {
+              <span>{{ t.property.city }}</span>
+            }
+          </p>
+
+          @if (ms.length) {
+            <dl class="dublett__merkmale">
+              @for (m of ms; track m.label) {
+                <div class="dublett__merkmal">
+                  <dt class="dublett__merkmal-label">{{ m.label }}</dt>
+                  <dd class="dublett__merkmal-wert">{{ m.wert }}</dd>
+                </div>
+              }
+            </dl>
+          }
+
+          <div class="dublett__aktion">
+            @if (modus() === 'uebernehmen') {
+              <button
+                type="button"
+                class="btn btn--klein"
+                [attr.aria-label]="'Liegenschaft „' + t.property.name + '“ übernehmen'"
+                (click)="uebernehmen.emit(t)"
+              >
+                Übernehmen
+              </button>
+            } @else {
+              <a
+                class="btn btn--klein"
+                [routerLink]="['/liegenschaften', t.property.id]"
+                [attr.aria-label]="'Liegenschaft „' + t.property.name + '“ öffnen'"
+                (click)="oeffnen.emit(t)"
+              >
+                Öffnen
+              </a>
+            }
+          </div>
+        </li>
+      }
+    </ul>
+
+    <p class="dublett__fuss">{{ fusszeile() }}</p>
+  </div>
+}

@@ -28,11 +28,20 @@ from ninja.errors import HttpError
 from ninja.responses import Status
 from ninja.security import django_auth
 
+from django.db.models import Exists, OuterRef
+
 from api.objektgrenze import guard_party
 from api.permissions import require, require_scoped
 from db_core.models import ContactPoint, Party, PartyAddress, PartyRelationship
 from db_core.services import identity as identity_service
-from db_core.services import objektsicht
+from db_core.services import kontakt_steckbrief, objektsicht
+from db_core.services.textsuche import (
+    feld_q,
+    kontaktwege_q,
+    norm,
+    tokenisieren,
+    tokens_q,
+)
 
 router = Router()
 
@@ -69,6 +78,15 @@ class PartyOut(Schema):
     party_type: str
     display_name: str
     status: str
+
+    # --- Steckbrief (Dublettenvermeidung) ---------------------------------
+    # Alle Felder mit Default: `PartyDetailOut` erbt von hier und füllt sie
+    # nicht — das Detail zeigt Kontaktwege und Adressen ohnehin als eigene
+    # Routen. Ohne Defaults wäre die Detailroute mit dieser Erweiterung kaputt.
+    telefon: str | None = None
+    email: str | None = None
+    address_line: str | None = None
+    objekte: list[str] = []
 
 
 class PartyListOut(Schema):
@@ -230,13 +248,28 @@ def list_parties(
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=100),
 ):
-    """Parties auflisten: Suche (display_name), Typ-/Statusfilter, Pagination.
+    """Kontakte auflisten: Suche **über Name, Kontaktwege und Adresse**, Filter, Seiten.
+
+    **Die Suche geht über die Kontaktwege, nicht nur über den Namen.** Wer einen
+    Anruf entgegennimmt, hat die Nummer — nicht den Namen. Fand die Liste nur
+    `display_name`, legte der Mitarbeiter denselben Herrn Meier zum vierten Mal an.
+
+    **Telefonnummern werden auf reine Ziffern normalisiert.** Getippt wird „0170
+    1234567", gespeichert ist „+49 170 1234567" — ein Textvergleich fände das nie.
+    Ein Token, das nur aus Ziffern besteht, wird deshalb zusätzlich gegen die
+    Ziffernform des Kontaktwegs geprüft (`textsuche.kontaktwege_q`).
+
+    Jede Zeile trägt ihren **Steckbrief** (Telefon, E-Mail, Adresse, bis zu drei
+    Objekte mit Rolle) — gebündelt geladen, nicht je Zeile.
 
     Ohne expliziten Statusfilter werden zusammengeführte (MERGED) Parties
     ausgeblendet; wer MERGED sehen will, setzt status=MERGED gezielt.
 
     Scope 'EIGENE': nur Kontakte an meinen Objekten (`distinct()` — derselbe Kontakt
-    kann über mehrere Wege an mehreren meiner Objekte hängen).
+    kann über mehrere Wege an mehreren meiner Objekte hängen). Der Steckbrief bekommt
+    Scope und Akteur mitgereicht: Die Zeilenbegrenzung hier gilt den **Parties**, das
+    Feld `objekte` nennt aber **Liegenschaften** — ein Kontakt an meinem Objekt darf
+    nicht die Namen seiner fremden Objekte mitbringen.
     """
     actor, scope = require_scoped(request, "identity", "LESEN")
     qs = Party.objects.all()
@@ -244,7 +277,7 @@ def list_parties(
         qs = qs.filter(objektsicht.eigene_party_q(actor)).distinct()
 
     if filters.q:
-        qs = qs.filter(display_name__icontains=filters.q)
+        qs = _kontaktsuche(qs, filters.q)
     if filters.party_type:
         qs = qs.filter(party_type=filters.party_type)
     if filters.status:
@@ -256,10 +289,61 @@ def list_parties(
 
     total = qs.count()
     start = (page - 1) * page_size
-    items = list(qs[start:start + page_size])
+    seite = list(qs[start:start + page_size])
+    # scope/actor durchreichen: Die Begrenzung oben gilt den Parties, `objekte`
+    # nennt aber Liegenschaften — die Objektgrenze zieht der Steckbrief selbst.
+    briefe = kontakt_steckbrief.steckbriefe(
+        [p.id for p in seite], scope=scope, actor=actor
+    )
+    leer = kontakt_steckbrief.KontaktSteckbrief()
+    items = []
+    for p in seite:
+        s = briefe.get(p.id, leer)
+        items.append(PartyOut(
+            id=p.id,
+            party_type=p.party_type,
+            display_name=p.display_name,
+            status=p.status,
+            telefon=s.telefon,
+            email=s.email,
+            address_line=s.address_line,
+            objekte=s.objekte,
+        ))
     return PartyListOut(
         items=items, total=total, page=page, page_size=page_size
     )
+
+
+def _kontaktsuche(qs, begriff):
+    """Tokensuche über Namen, Firmendaten, Kontaktwege und Adressfelder."""
+    tokens = tokenisieren(begriff)
+    if not tokens:
+        return qs
+    qs = qs.annotate(
+        n_display=norm("display_name"),
+        n_first=norm("person__first_name"),
+        n_last=norm("person__last_name"),
+        n_legal=norm("organization__legal_name"),
+    )
+    felder = ("n_display", "n_first", "n_last", "n_legal")
+
+    def beziehungen(token):
+        adresse = (
+            PartyAddress.objects.filter(party_id=OuterRef("pk"))
+            .annotate(
+                a_street=norm("address__street"),
+                a_hn=norm("address__house_number"),
+                a_plz=norm("address__postal_code"),
+                a_city=norm("address__city"),
+            )
+            .filter(feld_q(("a_street", "a_hn", "a_plz", "a_city"), token))
+        )
+        return [kontaktwege_q("party_id", token), Exists(adresse)]
+
+    # Bewusst `Exists` statt Joins über Kontaktwege/Adressen: Ein Join würde die
+    # Zeile je Kontaktweg vervielfachen und `total` verfälschen. Die 1:1-Joins auf
+    # person/organization sind unkritisch.
+    return qs.filter(tokens_q(felder, tokens, beziehungen))
 
 
 def _party_detail(party_id):
