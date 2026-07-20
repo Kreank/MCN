@@ -404,7 +404,7 @@ export class AnrufDialog {
    *
    * Der Weg wird ZUERST gesetzt und die Pflichtfelder daran ausgerichtet, erst
    * danach validiert. Sonst prüfte die Validierung gegen den alten Weg: Der erste
-   * Klick auf „Zur Entscheidung vorlegen" liefe gegen einen noch geforderten
+   * Klick auf „Zur Freigabe vorlegen" liefe gegen einen noch geforderten
    * Verantwortungsbereich, dessen Feld in diesem Moment schon ausgeblendet ist —
    * genau der wortlose Abbruch an einem unsichtbaren Feld, den die Umschaltung
    * bei Kontakt und Objekt oben vermeidet (WCAG 3.3.1).

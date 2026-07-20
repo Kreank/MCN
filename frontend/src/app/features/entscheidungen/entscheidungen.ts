@@ -1,5 +1,5 @@
 /**
- * Zur Entscheidung — die Arbeitsliste der technischen Leitung.
+ * Auftragsfreigabe — die Arbeitsliste der technischen Leitung.
  *
  * Gegenstück zum Vorlege-Weg im Anruf-Dialog: Was die Disposition fachlich nicht
  * entscheiden konnte, steht hier und wartet. Fachlich sind das Aufträge in

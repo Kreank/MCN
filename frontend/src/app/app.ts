@@ -50,7 +50,7 @@ export class App {
     // statt Renummerierung der Folgepunkte.
     {
       path: '/entscheidungen',
-      label: 'Zur Entscheidung',
+      label: 'Auftragsfreigabe',
       mark: '06',
       recht: ['workflow', 'FREIGEBEN'],
     },
@@ -72,7 +72,7 @@ export class App {
     // Vier-Augen-Freigaben sind bereichsübergreifende Governance (Bankdaten,
     // Rechnungskorrektur) — sie hängen an keinem Fachbereich, stehen aber bei
     // der Arbeitsorganisation. Zwischenschritt 62 statt Renummerierung.
-    { path: '/freigaben', label: 'Freigaben', mark: '62', recht: ['security', 'LESEN'] },
+    { path: '/freigaben', label: 'Vier-Augen-Freigaben', mark: '62', recht: ['security', 'LESEN'] },
     // KI-Vorschläge (ai_proposal): die Review-Queue der KI — schlägt vor, der
     // Mensch nimmt an. `nurAlle`: die Liste steht auf `require` (fail-closed), ein
     // Konto mit row_scope EIGENE bekommt 403. Neben den Freigaben (Governance).

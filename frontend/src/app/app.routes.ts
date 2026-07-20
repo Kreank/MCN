@@ -191,7 +191,7 @@ export const routes: Routes = [
         // „Freigabe" in der Auftragsliste erreichbar.
         path: 'entscheidungen',
         pathMatch: 'full',
-        title: 'Zur Entscheidung — Mitra Sanitär',
+        title: 'Auftragsfreigabe — Mitra Sanitär',
         canActivate: [darfGuard('workflow', 'FREIGEBEN')],
         loadComponent: () =>
           import('./features/entscheidungen/entscheidungen').then((m) => m.Entscheidungen),
@@ -334,7 +334,7 @@ export const routes: Routes = [
         // Vier-Augen-Anträge. Die Liste verlangt nur security/LESEN; Genehmigen
         // und Ablehnen gatet der Server zusätzlich mit security/FREIGEBEN.
         path: 'freigaben',
-        title: 'Freigaben — Mitra Sanitär',
+        title: 'Vier-Augen-Freigaben — Mitra Sanitär',
         canActivate: [darfGuard('security', 'LESEN')],
         loadComponent: () => import('./features/freigaben/freigaben').then((m) => m.Freigaben),
       },
