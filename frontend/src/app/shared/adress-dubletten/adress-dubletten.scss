@@ -1,0 +1,191 @@
+// =============================================================================
+// Dublettenhinweis an den Adressfeldern.
+//
+// Amber (--warn-tint / --warn-ink) ist der Ton für „schau nochmal hin" — nicht
+// Rot: Es ist kein Fehler, das Anlegen bleibt jederzeit erlaubt. Alle Farben
+// kommen aus den Marken-Tokens; die tragen Light und Dark von sich aus, und der
+// Text nimmt nie die Reinform-Orange auf hellem Grund (Kontrast 2,7:1).
+// Farbe ist nie alleiniger Träger: Zeichen „!" + Zahl + Klartext.
+// =============================================================================
+
+// `contents`: Der Host verschwindet aus dem Layout, das Panel wird direkt zum
+// Kind des Formulars. Ohne das bliebe der Host ein leeres Flex-Element im
+// Dialogformular und risse dort eine sichtbare Lücke, obwohl nichts zu sehen
+// ist (`.dialog-form` ist ein Flex-Container mit `gap`).
+:host {
+  display: contents;
+}
+
+.dublett {
+  margin-top: var(--space-4);
+  padding: var(--space-4);
+  border: 1.5px solid color-mix(in srgb, var(--warn-ink) 45%, var(--line-strong));
+  border-left-width: 3px;
+  border-radius: var(--radius);
+  background: var(--warn-tint);
+  animation: dublett-auf 0.18s ease-out;
+}
+
+@keyframes dublett-auf {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dublett {
+    animation: none;
+  }
+}
+
+// ------------------------------- Kopf ---------------------------------------
+.dublett__kopf {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-3);
+  color: var(--warn-ink);
+}
+.dublett__mark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 0.85rem;
+  line-height: 1;
+}
+.dublett__kopf-text {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--space-2);
+  align-items: baseline;
+}
+.dublett__kopf-zahl {
+  font-size: var(--step-0);
+}
+.dublett__kopf-frage {
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+// ------------------------------ Trefferliste --------------------------------
+.dublett__liste {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.dublett__eintrag {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.dublett__grund {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0;
+}
+.dublett__art {
+  flex: none;
+  padding: 0.1rem 0.4rem;
+  border: 1px solid color-mix(in srgb, var(--warn-ink) 55%, var(--line-strong));
+  border-radius: var(--radius-sm);
+  background: var(--warn-tint);
+  color: var(--warn-ink);
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.dublett__grund-text {
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+// Der WEG-Fall braucht einen ganzen Satz: „andere Hausnummer" liest sich sonst
+// wie „falsches Objekt", obwohl genau das Gegenteil gemeint sein kann.
+.dublett__weg {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--accent);
+  background: var(--neutral-tint);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+.dublett__name {
+  margin: 0;
+  font-size: var(--step-0);
+  font-weight: 600;
+  color: var(--ink);
+}
+.dublett__adresse {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--space-3);
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+.dublett__nummer {
+  font-family: var(--font-mono);
+  color: var(--ink-hint);
+}
+
+// ------------------------------- Merkmale -----------------------------------
+.dublett__merkmale {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.15rem var(--space-4);
+  margin: 0;
+  padding: 0;
+}
+.dublett__merkmal {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.dublett__merkmal-label {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-hint);
+}
+.dublett__merkmal-wert {
+  margin: 0; // <dd>-Default-Einzug
+  min-width: 0;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+  overflow-wrap: anywhere;
+}
+
+.dublett__aktion {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.dublett__fuss {
+  margin: var(--space-3) 0 0;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}

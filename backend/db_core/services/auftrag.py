@@ -3,9 +3,9 @@ Verantwortungsbereich bestätigen und Statuswechsel durchführen.
 
 Wie die übrigen Services laufen alle Writes über business_transaction (setzt
 app.current_user_id für Audit/Statusprotokoll; bei begründungspflichtigen
-Übergängen zusätzlich app.status_reason). Auftragsnummern (AU-…) vergibt die DB
-über workflow.next_number; das Model lässt die Spalte ungesetzt (db_default) und
-lädt frisch nach.
+Übergängen zusätzlich app.status_reason). Auftragsnummern (AU-HZG-26-…) vergibt
+die DB per BEFORE-INSERT-Trigger aus dem Gewerk (workflow.assign_gewerk_number,
+Migration 0120); das Model lässt die Spalte ungesetzt und lädt frisch nach.
 
 Der Auftrag hat einen Trigger-gestützten Statusautomaten. Die erlaubten
 Übergänge und die Begründungspflicht spiegeln workflow.status_transition
@@ -25,6 +25,7 @@ from db_core.gate_errors import as_business_error
 from db_core.models import (
     Project,
     Property,
+    Trade,
     ServiceCase,
     ServiceJob,
     TechnicalAsset,
@@ -130,6 +131,7 @@ def create_work_order(
     customer_reference=None,
     is_emergency=False,
     asset_id=None,
+    trade_id=None,
 ):
     """Legt einen workflow.work_order (Auftrag) im Initialstatus ENTWURF an.
 
@@ -144,6 +146,23 @@ def create_work_order(
     erzwingt über den zusammengesetzten FK (asset_id, property_id), dass die Anlage
     zu dieser Liegenschaft gehört; hier wird es vorab geprüft, damit daraus ein 422
     wird und kein 500.
+
+    `trade_id` (Gewerk, 0120) ist optional — beim Annehmen ist oft noch unklar, ob
+    Heizung oder Sanitär. Es bestimmt zugleich das Kürzel in der Auftragsnummer
+    (``AU-HZG-26-0142``; ohne Gewerk ``AU-26-0143``).
+
+    **Die Nummer ist ein Schnappschuss, das Gewerk bleibt änderbar.** Wird das
+    Gewerk später korrigiert, behält der Auftrag seine Nummer — sie ist vergeben,
+    steht auf Ausdrucken und in Fremdsystemen und wird deshalb nie umgeschrieben
+    (dieselbe Regel wie bei Belegnummern). Ein Auftrag kann also
+    ``AU-HZG-26-0142`` heißen und im Feld `trade` Sanitär tragen.
+
+    Das ist bewusst so gewählt: Die Alternative wäre, das Gewerk nach der Anlage
+    einzufrieren — dann wäre die Nummer immer wahr, aber eine bei der Annahme
+    falsch getroffene Einordnung ließe sich nur durch einen NEUEN Auftrag
+    heilen. Korrigierbarkeit wiegt hier schwerer als die Lesbarkeit der Nummer
+    im Ausnahmefall. Auswertungen und Filter lesen immer `trade`, nie die
+    Nummer.
     """
     if not title or not title.strip():
         raise ValueError("title darf nicht leer sein.")
@@ -154,6 +173,7 @@ def create_work_order(
     ensure_exists(Property, property_id, "Liegenschaft")
     ensure_exists(Project, project_id, "Projekt")
     ensure_exists(ServiceCase, service_case_id, "Vorgang")
+    ensure_exists(Trade, trade_id, "Gewerk")
     if asset_id is not None:
         asset_property_id = (
             TechnicalAsset.objects.filter(pk=asset_id)
@@ -180,8 +200,11 @@ def create_work_order(
             customer_reference=customer_reference,
             desired_date=desired_date,
             is_emergency=is_emergency,
+            trade_id=trade_id,
             version=1,
         )
+        # Die Auftragsnummer vergibt erst der BEFORE-INSERT-Trigger aus dem
+        # Gewerk (0120) — vor dem Nachladen steht sie nicht in der Instanz.
         order.refresh_from_db()
     return order
 

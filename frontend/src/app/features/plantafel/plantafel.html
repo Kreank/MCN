@@ -104,7 +104,13 @@
         <button type="button" class="btn" (click)="filterZuruecksetzen()">Filter zurücksetzen</button>
       }
       @if (darfPlanen()) {
-        <button type="button" class="btn btn--primary" (click)="neuerTermin()">
+        <!-- Steht VOR „Neuer Termin", weil es der häufigere Weg ist: Der Kunde
+             ist am Telefon und es gibt noch keinen Auftrag. „Neuer Termin"
+             setzt einen bestehenden voraus. -->
+        <button type="button" class="btn btn--primary" (click)="anrufAnnehmen()">
+          <span aria-hidden="true">☎</span> Anruf annehmen
+        </button>
+        <button type="button" class="btn" (click)="neuerTermin()">
           <span aria-hidden="true">＋</span> Neuer Termin
         </button>
       }
@@ -642,7 +648,7 @@
                         }
 
                         @if (darfUmplanen()) {
-                          <div class="tile__aktionen">
+                          <div class="tile__aktionen" appSchwebendesPanel>
                             <button
                               type="button"
                               class="minibtn tile__griff"
@@ -1031,4 +1037,16 @@
       </div>
     </form>
   </app-dialog>
+
+  <!-- Anruf annehmen: Kunde, Auftrag und Termin in einem Durchgang. Eigene
+       Komponente statt eines weiteren Zweigs im Termin-Dialog — die beiden
+       teilen kein einziges Feld außer dem Zeitpunkt. -->
+  <app-anruf-dialog
+    [offen]="anrufOffen()"
+    [startDatum]="anrufDatum()"
+    [startZeit]="anrufZeit()"
+    [mitarbeiterVorauswahl]="anrufMitarbeiter()"
+    (angelegt)="anrufFertig($event)"
+    (abbrechen)="anrufOffen.set(false)"
+  />
 </section>

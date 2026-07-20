@@ -2,6 +2,8 @@ import {
   Component,
   DestroyRef,
   ElementRef,
+  Injector,
+  afterNextRender,
   effect,
   inject,
   input,
@@ -21,12 +23,26 @@ import {
 } from 'rxjs';
 import { feldFehlerText } from './feld-fehler';
 
+/**
+ * Ein Entscheidungsmerkmal an einer Referenz (Eigentümer, Telefon, Einheiten …).
+ * Merkmale beantworten die Frage „ist das WIRKLICH das gesuchte Objekt?" — sie
+ * erscheinen in der Trefferzeile UND am gewählten Chip, damit die Entscheidung
+ * auch nach der Auswahl nachprüfbar bleibt.
+ */
+export interface RefMerkmal {
+  label: string;
+  wert: string;
+}
+
 /** Eine auswählbare Referenz (Kontakt, Auftrag, Liegenschaft …). */
 export interface RefOption {
   id: string;
   label: string;
   /** Optionale Zweitzeile (Nummer, Ort …). */
   sub?: string | null;
+  /** Optionale Merkmale. Leere/unbekannte Werte gehören NICHT hierher (kein
+   *  „—"-Rauschen) — der Aufrufer filtert sie weg. */
+  merkmale?: RefMerkmal[];
 }
 
 /** Ladefunktion: liefert zum Suchbegriff die passenden Optionen. */
@@ -83,7 +99,9 @@ export class ReferenzWahl {
 
   private readonly such$ = new Subject<string>();
   private readonly destroyRef = inject(DestroyRef);
+  private readonly injector = inject(Injector);
   private readonly sucheInput = viewChild<ElementRef<HTMLInputElement>>('sucheInput');
+  private readonly aendernBtn = viewChild<ElementRef<HTMLButtonElement>>('aendernBtn');
   private valueSub = false;
 
   constructor() {
@@ -130,6 +148,24 @@ export class ReferenzWahl {
     if (this.hinweis()) ids.push(this.hinweisId);
     if (this.fehlerText()) ids.push(this.fehlerId);
     return ids.length ? ids.join(' ') : null;
+  }
+
+  /**
+   * Zugänglicher Name einer Trefferzeile. Die Merkmale werden bewusst IN den
+   * Namen gezogen (statt sie per `aria-describedby` anzuhängen): Bei
+   * `aria-activedescendant` liest der Screenreader die aktive Option vor, und
+   * die Beschreibung folgt dort je nach Kombination verzögert oder gar nicht.
+   * Ein expliziter Name hält außerdem Dekor-Trenner („·") aus der Ansage
+   * heraus und macht aus den Merkmalen lesbare „Label: Wert"-Sätze.
+   *
+   * Der sichtbare Text steht am Anfang des Namens — WCAG 2.5.3 („Label in
+   * Name") bleibt gewahrt.
+   */
+  protected optionName(o: RefOption): string {
+    const teile: string[] = [o.label];
+    if (o.sub) teile.push(o.sub);
+    for (const m of o.merkmale ?? []) teile.push(`${m.label}: ${m.wert}`);
+    return teile.join('. ');
   }
 
   protected aktivOptionId(): string | null {
@@ -210,6 +246,25 @@ export class ReferenzWahl {
     c.setValue(o.id);
     c.markAsDirty();
     c.markAsTouched();
+  }
+
+  /**
+   * Auswahl von AUSSEN setzen (z. B. „Übernehmen" aus einer Dublettenwarnung).
+   * Nötig, weil ein bloßes `control.setValue(id)` zwar die ID hielte, die
+   * sichtbare Auswahl aber leer ließe — Wert und Anzeige liefen auseinander.
+   *
+   * Der Fokus wandert auf „Ändern": Der auslösende Knopf verschwindet in aller
+   * Regel mit der Übernahme, und Fokus auf `<body>` wäre ein Bruch (WCAG 2.4.3).
+   */
+  auswahlSetzen(o: RefOption): void {
+    this.waehlen(o);
+    // `afterNextRender` statt `queueMicrotask`: Der Chip mitsamt „Ändern"-Knopf
+    // entsteht erst mit dem nächsten Rendern. Zoneless taktet die Erkennung
+    // gegen rAF/Timeout — ein Microtask könnte davor laufen und liefe dann ins
+    // Leere (Fokus fiele auf <body>).
+    afterNextRender(() => this.aendernBtn()?.nativeElement.focus(), {
+      injector: this.injector,
+    });
   }
 
   protected zuruecksetzen(): void {

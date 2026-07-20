@@ -4,6 +4,7 @@ import { ActivatedRoute, RouterLink } from '@angular/router';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Mappe, MappeTab } from '../../shared/mappe/mappe';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { vonLokalerEingabe } from '../../shared/datum';
 import { Dateien } from '../../shared/dateien/dateien';
 import { Berichte } from '../../shared/berichte/berichte';
 import { ZielFilter } from '../../core/datei.model';
@@ -362,9 +363,17 @@ export class EinsatzDetail {
     const d = this.daten();
     if (!d || this.nichtBereit(this.terminForm)) return;
     const v = this.terminForm.getRawValue();
+    // Pflichtfeld laut Validator — aber nicht per `!` behaupten: Ein nicht
+    // parsbarer Wert wuerde sonst still als `null` rausgehen und einen 422
+    // ausloesen, den im Formular niemand zuordnen kann.
+    const start = vonLokalerEingabe(v.scheduled_start);
+    if (!start) {
+      this.formularMeldung.set('Bitte einen gueltigen Terminbeginn angeben.');
+      return;
+    }
     this.dialogLaedt.set(true);
     this.svc
-      .setSchedule(d.id, { scheduled_start: v.scheduled_start, scheduled_end: v.scheduled_end || null })
+      .setSchedule(d.id, { scheduled_start: start, scheduled_end: vonLokalerEingabe(v.scheduled_end) })
       .subscribe({
         next: () => this.nachSchreiben('Termin gesetzt.'),
         error: (err) => {
@@ -394,10 +403,16 @@ export class EinsatzDetail {
     const d = this.daten();
     if (!d || this.nichtBereit(this.zeitForm)) return;
     const v = this.zeitForm.getRawValue();
+    const von = vonLokalerEingabe(v.started_at);
+    const bis = vonLokalerEingabe(v.ended_at);
+    if (!von || !bis) {
+      this.formularMeldung.set('Bitte Beginn und Ende der Zeitbuchung angeben.');
+      return;
+    }
     const payload: TimeLogInput = {
       time_type: v.time_type,
-      started_at: v.started_at,
-      ended_at: v.ended_at,
+      started_at: von,
+      ended_at: bis,
       note: v.note.trim() || null,
     };
     this.dialogLaedt.set(true);

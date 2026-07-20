@@ -517,10 +517,14 @@ def create_trade(actor_app_user_id, *, code, label, sort_order=0):
     label = _clean(label)
     if not code:
         raise ValueError("Gewerk-Code ist erforderlich.")
-    # Spiegelt den DB-CHECK trade_code_check; sonst 500 statt 422.
-    if not re.fullmatch(r"[A-Z0-9_]{2,}", code):
+    # Spiegelt den DB-CHECK trade_code_check; sonst 500 statt 422. Der Code ist
+    # zugleich das Kürzel in der Auftragsnummer (AU-HZG-26-0142) — deshalb muss
+    # er mit einem Buchstaben beginnen, sonst wäre er dort nicht mehr vom
+    # Jahresteil zu unterscheiden (Migration 0120).
+    if not re.fullmatch(r"[A-Z][A-Z0-9_]+", code):
         raise ValueError(
-            "Gewerk-Code darf nur A–Z, 0–9 und _ enthalten (mindestens 2 Zeichen)."
+            "Gewerk-Code muss mit einem Buchstaben beginnen und darf nur A–Z, "
+            "0–9 und _ enthalten (mindestens 2 Zeichen)."
         )
     if not label:
         raise ValueError("Gewerk-Bezeichnung ist erforderlich.")

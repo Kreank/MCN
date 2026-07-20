@@ -1618,6 +1618,78 @@ button {
      die Dauer verfaelschen und den Beginn verschieben. */
   min-width: 2.9rem;
 }
+
+/* PLANTAFEL — Kachel-Aktionen im Top Layer (Direktive `appSchwebendesPanel`).
+
+   Das Panel muss die Kachel verlassen, ist aber deren DOM-Kind. Die Kachel ist
+   durch `container-type: inline-size` (oben) ein eigener Stacking-Context —
+   `contain: layout` ist darin enthalten. Ein `z-index` am Panel wirkt deshalb
+   NUR innerhalb der Kachel; nach aussen zaehlt der z-index der Kachel (2), und
+   gegen die gleichrangigen Nachbarkacheln entscheidet die DOM-Reihenfolge:
+   jede weiter unten stehende Kachel gewann. Zusaetzlich schnitt
+   `.board-wrap { overflow: auto }` das Panel an der Unterkante ab.
+
+   Das Popover-Attribut hebt das Element in den Top Layer — ausserhalb jedes
+   Clippings und jeder Stacking-Konkurrenz. Die Direktive setzt `left`/`top`
+   inline (Viewport-Koordinaten, mit Umklappen nach oben bei Platzmangel).
+   Ohne Popover-Unterstuetzung greift unveraendert das absolute Fallback aus
+   `plantafel.scss`.
+
+   Die Selektoren sind bewusst mit `.tile` praefixiert: Die Basisregeln stehen
+   in der Komponenten-SCSS und tragen durch Angulars Emulation ein
+   Attribut-Suffix (`.tile__aktionen[_ngcontent-x]`, Spezifitaet 0,2,0). Ein
+   blosses `.tile__aktionen:popover-open` waere gleich spezifisch — dann
+   entschiede die Reihenfolge im `<head>`, und die haengt daran, dass Angular
+   Komponentenstile zur Laufzeit NACH dem globalen Stylesheet einhaengt. Die
+   Komponentenregel gewaenne. Mit `.tile` davor sind es 0,3,0 und die Frage
+   stellt sich nicht. */
+.tile .tile__aktionen[popover] {
+  /* GESCHLOSSEN bleibt das Panel bewusst im Fluss und damit im Fokus- und
+     Vorlesebaum — `opacity: 0` aus der Basisregel macht es unsichtbar, ohne es
+     zu entfernen. Ein `display: none` (was die UA fuer geschlossene Popover
+     vorsieht, hier aber gegen `display: flex` verliert) waere bequemer, kostete
+     aber zwei Dinge, die nicht verhandelbar sind: Shift+Tab von hinten spraenge
+     ueber die Knoepfe hinweg und koennte sie nie erreichen, und im
+     Browsemodus eines Screenreaders verschwaenden die Kachel-Aktionen ganz.
+
+     Die Phantomposition, die daran frueher haftete, loest nicht das Ausblenden,
+     sondern das Aufraeumen: Die Direktive entfernt die inline gesetzten
+     Viewport-Koordinaten beim Schliessen wieder. Sonst wirkten sie hier als
+     absolute Offsets INNERHALB der Kachel.
+
+     Die UA-Regeln fuer `[popover]` gelten auch im geschlossenen Zustand und
+     zerren an der Box (`position: fixed`, `inset: 0`, `margin: auto`,
+     `width/height: fit-content`). Deshalb wird die Geometrie hier vollstaendig
+     zurueckgeholt, statt sich auf die Basisregel zu verlassen. */
+  position: absolute;
+  inset: auto;
+  top: 100%;
+  left: -1px;
+  margin: 0;
+  width: auto;
+  height: auto;
+  /* UA setzt `overflow: auto` am Popover — auch im geschlossenen Zustand. Heute
+     folgenlos (der Inhalt passt), aber ein Scroll-Container im Fallback waere
+     eine stille Falle. */
+  overflow: visible;
+  /* UA setzt `color: CanvasText` am Popover; eine UA-Deklaration schlaegt
+     Vererbung. Heute unkritisch (die Knoepfe faerben sich selbst), aber sobald
+     jemand reinen Text ins Panel legt, waere es ein Kontrastproblem. */
+  color: inherit;
+}
+.tile .tile__aktionen[popover]:popover-open {
+  /* Im Top Layer positioniert nur noch der Viewport. */
+  position: fixed;
+  /* Die UA-Regeln fuer `[popover]` setzen `inset: 0` und `margin: auto`, um das
+     Popover zu zentrieren. Beides muss weg, sonst zieht `right`/`bottom: 0` die
+     Box auf und die inline gesetzten Koordinaten laufen ins Leere. */
+  inset: auto;
+  margin: 0;
+  /* Das Panel wird nicht mehr ein-/ausgeblendet, sondern ein-/ausgehaengt. */
+  opacity: 1;
+  pointer-events: auto;
+  overflow: visible;
+}
 @container plantafel-kachel (max-width: 8rem) {
   .tile__ort,
   .tile__frei,

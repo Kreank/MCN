@@ -15,6 +15,25 @@ export interface Property {
   property_type: PropertyType;
   status: PropertyStatus;
   city: string;
+
+  // --- Entscheidungsmerkmale (Dublettenvermeidung) --------------------------
+  // Diese Felder füllt der Server nur in LISTEN-Antworten (Suche/Dubletten);
+  // sie sind darum optional typisiert. Wer eine `Property` aus einem Detail
+  // ableitet, darf sie nicht voraussetzen.
+  /** Einzeilige Objektadresse, z. B. „Albrechtstraße 30, 12167 Berlin". */
+  address_line?: string | null;
+  /** Anzeigenamen der Eigentümer/WEG. */
+  eigentuemer?: string[];
+  /** Verwaltungsfirma. */
+  verwaltung?: string | null;
+  /** Erreichbare Telefonnummer zum Objekt. */
+  telefon?: string | null;
+  /** Woher die Nummer stammt, z. B. „Verwaltung Stegos GmbH". */
+  telefon_quelle?: string | null;
+  /** Anzahl erfasster Einheiten. */
+  einheiten_anzahl?: number;
+  /** Abweichende Gebäudeadressen (WEG über mehrere Hausnummern). */
+  gebaeude_adressen?: string[];
 }
 
 export interface PropertyPage {
@@ -30,6 +49,35 @@ export interface PropertyQuery {
   q?: string;
   property_type?: PropertyType | null;
   status?: PropertyStatus | null;
+}
+
+// --- Dublettenprüfung (GET /api/property/properties/adress-dubletten) ------
+/**
+ * Trefferart, absteigend nach Schärfe:
+ * - `EXAKT`    — Straße + Hausnummer + PLZ/Ort stimmen überein.
+ * - `GEBAEUDE` — eine Gebäudeadresse der Liegenschaft passt.
+ * - `STRASSE`  — nur Straße + Ort/PLZ passen, die Hausnummer weicht ab. Das ist
+ *   der WEG-Fall: eine Gemeinschaft kann mehrere Hausnummern umfassen.
+ */
+export type AdressTrefferArt = 'EXAKT' | 'GEBAEUDE' | 'STRASSE';
+
+export interface AdressTreffer {
+  art: AdressTrefferArt;
+  /** Vom Server formulierte Begründung des Treffers. */
+  grund: string;
+  property: Property;
+}
+
+export interface AdressDubletten {
+  treffer: AdressTreffer[];
+}
+
+export interface AdressDublettenQuery {
+  street: string;
+  house_number?: string | null;
+  postal_code?: string | null;
+  city?: string | null;
+  limit?: number;
 }
 
 // --- Detail (GET /api/property/properties/{id}) ----------------------------

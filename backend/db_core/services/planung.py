@@ -1055,6 +1055,7 @@ def create_termin(
     appointment_category_id=None,
     assignee_ids=(),
     resource_ids=(),
+    trade_id=None,
 ):
     """Legt einen Termin mit allem an, was am Board dranhängt.
 
@@ -1082,6 +1083,7 @@ def create_termin(
                 on_site_contact_party_id=on_site_contact_party_id,
                 access_instructions=access_instructions,
                 appointment_category_id=appointment_category_id,
+                trade_id=trade_id,
             )
             for uid in assignee_ids or ():
                 einsatz_service.assign_user(

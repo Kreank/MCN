@@ -15,6 +15,7 @@ import { map } from 'rxjs';
 import { EinsatzService } from '../../core/einsatz.service';
 import { PlanungStammdatenService } from '../../core/planung-stammdaten.service';
 import {
+  AnrufResult,
   AppointmentCategory,
   BacklogJob,
   BoardAbsence,
@@ -42,6 +43,8 @@ import { Dialog } from '../../shared/dialog/dialog';
 import { Feld, FeldOption } from '../../shared/formular/feld';
 import { ReferenzWahl, RefSuche } from '../../shared/formular/referenz-wahl';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { SchwebendesPanel, panelOeffnen } from '../../shared/schwebendes-panel';
+import { AnrufDialog } from '../anruf/anruf-dialog';
 import { VerbotenState, fehlerDetail, fehlerState } from '../../shared/http-fehler';
 
 type ViewState =
@@ -304,6 +307,7 @@ function montagVon(iso: string): string {
   selector: 'app-plantafel',
   imports: [
     RouterLink, PlanungNav, KeinZugriff, ReactiveFormsModule, Dialog, Feld, ReferenzWahl,
+    SchwebendesPanel, AnrufDialog,
   ],
   templateUrl: './plantafel.html',
   styleUrl: './plantafel.scss',
@@ -1330,7 +1334,12 @@ export class Plantafel {
     // Fokus zurück auf GENAU den Auslöser (ein Einsatz mit mehreren Zuweisungen
     // erscheint in jeder Bahn — eine DOM-ID wäre mehrdeutig).
     setTimeout(() => {
-      if (ausloeser?.isConnected) ausloeser.focus();
+      if (!ausloeser?.isConnected) return;
+      // Der Auslöser sitzt im Hover-Panel der Kachel. Geschlossen ist das
+      // `display: none` — `focus()` verpuffte dort und der Fokus fiele in den
+      // `<body>`. Erst aufklappen, dann fokussieren (WCAG 2.4.3).
+      panelOeffnen(ausloeser);
+      ausloeser.focus();
     });
   }
 
@@ -1538,6 +1547,14 @@ export class Plantafel {
   protected readonly art = signal<TerminArt>('auftrag');
   /** Mehrfachauswahl im Dialog (Hero: „Mitarbeiter und Ressourcen zuweisen"). */
   protected readonly gewaehlteMitarbeiter = signal<string[]>([]);
+
+  // Anruf-Dialog (eigener Zustand, damit er sich nicht mit dem Termin-Dialog
+  // ins Gehege kommt — beide dürfen nie gleichzeitig offen sein, aber sie teilen
+  // sich auch keine Felder).
+  protected readonly anrufOffen = signal(false);
+  protected readonly anrufDatum = signal('');
+  protected readonly anrufZeit = signal('');
+  protected readonly anrufMitarbeiter = signal<string[]>([]);
   protected readonly gewaehlteRessourcen = signal<string[]>([]);
   /** Beim Bearbeiten: der Auftrag ist unveränderlich (DB-Trigger WF-01). */
   protected readonly auftragGesperrt = signal(false);
@@ -1837,6 +1854,61 @@ export class Plantafel {
     }
     auftrag.updateValueAndValidity();
     titel.updateValueAndValidity();
+  }
+
+  /**
+   * „Anruf annehmen" — der Weg für den Kunden, der gerade am Telefon ist.
+   *
+   * Bewusst eine Schwester von `neuerTermin()` statt eines Parameters daran: Die
+   * beiden teilen nur den Slot, sonst nichts. `neuerTermin` setzt einen Termin
+   * an einen BESTEHENDEN Auftrag; hier entstehen Kunde, Auftrag und Termin
+   * zusammen. Das in eine Methode zu zwingen hieße, zwei Formulare mit einer
+   * Zustandsmaschine zu bedienen.
+   */
+  anrufAnnehmen(laneIdx?: number, slotIdx?: number): void {
+    if (!this.darfPlanen()) return;
+    const lane = laneIdx !== undefined ? this.lanes()[laneIdx] : null;
+    const band = this.bandEinstellung();
+
+    if (slotIdx !== undefined) {
+      // Aus einer Zelle heraus: exakt der angeklickte Slot.
+      const slot = this.slots()[slotIdx];
+      this.anrufDatum.set(slot.dayIso);
+      const stunde = this.ansicht() === 'tag' ? slot.start.getHours() : band.von + 2;
+      this.anrufZeit.set(`${`${stunde}`.padStart(2, '0')}:00`);
+    } else {
+      // Aus der Kopfleiste: HEUTE und die nächste volle Stunde. Nicht
+      // `slots()[0]` — das wäre in der Wochenansicht der Montag der
+      // angezeigten Woche, mitten in der Woche also ein Datum in der
+      // Vergangenheit. Wer am Telefon einen Termin macht, meint fast nie
+      // rückwirkend.
+      const jetzt = new Date();
+      this.anrufDatum.set(
+        [
+          jetzt.getFullYear(),
+          String(jetzt.getMonth() + 1).padStart(2, '0'),
+          String(jetzt.getDate()).padStart(2, '0'),
+        ].join('-'),
+      );
+      // Ins eingestellte Zeitband klemmen: Nach Feierabend angerufen heißt
+      // Termin am nächsten Arbeitsbeginn, nicht um 23:00.
+      const naechste = Math.min(Math.max(jetzt.getHours() + 1, band.von), band.bis - 1);
+      this.anrufZeit.set(`${`${naechste}`.padStart(2, '0')}:00`);
+    }
+
+    this.anrufMitarbeiter.set(lane?.kind === 'USER' ? [lane.id] : []);
+    this.anrufOffen.set(true);
+  }
+
+  /** Der Durchstich hat Kunde, Auftrag und Termin angelegt. */
+  anrufFertig(res: AnrufResult): void {
+    this.anrufOffen.set(false);
+    this.sagen(
+      res.im_rueckstand
+        ? `Auftrag ${res.order_number} angelegt und freigegeben. Der Termin liegt im Rückstand.`
+        : `Auftrag ${res.order_number} angelegt und freigegeben, Termin ${res.job_number} geplant.`,
+    );
+    this.refresh();
   }
 
   /** „+ Neuer Termin" (Kopfleiste) oder Klick in eine leere Zelle. */

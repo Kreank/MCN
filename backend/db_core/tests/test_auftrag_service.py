@@ -5,12 +5,13 @@ Tore (deferred Constraint-Trigger) sind scharf. app_user aus conftest;
 Liegenschaften/Parties über die bestehenden Services.
 """
 import re
+import uuid
 
 import pytest
 from django.db import Error, connection
 
 from db_core.db_context import business_transaction
-from db_core.models import WorkOrder, WorkOrderParty
+from db_core.models import Trade, WorkOrder, WorkOrderParty
 from db_core.services import auftrag as auftrag_service
 from db_core.services import identity as identity_service
 from db_core.services import property as property_service
@@ -67,7 +68,94 @@ def test_create_work_order_startet_entwurf(app_user):
     assert order.status == "ENTWURF"
     assert order.responsibility_scope == "UNKNOWN"
     assert order.version == 1
-    assert re.match(r"^AU-[0-9]{4}-[0-9]{6,}$", order.order_number)
+    # Ohne Gewerk das Ersatzformat (0120): AU-26-0001 statt AU-2026-000001.
+    assert re.match(r"^AU-[0-9]{2}-[0-9]{4,}$", order.order_number)
+
+
+@pytest.mark.django_db
+def test_auftragsnummer_traegt_das_gewerk_kuerzel(app_user):
+    """Migration 0120: Das Gewerk steht in der Nummer, je Gewerk ein Zähler.
+
+    Der fachliche Kern des Slices — an der Nummer soll ohne Nachschlagen
+    erkennbar sein, ob es Heizung oder Sanitär ist.
+    """
+    obj = _property(app_user)
+    heizung = Trade.objects.get(code="HZG")
+    sanitaer = Trade.objects.get(code="SAN")
+
+    a1 = auftrag_service.create_work_order(
+        app_user.id, property_id=obj.id, title="Therme", trade_id=heizung.id
+    )
+    a2 = auftrag_service.create_work_order(
+        app_user.id, property_id=obj.id, title="Bad", trade_id=sanitaer.id
+    )
+    a3 = auftrag_service.create_work_order(
+        app_user.id, property_id=obj.id, title="Noch unklar"
+    )
+
+    assert re.match(r"^AU-HZG-[0-9]{2}-[0-9]{4,}$", a1.order_number)
+    assert re.match(r"^AU-SAN-[0-9]{2}-[0-9]{4,}$", a2.order_number)
+    # Ohne Gewerk kein Kürzel — die Erfassung darf daran nicht scheitern.
+    assert re.match(r"^AU-[0-9]{2}-[0-9]{4,}$", a3.order_number)
+
+    # Eigener Zähler je Gewerk: der erste Sanitärauftrag ist die 1, auch wenn
+    # vorher schon ein Heizungsauftrag angelegt wurde.
+    assert a1.order_number.rsplit("-", 1)[1] == a2.order_number.rsplit("-", 1)[1]
+
+    a4 = auftrag_service.create_work_order(
+        app_user.id, property_id=obj.id, title="Zweite Therme", trade_id=heizung.id
+    )
+    assert int(a4.order_number.rsplit("-", 1)[1]) == int(
+        a1.order_number.rsplit("-", 1)[1]
+    ) + 1
+
+
+@pytest.mark.django_db
+def test_gewerk_bleibt_aenderbar_die_nummer_nicht(app_user):
+    """Die Nummer ist ein Schnappschuss der Anlage, kein lebendes Feld.
+
+    Bewusste Entscheidung: Eine bei der Annahme falsche Einordnung muss
+    korrigierbar sein, ohne einen neuen Auftrag anzulegen. Die einmal vergebene
+    Nummer bleibt dabei stehen — genau wie eine Belegnummer.
+    """
+    obj = _property(app_user)
+    heizung = Trade.objects.get(code="HZG")
+    sanitaer = Trade.objects.get(code="SAN")
+
+    order = auftrag_service.create_work_order(
+        app_user.id, property_id=obj.id, title="Verwechselt", trade_id=heizung.id
+    )
+    nummer = order.order_number
+    assert "-HZG-" in nummer
+
+    with business_transaction(app_user.id):
+        WorkOrder.objects.filter(id=order.id).update(trade_id=sanitaer.id)
+    order.refresh_from_db()
+
+    assert order.trade_id == sanitaer.id
+    assert order.order_number == nummer, "Die Nummer darf sich nie ändern"
+
+
+@pytest.mark.django_db
+def test_nummer_kann_nicht_von_aussen_gesetzt_werden(app_user):
+    """P3-01: Die Nummer vergibt ausschließlich die DB.
+
+    Der alte Spalten-Default ließ eine mitgegebene Nummer stillschweigend durch;
+    der Trigger aus 0120 weist sie ab.
+    """
+    obj = _property(app_user)
+    with pytest.raises(Error):
+        with business_transaction(app_user.id):
+            WorkOrder.objects.create(
+                id=uuid.uuid4(),
+                property_id=obj.id,
+                order_number="AU-FREI-ERFUNDEN",
+                title="Schmuggel",
+                responsibility_scope="UNKNOWN",
+                status="ENTWURF",
+                priority="NORMAL",
+                version=1,
+            )
 
 
 @pytest.mark.django_db

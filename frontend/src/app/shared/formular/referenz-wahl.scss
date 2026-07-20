@@ -55,6 +55,47 @@
   color: color-mix(in srgb, var(--on-command) 75%, transparent);
 }
 
+// ============================ Merkmale ======================================
+// Kompakte Label/Wert-Paare an Treffer UND Chip. Sie beantworten „ist das das
+// richtige Objekt?" — ohne sie zeigt der Picker nur Name + Nummer + Ort und
+// zwingt zum Raten. Aufrufer ohne Merkmale sehen exakt nichts davon.
+.ref-wahl__merkmale {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.15rem var(--space-3);
+  margin: 0.25rem 0 0;
+  padding: 0;
+}
+.ref-wahl__merkmal {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.ref-wahl__merkmal-label {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-hint);
+}
+.ref-wahl__merkmal-wert {
+  margin: 0; // <dd> traegt im Chip einen Browser-Default-Einzug
+  min-width: 0;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+  overflow-wrap: anywhere;
+}
+// Auf der aktiven (navy hinterlegten) Zeile traegt der Kleintext den
+// Navy-Vordergrund entsaettigt — reines --ink-hint waere dort zu dunkel.
+.ref-wahl__opt.is-aktiv .ref-wahl__merkmal-label {
+  color: color-mix(in srgb, var(--on-command) 70%, transparent);
+}
+.ref-wahl__opt.is-aktiv .ref-wahl__merkmal-wert {
+  color: var(--on-command);
+}
+
 .ref-wahl__chip {
   display: flex;
   align-items: center;

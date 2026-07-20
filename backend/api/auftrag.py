@@ -52,6 +52,14 @@ class ProjectRefOut(Schema):
     name: str
 
 
+class TradeRefOut(Schema):
+    """Gewerk am Auftrag (0120) — `code` ist zugleich das Kürzel in der Nummer."""
+
+    id: UUID
+    code: str
+    label: str
+
+
 class WorkOrderOut(Schema):
     id: UUID
     order_number: str
@@ -65,6 +73,7 @@ class WorkOrderOut(Schema):
     property: PropertyRefOut
     project: ProjectRefOut | None = None
     service_case_number: str | None = None
+    trade: TradeRefOut | None = None
 
 
 class WorkOrderListOut(Schema):
@@ -122,6 +131,9 @@ class WorkOrderIn(Schema):
     # Optional: die technische Anlage, um die es geht. Muss zur Liegenschaft
     # gehören (zusammengesetzter FK; der Service weist sonst mit 422 ab).
     asset_id: UUID | None = None
+    # Gewerk (0120). Optional — beim Annehmen ist oft noch unklar, ob Heizung
+    # oder Sanitär. Bestimmt das Kürzel in der Auftragsnummer (AU-HZG-26-0142).
+    trade_id: UUID | None = None
 
 
 class WorkOrderPartyIn(Schema):
@@ -151,6 +163,10 @@ class WorkOrderFilter(Schema):
     project_id: UUID | None = None
     property_id: UUID | None = None
     service_case_id: UUID | None = None
+    # „Zeig mir alle Heizungsaufträge" — liest IMMER das Feld, nie die Nummer:
+    # die ist ein Schnappschuss der Anlage und kann nach einer Korrektur des
+    # Gewerks davon abweichen.
+    trade_id: UUID | None = None
 
 
 # --- Mapper ----------------------------------------------------------------
@@ -172,6 +188,12 @@ def _project_ref(order):
     )
 
 
+def _trade_ref(obj):
+    if not obj.trade_id:
+        return None
+    return TradeRefOut(id=obj.trade.id, code=obj.trade.code, label=obj.trade.label)
+
+
 def _work_order_out(order):
     return WorkOrderOut(
         id=order.id,
@@ -188,6 +210,7 @@ def _work_order_out(order):
         service_case_number=(
             order.service_case.case_number if order.service_case_id else None
         ),
+        trade=_trade_ref(order),
     )
 
 
@@ -229,7 +252,7 @@ def list_work_orders(
     """
     actor, scope = require_scoped(request, "workflow", "LESEN")
     qs = WorkOrder.objects.select_related(
-        "property__address", "project", "service_case"
+        "property__address", "project", "service_case", "trade"
     )
     qs = objektsicht.begrenzen(qs, scope, actor, "property_id")
     if filters.q:
@@ -243,6 +266,8 @@ def list_work_orders(
         qs = qs.filter(property_id=filters.property_id)
     if filters.service_case_id:
         qs = qs.filter(service_case_id=filters.service_case_id)
+    if filters.trade_id:
+        qs = qs.filter(trade_id=filters.trade_id)
     qs = qs.order_by("-created_at", "id")
 
     total = qs.count()
@@ -254,7 +279,7 @@ def list_work_orders(
 def _work_order_detail(work_order_id):
     order = (
         WorkOrder.objects.filter(id=work_order_id)
-        .select_related("property__address", "project", "service_case")
+        .select_related("property__address", "project", "service_case", "trade")
         .prefetch_related("parties__party")
         .first()
     )
@@ -370,6 +395,7 @@ def create_work_order(request, payload: WorkOrderIn):
             customer_reference=payload.customer_reference,
             is_emergency=payload.is_emergency,
             asset_id=payload.asset_id,
+            trade_id=payload.trade_id,
         )
     except ValueError as exc:
         raise HttpError(422, str(exc))

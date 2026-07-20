@@ -1,9 +1,10 @@
 """Projekt-Service: Projekte, Projekt↔Liegenschaft, Vorgänge anlegen.
 
 Wie die übrigen Services laufen alle Writes über business_transaction (setzt
-app.current_user_id für Audit/Statusprotokoll). Projekt-Nummern (P-…) und
-Vorgangsnummern (V-…) vergibt die DB über workflow.next_number; die Models
-lassen die Spalten ungesetzt (db_default) und laden frisch nach.
+app.current_user_id für Audit/Statusprotokoll). Projekt-Nummern (P-HZG-26-…) und
+Vorgangsnummern (V-HZG-26-…) vergibt die DB per BEFORE-INSERT-Trigger aus dem
+Gewerk (Migration 0120); die Models lassen die Spalten ungesetzt und laden
+frisch nach.
 
 Der Projekt-„Status" ist nur OPEN/CLOSED (kein Statusautomat). Der Vorgang
 (service_case) hat dagegen einen Trigger-gestützten Statusautomaten; hier wird
@@ -29,6 +30,7 @@ from db_core.models import (
     ServiceCase,
     StatusCatalog,
     StatusTransition,
+    Trade,
     WorkOrder,
 )
 from db_core.services import beleg as beleg_service
@@ -83,6 +85,7 @@ def create_project(
     start_date=None,
     target_end_date=None,
     responsible_user_id=None,
+    trade_id=None,
 ):
     """Legt ein workflow.project an und verknüpft optional Liegenschaften.
 
@@ -92,6 +95,7 @@ def create_project(
         raise ValueError("name darf nicht leer sein.")
     ensure_exists(ProjectCategory, category_id, "Kategorie")
     ensure_exists(AppUser, responsible_user_id, "Benutzer")
+    ensure_exists(Trade, trade_id, "Gewerk")
     ensure_all_exist(Property, property_ids, "Liegenschaft")
 
     with business_transaction(actor_app_user_id):
@@ -103,6 +107,7 @@ def create_project(
             target_end_date=target_end_date,
             responsible_user_id=responsible_user_id,
             category_id=category_id,
+            trade_id=trade_id,
             version=1,
         )
         for property_id in property_ids or []:
@@ -292,6 +297,7 @@ def create_service_case(
     description=None,
     reported_by_party_id=None,
     priority="NORMAL",
+    trade_id=None,
 ):
     """Legt einen workflow.service_case (Vorgang) im Initialstatus NEU an.
 
@@ -307,6 +313,7 @@ def create_service_case(
     ensure_exists(Property, property_id, "Liegenschaft")
     ensure_exists(Project, project_id, "Projekt")
     ensure_party_usable(reported_by_party_id, "Melder")
+    ensure_exists(Trade, trade_id, "Gewerk")
     with business_transaction(actor_app_user_id):
         case = ServiceCase.objects.create(
             id=uuid.uuid4(),
@@ -318,6 +325,7 @@ def create_service_case(
             responsibility_scope="UNKNOWN",
             priority=priority,
             status="NEU",
+            trade_id=trade_id,
             version=1,
         )
         case.refresh_from_db()

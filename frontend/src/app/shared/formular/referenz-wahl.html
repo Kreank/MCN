@@ -14,8 +14,23 @@
         @if (g.sub) {
           <span class="ref-wahl__chip-sub">{{ g.sub }}</span>
         }
+        <!-- Merkmale am Chip: Die Auswahl bleibt nachprüfbar, ohne sie erneut
+             aufklappen zu müssen. Als Definitionsliste, damit Label und Wert
+             auch für Screenreader ein Paar bleiben (im Listbox-Teil unten geht
+             das nicht — `role="option"` erlaubt dort kein `dl`). -->
+        @if (g.merkmale?.length) {
+          <dl class="ref-wahl__merkmale">
+            @for (m of g.merkmale; track m.label) {
+              <div class="ref-wahl__merkmal">
+                <dt class="ref-wahl__merkmal-label">{{ m.label }}</dt>
+                <dd class="ref-wahl__merkmal-wert">{{ m.wert }}</dd>
+              </div>
+            }
+          </dl>
+        }
       </span>
       <button
+        #aendernBtn
         type="button"
         class="ref-wahl__aendern"
         (click)="zuruecksetzen()"
@@ -60,12 +75,26 @@
                 [id]="id + '-opt-' + i"
                 [class.is-aktiv]="aktivIndex() === i"
                 [attr.aria-selected]="aktivIndex() === i"
+                [attr.aria-label]="optionName(o)"
                 (mousedown)="waehlen(o); $event.preventDefault()"
                 (mousemove)="aktivIndex.set(i)"
               >
                 <span class="ref-wahl__opt-label">{{ o.label }}</span>
                 @if (o.sub) {
                   <span class="ref-wahl__opt-sub">{{ o.sub }}</span>
+                }
+                <!-- Merkmale bleiben INNERHALB derselben Option: ein
+                     `role="option"`, keine verschachtelten Bedienelemente. Den
+                     zugänglichen Namen liefert `optionName()`. -->
+                @if (o.merkmale?.length) {
+                  <span class="ref-wahl__merkmale">
+                    @for (m of o.merkmale; track m.label) {
+                      <span class="ref-wahl__merkmal">
+                        <span class="ref-wahl__merkmal-label">{{ m.label }}</span>
+                        <span class="ref-wahl__merkmal-wert">{{ m.wert }}</span>
+                      </span>
+                    }
+                  </span>
                 }
               </li>
             }

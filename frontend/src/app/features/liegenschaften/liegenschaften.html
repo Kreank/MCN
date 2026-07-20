@@ -187,6 +187,16 @@
       <app-feld [control]="neuForm.controls.address_addition" label="Adresszusatz" hinweis="Optional, z. B. Hinterhaus." />
       <app-feld [control]="neuForm.controls.postal_code" label="PLZ" [pflicht]="true" autocomplete="postal-code" />
       <app-feld [control]="neuForm.controls.city" label="Ort" [pflicht]="true" autocomplete="address-level2" />
+
+      <!-- Dublettenhinweis direkt unter den Adressfeldern. Kein Blocker: Er
+           zeigt nur, was es an der Adresse schon gibt — angelegt werden darf
+           trotzdem (Zweitobjekt, Teilung, getrennte Verwaltung). -->
+      <app-adress-dubletten
+        [treffer]="dubletten()"
+        modus="oeffnen"
+        (oeffnen)="dubletteGeoeffnet()"
+      />
+
       <app-feld [control]="neuForm.controls.country_code" label="Ländercode" hinweis="ISO-Code, z. B. DE." />
     </form>
     <div dialog-aktionen class="dialog__aktionen">

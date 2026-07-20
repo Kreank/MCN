@@ -39,8 +39,10 @@ from db_core.models import (
     AppUser,
     CompanyProfile,
     Employee,
+    EmployeeTrade,
     EmploymentContract,
     Person,
+    Trade,
     VacationBudget,
     WageGroup,
 )
@@ -94,6 +96,61 @@ def _get_employee(employee_id):
     if employee is None:
         raise ValueError(f"Mitarbeiter {employee_id} existiert nicht")
     return employee
+
+
+def list_employee_trades(employee_id, *, include_inactive=False):
+    """Die Gewerke eines Mitarbeiters, in Katalogreihenfolge."""
+    qs = EmployeeTrade.objects.filter(employee_id=employee_id)
+    if not include_inactive:
+        qs = qs.filter(active=True)
+    return list(
+        qs.select_related("trade").order_by(
+            "trade__sort_order", "trade__label", "trade__id"
+        )
+    )
+
+
+def set_employee_trades(actor_app_user_id, *, employee_id, trade_ids):
+    """Setzt die Gewerke eines Mitarbeiters auf genau diese Menge (Vollersetzung).
+
+    Warum Vollersetzung statt Einzeloperationen: Die Oberfläche zeigt eine Liste
+    mit Häkchen; „was angehakt ist, gilt" ist genau diese Semantik. Zwei getrennte
+    Aufrufe (hinzufügen/entfernen) wären für den Aufrufer nur eine Fehlerquelle.
+
+    hr.employee_trade verbietet DELETE (Schutzstandard). Was wegfällt, wird
+    deshalb **deaktiviert**, nicht gelöscht — und was zurückkommt, reaktiviert
+    die vorhandene Zeile, statt eine zweite anzulegen (der UNIQUE-Schlüssel
+    ließe das ohnehin nicht zu).
+    """
+    _get_employee(employee_id)
+    gewuenscht = set(trade_ids or ())
+    if gewuenscht:
+        vorhanden = set(
+            Trade.objects.filter(id__in=gewuenscht).values_list("id", flat=True)
+        )
+        fehlend = gewuenscht - vorhanden
+        if fehlend:
+            raise ValueError(f"Unbekanntes Gewerk: {sorted(str(f) for f in fehlend)}")
+
+    with business_transaction(actor_app_user_id):
+        bekannt = dict(
+            EmployeeTrade.objects.filter(employee_id=employee_id).values_list(
+                "trade_id", "id"
+            )
+        )
+        for trade_id in gewuenscht - set(bekannt):
+            EmployeeTrade.objects.create(
+                id=uuid.uuid4(), employee_id=employee_id, trade_id=trade_id
+            )
+        # Vorhandene Zeilen nur dort anfassen, wo sich der Zustand ändert — sonst
+        # schriebe jeder Speichervorgang sinnlose Audit-Einträge.
+        EmployeeTrade.objects.filter(
+            employee_id=employee_id, trade_id__in=gewuenscht & set(bekannt), active=False
+        ).update(active=True)
+        EmployeeTrade.objects.filter(
+            employee_id=employee_id, active=True
+        ).exclude(trade_id__in=gewuenscht).update(active=False)
+    return list_employee_trades(employee_id)
 
 
 def _contract_on(contracts, day):
