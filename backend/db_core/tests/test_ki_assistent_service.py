@@ -244,3 +244,104 @@ def test_vorschlag_ohne_auftrag_kein_proposal(app_user, liegenschaft):
     )
     assert res.antwort_turn.proposal_id is None
     assert "Auftrag" in res.antwort_turn.content
+
+
+# --- Retrieval: Gattungswörter, Artikel-Gate, Fokus bei Nachfragen ----------
+#
+# Der Fall aus dem Betrieb (2026-07-20): Auf „Welche Mieter wohnen in der WEG
+# Wartburgstr 52?" folgte „gibt es schon Aufträge dazu?" — und der Assistent
+# antwortete mit fünf Hager/Eaton-Klemmen. Grund war eine Kette aus drei Fehlern:
+# `Aufträge` blieb als Suchtext übrig, traf im Artikelstamm auf „…auf Träger…",
+# und weil damit Treffer da waren, kam der Gesprächs-Fokus nie zum Zug.
+
+@pytest.fixture
+def klemme(app_user):
+    """Ein Artikel, dessen Bezeichnung auf `Aufträge` matcht — der Stolperstein."""
+    from db_core.services import artikel as artikel_service
+    return artikel_service.create_article(
+        app_user.id, article_number="DN-bo-QFZ384HA", unit="ST",
+        description="Hager FZ384 PE/N-Klemmen auf Träger Quick-Connect Technik",
+    )
+
+
+def test_gattungswort_wird_typfilter_nicht_suchtext():
+    """`Aufträge` sagt die Sorte, nicht den Suchtext — und verschwindet aus ihm."""
+    assert assistent._typfilter("gibt es schon Aufträge dazu?") == {"AUFTRAG"}
+    assert assistent._suchbegriffe("gibt es schon Aufträge dazu?") == []
+    # Mit Eigennamen bleibt der Name stehen, die Gattung wird zum Filter.
+    assert assistent._typfilter("Rechnungen zur Villa Sonnenschein") == {"RECHNUNG"}
+    assert "Sonnenschein" in assistent._suchbegriffe("Rechnungen zur Villa Sonnenschein")[0]
+    # „Termin" und „Einsatz" meinen denselben Typ (Oberfläche vs. Datenmodell).
+    assert assistent._typfilter("Termine") == assistent._typfilter("Einsätze") == {"EINSATZ"}
+
+
+def test_artikel_absicht_erkannt():
+    """Der Artikelstamm öffnet nur bei erkennbarer Material-Absicht."""
+    for frage in ["Ich suche Artikel Klemme", "Wie lautet die Artikelnummer von X",
+                  "Was kostet die Klemme?", "Welches Material brauche ich?"]:
+        assert assistent._artikel_erlaubt(frage, assistent._typfilter(frage)), frage
+    for frage in ["gibt es schon Aufträge dazu?", "Welche Mieter wohnen dort?",
+                  "Was ist offen?"]:
+        assert not assistent._artikel_erlaubt(frage, assistent._typfilter(frage)), frage
+
+
+def test_frageverben_verstopfen_den_suchtext_nicht():
+    """Die Suche verknüpft mit UND — jedes Frageverb im Begriff killt den Treffer.
+
+    „Wie lautet die Artikelnummer von Hager FZ384" suchte mit `lautet` als
+    Pflicht-Token und fand nichts: Kein Artikel heißt „lautet".
+    """
+    # Nur `Hager FZ384` bleibt — die Aufweich-Stufen fallen hier zusammen und
+    # werden dedupliziert (beide Tokens sind tragend und gleich lang).
+    assert assistent._suchbegriffe("Wie lautet die Artikelnummer von Hager FZ384") \
+        == ["Hager FZ384"]
+    assert assistent._suchbegriffe("Ich suche Artikel Klemme") == ["Klemme"]
+    assert assistent._suchbegriffe("Was kostet die Klemme?") == ["Klemme?"]
+
+
+@pytest.mark.django_db
+def test_nachfrage_nach_auftraegen_findet_keine_artikel(app_user, klemme):
+    """Der Betriebsfall: `Aufträge dazu?` darf NICHT im Artikelstamm landen."""
+    treffer = assistent._suchtreffer("gibt es schon Aufträge dazu?", _sicht(app_user.id))
+    assert treffer == []                     # leer → der Aufrufer greift zum Fokus
+    # Gegenprobe: Ohne Filter fände die blanke Suche die Klemme sehr wohl.
+    roh = assistent._suchtreffer("Aufträge", _sicht(app_user.id))
+    assert all(t["typ"] != "ARTIKEL" for t in roh)
+
+
+@pytest.mark.django_db
+def test_artikelfrage_findet_den_artikel(app_user, klemme):
+    """Das Gate ist kein Verbot: Wer nach Material fragt, bekommt Material."""
+    treffer = assistent._suchtreffer("Was kostet die Klemme?", _sicht(app_user.id))
+    assert any(t["typ"] == "ARTIKEL" and str(klemme.id) == t["id"] for t in treffer)
+
+
+@pytest.mark.django_db
+def test_nachfrage_faellt_auf_gespraechsfokus_zurueck(app_user, auftrag, klemme):
+    """Ende-zu-Ende: Die Nachfrage landet beim Objekt von eben, nicht bei Klemmen."""
+    conv = assistent.starte_gespraech(app_user.id)
+    assistent.antworte(
+        app_user.id, conversation=conv, frage="Villa Sonnenschein",
+        sicht=_sicht(app_user.id),
+        backend=_fake({"intent": "AUSKUNFT", "entitaeten": [0]},
+                      {"antwort": "Die Villa Sonnenschein steht in Musterstadt.",
+                       "quellen": [0]}),
+    )
+    res = assistent.antworte(
+        app_user.id, conversation=conv, frage="gibt es schon Aufträge dazu?",
+        sicht=_sicht(app_user.id),
+        backend=_fake({"intent": "AUSKUNFT", "entitaeten": [0]},
+                      {"antwort": "Ja, ein Notdienst-Auftrag ist offen.", "quellen": [0]}),
+    )
+    assert len(res.antwort_turn.sources) == 1
+    assert res.antwort_turn.sources[0]["typ"] == "LIEGENSCHAFT"   # nicht ARTIKEL
+
+
+@pytest.mark.django_db
+def test_dossier_nennt_auftraege_beim_namen(app_user, auftrag):
+    """`gibt es Aufträge dazu?` braucht Titel, nicht nur eine Zahl."""
+    aus = assistent._kompaktes_dossier(
+        "LIEGENSCHAFT", auftrag.property_id, _sicht(app_user.id))
+    assert aus["offene_auftraege"] == 1
+    assert any(a["titel"] == "Notdienst Heizungsausfall Nord"
+               for a in aus["auftraege"])

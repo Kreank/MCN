@@ -4,11 +4,16 @@ Doktrin (wie der gesamte KI-Pfad, `docs/ki-orchestrierung.md`): **die Pipeline r
 Werkzeuge, das Modell fast nie.** Kein offener ReAct-Loop, sondern zwei enge,
 schema-erzwungene Modell-Schritte um eine deterministische Retrieval-Mitte:
 
-  0. **Frage → Suchbegriff** (deterministisch, in Code): Die globale Suche verknüpft
-     Tokens mit UND. Ein ganzer Fragesatz macht jedes Füllwort zur Pflicht und findet
-     **nichts** — deshalb fallen Frage-Floskeln vorher weg (`_suchbegriffe`). Findet
-     die Frage gar nichts, gilt der **Gesprächs-Fokus**: die Entitäten der letzten
-     Antwort, neu rechtegeprüft (`_fokus_treffer`). Ohne ihn gäbe es keine Nachfrage.
+  0. **Frage → Suchbegriff + Typfilter** (deterministisch, in Code): Die globale Suche
+     verknüpft Tokens mit UND. Ein ganzer Fragesatz macht jedes Füllwort zur Pflicht
+     und findet **nichts** — deshalb fallen Frage-Floskeln vorher weg
+     (`_suchbegriffe`). **Gattungswörter** („Aufträge", „Rechnungen", „Termine")
+     fallen ebenfalls heraus, werden aber zum **Typfilter** (`_typfilter`): Sie sagen
+     die Sorte, nicht den Suchtext. Der **Artikelstamm** bleibt dabei zu, solange die
+     Frage nicht erkennbar Material meint (`_artikel_erlaubt`) — bei ~2 Mio. Zeilen
+     gewinnt er sonst jede unscharfe Frage. Bleibt nichts Passendes übrig, gilt der
+     **Gesprächs-Fokus**: die Entitäten der letzten Antwort, neu rechtegeprüft
+     (`_fokus_treffer`). Ohne ihn gäbe es keine Nachfrage.
   1. **Retrieval-Plan** (constrained): das Modell bekommt die Frage, den bisherigen
      Verlauf und die **rechtegefilterte** Trefferliste der globalen Suche und wählt
      nur (a) den Intent (AUSKUNFT/KENNZAHL/VORSCHLAG), (b) bis zu drei Treffer, die
@@ -85,6 +90,7 @@ MAX_ANTWORT_LEN = 4000   # Antworttext deckeln
 MAX_TITEL_LEN = 120      # Gesprächstitel aus der ersten Frage
 PROPOSAL_TTL_HOURS = 72  # Ablauf eines aus dem Chat entworfenen Vorschlags
 MAX_FOKUS = 3            # so viele Entitäten trägt der Gesprächs-Fokus weiter
+MAX_LISTE = 5            # benannte Zeilen je Liste im Dossier-Extrakt (Titel, nicht nur Zahl)
 
 # Ab wann fragt der Assistent zurück, statt alles auszubreiten? Erst wenn die Frage
 # offen genug ist, dass eine vollständige Antwort mehrere Kategorien tief laden
@@ -254,16 +260,102 @@ ist sind war waren hat habe haben hatte hatten wird werden wurde
 mir mich mein meine meiner ich du dir dich wir uns unser ihr euch
 zeig zeige zeigen sag sage sagen gib gibt geben nenn nenne nennen
 sehen sehe siehst brauche braucht liste auflisten
+lautet lauten heisst heissen suche suchen finde finden weiss wissen
+moechte moechten will wollen benoetige benoetigt
 bitte danke mal noch schon denn eigentlich genau alles alle etwas
 und oder aber auch nur nicht kein keine keinen
 der die das den dem des ein eine einer einem eines
 fuer von vom mit bei zu zum zur im in am an auf ueber unter aus
 es da dort hier dann jetzt heute gerade ja nein
+dazu davon damit dafuer darueber dabei daran darin dort dazugehoerig
 """.split())
 
 # Ein Token gilt als „tragend", wenn es Ziffern enthält (Nummern sind erstklassig,
 # s. Such-Docstring Punkt 3) oder lang genug ist, um kein Füllwort zu sein.
 _TRAGEND_MIN_LEN = 5
+
+# Gattungswörter → Typfilter. Sie sagen, WELCHE SORTE gemeint ist, nicht wonach zu
+# suchen wäre. Als Suchtext richten sie Schaden an: „gibt es schon Aufträge dazu?"
+# blieb als Begriff `Aufträge` übrig und traf im Artikelstamm auf „…auf Träger…" —
+# fünf Klemmen statt der Aufträge des Hauses. Als Filter tun sie das Richtige: der
+# Suchtext schrumpft (oft auf nichts, dann trägt der Gesprächs-Fokus), und aus den
+# Treffern bleibt nur die gefragte Sorte.
+_TYPWOERTER = {
+    "auftrag": "AUFTRAG", "auftraege": "AUFTRAG",
+    "vorgang": "VORGANG", "vorgaenge": "VORGANG",
+    "meldung": "VORGANG", "meldungen": "VORGANG",
+    "projekt": "PROJEKT", "projekte": "PROJEKT",
+    "angebot": "ANGEBOT", "angebote": "ANGEBOT",
+    "rechnung": "RECHNUNG", "rechnungen": "RECHNUNG",
+    # „Einsatz" heißt in der Oberfläche „Termin" — beide Wörter meinen denselben Typ.
+    "termin": "EINSATZ", "termine": "EINSATZ",
+    "einsatz": "EINSATZ", "einsaetze": "EINSATZ",
+    "kontakt": "KONTAKT", "kontakte": "KONTAKT",
+    "kunde": "KONTAKT", "kunden": "KONTAKT",
+    "liegenschaft": "LIEGENSCHAFT", "liegenschaften": "LIEGENSCHAFT",
+    "objekt": "LIEGENSCHAFT", "objekte": "LIEGENSCHAFT",
+    "mitarbeiter": "MITARBEITER",
+    "leistung": "LEISTUNG", "leistungen": "LEISTUNG",
+    "artikel": "ARTIKEL", "artikelnummer": "ARTIKEL", "artikelnr": "ARTIKEL",
+}
+
+# Wörter, die den Artikelstamm überhaupt erst öffnen (s. `_artikel_erlaubt`). Der
+# Stamm ist mit ~2 Mio. Zeilen so groß, dass er jede unscharfe Frage gewinnt: Wer
+# nach einem Haus fragt, bekommt Klemmen. Er wird deshalb im Assistenten nur
+# durchsucht, wenn die Frage erkennbar Material meint — „Ich suche Artikel …",
+# „Wie lautet die Artikelnummer von …", „Was kostet …".
+#
+# Wie die Gattungswörter fallen sie aus dem **Suchtext** heraus: Sie sagen etwas
+# über die Frage, nicht über das Gesuchte. „Was kostet die Klemme?" muss nach
+# `Klemme` suchen — `kostet Klemme` wäre UND-verknüpft und fände nichts.
+_ARTIKEL_ABSICHT = frozenset("""
+artikel artikelnummer artikelnr artikelnummern
+material materialien ersatzteil ersatzteile teil teile
+preis preise kostet kosten kostenpunkt
+gtin ean herstellernummer fabrikat
+""".split())
+
+
+def _typfilter(frage: str) -> set[str]:
+    """Die in der Frage genannten Gattungen als Typmenge (leer = keine genannt)."""
+    return {
+        _TYPWOERTER[n]
+        for w in (frage or "").split()
+        if (n := suche_service.normalisieren(w)) in _TYPWOERTER
+    }
+
+
+def _artikel_erlaubt(frage: str, typen: set[str]) -> bool:
+    """Darf der Artikelstamm in die Trefferliste? Nur bei erkennbarer Absicht.
+
+    Zwei Wege hinein: die Frage nennt die Gattung „Artikel" (dann steht ARTIKEL
+    ohnehin im Typfilter), oder sie fragt nach Material/Nummer/Preis.
+    """
+    if "ARTIKEL" in typen:
+        return True
+    return any(
+        suche_service.normalisieren(w) in _ARTIKEL_ABSICHT
+        for w in (frage or "").split()
+    )
+
+
+def _passende_treffer(treffer, typen: set[str], artikel_ok: bool) -> list:
+    """Treffer auf die gefragte Sorte eindampfen.
+
+    Direkttreffer bleiben IMMER: Wer eine Kennung oder GTIN eintippt, meint genau
+    dieses eine Objekt — das ist Absicht genug, auch ohne Gattungswort.
+    """
+    aus = []
+    for t in treffer:
+        if t.ist_direkttreffer:
+            aus.append(t)
+            continue
+        if typen and t.typ not in typen:
+            continue
+        if t.typ == "ARTIKEL" and not artikel_ok:
+            continue
+        aus.append(t)
+    return aus
 
 
 def _suchbegriffe(frage: str) -> list[str]:
@@ -272,10 +364,19 @@ def _suchbegriffe(frage: str) -> list[str]:
     Der Aufrufer probiert sie der Reihe nach und nimmt die erste Stufe mit Treffern.
     Dieses Aufweichen ist die Versicherung gegen die Floskel-Liste: Sie muss nicht
     vollständig sein — was sie durchlässt, fängt die nächste Stufe ab.
+
+    Gattungs- und Absichtswörter fallen wie Floskeln heraus — sie werden zum
+    Typfilter (`_typfilter`) bzw. öffnen den Artikelstamm (`_artikel_erlaubt`),
+    statt den Suchtext zu verstopfen. Bleibt danach nichts übrig („gibt es schon
+    Aufträge dazu?"), ist die Liste leer: Dann gibt es nichts zu suchen, und der
+    Gesprächs-Fokus ist die richtige Quelle.
     """
     woerter = [w for w in (frage or "").split() if suche_service.normalisieren(w)]
     ohne_floskeln = [
-        w for w in woerter if suche_service.normalisieren(w) not in _FLOSKELN
+        w for w in woerter
+        if (n := suche_service.normalisieren(w)) not in _FLOSKELN
+        and n not in _TYPWOERTER
+        and n not in _ARTIKEL_ABSICHT
     ]
     tragend = [
         w for w in ohne_floskeln
@@ -303,14 +404,25 @@ def _suchbegriffe(frage: str) -> list[str]:
 def _suchtreffer(frage: str, sicht: AssistentSicht) -> list[dict]:
     """Rechtegefilterte Suchtreffer als flache, kompakte Quellenliste.
 
-    Sucht mit dem strengsten Begriff, der noch etwas findet (s. `_suchbegriffe`).
-    Ohne jeden Treffer bleibt die Liste leer — der Aufrufer greift dann auf den
+    Sucht mit dem strengsten Begriff, der noch **passende** Treffer liefert (s.
+    `_suchbegriffe`), und dampft jede Stufe auf die gefragte Sorte ein
+    (`_passende_treffer`). Bleibt nichts übrig, greift der Aufrufer auf den
     Gesprächs-Fokus zurück (`_fokus_treffer`).
+
+    Dass hier **gefiltert und nicht nur gesucht** wird, ist der Kern: Das
+    stufenweise Aufweichen der Begriffe ist als Versicherung gegen die
+    Floskel-Liste gedacht, war aber ohne Filter eine Falle. Eine Stufe, die
+    irgendetwas fand, blockierte den Fokus — auch wenn dieses Etwas mit der Frage
+    nichts zu tun hatte. Schlechte Treffer sind schlimmer als keine: Keine führen
+    zum Fokus, schlechte führen zu Klemmen.
     """
+    typen = _typfilter(frage)
+    artikel_ok = _artikel_erlaubt(frage, typen)
     for begriff in _suchbegriffe(frage):
         ergebnis = suche_service.suche(begriff, sicht=sicht.such_sicht)
-        if ergebnis.treffer:
-            return [_treffer_zeile(t) for t in ergebnis.treffer[:MAX_HITS]]
+        passend = _passende_treffer(ergebnis.treffer, typen, artikel_ok)
+        if passend:
+            return [_treffer_zeile(t) for t in passend[:MAX_HITS]]
     return []
 
 
@@ -442,10 +554,31 @@ def _zahl_block(aus: dict, d: dict) -> None:
 
 
 def _vorgang_block(aus: dict, d: dict) -> None:
+    """Vorgänge/Aufträge einer Entität: gezählt UND die jüngsten benannt.
+
+    Die Zählung allein beantwortet „gibt es schon Aufträge dazu?" nur halb — „drei
+    offene" lässt den Fragenden mit der Frage zurück, welche. Deshalb wandern die
+    jüngsten Titel mit ins Prompt-Fenster, gedeckelt wie die anderen Listen des
+    Extrakts (`anlagen`, `faelligkeiten`). Die Zeilen sind bereits rechtegefiltert:
+    Sie stammen aus dem Dossier, das mit der `dossier_sicht` des Fragenden lief.
+    """
     if d.get("vorgaenge") is not None:
         aus["offene_vorgaenge"] = sum(1 for v in d["vorgaenge"] if v.get("is_offen"))
+        aus["vorgaenge"] = [
+            {"titel": v.get("title"), "status": v.get("status")}
+            for v in d["vorgaenge"][:MAX_LISTE]
+        ] or None
     if d.get("auftraege") is not None:
         aus["offene_auftraege"] = sum(1 for a in d["auftraege"] if a.get("is_offen"))
+        aus["auftraege"] = [
+            {"nummer": a.get("order_number"), "titel": a.get("title"),
+             "status": a.get("status")}
+            for a in d["auftraege"][:MAX_LISTE]
+        ] or None
+    # Leere Listen tragen nichts ins Fenster — raus damit.
+    for schluessel in ("vorgaenge", "auftraege"):
+        if aus.get(schluessel) is None:
+            aus.pop(schluessel, None)
 
 
 def _adresse(k: dict) -> str:
