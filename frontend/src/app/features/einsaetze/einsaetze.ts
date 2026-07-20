@@ -19,6 +19,7 @@ import { PropertyRef } from '../../core/projekt.model';
 import { Building, gebaeudeLabel } from '../../core/property.model';
 import { PlanungNav } from '../planung-nav/planung-nav';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { vonLokalerEingabe } from '../../shared/datum';
 import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 import { Dialog } from '../../shared/dialog/dialog';
 import { Feld, FeldOption } from '../../shared/formular/feld';
@@ -336,8 +337,8 @@ export class Einsaetze {
       property_id: frei ? v.property_id || null : null,
       building_id: frei ? v.building_id || null : null,
       unit_id: frei ? v.unit_id || null : null,
-      scheduled_start: v.scheduled_start || null,
-      scheduled_end: v.scheduled_end || null,
+      scheduled_start: vonLokalerEingabe(v.scheduled_start),
+      scheduled_end: vonLokalerEingabe(v.scheduled_end),
       on_site_contact_party_id: v.on_site_contact_party_id || null,
       access_instructions: v.access_instructions.trim() || null,
     };

@@ -24,6 +24,7 @@ from ninja.responses import Status
 from ninja.security import django_auth
 
 from api.permissions import require, require_scoped
+from db_core.betriebszeit import Betriebszeitpunkt
 from db_core.models import (
     AppointmentCategory,
     AppUser,
@@ -214,8 +215,8 @@ class ServiceJobFilter(Schema):
     q: str | None = None
     status: str | None = None
     work_order_id: UUID | None = None
-    scheduled_from: datetime | None = None
-    scheduled_to: datetime | None = None
+    scheduled_from: Betriebszeitpunkt | None = None
+    scheduled_to: Betriebszeitpunkt | None = None
 
 
 class ServiceJobCreateIn(Schema):
@@ -230,8 +231,8 @@ class ServiceJobCreateIn(Schema):
     # einzige Möglichkeit, das konkrete Haus/die Wohnung zu treffen.
     building_id: UUID | None = None
     unit_id: UUID | None = None
-    scheduled_start: datetime | None = None
-    scheduled_end: datetime | None = None
+    scheduled_start: Betriebszeitpunkt | None = None
+    scheduled_end: Betriebszeitpunkt | None = None
     on_site_contact_party_id: UUID | None = None
     access_instructions: str | None = None
     appointment_category_id: UUID | None = None
@@ -255,8 +256,8 @@ class ServiceJobUpdateIn(Schema):
 
 
 class ScheduleIn(Schema):
-    scheduled_start: datetime
-    scheduled_end: datetime | None = None
+    scheduled_start: Betriebszeitpunkt
+    scheduled_end: Betriebszeitpunkt | None = None
 
 
 class StatusAdvanceIn(Schema):
@@ -271,8 +272,8 @@ class AssignmentIn(Schema):
 
 class TimeLogIn(Schema):
     time_type: str
-    started_at: datetime
-    ended_at: datetime
+    started_at: Betriebszeitpunkt
+    ended_at: Betriebszeitpunkt
     # Nur für Scope ALLE (Disposition/Leitung) auswertbar: Zeit für eine andere
     # Person buchen. Bei Scope EIGENE (Monteur) wird auf den Akteur gezwungen.
     user_id: UUID | None = None
@@ -1258,8 +1259,8 @@ class TerminCreateIn(Schema):
     property_id: UUID | None = None
     building_id: UUID | None = None
     unit_id: UUID | None = None
-    scheduled_start: datetime | None = None
-    scheduled_end: datetime | None = None
+    scheduled_start: Betriebszeitpunkt | None = None
+    scheduled_end: Betriebszeitpunkt | None = None
     on_site_contact_party_id: UUID | None = None
     access_instructions: str | None = None
     appointment_category_id: UUID | None = None
@@ -1283,8 +1284,8 @@ class TerminUpdateIn(Schema):
     property_id: UUID | None = None
     building_id: UUID | None = None
     unit_id: UUID | None = None
-    scheduled_start: datetime | None = None
-    scheduled_end: datetime | None = None
+    scheduled_start: Betriebszeitpunkt | None = None
+    scheduled_end: Betriebszeitpunkt | None = None
     on_site_contact_party_id: UUID | None = None
     access_instructions: str | None = None
     appointment_category_id: UUID | None = None

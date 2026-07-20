@@ -20,6 +20,7 @@ import {
 import { OrderPriority, WorkOrderCreate } from '../../core/auftrag.model';
 import { ServiceJobCreate } from '../../core/einsatz.model';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { vonLokalerEingabe } from '../../shared/datum';
 import { Dateien } from '../../shared/dateien/dateien';
 import { Belege, BelegKontext } from '../../shared/belege/belege';
 import { ZielFilter } from '../../core/datei.model';
@@ -444,8 +445,8 @@ export class VorgangDetail {
       work_order_id: null,
       title: v.title.trim(),
       property_id: d.property.id,
-      scheduled_start: v.scheduled_start || null,
-      scheduled_end: v.scheduled_end || null,
+      scheduled_start: vonLokalerEingabe(v.scheduled_start),
+      scheduled_end: vonLokalerEingabe(v.scheduled_end),
       on_site_contact_party_id: v.on_site_contact_party_id || null,
       access_instructions: v.access_instructions.trim() || null,
     };

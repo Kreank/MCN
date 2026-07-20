@@ -38,6 +38,7 @@ from ninja.errors import HttpError
 from ninja.responses import Status
 
 from api.permissions import require, require_scoped
+from db_core.betriebszeit import Betriebszeitpunkt
 from db_core.models import Employee, TimeAdjustment, TimeEntry, WorkDay
 from db_core.services import zeiterfassung as zeit_service
 
@@ -142,8 +143,8 @@ class StempelIn(Schema):
 
 class EintragCreateIn(Schema):
     category_id: UUID
-    started_at: datetime
-    ended_at: datetime
+    started_at: Betriebszeitpunkt
+    ended_at: Betriebszeitpunkt
     user_id: UUID | None = None
     service_job_id: UUID | None = None
     note: str | None = None
@@ -152,8 +153,8 @@ class EintragCreateIn(Schema):
 
 class EintragUpdateIn(Schema):
     category_id: UUID | None = None
-    started_at: datetime | None = None
-    ended_at: datetime | None = None
+    started_at: Betriebszeitpunkt | None = None
+    ended_at: Betriebszeitpunkt | None = None
     note: str | None = None
     correction_reason: str | None = None
 

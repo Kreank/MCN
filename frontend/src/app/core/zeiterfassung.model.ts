@@ -9,6 +9,8 @@
  * (verlustfrei, Repo-Konvention). Beides wird erst zur Anzeige formatiert.
  */
 
+import { vonLokalerEingabe } from '../shared/datum';
+
 export type Zustand = 'GESTOPPT' | 'LAEUFT' | 'PAUSE';
 export type TagStatus = 'ENTWURF' | 'EINGEREICHT' | 'BESTAETIGT' | 'ABGELEHNT';
 export type PausenModus = 'KEINE' | 'GESETZLICH' | 'FESTE_ZEITEN';
@@ -322,7 +324,24 @@ export function toLocalInput(iso: string | null): string {
   )}:${pad(d.getMinutes())}`;
 }
 
-/** `datetime-local` → ISO mit Zeitzonen-Offset (der Server rechnet in UTC). */
+/**
+ * `datetime-local` → ISO mit Zeitzonen-Offset (der Server rechnet in UTC).
+ *
+ * Duenne Huelle um {@link vonLokalerEingabe} — es gibt bewusst nur EINE
+ * Umrechnung im Frontend. Der Unterschied ist nur der Vertrag: Hier ist der
+ * Zeitpunkt PFLICHT (Zeitbuchungen haben immer Start und Ende), waehrend ein
+ * Termin ohne Zeit legitim im Rueckstand liegt.
+ *
+ * Die Aufrufer setzen den Wert aus zwei Controls zusammen (`${datum}T${von}`).
+ * Ist eines davon leer, entsteht ein unparsbarer String wie `"2026-07-21T"`.
+ * Frueher lief das in ein nacktes `RangeError: Invalid time value` aus
+ * `toISOString()`. Der Fall gehoert durch die Formularvalidierung abgefangen —
+ * kommt er trotzdem an, ist das ein Programmierfehler, der laut scheitern soll
+ * statt still `null` an den Server zu schicken (der antwortet sonst mit einem
+ * 422, das im Formular niemand zuordnen kann).
+ */
 export function fromLocalInput(wert: string): string {
-  return new Date(wert).toISOString();
+  const iso = vonLokalerEingabe(wert);
+  if (!iso) throw new Error(`Unvollstaendige Zeitangabe: "${wert}"`);
+  return iso;
 }

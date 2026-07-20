@@ -26,6 +26,7 @@ import {
   serviceJobStatusLabel,
 } from '../../core/einsatz.model';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { vonLokalerEingabe } from '../../shared/datum';
 import { Dateien } from '../../shared/dateien/dateien';
 import { Berichte } from '../../shared/berichte/berichte';
 import { SollIstAbgleich } from '../../shared/soll-ist/soll-ist';
@@ -489,8 +490,8 @@ export class AuftragDetail {
       work_order_id: d.id,
       title: v.title.trim() || null,
       property_id: null,
-      scheduled_start: v.scheduled_start || null,
-      scheduled_end: v.scheduled_end || null,
+      scheduled_start: vonLokalerEingabe(v.scheduled_start),
+      scheduled_end: vonLokalerEingabe(v.scheduled_end),
       on_site_contact_party_id: v.on_site_contact_party_id || null,
       access_instructions: v.access_instructions.trim() || null,
     };
