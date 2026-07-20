@@ -1,0 +1,57 @@
+/* Anruf-Dialog — bewusst breit.
+ *
+ * Ein Telefonat trägt vier Themenblöcke (Wer, Wo, Was, Wann). In einem schmalen
+ * Modal stünden die untereinander und der Disponent scrollte, während der Kunde
+ * spricht. Der Dialog nutzt deshalb die Breite und stellt die Felder je Block
+ * nebeneinander — auf schmalen Geräten fällt das Raster automatisch auf eine
+ * Spalte zurück. */
+
+.anruf {
+  display: grid;
+  gap: var(--space-5);
+  /* Breiter als der Standard-Dialog, aber nie breiter als der Viewport. */
+  width: min(72rem, 100%);
+}
+
+.anruf__block {
+  display: grid;
+  gap: var(--space-3);
+  padding-block-end: var(--space-4);
+  border-block-end: 1px solid var(--line);
+
+  &:last-of-type {
+    padding-block-end: 0;
+    border-block-end: none;
+  }
+}
+
+.anruf__titel {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--step-0);
+  color: var(--ink-muted);
+  /* Die Blocküberschriften sind Orientierung, keine Hierarchie-Ebene, die mit
+     dem Dialogtitel konkurrieren soll. */
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.anruf__raster {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  align-items: start;
+}
+
+/* Felder, die über die volle Breite gehören: Freitext und alles, was lange
+   Werte trägt. `grid-column: 1 / -1` funktioniert auch dann, wenn das Raster je
+   nach Breite unterschiedlich viele Spalten hat. */
+.anruf__voll {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 40rem) {
+  .anruf__raster {
+    grid-template-columns: 1fr;
+  }
+}

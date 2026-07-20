@@ -1,6 +1,7 @@
 // Vertrag zu /api/planung/einsaetze (workflow.service_job in der DB).
 import { PropertyRef, StatusChangeEntry } from './projekt.model';
 import { WorkOrderStatus, workOrderStatusLabel } from './auftrag.model';
+import { PropertyType } from './property.model';
 
 export type ServiceJobStatus =
   | 'UNGEPLANT'
@@ -368,6 +369,83 @@ export interface TerminUpdate {
 /** Antwort auf Anlegen/Ändern eines Termins — mit weichen Belegungshinweisen. */
 export interface TerminResult extends ServiceJob {
   warnings: string[];
+}
+
+// --- Anruf-Durchstich: POST /api/planung/anruf -----------------------------
+// Kunde + Ort + Auftrag + Termin aus einem Telefonat, in EINER Transaktion.
+// Anders als TerminCreate setzt das keinen bestehenden Auftrag voraus — der
+// Auftrag entsteht mit und wird direkt freigegeben (das Telefonat ist der
+// Beauftragungsnachweis), damit der Monteur am Termintag losfahren darf.
+
+/** Der Anrufer. Mit `existing_party_id` wird ein bestehender Kontakt
+ * referenziert und NICHT neu angelegt — dann bleiben die Namensfelder leer. */
+export interface AnrufPerson {
+  existing_party_id?: string | null;
+  salutation?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  phone?: string | null;
+  email?: string | null;
+}
+
+/** Der Ort. Mit `existing_property_id` wird eine bestehende Liegenschaft
+ * referenziert (kein Duplikat, keine zweite Adresse). */
+export interface AnrufProperty {
+  existing_property_id?: string | null;
+  /** Bei Neuanlage Pflicht — der Server hat bewusst keinen Default, weil
+   * ausgerechnet EINFAMILIENHAUS den Verantwortungsbereich ableitet. */
+  property_type?: PropertyType | null;
+  name?: string | null;
+  street?: string | null;
+  house_number?: string | null;
+  postal_code?: string | null;
+  city?: string | null;
+}
+
+export interface AnrufAuftrag {
+  title: string;
+  description?: string | null;
+  priority?: string | null;
+  is_emergency?: boolean;
+  /** Beim Einfamilienhaus ableitbar, sonst für die Freigabe Pflicht. Im Notfall
+   * (`is_emergency`) entbehrlich — dann lässt die DB die Freigabe ohne zu. */
+  responsibility_scope?: string | null;
+  order_evidence_reference?: string | null;
+  /** Gewerk. Optional — am Telefon oft noch offen. Der Einsatz erbt es. */
+  trade_id?: string | null;
+}
+
+/** Ohne `scheduled_start` landet der Termin im Rückstand — gewollt. */
+export interface AnrufTermin {
+  scheduled_start?: string | null;
+  scheduled_end?: string | null;
+  building_id?: string | null;
+  unit_id?: string | null;
+  assignee_ids?: string[];
+  resource_ids?: string[];
+  access_instructions?: string | null;
+  appointment_category_id?: string | null;
+}
+
+export interface AnrufIn {
+  person: AnrufPerson;
+  property: AnrufProperty;
+  auftrag: AnrufAuftrag;
+  termin?: AnrufTermin | null;
+}
+
+export interface AnrufResult {
+  party_id: string;
+  property_id: string;
+  work_order_id: string;
+  order_number: string;
+  order_status: string;
+  service_job_id: string;
+  job_number: string;
+  job_status: string;
+  scheduled_start: string | null;
+  /** Explizit, damit die Oberfläche keine Statuscodes kennen muss. */
+  im_rueckstand: boolean;
 }
 
 const KONFLIKT_LABELS: Record<KonfliktArt, string> = {
