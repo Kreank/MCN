@@ -7,6 +7,7 @@ import {
   output,
   viewChild,
 } from '@angular/core';
+import { panelOeffnen } from '../schwebendes-panel';
 
 /** Selektor fuer das erste sinnvoll fokussierbare Element im Dialoginhalt. */
 const FOKUSSIERBAR =
@@ -104,7 +105,22 @@ export class Dialog implements OnDestroy {
     if (el?.open) this.schliessenIntern(el);
   }
 
+  /**
+   * Wer den Dialog geoeffnet hat — fuer die Fokusrueckgabe beim Schliessen.
+   *
+   * Das native `<dialog>` gibt den Fokus zwar selbst zurueck, aber nur, wenn
+   * der Ausloeser noch fokussierbar IST. Liegt er in einem eingeklappten
+   * Hover-Panel (Plantafel-Kachel: geschlossenes Popover ist `display: none`),
+   * verpufft die native Rueckgabe und der Fokus faellt in den `<body>` — der
+   * Nutzer steht am Seitenanfang statt an der Kachel, an der er war
+   * (WCAG 2.4.3). Deshalb wird der Ausloeser hier selbst gemerkt und sein
+   * Panel vor dem Fokussieren wieder geoeffnet.
+   */
+  private ausloeser: HTMLElement | null = null;
+
   private oeffnen(el: HTMLDialogElement): void {
+    const aktiv = document.activeElement;
+    this.ausloeser = aktiv instanceof HTMLElement ? aktiv : null;
     if (typeof el.showModal === 'function') el.showModal();
     else el.setAttribute('open', ''); // Fallback (z. B. Test-DOM)
     scrollSperren();
@@ -117,6 +133,11 @@ export class Dialog implements OnDestroy {
     if (typeof el.close === 'function') el.close();
     else el.removeAttribute('open');
     scrollFreigeben();
+    const ziel = this.ausloeser;
+    this.ausloeser = null;
+    if (!ziel?.isConnected) return;
+    panelOeffnen(ziel);
+    ziel.focus();
   }
 
   private startfokus(el: HTMLDialogElement): void {

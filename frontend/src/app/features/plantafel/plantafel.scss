@@ -430,8 +430,14 @@
   pointer-events: none;
   transition: opacity 0.1s ease;
 }
-.tile:hover .tile__aktionen,
-.tile:focus-within .tile__aktionen {
+/* `:not([popover])` = nur das FALLBACK. Hat die Direktive `appSchwebendesPanel`
+   uebernommen (Popover-faehiger Browser), steuert allein `:popover-open` die
+   Sichtbarkeit — sonst zeigte `:focus-within` das GESCHLOSSENE Panel wieder an
+   der alten, vom Scroll-Container beschnittenen Stelle an. Das ueber
+   Spezifitaet auszufechten waere ein Wettruesten; hier schliessen sich die
+   beiden Wege sauber gegenseitig aus. */
+.tile:hover .tile__aktionen:not([popover]),
+.tile:focus-within .tile__aktionen:not([popover]) {
   opacity: 1;
   pointer-events: auto;
 }

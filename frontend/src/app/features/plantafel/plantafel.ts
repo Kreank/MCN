@@ -42,6 +42,7 @@ import { Dialog } from '../../shared/dialog/dialog';
 import { Feld, FeldOption } from '../../shared/formular/feld';
 import { ReferenzWahl, RefSuche } from '../../shared/formular/referenz-wahl';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
+import { SchwebendesPanel, panelOeffnen } from '../../shared/schwebendes-panel';
 import { VerbotenState, fehlerDetail, fehlerState } from '../../shared/http-fehler';
 
 type ViewState =
@@ -304,6 +305,7 @@ function montagVon(iso: string): string {
   selector: 'app-plantafel',
   imports: [
     RouterLink, PlanungNav, KeinZugriff, ReactiveFormsModule, Dialog, Feld, ReferenzWahl,
+    SchwebendesPanel,
   ],
   templateUrl: './plantafel.html',
   styleUrl: './plantafel.scss',
@@ -1330,7 +1332,12 @@ export class Plantafel {
     // Fokus zurück auf GENAU den Auslöser (ein Einsatz mit mehreren Zuweisungen
     // erscheint in jeder Bahn — eine DOM-ID wäre mehrdeutig).
     setTimeout(() => {
-      if (ausloeser?.isConnected) ausloeser.focus();
+      if (!ausloeser?.isConnected) return;
+      // Der Auslöser sitzt im Hover-Panel der Kachel. Geschlossen ist das
+      // `display: none` — `focus()` verpuffte dort und der Fokus fiele in den
+      // `<body>`. Erst aufklappen, dann fokussieren (WCAG 2.4.3).
+      panelOeffnen(ausloeser);
+      ausloeser.focus();
     });
   }
 
