@@ -360,7 +360,8 @@ class TurnOut(Schema):
     seq: int
     role: str                      # USER | ASSISTANT
     content: str
-    intent: str | None = None      # AUSKUNFT | KENNZAHL | VORSCHLAG (nur ASSISTANT)
+    # AUSKUNFT | KENNZAHL | VORSCHLAG | RUECKFRAGE (nur ASSISTANT)
+    intent: str | None = None
     sources: list[QuelleOut] = []
     proposal_id: uuid.UUID | None = None
     ai_run_id: uuid.UUID | None = None
