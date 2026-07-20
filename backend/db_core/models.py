@@ -4867,7 +4867,8 @@ class ConversationTurn(models.Model):
     role = models.TextField()                # USER|ASSISTANT
     content = models.TextField()
     sources = models.JSONField(default=list)
-    intent = models.TextField(null=True, blank=True)   # AUSKUNFT|KENNZAHL|VORSCHLAG
+    # AUSKUNFT|KENNZAHL|VORSCHLAG|RUECKFRAGE (0120)
+    intent = models.TextField(null=True, blank=True)
     ai_run = models.ForeignKey(
         AiRun, models.DO_NOTHING, db_column="ai_run_id",
         null=True, blank=True, related_name="assistant_turns",

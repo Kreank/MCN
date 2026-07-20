@@ -1371,3 +1371,192 @@ def auftrag_dossier(work_order_id, sicht: Sicht):
         "dokumente_sichtbar": sicht.darf_content(),
         "dokumente": dokumente,
     }
+
+
+# ===========================================================================
+# „Was ist hier offen?" — der Offen-Überblick eines Objekts
+# ===========================================================================
+#
+# Gebaut für den KI-Assistenten (`db_core/ai/assistent.py`), aber bewusst hier und
+# nicht dort: Wer entscheidet, welche Zeile ein Konto sehen darf, ist **eine** Frage
+# mit **einer** Antwort, und die steht in diesem Modul. Ein zweiter Rechtefilter im
+# KI-Pfad wäre die Stelle, an der die beiden eines Tages auseinanderlaufen.
+#
+# Zwei Ebenen, weil die Frage „Was ist alles offen?" zwei verschiedene Antworten hat:
+#
+#   * `offen_ueberblick()` — nur **Zählungen** je Kategorie. Das ist das Menü, mit
+#     dem der Assistent zurückfragt („3 Vorgänge, 2 Aufträge, 1.240 € offen — was
+#     genau?"). Klein genug, dass es das Prompt-Fenster nicht anfasst.
+#   * `offen_detail()` — die **Zeilen einer** Kategorie, wenn der Nutzer sich
+#     entschieden hat. So trägt jede Antwort nur eine Sache, statt das Modell mit
+#     der gesamten Objekthistorie zu erschlagen.
+#
+# Eine Kategorie, die das Konto nicht lesen darf, fehlt **komplett** (kein Schlüssel
+# mit Anzahl 0). Sonst verriete schon das Menü, dass es offene Posten gibt — an der
+# Geldsperre vorbei, die `liegenschaft_dossier` sorgfältig zieht.
+
+# Angebotsstatus, die keine Entscheidung mehr erwarten. „Offen" heißt: alles andere.
+ANGEBOT_ENDSTATUS = ("ANGENOMMEN", "ABGELEHNT", "ABGELAUFEN", "ERSETZT")
+
+# Prioritäten, die im Überblick als „dringend" zählen. Die Stufen stehen in
+# `workflow.priority_level` (NOTFALL=1, DRINGEND=2, NORMAL=3) — hier die beiden oberen.
+DRINGENDE_PRIORITAETEN = ("NOTFALL", "DRINGEND")
+
+# Die Kategorien des Überblicks — Reihenfolge ist Anzeigereihenfolge.
+OFFEN_KATEGORIEN = ("VORGANG", "AUFTRAG", "ANGEBOT", "FAELLIGKEIT", "POSTEN")
+
+# So viele Zeilen liefert `offen_detail` je Kategorie höchstens.
+OFFEN_DETAIL_LIMIT = 15
+
+
+def _offene_vorgaenge_qs(property_id):
+    return (
+        ServiceCase.objects.filter(property_id=property_id)
+        .exclude(status__in=VORGANG_ENDSTATUS)
+        .order_by("-received_at")
+    )
+
+
+def _offene_auftraege_qs(property_id):
+    return (
+        WorkOrder.objects.filter(property_id=property_id)
+        .exclude(status__in=AUFTRAG_ENDSTATUS)
+        .order_by("-created_at")
+    )
+
+
+def _offene_angebote_qs(property_id, sicht):
+    """Offene Angebote am Objekt — objektbegrenzt, wenn das Konto nur EIGENE hat.
+
+    `angebote_begrenzen` ist fail-closed: Alles außer dem ausdrücklichen 'ALLE'
+    landet in der Objektgrenze. Der Scope wird deshalb aus `sicht.invoicing`
+    abgeleitet, nicht geraten.
+    """
+    qs = (
+        Quote.objects.filter(property_id=property_id)
+        .exclude(status__in=ANGEBOT_ENDSTATUS)
+        .order_by("-created_at")
+    )
+    scope = "ALLE" if sicht.invoicing else "EIGENE"
+    return objektsicht.angebote_begrenzen(qs, scope, sicht.actor_id)
+
+
+def _darf_angebote(sicht):
+    return sicht.invoicing or sicht.invoicing_eigene
+
+
+def offen_ueberblick(property_id, sicht: Sicht) -> dict:
+    """Zählungen der offenen Punkte eines Objekts — je Kategorie eine Zeile.
+
+    Rückgabe: `{"VORGANG": {"anzahl": 3, "hinweis": "…"}, …}`. Kategorien ohne
+    Recht fehlen ganz; Kategorien mit Anzahl 0 fehlen ebenfalls (der Assistent
+    soll „nichts offen" sagen, nicht fünf Nullen vorlesen).
+
+    **Beträge nur mit `invoicing` (Scope ALLE)** — dieselbe Grenze wie bei
+    `liegenschaft_dossier.offene_posten`.
+    """
+    heute = date.today()
+    aus: dict = {}
+
+    if sicht.darf_workflow():
+        vorgaenge = list(_offene_vorgaenge_qs(property_id))
+        if vorgaenge:
+            dringend = sum(
+                1 for c in vorgaenge if c.priority in DRINGENDE_PRIORITAETEN)
+            aus["VORGANG"] = {
+                "anzahl": len(vorgaenge),
+                "hinweis": f"{dringend} dringend" if dringend else None,
+            }
+        auftraege = list(_offene_auftraege_qs(property_id))
+        if auftraege:
+            aus["AUFTRAG"] = {"anzahl": len(auftraege), "hinweis": None}
+
+    if _darf_angebote(sicht):
+        anzahl = _offene_angebote_qs(property_id, sicht).count()
+        if anzahl:
+            aus["ANGEBOT"] = {"anzahl": anzahl, "hinweis": None}
+
+    if sicht.darf_maintenance():
+        faellig = list(faelligkeit_service.liste(
+            status="OFFEN", property_id=property_id, stichtag=heute))
+        if faellig:
+            ueberfaellig = sum(1 for d in faellig if d.due_date < heute)
+            aus["FAELLIGKEIT"] = {
+                "anzahl": len(faellig),
+                "hinweis": f"{ueberfaellig} überfällig" if ueberfaellig else None,
+            }
+
+    if sicht.invoicing:
+        posten = _offene_posten(Invoice.objects.filter(property_id=property_id), heute)
+        if posten["anzahl"]:
+            hinweis = f"{posten['summe_offen']} € offen"
+            if posten["anzahl_ueberfaellig"]:
+                hinweis += f", davon {posten['summe_ueberfaellig']} € überfällig"
+            aus["POSTEN"] = {"anzahl": posten["anzahl"], "hinweis": hinweis}
+
+    return aus
+
+
+def offen_detail(property_id, sicht: Sicht, kategorie: str) -> list[dict] | None:
+    """Die offenen Zeilen EINER Kategorie — oder `None`, wenn das Recht fehlt.
+
+    `None` heißt „darfst du nicht", `[]` heißt „nichts offen". Der Assistent muss
+    beides unterscheiden können, sonst sagt er „nichts offen", wo er in Wahrheit
+    nichts sehen darf.
+    """
+    heute = date.today()
+
+    if kategorie == "VORGANG":
+        if not sicht.darf_workflow():
+            return None
+        return [_vorgang_zeile(c)
+                for c in _offene_vorgaenge_qs(property_id)[:OFFEN_DETAIL_LIMIT]]
+
+    if kategorie == "AUFTRAG":
+        if not sicht.darf_workflow():
+            return None
+        return [_auftrag_zeile(o)
+                for o in _offene_auftraege_qs(property_id)[:OFFEN_DETAIL_LIMIT]]
+
+    if kategorie == "ANGEBOT":
+        if not _darf_angebote(sicht):
+            return None
+        qs = _offene_angebote_qs(property_id, sicht)[:OFFEN_DETAIL_LIMIT]
+        # Preisfrei, wenn das Konto nur `invoicing_eigene` trägt — die Betragsspalte
+        # ist genau der Weg, auf dem Geld an der Objektsicht vorbei herausrutscht.
+        return [
+            {
+                "id": q.id,
+                "quote_number": q.quote_number,
+                "title": q.title,
+                "status": q.status,
+                "valid_until_date": q.valid_until_date,
+                **({"gross_total": q.gross_total} if sicht.invoicing else {}),
+            }
+            for q in qs
+        ]
+
+    if kategorie == "FAELLIGKEIT":
+        if not sicht.darf_maintenance():
+            return None
+        return [
+            {
+                "id": d.id,
+                "kind": d.kind,
+                "title": d.title,
+                "due_date": d.due_date,
+                "status": d.status,
+                "is_ueberfaellig": d.due_date < heute,
+            }
+            for d in faelligkeit_service.liste(
+                status="OFFEN", property_id=property_id, stichtag=heute
+            )[:OFFEN_DETAIL_LIMIT]
+        ]
+
+    if kategorie == "POSTEN":
+        if not sicht.invoicing:
+            return None
+        posten = _offene_posten(Invoice.objects.filter(property_id=property_id), heute)
+        return posten["posten"][:OFFEN_DETAIL_LIMIT]
+
+    return None
