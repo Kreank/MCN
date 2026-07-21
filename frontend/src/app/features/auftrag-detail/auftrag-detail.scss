@@ -14,6 +14,121 @@
   margin-bottom: var(--space-4);
 }
 
+// ======================= Freigabe-Checkliste (A4) ===========================
+/* Der Zustand jeder Zeile steht IMMER als Wort da („erfüllt" / „fehlt" /
+   „im Notfall entbehrlich"); Marke und Farbe sind nur Zugabe (WCAG 2.2 AA:
+   Status nie allein über Farbe). */
+.freigabe-check {
+  margin-bottom: var(--space-5);
+  padding: var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+}
+.freigabe-check__kopf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.freigabe-check__titel {
+  margin: 0;
+  font-size: var(--step-0);
+  font-weight: 700;
+  color: var(--ink);
+}
+.freigabe-check__fazit {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0;
+  font-size: var(--step--1);
+  font-weight: 600;
+}
+.freigabe-check__fazit--ok {
+  color: var(--positive-ink);
+}
+.freigabe-check__fazit--offen {
+  color: var(--warn-ink);
+}
+
+.freigabe-check__liste {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.freigabe-check__zeile {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-sunken);
+  border-radius: var(--radius-sm);
+}
+.freigabe-check__marke {
+  flex: none;
+  width: 1.25rem;
+  font-size: var(--step-0);
+  font-weight: 700;
+  text-align: center;
+}
+.freigabe-check__zeile--erfuellt .freigabe-check__marke {
+  color: var(--positive-ink);
+}
+.freigabe-check__zeile--offen .freigabe-check__marke {
+  color: var(--warn-ink);
+}
+.freigabe-check__zeile--entbehrlich .freigabe-check__marke {
+  color: var(--ink-faint);
+}
+
+.freigabe-check__text {
+  flex: 1;
+  min-width: 14rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+.freigabe-check__label {
+  font-size: var(--step--1);
+  color: var(--ink);
+}
+.freigabe-check__zustand {
+  font-weight: 600;
+}
+.freigabe-check__zeile--erfuellt .freigabe-check__zustand {
+  color: var(--positive-ink);
+}
+.freigabe-check__zeile--offen .freigabe-check__zustand {
+  color: var(--warn-ink);
+}
+.freigabe-check__zeile--entbehrlich .freigabe-check__zustand {
+  color: var(--ink-muted);
+}
+.freigabe-check__wert {
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+/* Die erledigte Zeile darf zurücktreten — sie ist Beleg, keine Aufgabe. */
+.freigabe-check__zeile--erfuellt .freigabe-check__wert {
+  font-family: var(--font-mono);
+}
+.freigabe-check__tat {
+  flex: none;
+}
+
+.freigabe-check__hinweis {
+  margin: var(--space-3) 0 0;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
 // ============================ Referenzlisten ================================
 .ref-liste {
   list-style: none;

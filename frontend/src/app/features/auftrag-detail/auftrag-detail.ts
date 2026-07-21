@@ -41,6 +41,7 @@ import { Feld, FeldOption } from '../../shared/formular/feld';
 import { ReferenzWahl, RefSuche } from '../../shared/formular/referenz-wahl';
 import { apiFehlerZuweisen } from '../../shared/formular/api-fehler';
 import { deZuApiDezimal, dezimalValidator } from '../../shared/formular/dezimal';
+import { nichtNurLeerraumValidator } from '../../shared/formular/text';
 import {
   felderAlsBeruehrtMarkieren,
   serverFehlerZuruecksetzen,
@@ -54,6 +55,27 @@ type ViewState =
 
 type Meldung = { art: 'erfolg' | 'fehler'; text: string };
 type DialogArt = 'beteiligter' | 'status' | 'nachweis' | 'verantwortung' | 'termin';
+
+/**
+ * Ein Tor der Auftragsfreigabe, wie es `workflow.recheck_work_order_gates`
+ * (`db/migrations/0013_auftrag.sql:143-179`) prüft — als Zeile für die
+ * Checkliste am Auftrag.
+ */
+type FreigabeSchritt = {
+  id: 'nachweis' | 'verantwortung' | 'auftraggeber';
+  label: string;
+  regel: string;
+  erfuellt: boolean;
+  /** Der Notfall (`is_emergency`) hebt genau dieses Tor auf — A-26 nicht. */
+  imNotfallEntbehrlich: boolean;
+  /** Der Ist-Wert, damit die Zeile auch im erfüllten Fall etwas aussagt. */
+  wert: string;
+  aktion: DialogArt;
+  aktionLabel: string;
+};
+
+/** Zustand einer Checklistenzeile. `entbehrlich` = durch Notfall aufgehoben. */
+type SchrittZustand = 'erfuellt' | 'entbehrlich' | 'offen';
 
 // Kandidaten für den allgemeinen Statuswechsel (FREIGEGEBEN läuft über die
 // gesonderte Freigabe mit Bestätigung und eigenem Recht).
@@ -246,6 +268,101 @@ export class AuftragDetail {
     return s === 'ENTWURF' || s === 'FREIGABE_AUSSTEHEND';
   });
 
+  // --- Freigabe-Checkliste (A4) --------------------------------------------
+  /**
+   * Die drei Tore aus `workflow.recheck_work_order_gates` als lesbare Liste.
+   *
+   * Zweck: Der Disponent soll **vor** dem Klick sehen, was fehlt, statt es aus
+   * einer 422-Meldung zu erfahren und dann drei Masken abzuklappern. Die
+   * Nachtrag-Dialoge liegen ohnehin schon auf dieser Seite — die Checkliste
+   * verdrahtet jede Lücke direkt mit ihrem Dialog.
+   *
+   * Wichtig: Das hier ist **Anzeige, kein Tor.** Die Regeln setzt die Datenbank
+   * durch; die Oberfläche erfindet keine eigenen Sperren (siehe Befund A3, wo
+   * genau so eine erfundene Sperre vermutet — und widerlegt — wurde). Der
+   * „Freigeben"-Knopf bleibt deshalb bedienbar, auch wenn Zeilen offen sind.
+   */
+  protected readonly freigabeSchritte = computed<FreigabeSchritt[]>(() => {
+    const d = this.daten();
+    if (!d) return [];
+    const auftraggeber = d.parties.find((p) => p.role === 'PRINCIPAL');
+    // Die DB prüft BEIDES zusammen (0013_auftrag.sql:167-168) — ein bestätigter
+    // Zeitpunkt bei Bereich UNKNOWN reicht ihr nicht. Also auch hier ein Wert.
+    const verantwortungOk =
+      d.responsibility_scope !== 'UNKNOWN' && !!d.responsibility_confirmed_at;
+    return [
+      {
+        id: 'nachweis',
+        label: 'Beauftragungsnachweis in Textform',
+        regel: 'A-26',
+        erfuellt: !!d.order_evidence_reference?.trim(),
+        imNotfallEntbehrlich: false,
+        wert: d.order_evidence_reference?.trim() || 'Nicht hinterlegt',
+        aktion: 'nachweis',
+        aktionLabel: 'Nachweis setzen',
+      },
+      {
+        // Beides zusammen — die DB prüft Bereich UND Bestätigungszeitpunkt.
+        id: 'verantwortung',
+        label: 'Zuständigkeit bestätigt',
+        regel: 'B-01/A-21',
+        erfuellt: verantwortungOk,
+        imNotfallEntbehrlich: true,
+        // Am SELBEN Zustand wie `erfuellt` — sonst stünde bei bestätigtem
+        // Zeitpunkt und Bereich UNKNOWN „fehlt" neben einem Bereichsnamen.
+        wert: verantwortungOk ? this.scopeLabel(d.responsibility_scope) : 'Nicht bestätigt',
+        aktion: 'verantwortung',
+        aktionLabel: 'Verantwortung bestätigen',
+      },
+      {
+        id: 'auftraggeber',
+        label: 'Auftraggeber benannt',
+        regel: 'B-01/A-25',
+        erfuellt: !!auftraggeber,
+        imNotfallEntbehrlich: true,
+        wert: auftraggeber?.display_name ?? 'Niemand in der Rolle Auftraggeber',
+        aktion: 'beteiligter',
+        aktionLabel: 'Auftraggeber hinzufügen',
+      },
+    ];
+  });
+
+  /** Nur die Zeilen, die die Freigabe wirklich noch aufhalten. */
+  protected readonly freigabeLuecken = computed(() =>
+    this.freigabeSchritte().filter((s) => this.schrittZustand(s) === 'offen'),
+  );
+
+  /**
+   * Lücke aus der Checkliste heraus schließen.
+   *
+   * Für den Auftraggeber wird die Rolle vorbelegt: Der Knopf verspricht
+   * „Auftraggeber hinzufügen" — die Rolle dann selbst aus acht Einträgen suchen
+   * zu müssen, wäre genau die Klickarbeit, gegen die das Arbeitspaket antritt.
+   * Schlimmer noch: eine versehentlich andere Rolle ließe das Tor offen, ohne
+   * dass die Zeile erklärt, warum.
+   */
+  luecheSchliessen(s: FreigabeSchritt): void {
+    this.dialogOeffnen(s.aktion);
+    if (s.id === 'auftraggeber') this.beteiligterForm.patchValue({ role: 'PRINCIPAL' });
+  }
+
+  schrittZustand(s: FreigabeSchritt): SchrittZustand {
+    if (s.erfuellt) return 'erfuellt';
+    if (s.imNotfallEntbehrlich && this.daten()?.is_emergency) return 'entbehrlich';
+    return 'offen';
+  }
+
+  /** Marke der Zeile. Immer zusammen mit dem Zustandstext — nie Farbe allein. */
+  schrittMarke(s: FreigabeSchritt): string {
+    const z = this.schrittZustand(s);
+    return z === 'erfuellt' ? '✓' : z === 'entbehrlich' ? '–' : '✕';
+  }
+
+  schrittZustandText(s: FreigabeSchritt): string {
+    const z = this.schrittZustand(s);
+    return z === 'erfuellt' ? 'erfüllt' : z === 'entbehrlich' ? 'im Notfall entbehrlich' : 'fehlt';
+  }
+
   protected readonly partySuche: RefSuche = (q) =>
     this.partySvc.list({ page: 1, page_size: 20, q }).pipe(
       map((p) => p.items.map((x) => ({ id: x.id, label: x.display_name }))),
@@ -262,7 +379,14 @@ export class AuftragDetail {
     reason: this.fb.control('', { nonNullable: true }),
   });
   protected readonly nachweisForm = this.fb.group({
-    reference: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
+    // `nichtNurLeerraum` zusätzlich zu `required`: Ein Nachweis aus lauter
+    // Leerzeichen käme durch die DB (dort steht nur NOT NULL, kein CHECK), die
+    // Checkliste meldete danach aber dauerhaft „fehlt", weil sie trimmt. Lieber
+    // gar nicht erst speichern, als eine Anzeige, die dem Verhalten widerspricht.
+    reference: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.required, nichtNurLeerraumValidator],
+    }),
   });
   protected readonly verantwortungForm = this.fb.group({
     scope: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),

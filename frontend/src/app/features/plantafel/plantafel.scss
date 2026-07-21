@@ -313,7 +313,10 @@
   border-radius: var(--radius-sm);
   border: 1px solid var(--line);
   border-left: 3px solid var(--line-strong);
-  background: var(--surface);
+  // Flaeche = Kategorie (C1), linker Rand = Status. Nur getoent, nie gesaettigt
+  // — bei voller Saettigung bricht der Textkontrast (WCAG 2.2 AA). Ohne
+  // Kategorie mischt der Fallback --surface mit sich selbst = --surface.
+  background: color-mix(in srgb, var(--kat-hue, var(--surface)) 16%, var(--surface));
   box-shadow: var(--shadow-1);
   transition: transform 0.1s ease, box-shadow 0.15s ease;
 
@@ -455,7 +458,12 @@
 }
 .tile__adresse {
   font-size: 0.62rem;
-  color: var(--ink-faint);
+  // --ink-muted statt --ink-faint: Seit die Kategorie die FLAECHE toent (C1),
+  // ist --surface nicht mehr der Hintergrund. --ink-faint ist genau auf
+  // --surface gerechnet (5,48:1 hell / 5,21:1 dunkel) und faellt auf der
+  // getoenten Kachel unter 4,5:1 — auf kat-amber dunkel bis 3,99:1.
+  // --ink-muted haelt ueber alle acht Toene und beide Themes >= 5,08:1.
+  color: var(--ink-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -466,20 +474,20 @@
 }
 
 // Statusfarben — immer NUR Zugabe: die Kachel trägt das Status-Label als Text.
+// Seit C1 traegt die FLAECHE die Kategorie; der Status bleibt deshalb auf dem
+// linken Rand. Fruehere Status-Hintergruende sind entfallen, sie haetten die
+// Kategorietoenung ueberdeckt und zwei Aussagen in eine Flaeche gelegt.
 .tile--plan {
   border-left-color: var(--command);
 }
 .tile--aktiv {
   border-left-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
 }
 .tile--fertig {
   border-left-color: var(--positive-ink);
-  background: color-mix(in srgb, var(--positive-tint) 50%, var(--surface));
 }
 .tile--aus {
   border-left-color: var(--warn-ink);
-  background: color-mix(in srgb, var(--warn-tint) 45%, var(--surface));
 }
 .tile--pause,
 .tile--nach {

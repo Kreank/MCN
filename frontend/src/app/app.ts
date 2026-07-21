@@ -24,6 +24,50 @@ interface NavItem {
   nurAlle?: boolean;
 }
 
+/** Eine Navigationsgruppe mit den Punkten, die in ihr sichtbar sind. */
+interface NavGruppe {
+  id: string;
+  titel: string;
+  punkte: NavItem[];
+}
+
+/**
+ * Gruppierung der Navigation (Befund D1/D2): 24 flache Einträge ohne Ordnung
+ * waren für den Disponenten eine Suchaufgabe.
+ *
+ * Bewusst als Pfad-Liste NEBEN `nav` statt als Feld IN `nav`: die Reihenfolge
+ * innerhalb einer Gruppe steht damit an einer einzigen, lesbaren Stelle, und
+ * die ausführlichen Begründungen an den Einträgen bleiben unangetastet.
+ *
+ * Jeder Pfad muss in genau einer Gruppe stehen. Was fehlt, landet sichtbar in
+ * „Sonstiges" (siehe `sichtbareGruppen`) — verschwinden darf ein Punkt nie.
+ */
+const NAV_GRUPPEN: readonly { id: string; titel: string; pfade: readonly string[] }[] = [
+  {
+    id: 'tag',
+    titel: 'Tagesgeschäft',
+    pfade: ['/uebersicht', '/auftraege', '/eingang', '/projekte', '/planung', '/wartung', '/aufgaben'],
+  },
+  // Entscheidungs-Schreibtische: beide sind Warteschlangen, an denen jemand
+  // zustimmt oder ablehnt — fachlich dasselbe Tun, unabhängig vom Bereich.
+  { id: 'freigaben', titel: 'Freigaben', pfade: ['/entscheidungen', '/freigaben'] },
+  // „KI + CRM, nicht CRM + KI" (CLAUDE.md): die KI ist ein eigener Akteur und
+  // bekommt deshalb eine eigene Gruppe, keinen Anhang am Tagesgeschäft.
+  { id: 'ki', titel: 'KI', pfade: ['/ki-vorschlaege', '/ki-assistent'] },
+  {
+    id: 'stamm',
+    titel: 'Stammdaten',
+    pfade: ['/kontakte', '/liegenschaften', '/artikel', '/geraetewissen'],
+  },
+  {
+    id: 'kfm',
+    titel: 'Kaufmännisch',
+    pfade: ['/dokumente', '/buchhaltung', '/belegerfassung', '/auswertungen'],
+  },
+  { id: 'personal', titel: 'Personal', pfade: ['/mitarbeiter', '/zeiterfassung', '/meine-zeiten'] },
+  { id: 'system', titel: 'System', pfade: ['/werkzeuge', '/einstellungen'] },
+];
+
 @Component({
   selector: 'app-root',
   imports: [RouterOutlet, RouterLink, RouterLinkActive, Kommandopalette],
@@ -195,15 +239,67 @@ export class App {
     }),
   );
 
+  /**
+   * Die sichtbaren Punkte, in Gruppen einsortiert. Leere Gruppen (alle Punkte
+   * wegen fehlender Rechte gefiltert) fallen weg — eine Überschrift ohne
+   * Inhalt wäre nur Rauschen.
+   */
+  protected readonly sichtbareGruppen = computed<NavGruppe[]>(() => {
+    const punkte = this.sichtbareNav();
+    const vergeben = new Set<string>();
+    const gruppen: NavGruppe[] = [];
+
+    for (const g of NAV_GRUPPEN) {
+      // Reihenfolge kommt aus `pfade`, nicht aus `nav` — die Gruppe bestimmt,
+      // in welcher Folge ihre Punkte stehen.
+      // Stünde ein Pfad versehentlich doppelt, erschiene er zweimal und die
+      // Bemaszungsmarke zählte eine Zeile zu viel — ab dort stünde sie
+      // dauerhaft daneben. `new Set` faengt die Dublette INNERHALB dieser
+      // Gruppe ab, `vergeben` die ueber Gruppen hinweg. Die erste Nennung
+      // gewinnt; jede weitere faellt still weg, statt die Navigation zu
+      // verstellen.
+      const treffer = [...new Set(g.pfade)]
+        .filter((p) => !vergeben.has(p))
+        .map((p) => punkte.find((n) => n.path === p))
+        .filter((n): n is NavItem => !!n);
+      treffer.forEach((n) => vergeben.add(n.path));
+      if (treffer.length) gruppen.push({ id: g.id, titel: g.titel, punkte: treffer });
+    }
+
+    // Sicherheitsnetz: ein neuer Navigationspunkt, den niemand einer Gruppe
+    // zugeordnet hat, wird sichtbar angehängt statt still verschluckt.
+    const rest = punkte.filter((n) => !vergeben.has(n.path));
+    if (rest.length) gruppen.push({ id: 'sonstiges', titel: 'Sonstiges', punkte: rest });
+
+    return gruppen;
+  });
+
   /** Aktuelle URL — Grundlage für die aktive Bemaszungsmarke. */
   private readonly aktuelleUrl = signal('/');
 
-  /** Index des aktiven Punkts innerhalb der sichtbaren Liste. */
-  protected readonly activeIndex = computed(() => {
+  /**
+   * Position des aktiven Punkts als Zeilenversatz: wie viele Punkte und wie
+   * viele Gruppenüberschriften stehen über ihm. Die Bemaszungsmarke rechnet
+   * daraus ihren Weg (`punkte × --nav-item-h + koepfe × --nav-head-h`) —
+   * seit der Gruppierung genügt der reine Index nicht mehr.
+   */
+  private readonly aktivePos = computed(() => {
     const url = this.aktuelleUrl();
-    const idx = this.sichtbareNav().findIndex((n) => url.startsWith(n.path));
-    return idx < 0 ? 0 : idx;
+    let punkte = 0;
+    let koepfe = 0;
+    for (const g of this.sichtbareGruppen()) {
+      koepfe++; // die Überschrift dieser Gruppe steht über allen ihren Punkten
+      for (const n of g.punkte) {
+        if (url.startsWith(n.path)) return { punkte, koepfe };
+        punkte++;
+      }
+    }
+    // Kein Treffer (z. B. /login): Marke ruht auf dem ersten Punkt.
+    return { punkte: 0, koepfe: 1 };
   });
+
+  protected readonly activeIndex = computed(() => this.aktivePos().punkte);
+  protected readonly activeHeads = computed(() => this.aktivePos().koepfe);
 
   protected readonly rollenText = computed(() => {
     const rollen = this.auth.user()?.roles ?? [];

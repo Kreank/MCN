@@ -1,5 +1,8 @@
 :host {
   --nav-item-h: 3rem;
+  // Feste Kopfhoehe der Navigationsgruppen: die Bemaszungsmarke rechnet damit
+  // (siehe .messkante__mark), deshalb darf sie NICHT aus dem Inhalt folgen.
+  --nav-head-h: 1.9rem;
   display: block;
 }
 
@@ -124,7 +127,12 @@
   top: 0;
   height: var(--nav-item-h);
   width: 1.6rem;
-  transform: translateY(calc(var(--active-index, 0) * var(--nav-item-h)));
+  // Seit der Gruppierung (D1/D2) stehen Ueberschriften zwischen den Punkten —
+  // der Weg der Marke ist deshalb Punkte MAL Zeilenhoehe PLUS Ueberschriften
+  // MAL Kopfhoehe. Beide Hoehen sind fix, damit die Rechnung exakt bleibt.
+  transform: translateY(
+    calc(var(--active-index, 0) * var(--nav-item-h) + var(--active-heads, 0) * var(--nav-head-h))
+  );
   transition: transform 0.34s cubic-bezier(0.4, 0, 0.15, 1);
 
   &::before {

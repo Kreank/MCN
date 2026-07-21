@@ -41,30 +41,42 @@
 
       <nav class="nav" aria-label="Hauptnavigation">
         <!-- Messkante: Maszband-Leiste; orange Bemaszungsmarke verfaehrt zum aktiven Punkt -->
-        <div class="messkante" aria-hidden="true" [style.--active-index]="activeIndex()">
+        <div
+          class="messkante"
+          aria-hidden="true"
+          [style.--active-index]="activeIndex()"
+          [style.--active-heads]="activeHeads()"
+        >
           <span class="messkante__mark"></span>
         </div>
 
-        <ul class="nav__list">
-          @for (item of sichtbareNav(); track item.path) {
-            <li>
-              <!-- Eingeklappt sieht ein sehender Nutzer nur noch die Kennung („50").
-                   Der Tooltip nennt den Bereich; der zugängliche Name steht ohnehin
-                   im (nur optisch verborgenen) Label. -->
-              <a
-                class="nav__link"
-                [routerLink]="item.path"
-                routerLinkActive="is-active"
-                #rla="routerLinkActive"
-                [attr.aria-current]="rla.isActive ? 'page' : null"
-                [attr.title]="navSchmal() ? item.label : null"
-              >
-                <span class="nav__mark" aria-hidden="true">{{ item.mark }}</span>
-                <span class="nav__label">{{ item.label }}</span>
-              </a>
-            </li>
-          }
-        </ul>
+        <!-- Gruppiert (D1/D2). Die Ueberschrift ist `aria-hidden` und der Name
+             haengt am <ul> — im ARIA-Modell traegt die Liste ihren Namen selbst,
+             eine Ueberschrift dazwischen waere doppelt. Gleiches Muster wie in
+             der Kommandopalette. -->
+        @for (g of sichtbareGruppen(); track g.id) {
+          <p class="nav__gruppe" aria-hidden="true">{{ g.titel }}</p>
+          <ul class="nav__list" [attr.aria-label]="g.titel">
+            @for (item of g.punkte; track item.path) {
+              <li>
+                <!-- Eingeklappt sieht ein sehender Nutzer nur noch die Kennung („50").
+                     Der Tooltip nennt den Bereich; der zugängliche Name steht ohnehin
+                     im (nur optisch verborgenen) Label. -->
+                <a
+                  class="nav__link"
+                  [routerLink]="item.path"
+                  routerLinkActive="is-active"
+                  #rla="routerLinkActive"
+                  [attr.aria-current]="rla.isActive ? 'page' : null"
+                  [attr.title]="navSchmal() ? item.label : null"
+                >
+                  <span class="nav__mark" aria-hidden="true">{{ item.mark }}</span>
+                  <span class="nav__label">{{ item.label }}</span>
+                </a>
+              </li>
+            }
+          </ul>
+        }
       </nav>
 
       <p class="sidebar__foot">

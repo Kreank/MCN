@@ -1742,7 +1742,14 @@ button {
   font-family: var(--font-mono);
   font-size: 0.54rem;
   letter-spacing: 0.06em;
-  color: var(--ink-hint);
+  /* --ink-muted, NICHT --ink-hint: Dieses Kuerzel ist der Textersatz fuer die
+     Statusfarbe (WCAG 1.4.1) und in JEDER Kachelbreite das einzige, was den
+     Status traegt — es darf nie das schwaechste Element sein. Seit die
+     Kategorie die Flaeche toent (C1), ist --surface nicht mehr der
+     Hintergrund; --ink-hint ist auf --surface gerechnet und faellt auf der
+     getoenten Kachel bis auf 3,99:1. --ink-muted haelt ueber alle acht Toene
+     und beide Themes >= 5,08:1. */
+  color: var(--ink-muted);
 }
 
 /* PLANTAFEL — DAUERBALKEN. Ein kurzer Termin wird auf eine LESBARE Breite
@@ -1827,6 +1834,27 @@ button {
    Wer am Schreibtisch eingeklappt hat, saehe am Handy sonst eine breite Leiste mit
    zentrierten, unbeschrifteten Zahlen — die Einstellung ist fuer Breite gedacht,
    und die gibt es dort nicht zu gewinnen. */
+/* Gruppentitel der Navigation (D1/D2). Hoehe ist FIX (--nav-head-h, gesetzt am
+   app-root): die orange Bemaszungsmarke rechnet ihren Weg aus Zeilen- und
+   Kopfhoehen, ein aus dem Inhalt folgender Kopf wuerde sie verschieben. */
+.nav__gruppe {
+  display: flex;
+  align-items: center;
+  height: var(--nav-head-h);
+  margin: 0;
+  padding: 0 var(--space-3);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--on-command-muted);
+}
+/* Erste Gruppe schliesst buendig an die Marke an, die folgenden bekommen Luft —
+   der Abstand ist Teil von --nav-head-h und darf NICHT als margin dazukommen. */
+.nav__gruppe:not(:first-of-type) {
+  border-top: 1px solid var(--command-line);
+}
+
 @media (min-width: 721px) {
   .shell--schmal .sidebar {
     padding-inline: var(--space-2);
@@ -1855,6 +1883,14 @@ button {
   }
   .shell--schmal .nav__link {
     justify-content: center;
+  }
+  /* Eingeklappt bleiben nur die Kennungen. Die Gruppentitel verschwinden ganz
+     (nicht nur optisch): Sie sind `aria-hidden`, tragen also keinen
+     zugaenglichen Namen, den man erhalten muesste — den fuehrt das <ul>. Die
+     Bemaszungsmarke ist hier ohnehin ausgeblendet, ihre Rechnung stoert das
+     Entfernen der Koepfe also nicht. */
+  .shell--schmal .nav__gruppe {
+    display: none;
   }
   .shell--schmal .sidebar__brand {
     justify-content: center;

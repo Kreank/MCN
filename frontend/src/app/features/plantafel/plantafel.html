@@ -492,8 +492,11 @@
                          Tagesspalte, und zwei Termine am selben Tag liegen
                          nebeneinander auf ihrer Uhrzeit. -->
                     @for (b of balken(lane); track b.job.id) {
+                      <!-- Die Kategorieklasse setzt `--kat-hue` fuer die ganze
+                           Kachel (Befund C1): Flaeche = Kategorie, linker Rand =
+                           Status. Der Chip im Inneren erbt dieselbe Variable. -->
                       <div
-                        class="tile tile--{{ statusMod(b.job.status) }}"
+                        class="tile tile--{{ statusMod(b.job.status) }} {{ categoryClass(b.job.category) }}"
                         [class.tile--bewegt]="istInBewegung(b.job.id)"
                         [class.tile--konflikt]="b.job.conflicts.length > 0"
                         [class.tile--offen-links]="b.offenLinks"

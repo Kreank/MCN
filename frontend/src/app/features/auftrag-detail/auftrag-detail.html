@@ -78,6 +78,69 @@
             }
           </div>
         }
+        <!-- Freigabe-Checkliste (Befund A4): zeigt VOR dem Klick, was die drei
+             DB-Tore aus `workflow.recheck_work_order_gates` noch verlangen, und
+             verdrahtet jede Lücke mit ihrem Dialog auf DIESER Seite — statt den
+             Disponenten nach einer 422-Meldung durch drei Masken zu schicken.
+             Bewusst nur Anzeige: sperren tut die Datenbank, nicht die UI. -->
+        @if (freigabeMoeglich()) {
+          <section class="freigabe-check" aria-labelledby="freigabe-check-titel">
+            <div class="freigabe-check__kopf">
+              <h3 class="freigabe-check__titel" id="freigabe-check-titel">Vor der Freigabe</h3>
+              @if (freigabeLuecken().length === 0) {
+                <p class="freigabe-check__fazit freigabe-check__fazit--ok">
+                  <span aria-hidden="true">✓</span>
+                  Alle nötigen Angaben liegen vor.
+                </p>
+              } @else {
+                <p class="freigabe-check__fazit freigabe-check__fazit--offen">
+                  <span aria-hidden="true">✕</span>
+                  Noch {{ freigabeLuecken().length }}
+                  {{ freigabeLuecken().length === 1 ? 'Angabe' : 'Angaben' }} offen
+                </p>
+              }
+            </div>
+
+            <ul class="freigabe-check__liste">
+              @for (s of freigabeSchritte(); track s.id) {
+                <li class="freigabe-check__zeile freigabe-check__zeile--{{ schrittZustand(s) }}">
+                  <span class="freigabe-check__marke" aria-hidden="true">{{ schrittMarke(s) }}</span>
+                  <span class="freigabe-check__text">
+                    <span class="freigabe-check__label">
+                      {{ s.label }} —
+                      <span class="freigabe-check__zustand">{{ schrittZustandText(s) }}</span>
+                    </span>
+                    <span class="freigabe-check__wert">{{ s.wert }}</span>
+                  </span>
+                  @if (schrittZustand(s) === 'offen' && darfAendern()) {
+                    <button
+                      type="button"
+                      class="btn btn--klein freigabe-check__tat"
+                      (click)="luecheSchliessen(s)"
+                    >
+                      {{ s.aktionLabel }}
+                    </button>
+                  }
+                </li>
+              }
+            </ul>
+
+            <!-- E3: der Notfallweg war bisher nirgends erklärt. -->
+            @if (daten()!.is_emergency) {
+              <p class="freigabe-check__hinweis">
+                <strong>Notfall (Gefahr im Verzug):</strong> Zuständigkeit und Auftraggeber sind
+                für die Freigabe entbehrlich. Der Beauftragungsnachweis bleibt Pflicht.
+              </p>
+            } @else if (freigabeLuecken().length > 0) {
+              <p class="freigabe-check__hinweis">
+                Bei Gefahr im Verzug entfallen Zuständigkeit und Auftraggeber. Dafür muss der
+                Auftrag allerdings schon bei der Anlage als Notfall gekennzeichnet werden —
+                nachträglich lässt sich das derzeit nicht ändern.
+              </p>
+            }
+          </section>
+        }
+
         <dl class="feld-raster">
           <div class="feld"><dt class="feld__label">Auftragsnummer</dt><dd class="feld__wert">{{ daten()!.order_number }}</dd></div>
           <div class="feld"><dt class="feld__label">Status</dt><dd class="feld__wert">{{ statusLabel(daten()!.status) }}</dd></div>

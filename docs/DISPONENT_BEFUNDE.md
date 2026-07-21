@@ -29,8 +29,10 @@ Status: `offen` · `entschieden` · `umgesetzt`
 |---|---|---|---|---|
 | A1 | Termin-Dialog selbst ist schlank (1 Pflichtfeld, 3 Klicks, ein API-Call). Der Zeitfresser sitzt davor: der Auftrag. | — | `backend/api/planung.py:1308` | analysiert |
 | A2 | Auftrags-Freigabe verlangt Beauftragungsnachweis + bestätigte Zuständigkeit + Auftraggeber. Der Disponent wird durch die ganze Kette geschickt. | REGEL | `db/migrations/0013_auftrag.sql:161-179` | offen |
-| A3 | **Für Terminieren ist die Freigabe gar nicht nötig** — die DB erlaubt GEPLANT/BESTAETIGT auf nicht freigegebenem Auftrag. Erst UNTERWEGS verlangt sie. Wenn die UI trotzdem blockt, ist das ein UI-Fehler. | UI | `db/migrations/0014_einsatz.sql:84` | offen |
-| A4 | Vorschlag: Freigabe-Checkliste am Auftrag — drei Zeilen Haken/Kreuz, jede Lücke **inline** nachtragbar statt in drei Masken. | UI | — | offen |
+| A3 | **Für Terminieren ist die Freigabe gar nicht nötig** — die DB erlaubt GEPLANT/BESTAETIGT auf nicht freigegebenem Auftrag. Erst UNTERWEGS verlangt sie. Wenn die UI trotzdem blockt, ist das ein UI-Fehler. | UI | `db/migrations/0014_einsatz.sql:84` | **widerlegt 2026-07-21** |
+| A3a | **Es gibt keine UI-Blockade.** Alle Terminanlage-Pfade (Auftrag-Detail `auftrag-detail.ts:114`, Plantafel `plantafel.ts:1817-1855`, Einsätze-Liste `einsaetze.ts:157`, Anruf-Dialog) gaten ausschließlich auf das **Recht** `workflow/ANLEGEN`, nie auf `WorkOrderStatus`. Die Auftragsauswahl im Termin-Dialog ist ungefiltert. DB, Service (`services/einsatz.py`, `api/planung.py:1308`) und UI sind konsistent. | — | — | geklärt |
+| A3b | Wahrscheinlichere Ursachen der Testnacht: (1) der Termin ging, aber `UNTERWEGS` scheiterte — das ist das gewollte Tor B-01/A-23; (2) **fehlendes Recht** sieht in der Oberfläche exakt aus wie eine Statussperre (`row_scope = EIGENE` blendet „+ Termin" ganz aus, Server antwortet 403); (3) der Auftrag existierte schlicht noch nicht → das ist A1. | — | `0014_einsatz.sql:81-88` | **offen — Sascha: Klickpfad** |
+| A4 | Vorschlag: Freigabe-Checkliste am Auftrag — drei Zeilen Haken/Kreuz, jede Lücke **inline** nachtragbar statt in drei Masken. | UI | `auftrag-detail.{ts,html,scss}` | **umgesetzt 2026-07-21** |
 
 **Offene Frage an Sascha:** konkreter Klickpfad der Testnacht (über „Neuer Auftrag" oder aus der Plantafel-Zelle?).
 
@@ -51,9 +53,12 @@ Status: `offen` · `entschieden` · `umgesetzt`
 
 | # | Befund | Art | Fundstelle | Status |
 |---|---|---|---|---|
-| C1 | Kategoriefarbe erscheint nur als kleiner Badge, soll die ganze Kachel färben. | UI | `plantafel.html:617-621` | offen |
-| C2 | Farben liegen als Tokens in 8 CSS-Zeilen — Umstellung ist billig. | UI | `styles.scss:135-142` | offen |
-| C3 | Kollision: der linke Kachelrand zeigt heute den **Status**. Vorschlag: Fläche = Kategorie (getönt), linker Rand = Status. Volle Sättigung geht nicht (Textkontrast/WCAG). | UI | `plantafel.scss:470-493` | offen |
+| C1 | Kategoriefarbe erscheint nur als kleiner Badge, soll die ganze Kachel färben. | UI | `plantafel.html:617-621` | **umgesetzt 2026-07-21** |
+| C2 | Farben liegen als Tokens in 8 CSS-Zeilen — Umstellung ist billig. | UI | `styles.scss:135-142` | **umgesetzt** (Klasse wandert auf die Kachel, `--kat-hue` vererbt) |
+| C3 | Kollision: der linke Kachelrand zeigt heute den **Status**. Vorschlag: Fläche = Kategorie (getönt), linker Rand = Status. Volle Sättigung geht nicht (Textkontrast/WCAG). | UI | `plantafel.scss:470-493` | **umgesetzt** (Status-Hintergründe entfernt, Rand bleibt Status) |
+| C4 | **Beim Umsetzen aufgefallen — WCAG-Falle, behoben:** `--ink-hint`/`--ink-faint` sind exakt auf `--surface` gerechnet (5,48:1 hell / 5,21:1 dunkel). Auf der getönten Kachel fielen sie unter AA — auf `kat-amber` dunkel bis **3,99:1**, und zwar ausgerechnet auf `.tile__statuskurz`, dem Textersatz für die Statusfarbe. `.tile__statuskurz` und `.tile__adresse` tragen jetzt `--ink-muted` (schlechtester Fall 5,08:1). **Merksatz: wer eine Fläche tönt, muss die Textstufen darauf neu rechnen.** | UI | `styles.scss` `.tile__statuskurz`, `plantafel.scss` `.tile__adresse` | **behoben 2026-07-21** |
+| C6 | **Rest unter Schwelle, bewusst gelassen:** Die Rahmen von `.tile__frei`/`.tile__serie` (`--line-strong`) und der Kachel-Außenrahmen (`--line`) fallen auf `kat-navy` hell von 3,76:1 auf **2,92:1**. Beides ist nicht-interaktiv und nicht-textuell, der Text der Badges trägt `--ink-muted` — WCAG 1.4.11 greift hier nicht zwingend. Falls es doch stört: `border-color: color-mix(in srgb, var(--line-strong) 100%, var(--ink) 15%)`. | — | `plantafel.scss:401` | akzeptiert |
+| C5 | **Grenze der Lösung, bewusst akzeptiert:** Im **dunklen** Theme kollabieren die acht Töne bei 16 % Tönung auf sehr ähnliche Werte (Orange `#3e3e46` vs. Amber `#3b4345`); minimale CIE76-Distanz dE ≈ 4,3. Hellere Dark-Varianten wurden durchgerechnet: sie bringen nur dE 4,4 und kosten Kontrast (bei 20 % unter AA). Der Engpass ist strukturell — eine Tönung, die den Text lesbar lässt, kann auf dunklem Grund keine acht Kategorien tragen. Kein Rückschritt (vorher gab es gar keine Tönung), aber im Dunkeln bleibt der **Chip mit Namen** der eigentliche Träger. | — | — | akzeptiert |
 
 ---
 
@@ -61,8 +66,10 @@ Status: `offen` · `entschieden` · `umgesetzt`
 
 | # | Befund | Art | Fundstelle | Status |
 |---|---|---|---|---|
-| D1 | 24 flache Einträge ohne Gruppierung. | UI | `frontend/src/app/app.ts:40-154` | offen |
-| D2 | Vorschlag Gruppen: Tagesgeschäft (Übersicht, Eingang, Aufträge, Planung, Aufgaben) · Stammdaten (Kontakte, Liegenschaften, Artikel, Gerätewissen) · Kaufmännisch (Dokumente, Buchhaltung, Belegerfassung, Auswertungen) · Freigaben · Personal · System. | UI | — | offen |
+| D1 | 24 flache Einträge ohne Gruppierung. | UI | `frontend/src/app/app.ts:40-154` | **umgesetzt 2026-07-21** |
+| D2 | Vorschlag Gruppen: Tagesgeschäft · Stammdaten · Kaufmännisch · Freigaben · Personal · System. | UI | `app.ts` `NAV_GRUPPEN` | **umgesetzt, 7 statt 6 Gruppen** |
+| D3 | Abweichung vom Vorschlag: **eigene Gruppe „KI"** (KI-Vorschläge, KI-Assistent) statt Anhängsel am Tagesgeschäft — begründet aus CLAUDE.md („KI + CRM, nicht CRM + KI": die KI ist eigener Akteur). Zusätzlich sortiert: Projekte und Wartung ins Tagesgeschäft, Auftragsfreigabe zu den Freigaben (beides Entscheidungs-Warteschlangen). | — | — | umgesetzt |
+| D4 | **Falle beim Umbau:** Die dekorative „Messkante"-Marke rechnete ihren Weg als `activeIndex × 3rem` über eine **flache, lückenlose** Liste. Gruppenköpfe dazwischen hätten sie dauerhaft verschoben. Gelöst über eine zweite Zählgröße `activeHeads × --nav-head-h` mit **fixer** Kopfhöhe (1,9 rem, `box-sizing: border-box`, Rand innen) — die Kopfhöhe darf nie aus dem Inhalt folgen. | UI | `app.scss` `.messkante__mark` | umgesetzt |
 
 ---
 
@@ -72,7 +79,8 @@ Status: `offen` · `entschieden` · `umgesetzt`
 |---|---|---|---|---|
 | E1 | Übergangstabellen sind sauber und liegen in der DB; das Problem ist nicht das Regelwerk, sondern dass die UI den Nutzer **suchen** lässt, was fehlt. | — | `services/auftrag.py:96-118`, `services/einsatz.py:69-79` | analysiert |
 | E2 | Fehlende Angaben werden erst beim Scheitern sichtbar, Nachtragen erzwingt Maskenwechsel. → siehe A4. | UI | — | offen |
-| E3 | Notfall-Ausnahme existiert bereits (`is_emergency` hebt Zuständigkeit + Auftraggeber auf, Beauftragungsnachweis bleibt). Im UI vermutlich zu wenig sichtbar. | UI | `0013_auftrag.sql:167` | offen |
+| E3 | Notfall-Ausnahme existiert bereits (`is_emergency` hebt Zuständigkeit + Auftraggeber auf, Beauftragungsnachweis bleibt). Im UI vermutlich zu wenig sichtbar. | UI | `0013_auftrag.sql:167` | **umgesetzt 2026-07-21** (in der Checkliste erklärt) |
+| E4 | **Beim Umsetzen von E3 aufgefallen:** `is_emergency` ist nur bei der **Anlage** setzbar (`api/auftrag.py:396`), es gibt keinen PATCH. Stellt sich erst nach dem Anlegen heraus, dass Gefahr im Verzug ist, lässt sich der Auftrag nicht mehr umstellen. Die Checkliste sagt das jetzt ehrlich; behoben ist es nicht. | UI | `api/auftrag.py:396` | **offen — neu** |
 
 ---
 
@@ -224,20 +232,20 @@ es fehlen schlicht die Endpunkte.
 Deckt ab: **J5, J6**.
 
 - `tenure.ownership_period` / `ownership_interest` sind seit Migration 0005 vollständig gebaut — Bruchanteile, exakte LCM-Anteilsprüfung, Quellennachweis, Bestätigung. **Kein einziger Endpunkt, keine UI** greift darauf zu. Frontend sagt es selbst: `liegenschaft-detail.html:183` „sobald die Lesepfade angebunden sind (Roadmap 03)".
-- **Modelllücke J6:** `ownership_period.unit_id` ist NOT NULL → Eigentum nur an Einheiten. „Gebäude 52 gehört Herrn X" erzwingt heute eine Erfassung je Wohnung. Lösungsrichtung offen (siehe *Offene Entscheidungen*).
+- ~~**Modelllücke J6**~~ — **entschieden 2026-07-21: keine Schemaänderung.** `ownership_period.unit_id` bleibt NOT NULL, Eigentum mit Anteilen/Quelle/Bestätigung bleibt auf Einheitsebene. Für „Gebäude 52 gehört Herrn X" wird die anteilslose Rolle `property_party_role` = PROPERTY_OWNER genutzt. Das Paket ist damit reine Anbindung (J5) und braucht keine Migration.
 
-### AP6 — Sichtbares mit wenig Aufwand
+### AP6 — Sichtbares mit wenig Aufwand ✅ **umgesetzt 2026-07-21**
 
-- **C1–C3:** Kategoriefarbe auf die ganze Plantafel-Kachel. Fläche getönt = Kategorie, linker Rand bleibt Status. Volle Sättigung scheidet aus (Textkontrast, WCAG 2.2 AA ist laut CLAUDE.md nicht verhandelbar).
-- **D1/D2:** Nav-Gruppen statt 24 flacher Einträge — Tagesgeschäft · Stammdaten · Kaufmännisch · Freigaben · Personal · System.
+- **C1–C3:** Kategoriefarbe auf die ganze Plantafel-Kachel. Fläche getönt (16 %) = Kategorie, linker Rand bleibt Status; die früheren Status-Hintergründe sind entfallen, weil sie die Tönung überdeckt hätten. Siehe **C4** (Kontrastfalle, behoben) und **C5** (Grenze im Dunkeln, akzeptiert).
+- **D1/D2:** Nav-Gruppen statt 24 flacher Einträge — Tagesgeschäft · Freigaben · KI · Stammdaten · Kaufmännisch · Personal · System. Siehe **D3** (Abweichung) und **D4** (Messkante-Falle).
 
-### AP7 — Auftrag/Termin entzerren
+### AP7 — Auftrag/Termin entzerren ✅ **umgesetzt 2026-07-21** (A3 widerlegt, A4/E3 gebaut)
 
-Deckt ab: **A3, A4, E2, E3**.
+Deckt ab: ~~A3~~, **A4, E2, E3**.
 
-- **A3 zuerst prüfen:** Die DB erlaubt GEPLANT/BESTAETIGT auf **nicht** freigegebenem Auftrag (`0014_einsatz.sql:84`). Wenn die UI trotzdem zur Freigabe zwingt, ist das ein reiner UI-Fehler und der schnellste Gewinn der ganzen Liste.
+- ~~**A3 zuerst prüfen**~~ — **erledigt 2026-07-21, Befund widerlegt.** Es gibt keine UI-Blockade; alle Terminanlage-Pfade gaten nur auf das Recht `workflow/ANLEGEN`. Siehe A3a/A3b. Der erhoffte schnellste Gewinn entfällt; der Zeitfresser ist tatsächlich der Auftrag davor (A1) bzw. ein fehlendes Recht.
 - **A4:** Freigabe-Checkliste am Auftrag — drei Zeilen Haken/Kreuz (Nachweis · Zuständigkeit · Auftraggeber), jede Lücke **inline** nachtragbar statt in drei Masken.
-- **E3:** Notfall-Weg sichtbarer machen — `is_emergency` hebt zwei der drei Tore auf und die Disposition darf das Flag selbst setzen.
+- **E3:** Notfall-Weg sichtbarer machen — `is_emergency` hebt zwei der drei Tore auf. **Umgesetzt** als Erklärtext in der Checkliste. Dabei ist **E4** aufgefallen: Das Flag ist nur bei der Anlage setzbar, es gibt keinen PATCH — die Checkliste sagt das ehrlich, behoben ist es nicht.
 
 ---
 
@@ -245,7 +253,7 @@ Deckt ab: **A3, A4, E2, E3**.
 
 | # | Frage | Konsequenz |
 |---|---|---|
-| J6 | Soll Eigentum **oberhalb der Einheit** möglich werden (ganzes Gebäude/Grundstück), oder reicht die anteilslose Rolle `PROPERTY_OWNER`? | Erste Variante = Schemaänderung an `ownership_period` (nullable `unit_id` + `building_id`/`property_id` + angepasste Exclusion-Constraints). Zweite = nichts zu tun, aber ohne Anteile/Quelle/Bestätigung. |
+| ~~J6~~ | ~~Soll Eigentum **oberhalb der Einheit** möglich werden?~~ **Entschieden 2026-07-21: nein.** Die anteilslose Rolle `property_party_role` = PROPERTY_OWNER reicht für „Gebäude 52 gehört Herrn X". | **Keine Schemaänderung an `ownership_period`.** AP5 reduziert sich auf das Anbinden des bestehenden Modells (J5) auf Einheitsebene; oberhalb der Einheit bleibt es bei der Rolle ohne Anteile/Quelle/Bestätigung. |
 | I9 | Welche Raum-Infos fehlen konkret? Vorhanden sind Etage, Raumtyp, Fläche, Höhe, Volumen, Umfang, Innentemperatur, Luftwechsel, Heizlast-Kennwert, Steigleitungsabstand, Notiz. **Eine Raumnummer gibt es nicht.** | Ohne Antwort nicht umsetzbar. |
 | I11 | „Mehr Logik bei Struktur-/Raumzuweisung" — was genau? | Ohne Antwort nicht umsetzbar. |
 | I5 | Einheitsnummern pro Gebäude statt pro Liegenschaft eindeutig? | Dreht Beschluss A-09. **Zurückgestellt** — erst anfassen, wenn im Praxistest wirklich eine Kollision auftritt. |

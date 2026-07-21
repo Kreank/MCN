@@ -35,5 +35,6 @@ export function feldFehlerText(control: AbstractControl | null | undefined): str
   if (e['ganzzahl']) return 'Bitte eine ganze Zahl ohne Einheit eingeben (z. B. 30).';
   if (e['gtin'])
     return 'Ungültige GTIN/EAN: 8, 12, 13 oder 14 Ziffern mit korrekter Prüfziffer.';
+  if (e['nurLeerraum']) return 'Bitte einen Text eingeben — Leerzeichen allein genügen nicht.';
   return 'Ungültige Eingabe.';
 }
