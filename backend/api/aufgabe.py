@@ -37,6 +37,12 @@ class PartyRefOut(Schema):
     display_name: str
 
 
+class WorkOrderRefOut(Schema):
+    id: UUID
+    order_number: str
+    title: str
+
+
 class TaskOut(Schema):
     id: UUID
     title: str
@@ -48,6 +54,9 @@ class TaskOut(Schema):
     assigned_to: UserRefOut | None = None
     project: ProjectRefOut | None = None
     party: PartyRefOut | None = None
+    # Auftragsbezug (Befund D2). Kombinierbar mit Projekt und Kontakt — eine
+    # Aufgabe am Auftrag haengt fast immer auch am Kunden.
+    work_order: WorkOrderRefOut | None = None
 
 
 class TaskListOut(Schema):
@@ -64,6 +73,7 @@ class TaskIn(Schema):
     assigned_to_user_id: UUID | None = None
     project_id: UUID | None = None
     party_id: UUID | None = None
+    work_order_id: UUID | None = None
 
 
 class TaskUpdate(Schema):
@@ -75,6 +85,7 @@ class TaskUpdate(Schema):
     assigned_to_user_id: UUID | None = None
     project_id: UUID | None = None
     party_id: UUID | None = None
+    work_order_id: UUID | None = None
 
 
 class TaskFilter(Schema):
@@ -83,6 +94,7 @@ class TaskFilter(Schema):
     assigned_to_user_id: UUID | None = None
     project_id: UUID | None = None
     party_id: UUID | None = None
+    work_order_id: UUID | None = None
 
 
 def _task_out(task):
@@ -105,6 +117,15 @@ def _task_out(task):
         if task.party_id
         else None
     )
+    auftrag = (
+        WorkOrderRefOut(
+            id=task.work_order.id,
+            order_number=task.work_order.order_number,
+            title=task.work_order.title,
+        )
+        if task.work_order_id
+        else None
+    )
     return TaskOut(
         id=task.id,
         title=task.title,
@@ -116,6 +137,7 @@ def _task_out(task):
         assigned_to=assigned,
         project=project,
         party=party,
+        work_order=auftrag,
     )
 
 
@@ -137,7 +159,7 @@ def list_tasks(
     ausschließlich die ihm zugewiesenen Aufgaben.
     """
     actor, scope = require_scoped(request, "workflow", "LESEN")
-    qs = Task.objects.select_related("assigned_to", "project", "party")
+    qs = Task.objects.select_related("assigned_to", "project", "party", "work_order")
     if scope == "EIGENE":
         qs = qs.filter(assigned_to_id=actor)
 
@@ -153,6 +175,8 @@ def list_tasks(
         qs = qs.filter(project_id=filters.project_id)
     if filters.party_id:
         qs = qs.filter(party_id=filters.party_id)
+    if filters.work_order_id:
+        qs = qs.filter(work_order_id=filters.work_order_id)
 
     # Offene zuerst, dann erledigt, dann verworfen; innerhalb nach Fälligkeit
     # (NULLs zuletzt), dann neueste. Alphabetische Sortierung würde ERLEDIGT
@@ -195,7 +219,7 @@ def _guard_own_task(task_id, actor, scope):
 
 def _reload(task_id):
     task = (
-        Task.objects.select_related("assigned_to", "project", "party")
+        Task.objects.select_related("assigned_to", "project", "party", "work_order")
         .filter(id=task_id)
         .first()
     )
@@ -233,6 +257,7 @@ def create_task(request, payload: TaskIn):
             assigned_to_user_id=assigned_to,
             project_id=payload.project_id,
             party_id=payload.party_id,
+            work_order_id=payload.work_order_id,
         )
     except ValueError as exc:
         raise HttpError(422, str(exc))

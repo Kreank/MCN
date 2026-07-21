@@ -254,3 +254,126 @@ def test_patch_ohne_login_abgelehnt(anonymous_client, seeded):
         content_type="application/json",
     )
     assert r.status_code in (401, 403)
+
+
+# --- Auftragsbezug (Befund D2, Migration 0129) ------------------------------
+
+
+@pytest.fixture
+def auftrag(app_user):
+    from db_core.services import auftrag as auftrag_service
+    from db_core.services import property as property_service
+
+    prop = property_service.create_property(
+        app_user.id, name="Aufgaben-Objekt", property_type="WEG",
+        street="Weg", house_number="1", postal_code="10115", city="Berlin",
+    )
+    return auftrag_service.create_work_order(
+        app_user.id, property_id=prop.id, title="Heizung tropft"
+    )
+
+
+@pytest.mark.django_db
+def test_aufgabe_am_auftrag_anlegen(admin_client, auftrag):
+    """Befund D2: „Beim Kunden anrufen wegen Ersatzteil" gehört an den Auftrag."""
+    r = admin_client.post(
+        "/api/workflow/tasks",
+        data={"title": "Ersatzteil bestellen", "work_order_id": str(auftrag.id)},
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    body = r.json()
+    assert body["work_order"]["id"] == str(auftrag.id)
+    assert body["work_order"]["order_number"] == auftrag.order_number
+
+
+@pytest.mark.django_db
+def test_bezuege_sind_kombinierbar(admin_client, app_user, auftrag):
+    """Der Kern der Modellentscheidung: KEIN Exklusivitäts-CHECK.
+
+    `content.file_link` verlangt genau ein Ziel, `workflow.task` ausdrücklich
+    „und/oder" (0005). Eine Aufgabe am Auftrag hängt fast immer auch am Kunden,
+    den man deswegen anruft.
+    """
+    from db_core.services import identity as identity_service
+    from db_core.services import projekt as projekt_service
+
+    kunde = identity_service.create_person(
+        app_user.id, first_name="Erika", last_name="Meyer"
+    )
+    projekt = projekt_service.create_project(app_user.id, name="Sanierung")
+
+    r = admin_client.post(
+        "/api/workflow/tasks",
+        data={
+            "title": "Rückruf",
+            "work_order_id": str(auftrag.id),
+            "party_id": str(kunde.id),
+            "project_id": str(projekt.id),
+        },
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    body = r.json()
+    assert body["work_order"] is not None
+    assert body["party"] is not None
+    assert body["project"] is not None
+
+
+@pytest.mark.django_db
+def test_filter_nach_auftrag(admin_client, auftrag):
+    admin_client.post(
+        "/api/workflow/tasks",
+        data={"title": "Am Auftrag", "work_order_id": str(auftrag.id)},
+        content_type="application/json",
+    )
+    admin_client.post(
+        "/api/workflow/tasks",
+        data={"title": "Ohne Auftrag"},
+        content_type="application/json",
+    )
+    r = admin_client.get(f"/api/workflow/tasks?work_order_id={auftrag.id}")
+    assert r.status_code == 200
+    titel = [t["title"] for t in r.json()["items"]]
+    assert titel == ["Am Auftrag"]
+
+
+@pytest.mark.django_db
+def test_auftragsbezug_nachtraeglich_setzen_und_loesen(admin_client, auftrag):
+    r = admin_client.post(
+        "/api/workflow/tasks",
+        data={"title": "Später zuordnen"},
+        content_type="application/json",
+    )
+    task_id = r.json()["id"]
+
+    r = admin_client.patch(
+        f"/api/workflow/tasks/{task_id}",
+        data={"work_order_id": str(auftrag.id)},
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    assert r.json()["work_order"]["id"] == str(auftrag.id)
+
+    # `null` löst den Bezug (Server: exclude_unset trennt „nicht gesendet"
+    # von „auf null gesetzt").
+    r = admin_client.patch(
+        f"/api/workflow/tasks/{task_id}",
+        data={"work_order_id": None},
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    assert r.json()["work_order"] is None
+
+
+@pytest.mark.django_db
+def test_unbekannter_auftrag_ist_422(admin_client):
+    import uuid as _uuid
+
+    r = admin_client.post(
+        "/api/workflow/tasks",
+        data={"title": "Ins Leere", "work_order_id": str(_uuid.uuid4())},
+        content_type="application/json",
+    )
+    assert r.status_code == 422
+    assert "Auftrag" in r.json()["detail"]

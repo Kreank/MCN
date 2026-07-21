@@ -131,6 +131,13 @@
                       >◐ {{ t.party.display_name }}</a
                     >
                   }
+                  <!-- Auftragsbezug (Befund D2). Die Nummer statt des Titels:
+                       Sie ist das, was in Unterlagen und Gesprächen steht. -->
+                  @if (t.work_order) {
+                    <a class="ref-chip" [routerLink]="['/auftraege', t.work_order.id]"
+                      >⚑ {{ t.work_order.order_number }}</a
+                    >
+                  }
                   @if (t.assigned_to) {
                     <span class="row__assignee">{{ t.assigned_to.display_name }}</span>
                   }
@@ -270,6 +277,22 @@
         [hinweis]="istBearbeiten() ? 'Leer lassen = unverändert.' : 'Optionaler Kontaktbezug.'"
         platzhalter="Kontakt suchen …"
         leerText="Kein passender Kontakt."
+      />
+
+      <!-- Auftragsbezug (Befund D2): „Beim Kunden anrufen wegen Ersatzteil"
+           gehört an den Auftrag — nicht an das Projekt darüber, das es oft gar
+           nicht gibt, und nicht allein an den Kontakt, der die Aufgabe nicht
+           erklärt. Die drei Bezüge sind kombinierbar. -->
+      @if (istBearbeiten() && bearbeitenTask()?.work_order; as a) {
+        <p class="ref-aktuell">Aktueller Auftrag: <strong>{{ a.order_number }} · {{ a.title }}</strong> — eine Auswahl ersetzt den Bezug.</p>
+      }
+      <app-referenz-wahl
+        [control]="form.controls.work_order_id"
+        label="Auftrag"
+        [suche]="auftragSuche"
+        [hinweis]="istBearbeiten() ? 'Leer lassen = unverändert.' : 'Optionaler Auftragsbezug.'"
+        platzhalter="Auftragsnummer oder Titel suchen …"
+        leerText="Kein passender Auftrag."
       />
     </form>
 

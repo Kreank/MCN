@@ -870,6 +870,17 @@ class Task(models.Model):
         blank=True,
         related_name="tasks",
     )
+    # Auftragsbezug (0129, Befund D2). Kombinierbar mit project und party —
+    # eine Aufgabe am Auftrag hängt fast immer auch am Kunden, den man
+    # deswegen anruft. Deshalb kein Exklusivitäts-CHECK (siehe Migration).
+    work_order = models.ForeignKey(
+        "WorkOrder",
+        models.DO_NOTHING,
+        db_column="work_order_id",
+        null=True,
+        blank=True,
+        related_name="tasks",
+    )
     completed_by = models.ForeignKey(
         AppUser,
         models.DO_NOTHING,

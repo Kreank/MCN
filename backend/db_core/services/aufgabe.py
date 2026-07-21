@@ -10,7 +10,7 @@ import uuid
 from django.utils import timezone
 
 from db_core.db_context import business_transaction
-from db_core.models import AppUser, Project, Task
+from db_core.models import AppUser, Project, Task, WorkOrder
 from db_core.services._validation import ensure_exists, ensure_party_usable
 
 
@@ -23,12 +23,19 @@ def create_task(
     assigned_to_user_id=None,
     project_id=None,
     party_id=None,
+    work_order_id=None,
 ):
-    """Legt eine Aufgabe im Status OFFEN an (created_by = Akteur)."""
+    """Legt eine Aufgabe im Status OFFEN an (created_by = Akteur).
+
+    Die drei Bezuege sind **kombinierbar** (Befund D2): Eine Aufgabe am Auftrag
+    haengt fast immer auch am Kunden, den man deswegen anruft. Die DB erzwingt
+    deshalb bewusst keine Exklusivitaet.
+    """
     if not title or not title.strip():
         raise ValueError("title darf nicht leer sein.")
     ensure_exists(AppUser, assigned_to_user_id, "Benutzer")
     ensure_exists(Project, project_id, "Projekt")
+    ensure_exists(WorkOrder, work_order_id, "Auftrag")
     ensure_party_usable(party_id, "Kontakt")
     with business_transaction(actor_app_user_id):
         task = Task.objects.create(
@@ -40,6 +47,7 @@ def create_task(
             assigned_to_id=assigned_to_user_id,
             project_id=project_id,
             party_id=party_id,
+            work_order_id=work_order_id,
             created_by_id=actor_app_user_id,
             version=1,
         )
@@ -62,6 +70,7 @@ def update_task(
     assigned_to_user_id=_UNSET,
     project_id=_UNSET,
     party_id=_UNSET,
+    work_order_id=_UNSET,
 ):
     """Ändert die inhaltlichen Felder einer Aufgabe — nur die übergebenen.
 
@@ -78,6 +87,8 @@ def update_task(
         ensure_exists(Project, project_id, "Projekt")
     if party_id is not _UNSET:
         ensure_party_usable(party_id, "Kontakt")
+    if work_order_id is not _UNSET:
+        ensure_exists(WorkOrder, work_order_id, "Auftrag")
 
     with business_transaction(actor_app_user_id):
         task = _load(task_id)
@@ -100,6 +111,9 @@ def update_task(
         if party_id is not _UNSET:
             task.party_id = party_id
             update_fields.append("party")
+        if work_order_id is not _UNSET:
+            task.work_order_id = work_order_id
+            update_fields.append("work_order")
         if update_fields:
             task.save(update_fields=update_fields)
     return task

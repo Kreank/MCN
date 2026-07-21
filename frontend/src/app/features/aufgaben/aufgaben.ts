@@ -6,6 +6,7 @@ import { Observable, Subject, debounceTime, distinctUntilChanged, map } from 'rx
 import { AufgabeService } from '../../core/aufgabe.service';
 import { ProjektService } from '../../core/projekt.service';
 import { PartyService } from '../../core/party.service';
+import { AuftragService } from '../../core/auftrag.service';
 import { AuthService } from '../../core/auth.service';
 import { Task, TaskCreate, TaskPage, TaskStatus, TaskUpdate } from '../../core/aufgabe.model';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
@@ -39,6 +40,7 @@ export class Aufgaben {
   private readonly svc = inject(AufgabeService);
   private readonly projektSvc = inject(ProjektService);
   private readonly partySvc = inject(PartyService);
+  private readonly auftragSvc = inject(AuftragService);
   private readonly auth = inject(AuthService);
   private readonly fb = inject(FormBuilder);
 
@@ -82,6 +84,14 @@ export class Aufgaben {
     this.partySvc.list({ page: 1, page_size: 20, q }).pipe(
       map((p) => p.items.map((o) => ({ id: o.id, label: o.display_name }))),
     );
+  /**
+   * Auftragssuche (Befund D2). Nummer als Zusatz: „AU-HZG-26-0142" ist das,
+   * was in Unterlagen und Gesprächen steht; der Titel das, was man wiedererkennt.
+   */
+  protected readonly auftragSuche: RefSuche = (q) =>
+    this.auftragSvc.list({ page: 1, page_size: 20, q }).pipe(
+      map((p) => p.items.map((o) => ({ id: o.id, label: o.title, sub: o.order_number }))),
+    );
   protected readonly nutzerSuche: RefSuche = (q) =>
     this.svc.listAssignableUsers(q).pipe(
       map((users) => users.map((u) => ({ id: u.id, label: u.display_name }))),
@@ -106,6 +116,7 @@ export class Aufgaben {
     assigned_to_user_id: this.fb.control('', { nonNullable: true }),
     project_id: this.fb.control('', { nonNullable: true }),
     party_id: this.fb.control('', { nonNullable: true }),
+    work_order_id: this.fb.control('', { nonNullable: true }),
   });
 
   private readonly dialogForm = viewChild<ElementRef<HTMLElement>>('dialogForm');
@@ -210,6 +221,7 @@ export class Aufgaben {
       assigned_to_user_id: '',
       project_id: '',
       party_id: '',
+      work_order_id: '',
     });
   }
 
@@ -234,6 +246,7 @@ export class Aufgaben {
       assigned_to_user_id: '',
       project_id: '',
       party_id: '',
+      work_order_id: '',
     });
     this.formularMeldung.set(null);
     this.neuNochmalMeldung.set(null);
@@ -263,6 +276,7 @@ export class Aufgaben {
       due_date: v.due_date || null,
       project_id: v.project_id || null,
       party_id: v.party_id || null,
+      work_order_id: v.work_order_id || null,
     };
     // Zuweisung nur mitschicken, wenn der Akteur fremd zuweisen darf. Sonst
     // erzwingt der Server ohnehin den Akteur als Eigentümer.
@@ -288,6 +302,7 @@ export class Aufgaben {
     };
     if (v.project_id) payload.project_id = v.project_id;
     if (v.party_id) payload.party_id = v.party_id;
+    if (v.work_order_id) payload.work_order_id = v.work_order_id;
     if (this.darfZuweisen() && v.assigned_to_user_id) {
       payload.assigned_to_user_id = v.assigned_to_user_id;
     }
