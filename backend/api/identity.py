@@ -197,6 +197,53 @@ class OrganizationIn(Schema):
     adresse: AdresseIn | None = None
 
 
+class PersonPatch(Schema):
+    """PATCH: nur die **gesendeten** Felder werden geändert (Befund H4).
+
+    `null` heißt ausdrücklich „leeren" — bei `first_name`, `salutation`,
+    `title` und `birth_date` ist das erlaubt, beim Nachnamen nicht.
+    """
+
+    first_name: str | None = None
+    last_name: str | None = None
+    salutation: str | None = None
+    title: str | None = None
+    birth_date: date | None = None
+
+
+class OrganizationPatch(Schema):
+    """PATCH der Organisationsdaten — Umfirmierung (Befund H4)."""
+
+    legal_name: str | None = None
+    organization_type: str | None = None
+    display_name: str | None = None
+    legal_form: str | None = None
+    registration_number: str | None = None
+    tax_number: str | None = None
+    vat_id: str | None = None
+
+
+class ContactPointPatch(Schema):
+    """PATCH eines Kommunikationswegs — die Korrektur (Befund H2)."""
+
+    contact_type: str | None = None
+    value: str | None = None
+    label: str | None = None
+    is_primary: bool | None = None
+
+
+class PartyAddressPatch(Schema):
+    """PATCH einer Adress**zuordnung** (Befund H3).
+
+    Ohne Adressfelder: Der Inhalt ist append-only (H1) und wird über
+    `…/ersetzen` ausgetauscht.
+    """
+
+    address_type: str | None = None
+    is_primary: bool | None = None
+    label: str | None = None
+
+
 class PartyFilter(Schema):
     q: str | None = None
     party_type: str | None = None
@@ -470,6 +517,40 @@ def create_person(request, payload: PersonIn):
     return Status(201, _party_detail(party.id))
 
 
+@router.patch(
+    "/parties/{party_id}/person", response=PartyDetailOut, auth=django_auth
+)
+def update_person(request, party_id: UUID, payload: PersonPatch):
+    """Personendaten ändern — Heirat, Namensangleichung, Tippfehler (H4).
+
+    Bis Migration 0126 gab es dafür keinen Pfad. Die DSGVO spricht nicht
+    dagegen, sondern dafür: Art. 16 verlangt das Recht auf Berichtigung (H6).
+    `party.display_name` zieht mit — sonst hieße die Person in ihrer Mappe
+    anders als in jeder Liste.
+    """
+    actor, _ = _require_party(request, party_id, "AENDERN")
+    try:
+        identity_service.update_person(actor, party_id, payload.dict(exclude_unset=True))
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _party_detail(party_id)
+
+
+@router.patch(
+    "/parties/{party_id}/organization", response=PartyDetailOut, auth=django_auth
+)
+def update_organization(request, party_id: UUID, payload: OrganizationPatch):
+    """Organisationsdaten ändern — Umfirmierung (H4)."""
+    actor, _ = _require_party(request, party_id, "AENDERN")
+    try:
+        identity_service.update_organization(
+            actor, party_id, payload.dict(exclude_unset=True)
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _party_detail(party_id)
+
+
 @router.post("/parties/organization", response={201: PartyDetailOut}, auth=django_auth)
 def create_organization(request, payload: OrganizationIn):
     """Neue Organisation anlegen — optional gleich mit Telefon, E-Mail, Adresse.
@@ -548,10 +629,16 @@ def set_party_note(request, party_id: UUID, payload: NoteIn):
 # --- Kontaktwege -----------------------------------------------------------
 
 @router.get("/parties/{party_id}/contact-points", response=list[ContactPointOut])
-def list_contact_points(request, party_id: UUID):
-    """Aktive Kommunikationswege eines Kontakts (Tel/Mobil/E-Mail/Fax/Portal)."""
+def list_contact_points(request, party_id: UUID, include_ended: bool = Query(False)):
+    """Kommunikationswege eines Kontakts (Tel/Mobil/E-Mail/Fax/Portal).
+
+    `include_ended=true` nimmt die beendeten dazu (Befund H8). Der Parameter
+    existierte im Service seit jeher, wurde von der API aber nie angeboten —
+    die Historie war gespeichert und unerreichbar. `valid_until` steht bereits
+    im Ausgabeschema, Aktive und Beendete sind also unterscheidbar.
+    """
     _require_party(request, party_id, "LESEN")
-    return identity_service.list_contact_points(party_id)
+    return identity_service.list_contact_points(party_id, include_ended=include_ended)
 
 
 @router.post(
@@ -577,6 +664,35 @@ def create_contact_point(request, party_id: UUID, payload: ContactPointIn):
     return Status(201, point)
 
 
+@router.patch(
+    "/parties/{party_id}/contact-points/{contact_point_id}",
+    response=ContactPointOut,
+    auth=django_auth,
+)
+def update_contact_point(
+    request, party_id: UUID, contact_point_id: UUID, payload: ContactPointPatch
+):
+    """Kommunikationsweg **korrigieren** — Befund H2.
+
+    Korrektur, nicht Wechsel: Eine falsch getippte Nummer hat nie gegolten,
+    ihre „Historie" ist Rauschen. Eine Nummer, die galt und nicht mehr gilt,
+    wird stattdessen über `…/deactivate` beendet und neu angelegt — dann
+    bleibt lesbar, unter welcher Nummer der Kontakt im Mai erreichbar war.
+
+    Seit Migration 0126 hält ein Audit-Trigger fest, wer wann was geändert hat.
+    """
+    actor, _ = _require_party(request, party_id, "AENDERN")
+    if not ContactPoint.objects.filter(id=contact_point_id, party_id=party_id).exists():
+        raise HttpError(404, "Kommunikationsweg nicht gefunden.")
+    try:
+        point = identity_service.update_contact_point(
+            actor, contact_point_id, payload.dict(exclude_unset=True)
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return point
+
+
 @router.post(
     "/parties/{party_id}/contact-points/{contact_point_id}/deactivate",
     response=ContactPointOut,
@@ -597,10 +713,14 @@ def deactivate_contact_point(request, party_id: UUID, contact_point_id: UUID):
 # --- Adressen --------------------------------------------------------------
 
 @router.get("/parties/{party_id}/addresses", response=list[PartyAddressOut])
-def list_addresses(request, party_id: UUID):
-    """Aktive Adresszuordnungen eines Kontakts inkl. Adressdaten."""
+def list_addresses(request, party_id: UUID, include_ended: bool = Query(False)):
+    """Adresszuordnungen eines Kontakts inkl. Adressdaten.
+
+    `include_ended=true` nimmt die beendeten dazu (Befund H8) — „wo wohnte der
+    Kontakt, als der Schaden entstand?".
+    """
     _require_party(request, party_id, "LESEN")
-    return identity_service.list_addresses(party_id)
+    return identity_service.list_addresses(party_id, include_ended=include_ended)
 
 
 @router.post(
@@ -631,6 +751,92 @@ def create_address(request, party_id: UUID, payload: AddressIn):
     # link.address ist bereits geladen (create hat die FK gesetzt); für die
     # saubere Ausgabe frisch mit select_related nachladen.
     return Status(201, _address_link(link.id))
+
+
+def _adresszuordnung_oder_404(party_id, party_address_id):
+    if not PartyAddress.objects.filter(
+        id=party_address_id, party_id=party_id
+    ).exists():
+        raise HttpError(404, "Adresszuordnung nicht gefunden.")
+
+
+@router.patch(
+    "/parties/{party_id}/addresses/{party_address_id}",
+    response=PartyAddressOut,
+    auth=django_auth,
+)
+def update_address_link(
+    request, party_id: UUID, party_address_id: UUID, payload: PartyAddressPatch
+):
+    """Adress**zuordnung** ändern — Typ, Primär-Kennzeichen, Titel (Befund H3).
+
+    Der Adress**inhalt** bleibt außen vor: `identity.address` ist append-only
+    (H1). Dafür gibt es `…/ersetzen`.
+    """
+    actor, _ = _require_party(request, party_id, "AENDERN")
+    _adresszuordnung_oder_404(party_id, party_address_id)
+    try:
+        identity_service.update_party_address(
+            actor, party_address_id, payload.dict(exclude_unset=True)
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _address_link(party_address_id)
+
+
+@router.post(
+    "/parties/{party_id}/addresses/{party_address_id}/ersetzen",
+    response=PartyAddressOut,
+    auth=django_auth,
+)
+def replace_address(
+    request, party_id: UUID, party_address_id: UUID, payload: AdresseIn
+):
+    """Adress**inhalt** korrigieren: neue Adresszeile anlegen und umhängen.
+
+    Der von Befund H1 vorgezeichnete Weg — `identity.address` ist append-only,
+    eine Korrektur ändert die Zeile nicht, sie ersetzt sie. Typ, Primär und
+    Titel der Zuordnung bleiben stehen.
+
+    Kein PATCH, sondern POST: Es entsteht eine neue Ressource (die Adresszeile),
+    und der Aufruf ist nicht idempotent.
+    """
+    actor, _ = _require_party(request, party_id, "AENDERN")
+    _adresszuordnung_oder_404(party_id, party_address_id)
+    try:
+        identity_service.ersetze_party_address(
+            actor,
+            party_address_id,
+            street=payload.street,
+            postal_code=payload.postal_code,
+            city=payload.city,
+            house_number=payload.house_number,
+            address_addition=payload.address_addition,
+            country_code=payload.country_code,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _address_link(party_address_id)
+
+
+@router.post(
+    "/parties/{party_id}/addresses/{party_address_id}/beenden",
+    response=PartyAddressOut,
+    auth=django_auth,
+)
+def end_address_link(request, party_id: UUID, party_address_id: UUID):
+    """Adresszuordnung beenden — der Umzug (Befund H3).
+
+    Kein Löschen: Die Zeile bleibt lesbar, weil Aufträge und Belege aus der
+    Zeit auf sie zeigen (Trigger seit 0126).
+    """
+    actor, _ = _require_party(request, party_id, "AENDERN")
+    _adresszuordnung_oder_404(party_id, party_address_id)
+    try:
+        identity_service.end_party_address(actor, party_address_id)
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _address_link(party_address_id)
 
 
 # --- Ansprechpartner (nur für Organisationen sinnvoll) ---------------------

@@ -108,6 +108,76 @@ def create_property(
     return prop
 
 
+def update_property(actor_app_user_id, property_id, daten, *, adresse=None):
+    """Teil-Update (PATCH) einer Liegenschaft — Name, Typ, Anschrift.
+
+    Behebt Befund H5: `api/property.py` hatte kein `PATCH /properties/{id}`.
+    Ein Tippfehler im Objektnamen oder eine falsch erfasste Anschrift waren
+    endgültig — und die Anschrift ist das, wonach der Monteur fährt.
+
+    **Die Adresse wird ersetzt, nicht geändert** (Befund H1): `identity.address`
+    ist append-only (`trg_address_immutable`, 0003). `adresse` ist deshalb ein
+    Satz Felder, aus dem serverseitig eine NEUE Zeile entsteht, auf die
+    `property.address_id` danach zeigt. Bewusst **keine** client-gelieferte
+    `address_id`: Die nähme eine fremde Anschrift an — derselbe Fehler, der in
+    AP1 an `building.address_id` aufgefallen ist.
+
+    Die alte Adresszeile bleibt stehen: Gebäude, Kontakte oder Belege können
+    auf sie zeigen.
+    """
+    prop = Property.objects.filter(pk=property_id).first()
+    if prop is None:
+        raise ValueError(f"Liegenschaft {property_id} existiert nicht")
+
+    daten = daten or {}
+    werte = {}
+    if "name" in daten:
+        wert = daten["name"]
+        if not wert or not str(wert).strip():
+            raise ValueError("Der Name ist ein Pflichtfeld und darf nicht leer sein.")
+        werte["name"] = str(wert).strip()
+    if "property_type" in daten:
+        if daten["property_type"] not in PROPERTY_TYPES:
+            raise ValueError(
+                f"Ungültiger property_type '{daten['property_type']}'. "
+                f"Erlaubt: {', '.join(PROPERTY_TYPES)}."
+            )
+        werte["property_type"] = daten["property_type"]
+
+    if not werte and not adresse:
+        return prop
+
+    if adresse:
+        for feldname, wert in (
+            ("Die Straße", adresse.get("street")),
+            ("Die PLZ", adresse.get("postal_code")),
+            ("Der Ort", adresse.get("city")),
+        ):
+            if not wert or not str(wert).strip():
+                raise ValueError(f"{feldname} darf nicht leer sein.")
+        land = adresse.get("country_code") or "DE"
+        if not re.fullmatch(r"[A-Z]{2}", str(land)):
+            raise ValueError(
+                f"Ungültiges Länderkürzel '{land}'. "
+                "Erwartet werden zwei Großbuchstaben (z. B. DE)."
+            )
+
+    with business_transaction(actor_app_user_id):
+        if adresse:
+            neu = Address.objects.create(
+                id=uuid.uuid4(),
+                street=adresse["street"].strip(),
+                house_number=adresse.get("house_number"),
+                address_addition=adresse.get("address_addition"),
+                postal_code=adresse["postal_code"].strip(),
+                city=adresse["city"].strip(),
+                country_code=adresse.get("country_code") or "DE",
+            )
+            werte["address_id"] = neu.id
+        Property.objects.filter(pk=property_id).update(**werte)
+    return Property.objects.select_related("address").get(pk=property_id)
+
+
 def add_building(
     actor_app_user_id,
     *,

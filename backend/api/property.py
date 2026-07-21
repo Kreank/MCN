@@ -704,6 +704,59 @@ def add_unit(request, building_id: UUID, payload: UnitIn):
     )
 
 
+class PropertyAdresseIn(Schema):
+    """Neue Anschrift der Liegenschaft — ersetzt die alte, ändert sie nicht.
+
+    `identity.address` ist append-only (H1). Bewusst keine `address_id`: Die
+    nähme eine fremde Anschrift an (der Fehler aus AP1 an `building.address_id`).
+    """
+
+    street: str
+    postal_code: str
+    city: str
+    house_number: str | None = None
+    address_addition: str | None = None
+    country_code: str = "DE"
+
+
+class PropertyPatch(Schema):
+    """PATCH: nur die **gesendeten** Felder werden geändert (Befund H5)."""
+
+    name: str | None = None
+    property_type: str | None = None
+    adresse: PropertyAdresseIn | None = None
+
+
+@router.patch(
+    "/properties/{property_id}", response=PropertyDetailOut, auth=django_auth
+)
+def update_property(request, property_id: UUID, payload: PropertyPatch):
+    """Liegenschaft korrigieren — Name, Typ, Anschrift (Befund H5).
+
+    `api/property.py` hatte kein PATCH auf die Liegenschaft selbst: Ein
+    Tippfehler im Objektnamen oder eine falsch erfasste Anschrift waren
+    endgültig — und die Anschrift ist das, wonach der Monteur fährt.
+
+    Die Adresse wird **ersetzt**, nicht geändert (append-only, H1): Aus den
+    gesendeten Feldern entsteht serverseitig eine neue Zeile, auf die
+    `property.address_id` danach zeigt. Die alte bleibt stehen, weil Gebäude,
+    Kontakte oder Belege auf sie zeigen können.
+
+    Scope 'EIGENE': nur an meinen Objekten, sonst 404.
+    """
+    actor, scope = require_scoped(request, "property", "AENDERN")
+    if not Property.objects.filter(id=property_id).exists():
+        raise HttpError(404, "Liegenschaft nicht gefunden.")
+    guard_objekt(scope, actor, property_id)
+    daten = payload.dict(exclude_unset=True)
+    adresse = daten.pop("adresse", None)
+    try:
+        property_service.update_property(actor, property_id, daten, adresse=adresse)
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _property_detail(property_id)
+
+
 @router.patch("/buildings/{building_id}", response=BuildingOut, auth=django_auth)
 def update_building(request, building_id: UUID, payload: BuildingPatch):
     """Gebäude korrigieren — Bezeichnung und Nummer.
