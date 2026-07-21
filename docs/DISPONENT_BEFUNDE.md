@@ -128,8 +128,10 @@ Status: `offen` · `entschieden` · `umgesetzt`
 
 | # | Befund | Art | Fundstelle | Status |
 |---|---|---|---|---|
-| I1 | Gebäude/Einheiten/Anlagen/Räume nachträglich nicht änderbar. **`building` und `unit` haben null Trigger** — reine API-Lücke, `PATCH` wäre ohne Schemaänderung nachrüstbar. | UI | `api/property.py` (nur POST) | offen |
-| I2 | Beim Nachrüsten fehlen bei `building`/`unit` auch Audit-/No-Delete-/No-Truncate-Trigger — der Schutzstandard aus CLAUDE.md wurde hier nie angewandt. Muster: `0086_raumaufmass.py:200-212`. | MODELL | — | offen |
+| I1 | Gebäude/Einheiten/Anlagen/Räume nachträglich nicht änderbar. Reine API-Lücke, `PATCH` wäre ohne Schemaänderung nachrüstbar. **Verifiziert 2026-07-21:** `api/property.py` hat sieben Routen und **kein einziges PATCH/PUT/DELETE**. Damit ist auch I7 zwangsläufig wahr. | UI | `api/property.py:143-660` | offen, verifiziert |
+| I2 | Beim Nachrüsten fehlen bei `building`/`unit` auch Audit-/No-Delete-/No-Truncate-Trigger — der Schutzstandard aus CLAUDE.md wurde hier nie angewandt. Muster: `0086_raumaufmass.py:200-212`. | MODELL | — | offen, verifiziert |
+| I2a | **Korrektur am Befundtext I1 (2026-07-21):** „`building` und `unit` haben **null** Trigger" ist zu stark. Es gibt drei: `trg_building_updated_at` (`0004_property.sql:70`), `trg_unit_updated_at` (`:97`) und `trg_unit_type_conflicts` (`0009_...sql:34`, BEFORE UPDATE OF `unit_type`). **Die Kernaussage von I2 bleibt vollständig richtig:** kein Audit-, kein No-Delete-, kein No-Truncate-Trigger, kein `REVOKE TRUNCATE`. Zum Vergleich trägt `property_party_role` in derselben Datei den vollen Satz. | — | `0004_property.sql:70,97` | geklärt |
+| I2b | **Praxisfolge für AP1:** `trg_unit_type_conflicts` ist ein bestehender fachlicher Guard, gegen den ein neues `PATCH /units/{id}` läuft, sobald jemand `unit_type` ändert. Der Endpunkt muss den Fehler fachlich übersetzen, sonst gibt es einen 500er statt einer Meldung. | UI | `0009_...sql:34-36` | offen |
 | I3 | Räume **sind** änderbar (`PATCH /rooms/{id}`) — das Raummodul ist das am weitesten ausgebaute UI der Objektwelt. Anlagen ebenfalls (`PATCH /assets/{id}`). Falls es sich anders anfühlt: UI-Auffindbarkeit prüfen. | — | `api/raum.py:645`, `api/anlage.py:327` | prüfen |
 | I4 | „Doppelte Namen verboten" — **`building.name` hat KEIN UNIQUE.** Vorderhaus/Seitenflügel/Hinterhaus sind erlaubt; das Feld heißt „Bezeichnung" mit genau diesem Beispiel im Hinweistext. | — | `liegenschaft-detail.html:283` | geklärt |
 | I5 | `UNIQUE (property_id, unit_number)` — Einheitsnummern sind pro Liegenschaft eindeutig, nicht pro Gebäude. Beschluss A-09. **Zurückgestuft 2026-07-21:** Sascha sieht die Hierarchie als korrekt umgesetzt an; erst anfassen, wenn im Praxistest wirklich eine Nummernkollision auftritt. | MODELL | `0004_property.sql:91` | zurückgestellt |
@@ -193,6 +195,26 @@ Dazu nötig (Backend, existiert noch nicht):
 - `PATCH /api/property/units/{id}` — mindestens `unit_number`, `unit_type`, **neu `storey`**
 - Migration: `property.unit.storey` text NULL, `CHECK (btrim(storey) <> '')` — Freitext wie `room.storey` (Souterrain/Hochparterre), **keine** Codeliste
 - **Schutzstandard mitziehen** (I2): Audit-, No-Delete-, No-Truncate-Trigger für `building` und `unit` nach Muster `backend/db_core/migrations/0086_raumaufmass.py:200-212`. Diese beiden Tabellen unterlaufen ihn bis heute vollständig.
+
+**Bestandsaufnahme 2026-07-21 — was da ist und was fehlt:**
+
+| Baustein | Status | Beleg |
+|---|---|---|
+| Baum-Markup Gebäude ▸ Einheit | **vorhanden, 2-stufig** | `liegenschaft-detail.html:102-131`, SCSS ab `:66` |
+| Ebene 3 (Räume) im Baum | fehlt | — |
+| Wiederverwendbare Tree-Komponente | existiert nicht; `@angular/cdk` ist da, `cdk-tree` ungenutzt | `package.json:14` |
+| `POST` Gebäude / Einheit | vorhanden | `api/property.py:603`, `:627` |
+| `PATCH` Gebäude / Einheit | **fehlt** | `api/property.py` hat kein PATCH |
+| `update_building` / `update_unit` (Service) | **fehlt** | `services/property.py:102-174` kennt nur `add_*` |
+| PATCH-Muster zum Abschauen | vorhanden | `services/raum.py:768` (`update_room`) |
+| `PATCH /rooms/{id}` · `PATCH /assets/{id}` | vorhanden — I3 bestätigt | `raum.py:645`, `anlage.py:327` |
+| `unit.storey` | **fehlt**, `unit` hat 6 Spalten (4 fachliche) | `0004_property.sql:78-95` |
+| Vorlage für `storey` | vorhanden, Freitext + Leerstring-Sperre | `0086_raumaufmass.py:141-144` |
+| Schutzstandard auf building/unit | **fehlt** (siehe I2a) | `0004_property.sql:70,97` |
+
+**Wichtig fürs Zuschneiden:** Der schwere Posten ist **nicht das UI**, sondern die fehlende Schreibseite — vier Endpunkte, zwei Services, ein Schemafeld, ein korrigierter Constraint (I6) und sechs Trigger. Das UI kann auf vorhandenem Markup und dem Zuordnungsmuster aus `raum-editor.ts:253-256` (abhängige Selects: Einheit leert sich bei Gebäudewechsel) aufsetzen. Zur Größenordnung: `features/raumaufmass/` hat 5.924 Zeilen, der ganze Struktur-Reiter rund 40 Zeilen HTML.
+
+**Migrationskopf:** `0123_merge_gewerk_und_assistent.py`, einziger Leaf. Neue Migration wäre `0124_…` mit `dependencies = [("db_core", "0123_merge_gewerk_und_assistent")]`. Doppelt vergeben waren 0025 und 0120 — beide bewusste Zweige, jeweils zusammengeführt, unproblematisch. Zwischen 0069 und 0071 fehlt 0070 (kosmetisch, Graph geschlossen).
 
 ### AP2 — Kopfzeile Liegenschaft: Verwaltung / Eigentümer / Mieter
 
