@@ -373,6 +373,117 @@ def _out(link):
     )
 
 
+# --- Kategorien (Befund A4/A5, Migration 0127) -----------------------------
+
+class KategorieOut(Schema):
+    id: UUID
+    code: str
+    label: str
+    is_system: bool
+    status: str
+    sort_order: int
+
+
+class KategorieIn(Schema):
+    """Neue Kategorie. `code` wird normalisiert (Großbuchstaben, Unterstriche).
+
+    Fehlt er, wird er aus der Bezeichnung abgeleitet — „Baustellenbericht"
+    ergibt `BAUSTELLENBERICHT`.
+    """
+
+    label: str
+    code: str | None = None
+    sort_order: int = 100
+
+
+class KategoriePatch(Schema):
+    """Nur Bezeichnung und Reihenfolge. Der **Code bleibt** (siehe Service)."""
+
+    label: str | None = None
+    sort_order: int | None = None
+
+
+@router.get("/file-categories", response=list[KategorieOut])
+def list_kategorien(
+    request,
+    nur_aktive: bool = Query(True),
+    ohne_system: bool = Query(False),
+):
+    """Die gepflegte Kategorienliste.
+
+    `ohne_system=true` für die Auswahl beim Hochladen: ARTIKELBILD, ATTEST,
+    BELEG_PDF und E_RECHNUNG vergibt ausschließlich das Programm und sie
+    gehören nicht in ein Auswahlfeld.
+    """
+    require(request, "content", "LESEN")
+    return dateien_service.kategorien(nur_aktive=nur_aktive, ohne_system=ohne_system)
+
+
+@router.post("/file-categories", response={201: KategorieOut}, auth=django_auth)
+def kategorie_anlegen(request, payload: KategorieIn):
+    """Eigene Kategorie anlegen (Befund A5).
+
+    `content/AENDERN`, nicht ANLEGEN: Hier entsteht keine Datei, sondern eine
+    Stammdatenzeile, die für alle gilt — das ist eine Verwaltungshandlung.
+    """
+    actor, _ = require(request, "content", "AENDERN")
+    try:
+        kategorie = dateien_service.kategorie_anlegen(
+            actor,
+            code=payload.code or payload.label,
+            label=payload.label,
+            sort_order=payload.sort_order,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return Status(201, kategorie)
+
+
+@router.patch("/file-categories/{category_id}", response=KategorieOut, auth=django_auth)
+def kategorie_aendern(request, category_id: UUID, payload: KategoriePatch):
+    """Bezeichnung und Reihenfolge ändern — der Code bleibt unangetastet."""
+    actor, _ = require(request, "content", "AENDERN")
+    try:
+        return dateien_service.kategorie_aendern(
+            actor, category_id, payload.dict(exclude_unset=True)
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+
+
+@router.post(
+    "/file-categories/{category_id}/deaktivieren",
+    response=KategorieOut,
+    auth=django_auth,
+)
+def kategorie_deaktivieren(request, category_id: UUID):
+    """Deaktivieren statt löschen (Befund A5).
+
+    Alte Dateien tragen ihre Kategorie noch; eine gelöschte machte die Historie
+    unlesbar — und der Fremdschlüssel ließe es ohnehin nicht zu.
+    Systemkategorien wehrt schon der Service ab, die DB zusätzlich per Trigger.
+    """
+    actor, _ = require(request, "content", "AENDERN")
+    try:
+        return dateien_service.kategorie_status(actor, category_id, aktiv=False)
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+
+
+@router.post(
+    "/file-categories/{category_id}/aktivieren",
+    response=KategorieOut,
+    auth=django_auth,
+)
+def kategorie_aktivieren(request, category_id: UUID):
+    """Eine deaktivierte Kategorie wieder in die Auswahl holen."""
+    actor, _ = require(request, "content", "AENDERN")
+    try:
+        return dateien_service.kategorie_status(actor, category_id, aktiv=True)
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+
+
 @router.post("/files", response={201: DateiOut}, auth=django_auth)
 def datei_hochladen(
     request,

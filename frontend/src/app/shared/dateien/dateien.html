@@ -39,8 +39,8 @@
             [disabled]="uploadLaeuft()"
             (change)="kategorie.set($any($event.target).value)"
           >
-            @for (k of kategorien; track k.wert) {
-              <option [value]="k.wert">{{ k.label }}</option>
+            @for (k of kategorien(); track k.code) {
+              <option [value]="k.code">{{ k.label }}</option>
             }
           </select>
         </label>
@@ -128,26 +128,53 @@
           <p>Für dieses Objekt sind noch keine Dateien abgelegt.</p>
         </div>
       } @else {
+        <!-- Filter nach Kategorie (Befund A4). Erst ab zwei Kategorien: bei
+             einer gäbe es nichts zu filtern, und ein Auswahlfeld mit einem
+             Eintrag ist nur Rauschen. Angeboten werden nur Kategorien, die in
+             DIESER Liste vorkommen — ein Filter auf eine leere Menge ist keine
+             Hilfe, sondern eine Sackgasse. -->
+        @if (filterOptionen().length > 1) {
+          <div class="datei-filter">
+            <label class="datei-filter__label" for="datei-filter">Kategorie</label>
+            <select
+              id="datei-filter"
+              class="feld-gruppe__input feld-gruppe__select datei-filter__select"
+              [value]="filter()"
+              (change)="filter.set($any($event.target).value)"
+            >
+              <option value="">Alle ({{ dateien().length }})</option>
+              @for (o of filterOptionen(); track o.code) {
+                <option [value]="o.code">{{ o.label }}</option>
+              }
+            </select>
+          </div>
+        }
+
+        @if (sichtbareDateien().length === 0) {
+          <div class="tab-platzhalter">
+            <p>In dieser Kategorie liegt hier nichts.</p>
+          </div>
+        }
         <ul class="datei-liste">
-          @for (d of dateien(); track d.link_id) {
+          @for (d of sichtbareDateien(); track d.link_id) {
             <li class="datei">
               <!-- Bild sichtbar und klickbar (Befunde A1/A2). Ein echter
                    <button>, kein klickbares <div>: Tastaturbedienung und
                    Fokus kommen so von selbst. Nicht-Bilder behalten das
                    Typkürzel. -->
-              @if (istBild(d)) {
+              @if (istAnsehbar(d)) {
                 <button
                   type="button"
                   class="datei__vorschau"
                   (click)="grossOeffnen(d)"
-                  [attr.aria-label]="'Bild „' + d.original_filename + '“ groß anzeigen'"
+                  [attr.aria-label]="'„' + d.original_filename + '“ ansehen'"
                 >
                   @if (vorschauen()[d.file_id]; as url) {
                     <img class="datei__bild" [src]="url" alt="" />
                   } @else {
-                    <!-- Noch nicht geladen oder über der Vorschaugrenze —
-                         die Großansicht holt es dann beim Klick. -->
-                    <span class="datei__typ" aria-hidden="true">IMG</span>
+                    <!-- Kein Bild, noch nicht geladen oder über der
+                         Vorschaugrenze — die Großansicht holt es beim Klick. -->
+                    <span class="datei__typ" aria-hidden="true">{{ typKuerzel(d.mime_type) }}</span>
                   }
                 </button>
               } @else {
@@ -227,11 +254,28 @@
     </div>
     <div class="lightbox__buehne">
       @if (grossansichtLaedt()) {
-        <p class="lightbox__laedt" role="status">Bild wird geladen …</p>
+        <p class="lightbox__laedt" role="status">Wird geladen …</p>
       } @else if (grossansichtUrl(); as url) {
-        <img class="lightbox__bild" [src]="url" [alt]="g.original_filename" />
+        <!-- Drei Darstellungen, je nach Art (Befund A3). Alle drei aus einer
+             Object-URL, also aus dem Blob — nie aus einer Origin-URL. -->
+        @if (istBild(g)) {
+          <img class="lightbox__bild" [src]="url" [alt]="g.original_filename" />
+        } @else if (istVideo(g)) {
+          <video class="lightbox__bild" [src]="url" controls preload="metadata">
+            Dein Browser kann dieses Video nicht abspielen.
+          </video>
+        } @else {
+          <!-- PDF: <iframe> statt <embed>, weil nur das eine Beschriftung für
+               Screenreader trägt. Wer es lieber im PDF-Programm öffnet, nutzt
+               weiterhin „Herunterladen" in der Zeile. -->
+          <iframe
+            class="lightbox__pdf"
+            [src]="sicher(url)"
+            [title]="g.original_filename"
+          ></iframe>
+        }
       } @else {
-        <p class="lightbox__laedt" role="alert">Das Bild konnte nicht geladen werden.</p>
+        <p class="lightbox__laedt" role="alert">Die Datei konnte nicht geladen werden.</p>
       }
     </div>
   </div>

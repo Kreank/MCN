@@ -3582,6 +3582,39 @@ class File(models.Model):
         return self.original_filename
 
 
+class FileCategory(models.Model):
+    """content.file_category — gepflegte Codeliste der Dateikategorien (0127).
+
+    Der **Code ist der Schlüssel**: `file_link.link_category` zeigt per
+    Fremdschlüssel darauf, und drei partielle UNIQUE-Indizes (0032/0042/0059)
+    vergleichen gegen den Literalwert.
+
+    `is_system` markiert die vier Kategorien, die ausschließlich das Programm
+    vergibt (ARTIKELBILD, ATTEST, BELEG_PDF, E_RECHNUNG). Ein Trigger verbietet
+    dort Umbenennen und Deaktivieren — sonst liefe einer der Indizes ins Leere
+    und die Einmaligkeit wäre still weg.
+
+    Kein Löschen, nur `status = 'INAKTIV'`: Alte Dateien tragen ihre Kategorie
+    noch, und eine gelöschte machte die Historie unlesbar.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    code = models.TextField(unique=True)
+    label = models.TextField()
+    is_system = models.BooleanField(db_default=models.Value(False))
+    status = models.TextField(db_default=models.Value("AKTIV"))
+    sort_order = models.IntegerField(db_default=models.Value(100))
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'content"."file_category'
+
+    def __str__(self):
+        return self.label
+
+
 class FileLink(models.Model):
     """content.file_link — hängt eine Datei an GENAU EIN Zielobjekt.
 

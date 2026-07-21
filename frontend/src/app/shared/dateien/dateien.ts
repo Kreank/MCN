@@ -12,8 +12,9 @@ import {
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { map } from 'rxjs';
+import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { AuthService } from '../../core/auth.service';
-import { Datei, LinkKategorie, ZielFilter } from '../../core/datei.model';
+import { Datei, Dateikategorie, ZielFilter } from '../../core/datei.model';
 import { DateiService } from '../../core/datei.service';
 import { VerbotenState, fehlerDetail, fehlerState } from '../http-fehler';
 import { Bestaetigung } from '../bestaetigung/bestaetigung';
@@ -28,12 +29,6 @@ type Zustand =
 interface UploadFehler {
   name: string;
   text: string;
-}
-
-/** Auswaehlbare fachliche Kategorie (BELEG_PDF ist reserviert, nur beleg_pdf.py). */
-interface KategorieOption {
-  wert: LinkKategorie;
-  label: string;
 }
 
 /**
@@ -59,6 +54,7 @@ export class Dateien {
   private readonly svc = inject(DateiService);
   private readonly auth = inject(AuthService);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly sanitizer = inject(DomSanitizer);
 
   /** Verwirft veraltete Liste-Antworten (Race beim schnellen Zielwechsel). */
   private ladeReqId = 0;
@@ -75,17 +71,51 @@ export class Dateien {
   protected readonly darfLoesen = computed(() => this.auth.darf('content', 'AENDERN'));
 
   // --- Upload --------------------------------------------------------------
-  protected readonly kategorie = signal<LinkKategorie>('DOKUMENT');
-  protected readonly kategorien: KategorieOption[] = [
-    { wert: 'DOKUMENT', label: 'Dokument' },
-    { wert: 'FOTO_VORHER', label: 'Foto (vorher)' },
-    { wert: 'FOTO_NACHHER', label: 'Foto (nachher)' },
-    { wert: 'VIDEO_BEGEHUNG', label: 'Video (Begehung)' },
-    { wert: 'SCAN', label: 'Scan' },
-    { wert: 'PLAN', label: 'Plan' },
-    { wert: 'VERTRAG', label: 'Vertrag' },
-    { wert: 'SONSTIGES', label: 'Sonstiges' },
-  ];
+  protected readonly kategorie = signal<string>('DOKUMENT');
+  /**
+   * Die Auswahl kommt seit Migration 0127 vom **Server**, nicht mehr aus einer
+   * festen Liste hier (Befund A4/A5). Selbst angelegte Kategorien tauchen
+   * damit von selbst auf, und eine deaktivierte verschwindet.
+   *
+   * `ohneSystem`: ARTIKELBILD, ATTEST, BELEG_PDF und E_RECHNUNG vergibt
+   * ausschließlich der Server — sie gehören in kein Auswahlfeld.
+   */
+  protected readonly kategorien = signal<Dateikategorie[]>([]);
+
+  /** Label zu einem Code — aus der geladenen Liste, sonst der Code selbst. */
+  kategorieLabelAusListe(code: string): string {
+    return this.kategorien().find((k) => k.code === code)?.label ?? code;
+  }
+
+  // --- Filter nach Kategorie (Befund A4) ----------------------------------
+  // „Kategorisieren: Bilder, Videos, Baustellenberichte" — bei dreißig Dateien
+  // an einem Objekt ist die Frage nicht „welche gibt es", sondern „wo sind die
+  // Fotos". Leerer Wert = alle.
+  protected readonly filter = signal<string>('');
+
+  /** Die angezeigten Dateien nach Filter. */
+  protected readonly sichtbareDateien = computed(() => {
+    const f = this.filter();
+    const alle = this.dateien();
+    return f ? alle.filter((d) => d.link_category === f) : alle;
+  });
+
+  /** Nur Kategorien, die in DIESER Dateiliste vorkommen — ein Filter auf eine
+   *  leere Menge ist keine Hilfe, sondern eine Sackgasse. */
+  protected readonly filterOptionen = computed(() => {
+    const vorhanden = new Set(
+      this.dateien()
+        .map((d) => d.link_category)
+        .filter((c): c is string => !!c),
+    );
+    const bekannt = this.kategorien().filter((k) => vorhanden.has(k.code));
+    // Kategorien, die es in der Liste gibt, aber nicht (mehr) in der
+    // Codeliste — z. B. deaktivierte. Sie bleiben filterbar.
+    const zusatz = [...vorhanden]
+      .filter((c) => !bekannt.some((k) => k.code === c))
+      .map((c) => ({ code: c, label: c }));
+    return [...bekannt.map((k) => ({ code: k.code, label: k.label })), ...zusatz];
+  });
 
   protected readonly uploadLaeuft = signal(false);
   /** Fortschritt 0–100, oder null (unbestimmt/kein total gemeldet). */
@@ -121,6 +151,25 @@ export class Dateien {
       const z = this.ziel();
       this.laden(z);
     });
+
+    // Kategorien einmal holen (Migration 0127). Ohne Systemkategorien: die
+    // vergibt ausschliesslich der Server.
+    this.svc
+      .kategorien({ ohneSystem: true })
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (liste) => {
+          this.kategorien.set(liste);
+          // Vorauswahl auf die erste vorhandene, falls DOKUMENT deaktiviert
+          // wurde — sonst schickte das Formular einen toten Code.
+          if (!liste.some((k) => k.code === this.kategorie()) && liste.length) {
+            this.kategorie.set(liste[0].code);
+          }
+        },
+        // Ohne Kategorien bleibt die Auswahl leer; der Upload meldet das dann
+        // sauber als 422. Ein Fehlerbanner waere hier Laerm.
+        error: () => {},
+      });
 
     // Object-URLs der Bildvorschauen freigeben — sonst haelt der Browser jedes
     // je angesehene Bild im Speicher, solange die Seite lebt.
@@ -334,20 +383,18 @@ export class Dateien {
     return d.toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' });
   }
 
+  /**
+   * Beschriftung einer Kategorie.
+   *
+   * Kommt seit Migration 0127 aus der geladenen Liste, nicht mehr aus einer
+   * hartkodierten Karte — sonst zeigte eine selbst angelegte Kategorie ihren
+   * rohen Code an und eine umbenannte behielte den alten Namen.
+   * Systemkategorien sind in `kategorien()` bewusst nicht enthalten; für sie
+   * ist der Code die ehrlichste Anzeige.
+   */
   kategorieLabel(code: string | null): string {
     if (!code) return '';
-    const map: Record<string, string> = {
-      DOKUMENT: 'Dokument',
-      FOTO_VORHER: 'Foto (vorher)',
-      FOTO_NACHHER: 'Foto (nachher)',
-      VIDEO_BEGEHUNG: 'Video',
-      SCAN: 'Scan',
-      PLAN: 'Plan',
-      VERTRAG: 'Vertrag',
-      SONSTIGES: 'Sonstiges',
-      BELEG_PDF: 'Beleg-PDF',
-    };
-    return map[code] ?? code;
+    return this.kategorieLabelAusListe(code);
   }
 
   // --- Bildvorschau und Grossansicht (Befunde A1/A2/A3) --------------------
@@ -383,6 +430,29 @@ export class Dateien {
     return d.mime_type.startsWith('image/');
   }
 
+  istVideo(d: Datei): boolean {
+    return d.mime_type.startsWith('video/');
+  }
+
+  istPdf(d: Datei): boolean {
+    return d.mime_type === 'application/pdf';
+  }
+
+  /**
+   * Lässt sich die Datei in der Anwendung ansehen (Befund A3)?
+   *
+   * Nur die drei Arten, die der Browser von sich aus darstellen kann. Alles
+   * andere — Word, Excel, ZIP — bleibt beim Herunterladen: eine „Vorschau",
+   * die nur den Dateinamen größer zeigt, ist keine.
+   *
+   * Die Typ-Whitelist des Uploads schließt HTML und SVG aus, deshalb ist das
+   * Einbetten hier unbedenklich; ein PDF kommt zudem über eine Object-URL aus
+   * dem Blob, nicht über eine Origin-URL.
+   */
+  istAnsehbar(d: Datei): boolean {
+    return this.istBild(d) || this.istVideo(d) || this.istPdf(d);
+  }
+
   /** Vorschauen der Bilder einer frisch geladenen Liste holen. */
   private vorschauenLaden(dateien: readonly Datei[]): void {
     for (const d of dateien) {
@@ -412,7 +482,7 @@ export class Dateien {
   }
 
   grossOeffnen(d: Datei): void {
-    if (!this.istBild(d)) return;
+    if (!this.istAnsehbar(d)) return;
     this.grossansicht.set(d);
     // Fokus ins Overlay holen — sonst stünde er hinter dem Bild in der Liste,
     // und Tastaturbedienung wie Screenreader landeten im Nichts.
@@ -432,6 +502,19 @@ export class Dateien {
       },
       error: () => this.grossansichtLaedt.set(false),
     });
+  }
+
+  /**
+   * Object-URL für ein `<iframe src>` freigeben.
+   *
+   * Angular blockt `blob:`-URLs in `[src]` eines iframes als potenziell
+   * unsicher. Hier ist das Freigeben vertretbar und eng begrenzt: Die URL
+   * stammt aus einem Blob, den diese Komponente selbst erzeugt hat, und der
+   * Aufruf steht ausschließlich im PDF-Zweig — die Upload-Whitelist lässt
+   * ohnehin kein HTML und kein SVG zu.
+   */
+  sicher(url: string): SafeResourceUrl {
+    return this.sanitizer.bypassSecurityTrustResourceUrl(url);
   }
 
   grossSchliessen(): void {

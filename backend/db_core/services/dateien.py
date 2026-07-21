@@ -26,13 +26,14 @@ Dateien sind physisch unveränderlich (`trg_file_immutable`): kein UPDATE, kein
 DELETE. Eine Korrektur ist eine neue Datei.
 """
 import hashlib
+import re
 import uuid
 from pathlib import PurePosixPath
 
 from db_core import storage as storage_module
 from db_core.db_context import business_transaction
 from db_core.gate_errors import as_business_error
-from db_core.models import File, FileLink
+from db_core.models import File, FileCategory, FileLink
 
 # 50 MB. Größere Dateien gehören nicht durch ein Formular, sondern in einen
 # Direkt-Upload gegen den Objektspeicher (später).
@@ -97,8 +98,13 @@ ZIELE = (
     "absence_id",
 )
 
-# Fachliche Einordnung. Freitext in der DB; hier eine gepflegte Liste, damit die
-# Kategorien nicht auseinanderlaufen. BELEG_PDF vergibt nur beleg_pdf.py.
+# Fachliche Einordnung. Seit Migration 0127 eine **gepflegte Codeliste in der
+# DB** (`content.file_category`) mit Fremdschlüssel — vorher Freitext plus
+# diese Konstante. Wer eine eigene Kategorie will, legt sie jetzt an, statt den
+# Code zu ändern (Befund A4/A5).
+#
+# Die Konstante bleibt als Notnagel für den Fall, dass die Tabelle nicht
+# erreichbar ist, und dokumentiert den Auslieferungsstand.
 LINK_KATEGORIEN = (
     "DOKUMENT",
     "FOTO_VORHER",
@@ -114,6 +120,109 @@ LINK_KATEGORIEN = (
     "ATTEST",
     "SONSTIGES",
 )
+
+
+def kategorien(*, nur_aktive=True, ohne_system=False):
+    """Die gepflegte Kategorienliste (Migration 0127).
+
+    `ohne_system` blendet die vier Kategorien aus, die ausschließlich das
+    Programm vergibt (ARTIKELBILD, ATTEST, BELEG_PDF, E_RECHNUNG) — sie gehören
+    nicht in eine Auswahl beim Hochladen, weil sie als Nebenwirkung anderer
+    Vorgänge entstehen.
+    """
+    qs = FileCategory.objects.all()
+    if nur_aktive:
+        qs = qs.filter(status="AKTIV")
+    if ohne_system:
+        qs = qs.filter(is_system=False)
+    return list(qs.order_by("sort_order", "label"))
+
+
+def kategorie_anlegen(actor_app_user_id, *, code, label, sort_order=100):
+    """Eigene Kategorie anlegen (Befund A5).
+
+    Der Code wird normalisiert (Großbuchstaben, keine Leerzeichen) — er landet
+    als Wert in `file_link.link_category` und in Auswertungen; ein Code mit
+    Leerzeichen oder wechselnder Schreibweise wäre der Anfang genau des
+    Auseinanderlaufens, gegen das die Liste antritt.
+    """
+    code = _kategorie_code(code)
+    if not label or not label.strip():
+        raise DateiFehler("Die Bezeichnung darf nicht leer sein.")
+    if FileCategory.objects.filter(code=code).exists():
+        raise DateiFehler(f"Die Kategorie '{code}' existiert bereits.")
+    with business_transaction(actor_app_user_id):
+        return FileCategory.objects.create(
+            id=uuid.uuid4(),
+            code=code,
+            label=label.strip(),
+            is_system=False,
+            status="AKTIV",
+            sort_order=sort_order,
+        )
+
+
+def kategorie_aendern(actor_app_user_id, category_id, daten):
+    """Bezeichnung und Reihenfolge ändern. Der **Code bleibt**.
+
+    Ein umbenannter Code hinge in jeder bereits abgelegten Datei — und bei den
+    Systemkategorien liefen zusätzlich die partiellen UNIQUE-Indizes ins Leere
+    (der Trigger verbietet es dort ohnehin). Was der Nutzer sieht, ist das
+    Label; das ist frei änderbar.
+    """
+    kategorie = FileCategory.objects.filter(pk=category_id).first()
+    if kategorie is None:
+        raise DateiFehler("Kategorie nicht gefunden.")
+
+    daten = daten or {}
+    werte = {}
+    if "label" in daten:
+        if not daten["label"] or not str(daten["label"]).strip():
+            raise DateiFehler("Die Bezeichnung darf nicht leer sein.")
+        werte["label"] = str(daten["label"]).strip()
+    if "sort_order" in daten and daten["sort_order"] is not None:
+        werte["sort_order"] = int(daten["sort_order"])
+    if not werte:
+        return kategorie
+    with business_transaction(actor_app_user_id):
+        FileCategory.objects.filter(pk=category_id).update(**werte)
+    return FileCategory.objects.get(pk=category_id)
+
+
+def kategorie_status(actor_app_user_id, category_id, *, aktiv):
+    """Deaktivieren oder wieder aktivieren — **kein Löschen**.
+
+    Alte Dateien tragen ihre Kategorie noch; eine gelöschte machte die Historie
+    unlesbar (und der Fremdschlüssel ließe es ohnehin nicht zu). Eine inaktive
+    Kategorie verschwindet aus der Auswahl und bleibt lesbar.
+
+    Systemkategorien wehrt der DB-Trigger ab; hier wird der Fall vorab als
+    Fachfehler abgefangen, damit daraus kein 500 wird.
+    """
+    kategorie = FileCategory.objects.filter(pk=category_id).first()
+    if kategorie is None:
+        raise DateiFehler("Kategorie nicht gefunden.")
+    if kategorie.is_system and not aktiv:
+        raise DateiFehler(
+            f"„{kategorie.label}“ wird vom Programm vergeben und lässt sich "
+            "nicht deaktivieren."
+        )
+    with business_transaction(actor_app_user_id):
+        FileCategory.objects.filter(pk=category_id).update(
+            status="AKTIV" if aktiv else "INAKTIV"
+        )
+    return FileCategory.objects.get(pk=category_id)
+
+
+def _kategorie_code(roh):
+    """`Baustellen bericht` → `BAUSTELLEN_BERICHT`."""
+    code = re.sub(r"[^A-Z0-9]+", "_", (roh or "").strip().upper()).strip("_")
+    if not code:
+        raise DateiFehler(
+            "Der Code darf nicht leer sein (erlaubt: Buchstaben, Ziffern, "
+            "Unterstrich)."
+        )
+    return code
 
 
 class DateiFehler(ValueError):
@@ -206,10 +315,15 @@ def datei_hochladen(
     ziel_spalte = _ziel_pruefen(ziel)
     ist_attest = "absence_id" in ziel_spalte
 
-    if link_category not in LINK_KATEGORIEN:
+    # Gegen die gepflegte Liste pruefen (Migration 0127), nicht mehr gegen
+    # eine Konstante — sonst waeren selbst angelegte Kategorien nicht
+    # benutzbar. Der Fremdschluessel ist die letzte Instanz; hier wird daraus
+    # ein 422 statt eines IntegrityError.
+    erlaubte = {k.code for k in kategorien()}
+    if link_category not in erlaubte:
         raise DateiFehler(
-            f"Unbekannte Kategorie '{link_category}'. "
-            f"Erlaubt: {', '.join(LINK_KATEGORIEN)}"
+            f"Unbekannte oder deaktivierte Kategorie '{link_category}'. "
+            f"Erlaubt: {', '.join(sorted(erlaubte))}"
         )
     if not inhalt:
         raise DateiFehler("Die Datei ist leer.")

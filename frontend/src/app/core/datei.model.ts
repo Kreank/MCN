@@ -32,6 +32,28 @@ export interface ZielFilter {
 }
 
 /** Fachliche Einordnung einer Verknuepfung (Freitext in der DB, gepflegte Liste). */
+/**
+ * Eine Zeile der gepflegten Kategorienliste (Migration 0127, Befund A4/A5).
+ *
+ * `is_system` markiert die vier Kategorien, die ausschließlich das Programm
+ * vergibt (ARTIKELBILD, ATTEST, BELEG_PDF, E_RECHNUNG). Sie erscheinen nicht
+ * in der Auswahl beim Hochladen und lassen sich weder umbenennen noch
+ * deaktivieren — drei partielle UNIQUE-Indizes hängen an ihren Codes.
+ */
+export interface Dateikategorie {
+  id: string;
+  code: string;
+  label: string;
+  is_system: boolean;
+  status: 'AKTIV' | 'INAKTIV';
+  sort_order: number;
+}
+
+/**
+ * Die bei Auslieferung vorhandenen Codes. Seit 0127 ist die Liste in der DB
+ * pflegbar — der Typ bleibt als Bequemlichkeit für die Stellen, die einen
+ * festen Code setzen (z. B. das Artikelbild), ist aber nicht mehr vollständig.
+ */
 export type LinkKategorie =
   | 'DOKUMENT'
   | 'FOTO_VORHER'

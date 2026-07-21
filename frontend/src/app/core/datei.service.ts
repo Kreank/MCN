@@ -6,7 +6,13 @@ import {
 } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable, map } from 'rxjs';
-import { Datei, DateiInhalt, DateiListe, ZielFilter } from './datei.model';
+import {
+  Datei,
+  Dateikategorie,
+  DateiInhalt,
+  DateiListe,
+  ZielFilter,
+} from './datei.model';
 
 /**
  * Typisierter Zugriff auf die Datei-Ablage (/api/content, dev-Proxy: /api -> :8000).
@@ -29,6 +35,50 @@ export class DateiService {
       if (wert) params = params.set(key, wert);
     }
     return params;
+  }
+
+  /**
+   * Die gepflegte Kategorienliste (Migration 0127).
+   *
+   * `ohne_system` für Auswahlfelder: ARTIKELBILD, ATTEST, BELEG_PDF und
+   * E_RECHNUNG vergibt ausschließlich der Server.
+   */
+  kategorien(opt?: { nurAktive?: boolean; ohneSystem?: boolean }): Observable<Dateikategorie[]> {
+    let params = new HttpParams();
+    if (opt?.nurAktive === false) params = params.set('nur_aktive', 'false');
+    if (opt?.ohneSystem) params = params.set('ohne_system', 'true');
+    return this.http.get<Dateikategorie[]>(`${this.base}/file-categories`, { params });
+  }
+
+  kategorieAnlegen(payload: {
+    label: string;
+    code?: string;
+    sort_order?: number;
+  }): Observable<Dateikategorie> {
+    return this.http.post<Dateikategorie>(`${this.base}/file-categories`, payload);
+  }
+
+  /** Nur Bezeichnung und Reihenfolge — der Code bleibt (siehe Service). */
+  kategorieAendern(
+    id: string,
+    payload: { label?: string; sort_order?: number },
+  ): Observable<Dateikategorie> {
+    return this.http.patch<Dateikategorie>(`${this.base}/file-categories/${id}`, payload);
+  }
+
+  /** Deaktivieren statt löschen — alte Dateien tragen ihre Kategorie noch. */
+  kategorieDeaktivieren(id: string): Observable<Dateikategorie> {
+    return this.http.post<Dateikategorie>(
+      `${this.base}/file-categories/${id}/deaktivieren`,
+      {},
+    );
+  }
+
+  kategorieAktivieren(id: string): Observable<Dateikategorie> {
+    return this.http.post<Dateikategorie>(
+      `${this.base}/file-categories/${id}/aktivieren`,
+      {},
+    );
   }
 
   /** Alle Dateien an einem Zielobjekt (neueste zuerst). Recht: content/LESEN. */
