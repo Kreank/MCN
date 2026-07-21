@@ -256,6 +256,81 @@
             }
           </section>
 
+          <!-- Aufträge der Liegenschaft (Befund C2). Bewusst VOR den Vorgängen:
+               „Vorgänge sind mittlerweile eher uninteressant […] viel wichtiger
+               ist zu sehen, welche Aufträge schon stattgefunden haben." Der
+               Vorgang ist der optionale Eingangskorb, der Auftrag die Historie. -->
+          <section class="objektgruppe" aria-labelledby="objekt-auftraege-titel">
+            <div class="objektgruppe__kopf">
+              <h3 id="objekt-auftraege-titel" class="objektgruppe__titel">Aufträge</h3>
+              @if (auftraegeState().kind === 'ready') {
+                <span class="objektgruppe__zahl">{{ $any(auftraegeState()).items.length }}</span>
+              }
+            </div>
+            @switch (auftraegeState().kind) {
+              @case ('loading') { <p class="lade-hinweis" role="status">Aufträge werden geladen …</p> }
+              @case ('forbidden') { <app-kein-zugriff [detail]="$any(auftraegeState()).detail" /> }
+              @case ('error') { <div class="tab-platzhalter"><p>Die Aufträge konnten nicht geladen werden.</p></div> }
+              @case ('ready') {
+                @if ($any(auftraegeState()).items.length === 0) {
+                  <div class="tab-platzhalter"><p>An dieser Liegenschaft gab es noch keine Aufträge.</p></div>
+                } @else {
+                  <ul class="ref-liste">
+                    @for (a of $any(auftraegeState()).items; track a.id) {
+                      <li>
+                        <a class="ref" [routerLink]="['/auftraege', a.id]">
+                          <span class="ref__nr">{{ a.order_number }}</span>
+                          <span class="ref__name">{{ a.title }}</span>
+                          <span class="ref__stamps">
+                            @if (a.is_emergency) { <span class="stamp stamp--negativ">Notfall</span> }
+                            <span class="stamp">{{ auftragStatusLabel(a.status) }}</span>
+                          </span>
+                        </a>
+                      </li>
+                    }
+                  </ul>
+                }
+              }
+            }
+          </section>
+
+          <!-- Einsätze/Termine der Liegenschaft (Befund C3). Der Filter deckt
+               beide Wege ab: freier Termin direkt am Objekt, sonst über den
+               Auftrag — sonst fehlte die halbe Historie. -->
+          <section class="objektgruppe" aria-labelledby="objekt-einsaetze-titel">
+            <div class="objektgruppe__kopf">
+              <h3 id="objekt-einsaetze-titel" class="objektgruppe__titel">Einsätze &amp; Termine</h3>
+              @if (einsaetzeState().kind === 'ready') {
+                <span class="objektgruppe__zahl">{{ $any(einsaetzeState()).items.length }}</span>
+              }
+            </div>
+            @switch (einsaetzeState().kind) {
+              @case ('loading') { <p class="lade-hinweis" role="status">Einsätze werden geladen …</p> }
+              @case ('forbidden') { <app-kein-zugriff [detail]="$any(einsaetzeState()).detail" /> }
+              @case ('error') { <div class="tab-platzhalter"><p>Die Einsätze konnten nicht geladen werden.</p></div> }
+              @case ('ready') {
+                @if ($any(einsaetzeState()).items.length === 0) {
+                  <div class="tab-platzhalter"><p>An dieser Liegenschaft gab es noch keine Einsätze.</p></div>
+                } @else {
+                  <ul class="ref-liste">
+                    @for (e of $any(einsaetzeState()).items; track e.id) {
+                      <li>
+                        <a class="ref" [routerLink]="['/planung', e.id]">
+                          <span class="ref__nr">{{ e.job_number }}</span>
+                          <span class="ref__name">{{ e.title || '—' }}</span>
+                          <span class="ref__meta">{{ einsatzZeit(e.scheduled_start) }}</span>
+                          <span class="ref__stamps">
+                            <span class="stamp">{{ einsatzStatusLabel(e.status) }}</span>
+                          </span>
+                        </a>
+                      </li>
+                    }
+                  </ul>
+                }
+              }
+            }
+          </section>
+
           <!-- Vorgänge der Liegenschaft -->
           <section class="objektgruppe" aria-labelledby="objekt-vorgaenge-titel">
             <div class="objektgruppe__kopf">

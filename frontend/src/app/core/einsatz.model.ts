@@ -77,6 +77,12 @@ export interface ServiceJobQuery {
   q?: string;
   status?: ServiceJobStatus | null;
   work_order_id?: string | null;
+  /**
+   * Alle Einsätze an einer Liegenschaft (Befund C3) — über BEIDE Wege: der
+   * freie Termin hängt direkt am Objekt, der auftragsgebundene über seinen
+   * Auftrag. Der Server löst das mit einer Oder-Bedingung auf.
+   */
+  property_id?: string | null;
   /** Zeitraumfilter der API (ISO-Datetime) — war bisher nicht verdrahtet. */
   scheduled_from?: string | null;
   scheduled_to?: string | null;

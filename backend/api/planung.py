@@ -215,6 +215,12 @@ class ServiceJobFilter(Schema):
     q: str | None = None
     status: str | None = None
     work_order_id: UUID | None = None
+    # „Welche Einsätze gab es an diesem Objekt?" — die Frage des Disponenten
+    # (Befund C3). Sie braucht BEIDE Wege: Der Einsatz hängt entweder direkt an
+    # der Liegenschaft (freier Termin, `property_id` ist seit 0062 nullable)
+    # oder über seinen Auftrag. Dieselbe Oder-Logik nutzt das Dossier
+    # (`services/dossier.py`) bereits.
+    property_id: UUID | None = None
     scheduled_from: Betriebszeitpunkt | None = None
     scheduled_to: Betriebszeitpunkt | None = None
 
@@ -451,6 +457,15 @@ def list_einsaetze(
         qs = qs.filter(status=filters.status)
     if filters.work_order_id:
         qs = qs.filter(work_order_id=filters.work_order_id)
+    if filters.property_id:
+        # BEIDE Wege (Befund C3): Der freie Termin hängt direkt an der
+        # Liegenschaft, der auftragsgebundene über seinen Auftrag. Nur einen
+        # von beiden zu prüfen ließe die halbe Historie des Objekts unsichtbar.
+        # Dieselbe Bedingung nutzt `services/dossier.py` für die Objektmappe.
+        qs = qs.filter(
+            Q(property_id=filters.property_id)
+            | Q(work_order__property_id=filters.property_id)
+        ).distinct()
     if filters.scheduled_from:
         qs = qs.filter(scheduled_start__gte=filters.scheduled_from)
     if filters.scheduled_to:

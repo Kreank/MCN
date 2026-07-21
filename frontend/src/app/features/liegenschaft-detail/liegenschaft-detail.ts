@@ -6,6 +6,10 @@ import { Mappe, MappeTab } from '../../shared/mappe/mappe';
 import { PropertyService } from '../../core/property.service';
 import { PartyService } from '../../core/party.service';
 import { ProjektService } from '../../core/projekt.service';
+import { AuftragService } from '../../core/auftrag.service';
+import { EinsatzService } from '../../core/einsatz.service';
+import { WorkOrder, workOrderStatusLabel } from '../../core/auftrag.model';
+import { ServiceJob, serviceJobStatusLabel } from '../../core/einsatz.model';
 import { AuthService } from '../../core/auth.service';
 import {
   CasePriority,
@@ -83,6 +87,8 @@ export class LiegenschaftDetail {
   private readonly svc = inject(PropertyService);
   private readonly parties = inject(PartyService);
   private readonly projektSvc = inject(ProjektService);
+  private readonly auftragSvc = inject(AuftragService);
+  private readonly einsatzSvc = inject(EinsatzService);
   private readonly fb = inject(FormBuilder);
   private readonly auth = inject(AuthService);
 
@@ -149,6 +155,9 @@ export class LiegenschaftDetail {
   // --- Projekte & Vorgänge der Liegenschaft (lazy) -------------------------
   protected readonly projekteState = signal<LazyState<Project>>({ kind: 'idle' });
   protected readonly vorgaengeState = signal<LazyState<ServiceCaseCard>>({ kind: 'idle' });
+  /** Aufträge und Einsätze an diesem Objekt (Befunde C2/C3). */
+  protected readonly auftraegeState = signal<LazyState<WorkOrder>>({ kind: 'idle' });
+  protected readonly einsaetzeState = signal<LazyState<ServiceJob>>({ kind: 'idle' });
 
   /**
    * Kontextzeile für die Werkzeuge (Heizlast/Heizkörper): Objektname + Adresse.
@@ -289,6 +298,8 @@ export class LiegenschaftDetail {
       this.nebenReqId++;
       this.projekteState.set({ kind: 'idle' });
       this.vorgaengeState.set({ kind: 'idle' });
+      this.auftraegeState.set({ kind: 'idle' });
+      this.einsaetzeState.set({ kind: 'idle' });
       if (!id) {
         this.state.set({ kind: 'error' });
         return;
@@ -296,13 +307,55 @@ export class LiegenschaftDetail {
       this.load(id);
     });
 
-    // Projekte/Vorgänge erst beim Öffnen des Tabs laden (lazy).
+    // Projekte/Vorgänge/Aufträge/Einsätze erst beim Öffnen des Tabs laden (lazy).
     effect(() => {
       const d = this.daten();
       if (!d) return;
       if (this.tab() !== 'vorgaenge') return;
       if (this.projekteState().kind === 'idle') this.ladeProjekte(d.id);
       if (this.vorgaengeState().kind === 'idle') this.ladeVorgaenge(d.id);
+      if (this.auftraegeState().kind === 'idle') this.ladeAuftraege(d.id);
+      if (this.einsaetzeState().kind === 'idle') this.ladeEinsaetze(d.id);
+    });
+  }
+
+  /**
+   * Aufträge und Einsätze an der Liegenschaft (Befunde C2/C3).
+   *
+   * Sascha wörtlich: „Vorgänge sind mittlerweile eher uninteressant […] Viel
+   * wichtiger ist zu sehen, welche Aufträge schon in einer Liegenschaft
+   * stattgefunden haben." Der Vorgang ist der optionale Eingangskorb; die
+   * Historie eines Objekts steht in seinen Aufträgen und Einsätzen.
+   *
+   * Beide Listen sind absichtlich unbegrenzt auf 50 gedeckelt wie die
+   * bestehenden — an der Objektmappe zählt der Überblick, nicht die
+   * Vollständigkeit bis zurück zur Gründung.
+   */
+  private ladeAuftraege(propertyId: string): void {
+    const rid = this.nebenReqId;
+    this.auftraegeState.set({ kind: 'loading' });
+    this.auftragSvc.list({ page: 1, page_size: 50, property_id: propertyId }).subscribe({
+      next: (p) => {
+        if (rid === this.nebenReqId) this.auftraegeState.set({ kind: 'ready', items: p.items });
+      },
+      error: (err) => {
+        if (rid === this.nebenReqId) this.auftraegeState.set(fehlerState(err));
+      },
+    });
+  }
+
+  private ladeEinsaetze(propertyId: string): void {
+    const rid = this.nebenReqId;
+    this.einsaetzeState.set({ kind: 'loading' });
+    // Der Filter `property_id` deckt BEIDE Wege ab: freier Termin direkt am
+    // Objekt, auftragsgebundener über seinen Auftrag (siehe api/planung.py).
+    this.einsatzSvc.list({ page: 1, page_size: 50, property_id: propertyId }).subscribe({
+      next: (p) => {
+        if (rid === this.nebenReqId) this.einsaetzeState.set({ kind: 'ready', items: p.items });
+      },
+      error: (err) => {
+        if (rid === this.nebenReqId) this.einsaetzeState.set(fehlerState(err));
+      },
     });
   }
 
@@ -668,6 +721,20 @@ export class LiegenschaftDetail {
         this.formularMeldung.set(apiFehlerZuweisen(err, this.einheitEditForm).formular);
       },
     });
+  }
+
+  auftragStatusLabel(s: string): string {
+    return workOrderStatusLabel(s as never);
+  }
+  einsatzStatusLabel(s: string): string {
+    return serviceJobStatusLabel(s as never);
+  }
+  /** Planbeginn eines Einsatzes, oder „ohne Termin". */
+  einsatzZeit(iso: string | null): string {
+    return iso ? new Date(iso).toLocaleString('de-DE', {
+      day: '2-digit', month: '2-digit', year: 'numeric',
+      hour: '2-digit', minute: '2-digit',
+    }) : 'ohne Termin';
   }
 
   /** Anzeigename eines Gebäudes — ohne Bezeichnung greift die Nummer. */
