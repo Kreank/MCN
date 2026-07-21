@@ -10,7 +10,7 @@ damit Fehleingaben schon vor dem DB-CHECK eine klare Meldung bekommen.
 """
 import uuid
 
-from django.db import IntegrityError
+from django.db import IntegrityError, ProgrammingError
 from django.db.models import Q
 
 from db_core.db_context import business_transaction
@@ -138,6 +138,7 @@ def add_unit(
     property_id,
     unit_type,
     unit_number,
+    storey=None,
 ):
     """Legt eine property.unit in einem Gebäude an.
 
@@ -170,8 +171,176 @@ def add_unit(
             property_id=property_id,
             unit_type=unit_type,
             unit_number=unit_number.strip(),
+            # Leerstring waere ein CHECK-Verstoss (unit_storey_nicht_leer) —
+            # „nicht erfasst" ist NULL. Gleiche Normalisierung wie im PATCH.
+            storey=_text_oder_none(storey),
         )
     return unit
+
+
+# ---------------------------------------------------------------------------
+# Korrigieren (AP1 / Befunde I1, I7, I12)
+#
+# Bis Migration 0124 gab es auf building und unit ausser INSERT keinen einzigen
+# Schreibpfad: Ein ohne Bezeichnung angelegtes Gebaeude blieb dauerhaft
+# „Gebaeude 1", eine vertippte Einheitsnummer war nicht mehr zu retten. Die
+# Tore dahinter setzt weiterhin die DB (zusammengesetzte FKs, UNIQUE,
+# trg_unit_type_conflicts) — hier steht nur die Uebersetzung in Fachfehler,
+# damit aus einem Tippfehler ein 422 mit Klartext wird und kein 500.
+# ---------------------------------------------------------------------------
+
+
+def _text_oder_none(wert):
+    """Leerstring wie „nicht gesetzt" behandeln.
+
+    `building.name` und `unit.storey` sind NULL-faehig. Ein Leerstring waere
+    zwar speicherbar (kein CHECK auf `name`), erzeugte aber einen Datensatz,
+    der befuellt AUSSIEHT und leer IST — und bei `storey` verletzte er den
+    CHECK. Beides wird deshalb auf NULL normalisiert: ausdrueckliches Leeren
+    ist erlaubt, ein leerer Wert wird es nie.
+    """
+    if wert is None:
+        return None
+    text = str(wert).strip()
+    return text or None
+
+
+def _pflichttext(daten, feld, label):
+    """Pflichtfeld aus einem PATCH lesen. NULL/leer ist Loeschen, nicht Setzen.
+
+    `label` ist die Bezeichnung, die der NUTZER liest — deshalb deutsch und
+    nicht der Spaltenname. „building_number ist ein Pflichtfeld" ist keine
+    Meldung, sondern ein Leck aus dem Schema.
+    """
+    wert = daten[feld]
+    if wert is None or not str(wert).strip():
+        raise ValueError(f"{label} ist ein Pflichtfeld und darf nicht leer sein.")
+    return str(wert).strip()
+
+
+def update_building(actor_app_user_id, building_id, daten):
+    """Teil-Update (PATCH) eines Gebaeudes. Nur uebergebene Felder werden gesetzt.
+
+    Behebt I7: Ein Gebaeude ohne Bezeichnung war bisher nie wieder benennbar.
+    `name` ist NULL-faehig — ein ausdrueckliches null (oder ein Leerstring)
+    loescht die Bezeichnung, die Liste faellt dann auf „Gebaeude <Nummer>"
+    zurueck. `building_number` ist NOT NULL und laesst sich nur ersetzen,
+    nicht leeren.
+    """
+    building = Building.objects.filter(pk=building_id).first()
+    if building is None:
+        raise ValueError(f"Gebäude {building_id} existiert nicht")
+
+    daten = daten or {}
+    werte = {}
+    if "building_number" in daten:
+        werte["building_number"] = _pflichttext(daten, "building_number", "Die Gebäudenummer")
+    if "name" in daten:
+        werte["name"] = _text_oder_none(daten["name"])
+    # `address_id` wird hier NICHT verarbeitet, auch wenn die Spalte es
+    # zuliesse: Eine Adresse gehoert zu einer Liegenschaft, und ohne diese
+    # Pruefung liesse sich einem Gebaeude die Anschrift einer fremden
+    # Liegenschaft geben (die `api/planung.py` dann als Einsatzort ausgibt).
+    # Siehe die Begruendung an `BuildingPatch` in `api/property.py`.
+
+    if not werte:
+        return building
+
+    try:
+        with business_transaction(actor_app_user_id):
+            Building.objects.filter(pk=building_id).update(**werte)
+    except IntegrityError as exc:
+        if "building_property_id_building_number_key" in str(exc):
+            raise ValueError(
+                f"An dieser Liegenschaft existiert bereits ein Gebäude mit der "
+                f"Nummer '{werte['building_number']}'."
+            ) from exc
+        raise
+    return Building.objects.get(pk=building_id)
+
+
+def update_unit(actor_app_user_id, unit_id, daten):
+    """Teil-Update (PATCH) einer Einheit. Nur uebergebene Felder werden gesetzt.
+
+    `storey` (Migration 0124) ist NULL-faehig — ausdrueckliches Leeren ist
+    erlaubt und heisst „nicht erfasst". `unit_number` und `unit_type` sind NOT
+    NULL und lassen sich nur ersetzen.
+
+    Das Gebaeude wird bewusst NICHT umgehaengt: Eine Einheit in ein anderes
+    Gebaeude zu verschieben zoege Raeume, Belegungen und Eigentumsstaende mit
+    und ist keine Korrektur, sondern ein Umzug — dafuer braucht es eine eigene
+    fachliche Entscheidung, nicht ein Feld im Bearbeiten-Formular.
+    """
+    unit = Unit.objects.filter(pk=unit_id).first()
+    if unit is None:
+        raise ValueError(f"Einheit {unit_id} existiert nicht")
+
+    daten = daten or {}
+    werte = {}
+    if "unit_type" in daten:
+        unit_type = daten["unit_type"]
+        if unit_type not in UNIT_TYPES:
+            raise ValueError(
+                f"Ungültiger unit_type '{unit_type}'. "
+                f"Erlaubt: {', '.join(UNIT_TYPES)}."
+            )
+        werte["unit_type"] = unit_type
+    if "unit_number" in daten:
+        werte["unit_number"] = _pflichttext(daten, "unit_number", "Die Einheitsnummer")
+    if "storey" in daten:
+        werte["storey"] = _text_oder_none(daten["storey"])
+
+    if not werte:
+        return unit
+
+    try:
+        with business_transaction(actor_app_user_id):
+            Unit.objects.filter(pk=unit_id).update(**werte)
+    except IntegrityError as exc:
+        if "unit_property_id_unit_number_key" in str(exc):
+            raise ValueError(
+                f"An dieser Liegenschaft existiert bereits eine Einheit mit der "
+                f"Nummer '{werte['unit_number']}'."
+            ) from exc
+        raise
+    except ProgrammingError as exc:
+        # trg_unit_type_conflicts (0009): Der Typwechsel nach COMMON_AREA/
+        # TECHNICAL_ROOM ist gesperrt, solange Eigentumsstaende (A-08) oder
+        # Belegungen (F-12) an der Einheit haengen.
+        #
+        # ProgrammingError, NICHT InternalError: plpgsql `RAISE EXCEPTION` ohne
+        # eigenen SQLSTATE liefert P0001, psycopg macht daraus RaiseException,
+        # und Django bildet das auf ProgrammingError ab. Ein Test hat das
+        # gefunden — mit InternalError griff der Handler nie und der Typwechsel
+        # endete als 500 statt als Meldung.
+        #
+        # Deshalb wird hier auf die Meldung geprueft und alles andere weiter-
+        # gereicht: ProgrammingError umfasst auch echte SQL-Fehler, und die
+        # duerfen nicht als Fachfehler getarnt werden.
+        #
+        # Beide Zweige sind AUSDRUECKLICH — kein stiller Fallback: Wuerde der
+        # zweite Zweig alles auffangen, was „Typwechsel" enthaelt, erschiene
+        # nach einer Umformulierung des Triggers klaglos die falsche
+        # Begruendung. Ein durchgereichter 500 ist ehrlicher als eine Meldung,
+        # die den falschen Grund nennt.
+        #
+        # Anker sind die Beschluss-Kennungen A-08 und F-12: Sie stehen in den
+        # Trigger-Meldungen (0009:21-28), sind reines ASCII (keine Umlautfrage)
+        # und identifizieren die REGEL, statt sie zu beschreiben — sie
+        # ueberleben also auch eine Umformulierung des Meldungstextes.
+        text = str(exc)
+        if "A-08" in text:
+            raise ValueError(
+                "Diese Einheit hat Eigentumsstände und kann deshalb nicht zur "
+                "Gemeinschaftsfläche oder zum Technikraum werden (Beschluss A-08)."
+            ) from exc
+        if "F-12" in text:
+            raise ValueError(
+                "Diese Einheit hat Belegungen und kann deshalb nicht zur "
+                "Gemeinschaftsfläche oder zum Technikraum werden (Beschluss F-12)."
+            ) from exc
+        raise
+    return Unit.objects.get(pk=unit_id)
 
 
 def add_party_role(

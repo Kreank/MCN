@@ -467,6 +467,12 @@ class Unit(models.Model):
     # APARTMENT|COMMERCIAL|GARAGE|PARKING|STORAGE|COMMON_AREA|TECHNICAL_ROOM|OTHER
     unit_type = models.TextField()
     unit_number = models.TextField()
+    # Geschoss (0124): Freitext wie room.storey — Souterrain, Hochparterre,
+    # Zwischengeschoss. NULL heißt „nicht erfasst"; ein gesetzter Wert darf
+    # nicht leer sein (DB-CHECK unit_storey_nicht_leer). Die Etage gehört
+    # fachlich an die Einheit, nicht an den Raum: die Wohnung liegt auf der
+    # Etage, die Räume liegen in der Wohnung.
+    storey = models.TextField(null=True, blank=True)
     created_at = models.DateTimeField(db_default=Now())
     updated_at = models.DateTimeField(db_default=Now())
 

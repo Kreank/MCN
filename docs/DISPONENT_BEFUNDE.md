@@ -131,13 +131,15 @@ Status: `offen` · `entschieden` · `umgesetzt`
 | I1 | Gebäude/Einheiten/Anlagen/Räume nachträglich nicht änderbar. Reine API-Lücke, `PATCH` wäre ohne Schemaänderung nachrüstbar. **Verifiziert 2026-07-21:** `api/property.py` hat sieben Routen und **kein einziges PATCH/PUT/DELETE**. Damit ist auch I7 zwangsläufig wahr. | UI | `api/property.py:143-660` | offen, verifiziert |
 | I2 | Beim Nachrüsten fehlen bei `building`/`unit` auch Audit-/No-Delete-/No-Truncate-Trigger — der Schutzstandard aus CLAUDE.md wurde hier nie angewandt. Muster: `0086_raumaufmass.py:200-212`. | MODELL | — | offen, verifiziert |
 | I2a | **Korrektur am Befundtext I1 (2026-07-21):** „`building` und `unit` haben **null** Trigger" ist zu stark. Es gibt drei: `trg_building_updated_at` (`0004_property.sql:70`), `trg_unit_updated_at` (`:97`) und `trg_unit_type_conflicts` (`0009_...sql:34`, BEFORE UPDATE OF `unit_type`). **Die Kernaussage von I2 bleibt vollständig richtig:** kein Audit-, kein No-Delete-, kein No-Truncate-Trigger, kein `REVOKE TRUNCATE`. Zum Vergleich trägt `property_party_role` in derselben Datei den vollen Satz. | — | `0004_property.sql:70,97` | geklärt |
-| I2b | **Praxisfolge für AP1:** `trg_unit_type_conflicts` ist ein bestehender fachlicher Guard, gegen den ein neues `PATCH /units/{id}` läuft, sobald jemand `unit_type` ändert. Der Endpunkt muss den Fehler fachlich übersetzen, sonst gibt es einen 500er statt einer Meldung. | UI | `0009_...sql:34-36` | offen |
+| I2b | **Praxisfolge für AP1:** `trg_unit_type_conflicts` ist ein bestehender fachlicher Guard, gegen den ein neues `PATCH /units/{id}` läuft, sobald jemand `unit_type` ändert. Der Endpunkt muss den Fehler fachlich übersetzen, sonst gibt es einen 500er statt einer Meldung. | UI | `0009_...sql:34-36` | **umgesetzt 2026-07-21** |
+| I2c | **Falle, die ein Test gefunden hat (2026-07-21):** plpgsql `RAISE EXCEPTION` ohne eigenen SQLSTATE liefert **P0001**, psycopg macht daraus `RaiseException`, und Django bildet das auf **`ProgrammingError`** ab — **nicht** auf `InternalError`. Der erste Wurf fing `InternalError`, der Handler griff also nie und der Typwechsel wäre in Produktion ein 500 geworden. Gilt genauso für `util.forbid_mutation` (No-Delete/No-Truncate). **Merksatz: Trigger-Meldungen kommen als `ProgrammingError` an.** | — | `services/property.py` | geklärt |
 | I3 | Räume **sind** änderbar (`PATCH /rooms/{id}`) — das Raummodul ist das am weitesten ausgebaute UI der Objektwelt. Anlagen ebenfalls (`PATCH /assets/{id}`). Falls es sich anders anfühlt: UI-Auffindbarkeit prüfen. | — | `api/raum.py:645`, `api/anlage.py:327` | prüfen |
 | I4 | „Doppelte Namen verboten" — **`building.name` hat KEIN UNIQUE.** Vorderhaus/Seitenflügel/Hinterhaus sind erlaubt; das Feld heißt „Bezeichnung" mit genau diesem Beispiel im Hinweistext. | — | `liegenschaft-detail.html:283` | geklärt |
 | I5 | `UNIQUE (property_id, unit_number)` — Einheitsnummern sind pro Liegenschaft eindeutig, nicht pro Gebäude. Beschluss A-09. **Zurückgestuft 2026-07-21:** Sascha sieht die Hierarchie als korrekt umgesetzt an; erst anfassen, wenn im Praxistest wirklich eine Nummernkollision auftritt. | MODELL | `0004_property.sql:91` | zurückgestellt |
 | I6 | **Echter Blocker 2:** `room_dublette` enthält `unit_id`, aber **nicht `building_id`**. „Treppenhaus EG" geht nur einmal pro Liegenschaft. | MODELL | `0086_raumaufmass.py:191` | offen |
 | I7 | **Echter Blocker 3:** Wurde ein Gebäude ohne Bezeichnung angelegt, ist es nie wieder benennbar → dauerhaft „Gebäude 1/2/3". Folge aus I1. | UI | `liegenschaft-detail.html:107` | offen |
 | I8 | Eigene Ebene „Gebäudeteil" zwischen building und unit. **Verworfen 2026-07-21:** Sascha bestätigt die Hierarchie Gebäude → Einheit → Raum als richtig. Vorderhaus/Hinterhaus bleiben eigene `building`-Zeilen. | — | — | verworfen |
+| I7a | **Testsuite-Falle (2026-07-21):** Ein No-Delete-Test mit `django_db(transaction=True)` erzeugt zwangsläufig einen Teardown-Fehler (Djangos `flush` benutzt TRUNCATE, das die No-Truncate-Trigger verbieten) und vergrößert die bekannte 19er-Baseline. Lösung: `pytest.raises` **innerhalb** eines `transaction.atomic()`-Blocks — der Savepoint fängt die Trigger-Exception ab, die Testtransaktion bleibt heil, die Baseline bleibt bei 19. | — | `test_property_patch_api.py` | geklärt |
 | I12 | **Die Einheit hat kein Etagen-Feld.** „Wohnung X liegt auf Etage Y" ist nicht abbildbar — `storey` hängt am *Raum* (`property.room`), nicht an der Wohnung. Fachlich verkehrt herum: die Wohnung liegt auf der Etage, die Räume liegen in der Wohnung. Ein Feld `unit.storey` (Freitext wie beim Raum, wegen Souterrain/Hochparterre). | MODELL (klein) | `0004_property.sql:78-95` vs. `0086_raumaufmass.py:141` | offen |
 | I13 | **Kernbefund Struktur:** Modell und Funktionen sind vollständig da — Gebäude anlegen, Einheit hinzufügen, Raum erstellen und zuordnen. Aber der zusammenhängende Vorgang ist über **3–7 Reiter** verstreut. „Wirkt, als solle der User möglichst viel klicken statt zu arbeiten." Kein Modellproblem. Vorschlag: **ein** Struktur-Screen mit Baum (Gebäude ▸ Einheit ▸ Raum), in dem alle drei Ebenen ohne Reiterwechsel angelegt, benannt und zugeordnet werden. | UI | `liegenschaft-detail.html` | **offen — Kernstück** |
 | I9 | Mehr Infos am Raum gewünscht. Vorhanden sind bereits: Etage, Raumtyp, Fläche, Höhe, Volumen (generiert), Umfang, Innentemperatur, Luftwechsel, Heizlast-Kennwert, Steigleitungsabstand, Notiz. **Keine Raumnummer.** Konkretisieren, was fehlt. | — | `0086_raumaufmass.py:136-192` | **offen — Sascha** |
@@ -184,7 +186,23 @@ Arbeitsvorgang, nicht nach Tabelle.**
 
 ## Arbeitspakete
 
-### AP1 — Struktur-Screen Liegenschaft *(größter Hebel)*
+### AP1 — Struktur-Screen Liegenschaft *(größter Hebel)* — **Schreibseite umgesetzt 2026-07-21**
+
+**Was jetzt läuft:** Migration **0124** (`unit.storey` + Audit-/No-Delete-/No-Truncate-Trigger
+für `building` und `unit`), die Services `update_building`/`update_unit`, die Endpunkte
+`PATCH /buildings/{id}` und `PATCH /units/{id}`, und im Struktur-Reiter je ein
+Bearbeiten-Dialog für Gebäude und Einheit. Damit sind **I1, I7, I12, I2, I2b** geschlossen:
+Ein namenloses Gebäude ist benennbar, eine vertippte Einheitsnummer korrigierbar, die Etage
+erfassbar — und jede dieser Änderungen hinterlässt einen Audit-Eintrag.
+
+**Was offen bleibt:** **I13** (der eigentliche *ein* Screen mit Ebene 3 = Räume im Baum) und
+**I10** (Belegungs-Infos am Raum). Der Baum zeigt weiterhin zwei Ebenen. Bewusste
+Entscheidung: Räume haben mit `features/raumaufmass/` (5.924 Zeilen) ein voll ausgebautes
+eigenes Modul; es in den Baum zu duplizieren wäre ein eigener Slice, kein Anhängsel. Der
+sinnvolle nächste Schritt ist eine **read-only dritte Ebene** mit Sprung in den Raum-Editor,
+nicht ein zweiter Raum-Editor im Baum.
+
+
 
 Ein Screen statt Reiterwanderung: Baum **Gebäude ▸ Einheit ▸ Raum**, in dem alle
 drei Ebenen angelegt, benannt, umbenannt und zugeordnet werden — ohne den Screen

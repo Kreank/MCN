@@ -111,12 +111,15 @@ export interface Unit {
   id: string;
   unit_type: string;
   unit_number: string;
+  /** Geschoss als Freitext (Migration 0124). `null` = nicht erfasst. */
+  storey: string | null;
 }
 
 export interface Building {
   id: string;
   building_number: string;
   name: string | null;
+  address_id: string | null;
   units: Unit[];
 }
 
@@ -157,6 +160,29 @@ export type UnitTypeCode =
 export interface UnitIn {
   unit_type: UnitTypeCode;
   unit_number: string;
+  /** Etage gleich beim Anlegen — optional, `null` heißt „nicht erfasst". */
+  storey?: string | null;
+}
+
+/**
+ * PATCH-Nutzlasten (Migration 0124 / Befunde I1, I7, I12).
+ *
+ * Nur **gesendete** Felder werden geändert — die Felder sind deshalb optional,
+ * und `null` bedeutet ausdrücklich „leeren", nicht „unverändert". Wer ein Feld
+ * nicht anfassen will, lässt es weg.
+ */
+export interface BuildingPatch {
+  building_number?: string;
+  name?: string | null;
+  // `address_id` fehlt bewusst — der Endpunkt nimmt es nicht an, solange die
+  // Objektgrenze für Adressen nicht entschieden ist (siehe `BuildingPatch` in
+  // `backend/api/property.py`).
+}
+
+export interface UnitPatch {
+  unit_type?: UnitTypeCode;
+  unit_number?: string;
+  storey?: string | null;
 }
 
 export interface PartyRoleIn {

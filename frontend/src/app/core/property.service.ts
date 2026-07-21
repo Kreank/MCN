@@ -6,6 +6,7 @@ import {
   AdressDublettenQuery,
   Building,
   BuildingIn,
+  BuildingPatch,
   PartyRole,
   PartyRoleIn,
   PropertyDetail,
@@ -14,6 +15,7 @@ import {
   PropertyQuery,
   Unit,
   UnitIn,
+  UnitPatch,
 } from './property.model';
 
 /** Typisierter Zugriff auf die Liegenschaften-API (dev-Proxy: /api -> :8000). */
@@ -73,6 +75,25 @@ export class PropertyService {
   /** Einheit in einem Gebäude anlegen. Erfordert Recht property.ANLEGEN. */
   addUnit(buildingId: string, payload: UnitIn): Observable<Unit> {
     return this.http.post<Unit>(`/api/property/buildings/${buildingId}/units`, payload);
+  }
+
+  /**
+   * Gebäude korrigieren — Bezeichnung und Nummer (Befund I7).
+   *
+   * Die Anschrift ist bewusst nicht dabei; sie braucht eine Objektgrenze, die
+   * noch nicht entschieden ist (siehe `BuildingPatch` in property.model.ts).
+   *
+   * Bis Migration 0124 gab es auf der Tabelle keinen Schreibpfad außer INSERT:
+   * ein ohne Bezeichnung angelegtes Gebäude blieb dauerhaft „Gebäude 1".
+   * Erfordert Recht property.AENDERN.
+   */
+  patchBuilding(buildingId: string, payload: BuildingPatch): Observable<Building> {
+    return this.http.patch<Building>(`/api/property/buildings/${buildingId}`, payload);
+  }
+
+  /** Einheit korrigieren — Nummer, Typ, Geschoss. Erfordert Recht property.AENDERN. */
+  patchUnit(unitId: string, payload: UnitPatch): Observable<Unit> {
+    return this.http.patch<Unit>(`/api/property/units/${unitId}`, payload);
   }
 
   /** Party-Rolle an einer Liegenschaft zuordnen. Erfordert Recht property.AENDERN. */

@@ -1088,12 +1088,34 @@ def test_monteur_erfasst_raeume_und_struktur_an_a(welt):
         content_type=JSON,
     )
     assert r.status_code == 201, r.content
+    gebaeude_id = r.json()["id"]
     r = c.post(
-        f"/api/property/buildings/{r.json()['id']}/units",
+        f"/api/property/buildings/{gebaeude_id}/units",
         data={"unit_type": "APARTMENT", "unit_number": "WE9"},
         content_type=JSON,
     )
     assert r.status_code == 201, r.content
+    einheit_id = r.json()["id"]
+
+    # Und sie KORRIGIEREN (Migration 0124, Befunde I1/I7/I12). Genau dafür
+    # gaten die Bearbeiten-Knöpfe im Leitstand auf `darf`, nicht `darfAlle`:
+    # Das namenlose Gebäude fällt dem auf, der davorsteht — dem Monteur mit
+    # Objektsicht. Ohne diesen Test bliebe der positive Fall unbelegt.
+    r = c.patch(
+        f"/api/property/buildings/{gebaeude_id}",
+        data={"name": "Hinterhaus West"},
+        content_type=JSON,
+    )
+    assert r.status_code == 200, r.content
+    assert r.json()["name"] == "Hinterhaus West"
+
+    r = c.patch(
+        f"/api/property/units/{einheit_id}",
+        data={"storey": "2. OG"},
+        content_type=JSON,
+    )
+    assert r.status_code == 200, r.content
+    assert r.json()["storey"] == "2. OG"
 
 
 @pytest.mark.django_db
@@ -1108,6 +1130,24 @@ def test_monteur_erfasst_keinen_raum_an_b(welt):
     r = c.post(
         f"/api/property/properties/{b['obj'].id}/buildings",
         data={"building_number": "9"},
+        content_type=JSON,
+    )
+    assert r.status_code == 404, r.content
+
+    # Auch nicht KORRIGIEREN (0124). 404, nicht 403 — eine 403 verriete, dass
+    # es das fremde Gebäude gibt. Gebäude und Einheit kommen direkt aus der
+    # Fixture (`_objekt` legt beide für A UND B an), damit der Test nicht
+    # still leerlaufen kann.
+    r = c.patch(
+        f"/api/property/buildings/{b['gebaeude'].id}",
+        data={"name": "Übernommen"},
+        content_type=JSON,
+    )
+    assert r.status_code == 404, r.content
+
+    r = c.patch(
+        f"/api/property/units/{b['einheit'].id}",
+        data={"storey": "EG"},
         content_type=JSON,
     )
     assert r.status_code == 404, r.content

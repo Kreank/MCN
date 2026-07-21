@@ -15,13 +15,17 @@ import {
   ServiceCaseStatus,
 } from '../../core/projekt.model';
 import {
+  Building,
   BuildingIn,
+  BuildingPatch,
   PartyRoleIn,
   PropertyDetail,
   PropertyRoleCode,
   PropertyStatus,
   PropertyType,
+  Unit,
   UnitIn,
+  UnitPatch,
   UnitTypeCode,
 } from '../../core/property.model';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
@@ -36,6 +40,7 @@ import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 import { Dialog } from '../../shared/dialog/dialog';
 import { Feld, FeldOption } from '../../shared/formular/feld';
 import { apiFehlerZuweisen } from '../../shared/formular/api-fehler';
+import { nichtNurLeerraumValidator } from '../../shared/formular/text';
 import {
   felderAlsBeruehrtMarkieren,
   serverFehlerZuruecksetzen,
@@ -178,6 +183,20 @@ export class LiegenschaftDetail {
    */
   protected readonly darfAendern = computed(() => this.auth.darfAlle('property', 'AENDERN'));
 
+  /**
+   * Struktur korrigieren (Gebäude/Einheit bearbeiten): `darf`, NICHT `darfAlle`.
+   *
+   * `PATCH /buildings/{id}` und `PATCH /units/{id}` stehen auf `require_scoped`
+   * und lassen Scope EIGENE ausdrücklich zu — `guard_objekt` gibt an fremden
+   * Objekten 404. Ein Hausmeister mit Objektsicht darf also an SEINEM Haus
+   * korrigieren, und er ist genau die Zielgruppe von Befund I7 (das namenlose
+   * Gebäude fällt dem auf, der davorsteht). Mit `darfAlle` bekäme er die
+   * Knöpfe nicht zu sehen, obwohl die API sie ihm erlaubt.
+   */
+  protected readonly darfStrukturAendern = computed(() =>
+    this.auth.darf('property', 'AENDERN'),
+  );
+
   // --- Meldung + Dialoge ---------------------------------------------------
   protected readonly meldung = signal<Meldung | null>(null);
   protected readonly dialogLaedt = signal(false);
@@ -205,6 +224,38 @@ export class LiegenschaftDetail {
       nonNullable: true,
       validators: [Validators.required],
     }),
+    storey: this.fb.control('', { nonNullable: true }),
+  });
+
+  // --- Struktur bearbeiten (AP1 / Befunde I1, I7, I12) ----------------------
+  // Bis Migration 0124 war die Objektstruktur eine Einbahnstraße: angelegt =
+  // endgültig. Ein ohne Bezeichnung erfasstes Gebäude blieb dauerhaft
+  // „Gebäude 1", eine vertippte Einheitsnummer war nicht mehr zu retten. Beide
+  // Dialoge sitzen bewusst im Struktur-Reiter selbst — die Korrektur gehört
+  // dorthin, wo der Fehler auffällt, nicht in eine eigene Maske.
+
+  /** Gebäude, das gerade bearbeitet wird (null = Dialog zu). */
+  protected readonly gebaeudeBearbeiten = signal<Building | null>(null);
+  protected readonly gebaeudeEditForm = this.fb.group({
+    building_number: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.required, nichtNurLeerraumValidator],
+    }),
+    name: this.fb.control('', { nonNullable: true }),
+  });
+
+  /** Einheit, die gerade bearbeitet wird (null = Dialog zu). */
+  protected readonly einheitBearbeiten = signal<Unit | null>(null);
+  protected readonly einheitEditForm = this.fb.group({
+    unit_type: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.required],
+    }),
+    unit_number: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.required, nichtNurLeerraumValidator],
+    }),
+    storey: this.fb.control('', { nonNullable: true }),
   });
 
   // Beteiligte(r)
@@ -356,7 +407,7 @@ export class LiegenschaftDetail {
   // ---- Einheit anlegen ----------------------------------------------------
   einheitOeffnen(buildingId: string, buildingLabel: string): void {
     this.einheitGebaeude.set({ id: buildingId, label: buildingLabel });
-    this.einheitForm.reset({ unit_type: '', unit_number: '' });
+    this.einheitForm.reset({ unit_type: '', unit_number: '', storey: '' });
     this.formularMeldung.set(null);
     this.einheitOffen.set(true);
   }
@@ -378,6 +429,7 @@ export class LiegenschaftDetail {
     const payload: UnitIn = {
       unit_type: v.unit_type as UnitTypeCode,
       unit_number: v.unit_number.trim(),
+      storey: v.storey.trim() || null,
     };
     this.dialogLaedt.set(true);
     this.svc.addUnit(geb.id, payload).subscribe({
@@ -486,6 +538,105 @@ export class LiegenschaftDetail {
 
   statusClass(s: PropertyStatus): string {
     return s === 'ACTIVE' ? 'stamp--positive' : '';
+  }
+
+  // --- Struktur bearbeiten: öffnen, absenden, schließen ---------------------
+
+  gebaeudeEditOeffnen(b: Building): void {
+    this.gebaeudeEditForm.reset({
+      building_number: b.building_number,
+      // `null` (keine Bezeichnung) wird zum leeren Feld — und ein leer
+      // gelassenes Feld schickt beim Absenden wieder `null`. Das Löschen einer
+      // Bezeichnung ist damit derselbe Handgriff wie das Nicht-Vergeben.
+      name: b.name ?? '',
+    });
+    this.formularMeldung.set(null);
+    this.gebaeudeBearbeiten.set(b);
+  }
+
+  gebaeudeEditSchliessen(): void {
+    if (!this.dialogLaedt()) this.gebaeudeBearbeiten.set(null);
+  }
+
+  gebaeudeEditAbsenden(): void {
+    const b = this.gebaeudeBearbeiten();
+    if (this.dialogLaedt() || !b) return;
+    serverFehlerZuruecksetzen(this.gebaeudeEditForm);
+    this.formularMeldung.set(null);
+    felderAlsBeruehrtMarkieren(this.gebaeudeEditForm);
+    if (this.gebaeudeEditForm.invalid) return;
+
+    const v = this.gebaeudeEditForm.getRawValue();
+    const payload: BuildingPatch = {
+      building_number: v.building_number.trim(),
+      name: v.name.trim() || null,
+    };
+    this.dialogLaedt.set(true);
+    this.svc.patchBuilding(b.id, payload).subscribe({
+      next: (neu) => {
+        this.dialogLaedt.set(false);
+        this.gebaeudeBearbeiten.set(null);
+        this.meldung.set({
+          art: 'erfolg',
+          text: `Gebäude ${neu.building_number} wurde geändert.`,
+        });
+        this.reload();
+      },
+      error: (err) => {
+        this.dialogLaedt.set(false);
+        this.formularMeldung.set(apiFehlerZuweisen(err, this.gebaeudeEditForm).formular);
+      },
+    });
+  }
+
+  einheitEditOeffnen(u: Unit): void {
+    this.einheitEditForm.reset({
+      unit_type: u.unit_type,
+      unit_number: u.unit_number,
+      storey: u.storey ?? '',
+    });
+    this.formularMeldung.set(null);
+    this.einheitBearbeiten.set(u);
+  }
+
+  einheitEditSchliessen(): void {
+    if (!this.dialogLaedt()) this.einheitBearbeiten.set(null);
+  }
+
+  einheitEditAbsenden(): void {
+    const u = this.einheitBearbeiten();
+    if (this.dialogLaedt() || !u) return;
+    serverFehlerZuruecksetzen(this.einheitEditForm);
+    this.formularMeldung.set(null);
+    felderAlsBeruehrtMarkieren(this.einheitEditForm);
+    if (this.einheitEditForm.invalid) return;
+
+    const v = this.einheitEditForm.getRawValue();
+    const payload: UnitPatch = {
+      unit_type: v.unit_type as UnitTypeCode,
+      unit_number: v.unit_number.trim(),
+      // Leeres Feld = „nicht erfasst". Die DB verbietet den Leerstring
+      // (CHECK unit_storey_nicht_leer), NULL ist der richtige Wert dafür.
+      storey: v.storey.trim() || null,
+    };
+    this.dialogLaedt.set(true);
+    this.svc.patchUnit(u.id, payload).subscribe({
+      next: (neu) => {
+        this.dialogLaedt.set(false);
+        this.einheitBearbeiten.set(null);
+        this.meldung.set({ art: 'erfolg', text: `Einheit ${neu.unit_number} wurde geändert.` });
+        this.reload();
+      },
+      error: (err) => {
+        this.dialogLaedt.set(false);
+        this.formularMeldung.set(apiFehlerZuweisen(err, this.einheitEditForm).formular);
+      },
+    });
+  }
+
+  /** Anzeigename eines Gebäudes — ohne Bezeichnung greift die Nummer. */
+  gebaeudeLabel(b: Building): string {
+    return b.name || `Gebäude ${b.building_number}`;
   }
 
   unitTypeLabel(t: string): string {

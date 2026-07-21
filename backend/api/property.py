@@ -105,12 +105,18 @@ class UnitOut(Schema):
     id: UUID
     unit_type: str
     unit_number: str
+    # Geschoss (Migration 0124): NULL heisst „nicht erfasst".
+    storey: str | None = None
 
 
 class BuildingOut(Schema):
     id: UUID
     building_number: str
     name: str | None = None
+    # Eigene Anschrift des Gebaeudes. Eine Liegenschaft kann mehrere Adressen
+    # umfassen (WEG „Albrechtstrasse 22" mit Haus Steglitzer Damm 12); die
+    # Zuordnung ist ueber PATCH aenderbar, deshalb steht sie auch in der Ausgabe.
+    address_id: UUID | None = None
     units: list[UnitOut]
 
 
@@ -493,15 +499,7 @@ def _property_detail(property_id):
         )
     ]
     buildings = [
-        BuildingOut(
-            id=b.id,
-            building_number=b.building_number,
-            name=b.name,
-            units=[
-                UnitOut(id=u.id, unit_type=u.unit_type, unit_number=u.unit_number)
-                for u in sorted(b.units.all(), key=lambda u: u.unit_number)
-            ],
-        )
+        _building_out(b)
         for b in sorted(prop.buildings.all(), key=lambda b: b.building_number)
     ]
 
@@ -579,6 +577,44 @@ class BuildingIn(Schema):
 class UnitIn(Schema):
     unit_type: str
     unit_number: str
+    # Etage gleich beim Anlegen (Migration 0124): Wer die Wohnung erfasst, weiss
+    # in dem Moment, in welchem Stock sie liegt — es waere ein zweiter Handgriff.
+    storey: str | None = None
+
+
+class BuildingPatch(Schema):
+    """PATCH: nur die **gesendeten** Felder werden geändert.
+
+    Alle Felder tragen einen Default, damit ein Teil-Payload gültig ist; welche
+    Felder tatsächlich gesetzt wurden, liest der Endpunkt über
+    `dict(exclude_unset=True)` — sonst ließe sich `name` nicht mehr auf `null`
+    zurücksetzen (Löschen wäre nicht von „nicht gesendet" unterscheidbar).
+    """
+
+    building_number: str | None = None
+    name: str | None = None
+    # `address_id` fehlt BEWUSST. Die eigene Anschrift eines Gebaeudes ist
+    # fachlich sinnvoll (eine WEG umfasst oft mehrere Adressen), aber sie
+    # braucht eine Objektgrenze: Ohne Pruefung liesse sich einem eigenen
+    # Gebaeude die Adresse einer FREMDEN Liegenschaft unterschieben, und die
+    # rendert `api/planung.py` anschliessend als Einsatzort fuer den Monteur.
+    # `ensure_exists` prueft nur, DASS die Adresse existiert, nicht WOZU sie
+    # gehoert. Solange es dafuer weder eine Maske noch eine entschiedene Regel
+    # gibt, bleibt der Schreibpfad zu — der Anlegepfad (`BuildingIn`) kennt ihn
+    # ebenfalls nicht.
+
+
+class UnitPatch(Schema):
+    """PATCH: nur die **gesendeten** Felder werden geändert (siehe BuildingPatch).
+
+    `building_id` fehlt bewusst: Eine Einheit in ein anderes Gebäude zu
+    verschieben zöge Räume, Belegungen und Eigentumsstände mit und ist keine
+    Korrektur, sondern ein Umzug.
+    """
+
+    unit_type: str | None = None
+    unit_number: str | None = None
+    storey: str | None = None
 
 
 class PartyRoleIn(Schema):
@@ -588,13 +624,23 @@ class PartyRoleIn(Schema):
     valid_until: date | None = None
 
 
+def _unit_out(unit):
+    return UnitOut(
+        id=unit.id,
+        unit_type=unit.unit_type,
+        unit_number=unit.unit_number,
+        storey=unit.storey,
+    )
+
+
 def _building_out(building):
     return BuildingOut(
         id=building.id,
         building_number=building.building_number,
         name=building.name,
+        address_id=building.address_id,
         units=[
-            UnitOut(id=u.id, unit_type=u.unit_type, unit_number=u.unit_number)
+            _unit_out(u)
             for u in sorted(building.units.all(), key=lambda u: u.unit_number)
         ],
     )
@@ -649,12 +695,64 @@ def add_unit(request, building_id: UUID, payload: UnitIn):
             property_id=building.property_id,
             unit_type=payload.unit_type,
             unit_number=payload.unit_number,
+            storey=payload.storey,
         )
     except ValueError as exc:
         raise HttpError(422, str(exc))
     return Status(
-        201, UnitOut(id=unit.id, unit_type=unit.unit_type, unit_number=unit.unit_number)
+        201, _unit_out(unit)
     )
+
+
+@router.patch("/buildings/{building_id}", response=BuildingOut, auth=django_auth)
+def update_building(request, building_id: UUID, payload: BuildingPatch):
+    """Gebäude korrigieren — Bezeichnung und Nummer.
+
+    Die **Anschrift** ist bewusst nicht dabei: Sie braucht eine Objektgrenze,
+    die es noch nicht gibt (Begründung an `BuildingPatch`).
+
+    Behebt Befund I7: Ein ohne Bezeichnung angelegtes Gebäude war bisher nie
+    wieder benennbar und blieb dauerhaft „Gebäude 1". Es gab auf der Tabelle
+    schlicht keinen Schreibpfad außer INSERT.
+
+    Scope 'EIGENE': Das Gebäude muss an einem meiner Objekte hängen, sonst 404
+    (nicht 403 — sonst verriete die Antwort seine Existenz).
+    """
+    actor, scope = require_scoped(request, "property", "AENDERN")
+    building = Building.objects.filter(id=building_id).first()
+    if building is None:
+        raise HttpError(404, "Gebäude nicht gefunden.")
+    guard_objekt(scope, actor, building.property_id, "Gebäude nicht gefunden.")
+    try:
+        property_service.update_building(
+            actor, building_id, payload.dict(exclude_unset=True)
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _building_out(Building.objects.prefetch_related("units").get(id=building_id))
+
+
+@router.patch("/units/{unit_id}", response=UnitOut, auth=django_auth)
+def update_unit(request, unit_id: UUID, payload: UnitPatch):
+    """Einheit korrigieren — Nummer, Typ, Geschoss.
+
+    `storey` (Migration 0124) ist neu: Bis dahin hing das Geschoss nur am Raum,
+    obwohl fachlich die Wohnung auf der Etage liegt und die Räume in der Wohnung.
+
+    Scope 'EIGENE': Die Einheit muss an einem meiner Objekte hängen, sonst 404.
+    """
+    actor, scope = require_scoped(request, "property", "AENDERN")
+    unit = Unit.objects.filter(id=unit_id).first()
+    if unit is None:
+        raise HttpError(404, "Einheit nicht gefunden.")
+    guard_objekt(scope, actor, unit.property_id, "Einheit nicht gefunden.")
+    try:
+        unit = property_service.update_unit(
+            actor, unit_id, payload.dict(exclude_unset=True)
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _unit_out(unit)
 
 
 @router.post(

@@ -129,6 +129,27 @@
   font-size: var(--step-0);
   color: var(--ink);
 }
+/* Etage (Migration 0124) und der Hinweis auf eine fehlende Gebaeudebezeichnung
+   (Befund I7). Beide sind reiner Text — eine fehlende Angabe wird nie nur ueber
+   Farbe oder Position kenntlich gemacht (WCAG 1.4.1). */
+.einheit__etage {
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+  white-space: nowrap;
+}
+.einheit__etage--leer {
+  font-family: inherit;
+  font-style: italic;
+}
+.einheit__tat {
+  flex: none;
+}
+.baum__fehlt {
+  font-size: var(--step--1);
+  font-style: italic;
+  color: var(--ink-muted);
+}
 
 // ============================== Rollen-Liste ================================
 .rollen {
