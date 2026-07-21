@@ -41,6 +41,7 @@ from api.permissions import require, require_scoped
 from db_core.betriebszeit import Betriebszeitpunkt
 from db_core.models import Employee, TimeAdjustment, TimeEntry, WorkDay
 from db_core.services import zeiterfassung as zeit_service
+from db_core.services.identity import personenname
 
 router = Router()
 # Zweiter Router: die Stammdatenpflege liegt fachlich bei den HR-Einstellungen
@@ -678,7 +679,7 @@ def mitarbeitende(request):
         MitarbeitendeOut(
             user_id=e.app_user_id,
             employee_id=e.id,
-            name=f"{e.party.first_name} {e.party.last_name}".strip(),
+            name=personenname(e.party.first_name, e.party.last_name),
             employee_number=e.employee_number,
         )
         for e in rows
@@ -729,7 +730,7 @@ def _ausgleich_out(a):
     return AusgleichOut(
         id=a.id,
         employee_id=a.employee_id,
-        mitarbeiter=f"{a.employee.party.first_name} {a.employee.party.last_name}".strip(),
+        mitarbeiter=personenname(a.employee.party.first_name, a.employee.party.last_name),
         adjustment_type=a.adjustment_type,
         effective_on=a.effective_on,
         minutes=a.minutes,

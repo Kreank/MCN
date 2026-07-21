@@ -188,6 +188,7 @@ from db_core.models import (
     WorkOrderParty,
 )
 from db_core.services import objektsicht
+from db_core.services.identity import personenname
 from db_core.services.artikel import build_article_search_q
 from db_core.services.textsuche import (
     MAX_TOKENS,
@@ -1028,7 +1029,7 @@ def _titel_untertitel(typ, obj, sicht):
 
     if typ == "MITARBEITER":
         return (
-            f"{obj.party.first_name} {obj.party.last_name}",
+            personenname(obj.party.first_name, obj.party.last_name),
             _untertitel(obj.employee_number, obj.status),
             obj.status,
         )

@@ -29,6 +29,7 @@ from db_core.models import (
     UserRole, WageGroup, WorkDay, WorkOrder,
 )
 from db_core.services import artikel as artikel_service
+from db_core.services.identity import personenname
 from db_core.services import aufgabe as aufgabe_service
 from db_core.services import auftrag as auftrag_service
 from db_core.services import beleg as beleg_service
@@ -376,7 +377,11 @@ class Command(BaseCommand):
         # die nach Teilerfolg abgebrochen sind.
         angelegt = uebersprungen = 0
         for person in DEMO_PERSONS:
-            expected = f"{person['first_name']} {person['last_name']}"
+            # `personenname` statt f-String: Der Wert ist ein Idempotenz-Schlüssel gegen
+    # `Party.display_name`. Bekäme eine Demo-Person keinen Vornamen, ergäbe die
+    # Verkettung „None Meyer", der Abgleich ginge ins Leere — und der Seed legte
+    # die Party bei JEDEM Lauf neu an, statt sie zu überspringen.
+    expected = personenname(person["first_name"], person["last_name"])
             if Party.objects.filter(display_name=expected).exists():
                 uebersprungen += 1
                 continue
@@ -1114,7 +1119,8 @@ class Command(BaseCommand):
         # Lauf nicht mehrere Konten anlegt.
         current_year = date.today().year
         for emp in DEMO_EMPLOYEES:
-            expected = f"{emp['person']['first_name']} {emp['person']['last_name']}"
+            # Idempotenz-Schlüssel, siehe oben.
+    expected = personenname(emp["person"]["first_name"], emp["person"]["last_name"])
             person = Party.objects.filter(display_name=expected).first()
             if person is not None and Employee.objects.filter(party_id=person.id).exists():
                 uebersprungen += 1

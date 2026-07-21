@@ -43,6 +43,7 @@ from db_core.models import (
     VacationBudget,
 )
 from db_core.services import beleg as beleg_service
+from db_core.services.identity import personenname
 
 # Korrekturbelege mindern den Umsatz (kein eigener Status "storniert" im Schema).
 # EINE Liste im Repo — sie wohnt im Belegmodul (`beleg.CREDIT_TYPES`); hier steht
@@ -827,7 +828,7 @@ def mitarbeitende_summary(*, year):
     people = []
     for e in employees:
         person = e.party
-        name = f"{person.first_name} {person.last_name}"
+        name = personenname(person.first_name, person.last_name)
         entitlement = budget_by_emp.get(e.id, Decimal("0"))
         used = used_by_emp.get(e.id, Decimal("0"))
         people.append(

@@ -465,7 +465,10 @@ export class AnrufDialog {
         ? { existing_party_id: kontakt }
         : {
             salutation: v.salutation.trim() || null,
-            first_name: v.first_name.trim(),
+            // `|| null` wie bei allen anderen optionalen Feldern: Der Server
+            // normalisiert zwar, aber die Zusicherung soll nicht allein daran
+            // hängen — auf der Leitung steht dann „nicht erhoben", nicht „leer".
+            first_name: v.first_name.trim() || null,
             last_name: v.last_name.trim(),
             phone: v.phone.trim() || null,
             email: v.email.trim() || null,

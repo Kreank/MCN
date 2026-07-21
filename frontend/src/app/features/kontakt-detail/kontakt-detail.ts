@@ -487,7 +487,8 @@ export class KontaktDetail {
     const v = this.ansprechForm.getRawValue();
     const payload: ContactPersonIn = neu
       ? {
-          first_name: v.first_name.trim(),
+          // `|| null`: „nicht erhoben" statt Leerstring (B1/B6).
+          first_name: v.first_name.trim() || null,
           last_name: v.last_name.trim(),
           salutation: v.salutation.trim() || null,
           title: v.title.trim() || null,

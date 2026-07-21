@@ -253,7 +253,8 @@ export class Schnellerfassung {
           }
         : {
             salutation: v.salutation.trim() || null,
-            first_name: v.first_name.trim(),
+            // `|| null`: „nicht erhoben" statt Leerstring (B1/B6).
+            first_name: v.first_name.trim() || null,
             last_name: v.last_name.trim(),
           },
       // Kontaktwege nur beim NEUEN Kontakt sinnvoll — der bestehende hat seine.

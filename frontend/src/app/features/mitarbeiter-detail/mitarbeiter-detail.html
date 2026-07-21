@@ -51,7 +51,10 @@
       @if (tab() === 'persoenliches') {
         <dl class="feld-raster">
           <div class="feld"><dt class="feld__label">Anrede</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.salutation">{{ daten()!.salutation || '—' }}</dd></div>
-          <div class="feld"><dt class="feld__label">Name</dt><dd class="feld__wert">{{ daten()!.first_name }} {{ daten()!.last_name }}</dd></div>
+          <!-- `display_name` statt der Verkettung: Der Vorname ist seit 0125
+               NULL-fähig, und „{{ null }} Meyer" ergäbe ein führendes
+               Leerzeichen. Den Namen setzt der Server an einer Stelle zusammen. -->
+          <div class="feld"><dt class="feld__label">Name</dt><dd class="feld__wert">{{ daten()!.display_name }}</dd></div>
           <div class="feld"><dt class="feld__label">Geburtsdatum</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.birth_date">{{ d(daten()!.birth_date) }}</dd></div>
           <div class="feld"><dt class="feld__label">Personalnummer</dt><dd class="feld__wert">{{ daten()!.employee_number }}</dd></div>
           <div class="feld"><dt class="feld__label">Eintritt</dt><dd class="feld__wert">{{ d(daten()!.hired_on) }}</dd></div>

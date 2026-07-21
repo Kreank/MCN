@@ -141,7 +141,18 @@ def test_strassenname_mit_hausnummer_findet_das_projekt(admin_client, welt):
     assert str(welt["projekt"].id) in _ids(daten, "PROJEKT")
     projekt = next(t for t in daten["treffer"] if t["typ"] == "PROJEKT")
     assert projekt["rang"] == 3
-    assert projekt["grund"] == "Adresse der Liegenschaft"
+    # `in`, nicht `==`: `grund` zählt ALLE Gruppen auf, die getroffen haben —
+    # exakte Gleichheit könnte also nur mit Glück halten.
+    #
+    # Der konkrete Fall: Die Liegenschaftsnummer kommt aus einer Sequenz, und
+    # PostgreSQL rollt Sequenzen NICHT mit der Testtransaktion zurück. Der
+    # Zähler klettert über die Sitzung; sobald er auf einer Zahl landet, die
+    # „53" enthält (OBJ-00153, OBJ-00253, OBJ-00530 …), trifft der Suchbegriff
+    # „Badensche Straße 53" zusätzlich die Gruppe „Liegenschaft", und `grund`
+    # lautet „Adresse der Liegenschaft · Liegenschaft". Das ist kein Flackern,
+    # sondern deterministisch — es hing nur daran, wie viele Tests vorher
+    # liefen, und hätte den Volllauf getroffen, sobald die Suite wächst.
+    assert "Adresse der Liegenschaft" in projekt["grund"]
 
 
 @pytest.mark.django_db

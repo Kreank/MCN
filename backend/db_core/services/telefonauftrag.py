@@ -96,7 +96,15 @@ def _ableiten_liegenschaftsname(name, street, house_number, city):
     return abgeleitet or (street or "").strip()
 
 
-def _personenname(salutation, first_name, last_name):
+def _anzeigename_mit_anrede(salutation, first_name, last_name):
+    """Wie `identity.personenname`, aber MIT Anrede — für den Gesprächsvermerk.
+
+    Bewusst nicht `_personenname` genannt: Das stand einen Unterstrich und ein
+    Argument neben dem öffentlichen `identity.personenname(first_name,
+    last_name)`, und `personenname(salutation, first_name)` wäre gültiges
+    Python mit dem Ergebnis „Frau Erika". Der längere Name macht den
+    Unterschied sichtbar.
+    """
     return " ".join(
         teil.strip()
         for teil in (salutation, first_name, last_name)
@@ -227,7 +235,7 @@ def anruf_durchstich(
             "entschieden werden?"
         )
 
-    anzeigename = anrufer_anzeigename or _personenname(
+    anzeigename = anrufer_anzeigename or _anzeigename_mit_anrede(
         salutation, first_name, last_name
     )
     nachweis = order_evidence_reference or _nachweis_aus_telefonat(anzeigename)

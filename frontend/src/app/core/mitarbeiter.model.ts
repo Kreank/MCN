@@ -28,7 +28,8 @@ export interface WageGroupRef {
 export interface Employee {
   id: string;
   employee_number: string;
-  first_name: string;
+  /** Optional seit Migration 0125 (Befund B1) — `null` = nicht erhoben. */
+  first_name: string | null;
   last_name: string;
   display_name: string;
   status: EmployeeStatus;

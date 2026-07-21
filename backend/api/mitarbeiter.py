@@ -26,6 +26,7 @@ from ninja.security import django_auth
 from api.permissions import require, require_scoped
 from db_core.models import Absence, Employee, EmploymentContract
 from db_core.services import mitarbeiter as mitarbeiter_service
+from db_core.services.identity import personenname
 
 router = Router()
 
@@ -44,7 +45,11 @@ class WageGroupRefOut(Schema):
 class EmployeeOut(Schema):
     id: UUID
     employee_number: str
-    first_name: str
+    # NULL-fähig seit Migration 0125 (Befund B1). Ohne das wirft Pydantic bei
+    # jedem Mitarbeiter ohne Vornamen einen ValidationError — also 500 statt
+    # Liste. Ein Kontakt ohne Vornamen kann über `EmployeeIn.party_id` sehr
+    # wohl Mitarbeiter werden.
+    first_name: str | None = None
     last_name: str
     display_name: str
     status: str
@@ -228,7 +233,7 @@ def _employee_out(employee):
         employee_number=employee.employee_number,
         first_name=person.first_name,
         last_name=person.last_name,
-        display_name=f"{person.first_name} {person.last_name}",
+        display_name=personenname(person.first_name, person.last_name),
         status=employee.status,
         hired_on=employee.hired_on,
         left_on=employee.left_on,

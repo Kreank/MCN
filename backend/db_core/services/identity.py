@@ -51,14 +51,24 @@ ORGANIZATION_TYPES = (
 )
 
 
-def _person_display_name(first_name, last_name):
-    """Anzeigename aus Vor- und Nachname.
+def personenname(first_name, last_name):
+    """Anzeigename aus Vor- und Nachname — **die** eine Stelle dafür.
 
-    Der Vorname ist seit Migration 0125 optional (Befund B1) — ohne ihn ist der
-    Anzeigename schlicht der Nachname. `first_name` kann deshalb None sein und
-    darf nicht blind `.strip()` bekommen.
+    Der Vorname ist seit Migration 0125 optional (Befund B1). Ohne ihn ist der
+    Anzeigename schlicht der Nachname.
+
+    Warum das eine öffentliche Funktion ist und kein f-String: Genau diese
+    Verkettung stand an sieben weiteren Orten im Backend (Mitarbeiterliste,
+    Zeiterfassung, Auswertungen, Suche), jeweils als
+    `f"{p.first_name} {p.last_name}"`. Mit einem NULL-Vornamen erzeugt das den
+    **literalen Text „None Özdemir"** — und das abschließende `.strip()`, das
+    mehrere dieser Stellen tragen, hilft dagegen nicht. Ein Review hat das
+    gefunden, nachdem der Vorname optional wurde. Wer künftig einen
+    Personennamen zusammensetzt, ruft diese Funktion.
     """
-    return f"{(first_name or '').strip()} {last_name.strip()}".strip()
+    return " ".join(
+        teil.strip() for teil in (first_name, last_name) if teil and teil.strip()
+    )
 
 
 def create_person(
@@ -87,7 +97,7 @@ def create_person(
     first_name = (first_name or "").strip() or None
     if not last_name or not last_name.strip():
         raise ValueError("Der Nachname darf nicht leer sein.")
-    display_name = _person_display_name(first_name, last_name)
+    display_name = personenname(first_name, last_name)
     with business_transaction(actor_app_user_id):
         # PK explizit: die Models tragen keinen Model-Default, ein von Django
         # eingesetztes NULL würde den DB-Default gen_random_uuid() aushebeln.

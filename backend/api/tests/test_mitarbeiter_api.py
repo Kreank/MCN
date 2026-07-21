@@ -163,6 +163,31 @@ def test_liste_und_pagination_felder(admin_client, seeded):
 
 
 @pytest.mark.django_db
+def test_mitarbeiter_ohne_vornamen(admin_client, app_user, seeded):
+    """Regression zu Migration 0125 (Befund B1).
+
+    Der Vorname wurde optional — `EmployeeOut.first_name` blieb dabei zunächst
+    `str`. Da Pydantic auch die ANTWORT validiert, warf jeder Mitarbeiter ohne
+    Vornamen einen ValidationError, und die ganze Liste antwortete mit 500.
+    Die Mitarbeiterseite liest den Namen über `Employee.party` und taucht
+    deshalb in keiner Suche nach Personen-Anlage auf — genau so ist der Fehler
+    durchgerutscht.
+
+    Zusätzlich: `display_name` darf nicht „None Yilmaz" lauten.
+    """
+    # `_employee` nimmt das AppUser-Objekt, nicht dessen id.
+    _employee(app_user, first_name=None, last_name="Yilmaz")
+
+    r = admin_client.get("/api/hr/employees")
+    assert r.status_code == 200, r.content
+
+    treffer = [i for i in r.json()["items"] if i["last_name"] == "Yilmaz"]
+    assert len(treffer) == 1
+    assert treffer[0]["first_name"] is None
+    assert treffer[0]["display_name"] == "Yilmaz"
+
+
+@pytest.mark.django_db
 def test_suche_nach_name(admin_client, seeded):
     r = admin_client.get("/api/hr/employees?q=Muster")
     assert r.status_code == 200

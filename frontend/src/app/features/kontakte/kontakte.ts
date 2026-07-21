@@ -440,6 +440,11 @@ export class Kontakte {
       next: (party) => {
         this.neuLaedt.set(false);
         this.orgOffen.set(false);
+        // Bewusst ANDERS als bei der Person (F2): Dort geht es direkt in die
+        // Mappe, weil dort Telefon und Adresse nachzutragen sind. Bei einer
+        // Organisation ist der nächste Schritt fast immer ein Ansprechpartner
+        // — deshalb bleibt hier die Meldung mit der Überleitung stehen, statt
+        // ungefragt zu navigieren. Zwei Wege, zwei Absichten.
         this.meldung.set({
           art: 'erfolg',
           text: `Organisation „${party.display_name}“ wurde angelegt.`,

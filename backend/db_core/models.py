@@ -185,7 +185,10 @@ class Person(models.Model):
     )
     salutation = models.TextField(null=True, blank=True)
     title = models.TextField(null=True, blank=True)
-    first_name = models.TextField()
+    # Optional seit Migration 0125 (Befund B1): Am Telefon fällt der Vorname
+    # oft nicht, und ein erfundenes „X" ist schlechter als gar keiner. Der
+    # Nachname bleibt Pflicht — er trägt den Anzeigenamen.
+    first_name = models.TextField(null=True, blank=True)
     last_name = models.TextField()
     birth_date = models.DateField(null=True, blank=True)
 
@@ -194,7 +197,9 @@ class Person(models.Model):
         db_table = 'identity"."person'
 
     def __str__(self):
-        return f"{self.first_name} {self.last_name}"
+        # Ohne Vornamen (seit 0125 erlaubt) stünde hier sonst der literale
+        # Text „None Meyer" — im Admin, in Logs und in jeder Fehlermeldung.
+        return " ".join(t for t in (self.first_name, self.last_name) if t)
 
 
 class Organization(models.Model):

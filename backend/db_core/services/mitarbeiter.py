@@ -47,6 +47,7 @@ from db_core.models import (
     WageGroup,
 )
 from db_core.services._validation import ensure_exists
+from db_core.services.identity import personenname
 
 EMPLOYEE_STATUS = ("AKTIV", "INAKTIV", "AUSGETRETEN")
 ABSENCE_TYPES = (
@@ -777,7 +778,7 @@ def carryover_vorschau(year, employee_ids=None):
             {
                 "employee_id": emp.id,
                 "employee_number": emp.employee_number,
-                "name": f"{emp.party.first_name} {emp.party.last_name}".strip(),
+                "name": personenname(emp.party.first_name, emp.party.last_name),
                 "year": year,
                 "target_year": ziel,
                 "entitlement_days": _tage(konto["entitlement_days"]),
@@ -867,7 +868,7 @@ def abwesenheits_zeilen(von, bis, employee_id=None, status=None):
     return [
         {
             "employee_number": a.employee.employee_number,
-            "name": f"{a.employee.party.first_name} {a.employee.party.last_name}".strip(),
+            "name": personenname(a.employee.party.first_name, a.employee.party.last_name),
             "absence_type": a.absence_type,
             "start_date": a.start_date,
             "end_date": a.end_date,
