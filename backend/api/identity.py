@@ -99,7 +99,9 @@ class PartyListOut(Schema):
 class PersonOut(Schema):
     salutation: str | None = None
     title: str | None = None
-    first_name: str
+    # NULL-fähig seit 0125 — sonst bräche die Ausgabe an jeder Person ohne
+    # Vornamen (Pydantic validiert die Response).
+    first_name: str | None = None
     last_name: str
     birth_date: date | None = None
 
@@ -138,7 +140,10 @@ class NoteIn(Schema):
 
 
 class PersonIn(Schema):
-    first_name: str
+    # Vorname optional seit Migration 0125 (Befund B1): Am Telefon fällt er
+    # oft nicht, und ein erfundenes „X" ist schlechter als gar keiner. Der
+    # Nachname bleibt Pflicht (B3) — ohne ihn gibt es keinen Anzeigenamen.
+    first_name: str | None = None
     last_name: str
     salutation: str | None = None
     title: str | None = None
@@ -575,10 +580,13 @@ def create_contact_person(request, party_id: UUID, payload: ContactPersonIn):
     actor, _ = _require_party(request, party_id, "ANLEGEN")
     new_person = None
     if payload.person_party_id is None:
-        if not payload.first_name or not payload.last_name:
+        # Nur der NACHNAME ist Pflicht (B1/B3, Migration 0125). Der Vorname
+        # eines Ansprechpartners ist am Telefon genauso oft unbekannt wie der
+        # eines Melders.
+        if not payload.last_name or not payload.last_name.strip():
             raise HttpError(
                 422,
-                "Entweder eine bestehende Person wählen oder Vor- und Nachname "
+                "Entweder eine bestehende Person wählen oder den Nachnamen "
                 "einer neuen Person angeben.",
             )
         new_person = {

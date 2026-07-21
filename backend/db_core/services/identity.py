@@ -52,7 +52,13 @@ ORGANIZATION_TYPES = (
 
 
 def _person_display_name(first_name, last_name):
-    return f"{first_name.strip()} {last_name.strip()}".strip()
+    """Anzeigename aus Vor- und Nachname.
+
+    Der Vorname ist seit Migration 0125 optional (Befund B1) — ohne ihn ist der
+    Anzeigename schlicht der Nachname. `first_name` kann deshalb None sein und
+    darf nicht blind `.strip()` bekommen.
+    """
+    return f"{(first_name or '').strip()} {last_name.strip()}".strip()
 
 
 def create_person(
@@ -71,10 +77,16 @@ def create_person(
     # display_name trägt den DB-CHECK btrim(...) <> '' (0002). Leere Namen vorab
     # als klaren 422 abweisen, statt sie als DB-IntegrityError (500) enden zu
     # lassen — analog zu create_property/create_organization.
-    if not first_name or not first_name.strip():
-        raise ValueError("first_name darf nicht leer sein.")
+    #
+    # Der VORNAME ist seit Migration 0125 optional (Befund B1): Der Anrufer
+    # nennt ihn oft nicht, und ein erfundenes „X" ist schlechter als gar
+    # keiner. Ein Leerstring wird zu None normalisiert — die DB verbietet ihn
+    # (person_first_name_nicht_leer), und „erhoben und leer" soll es nicht
+    # geben. Der NACHNAME bleibt Pflicht (B3): ohne ihn gäbe es keinen
+    # Anzeigenamen und keinen identifizierbaren Kontakt.
+    first_name = (first_name or "").strip() or None
     if not last_name or not last_name.strip():
-        raise ValueError("last_name darf nicht leer sein.")
+        raise ValueError("Der Nachname darf nicht leer sein.")
     display_name = _person_display_name(first_name, last_name)
     with business_transaction(actor_app_user_id):
         # PK explizit: die Models tragen keinen Model-Default, ein von Django

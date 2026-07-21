@@ -70,18 +70,36 @@ def test_create_person_ohne_app_user_id(db):
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize(
-    "first_name,last_name", [("  ", "Meyer"), ("Max", "   "), ("", "")]
-)
-def test_create_person_leerer_name_ist_valuefehler(app_user, first_name, last_name):
-    """Leere/nur-Leerzeichen-Namen sind ein Fachfehler (ValueError → 422), kein
-    roher DB-IntegrityError (500): display_name trägt den CHECK btrim(...) <> ''."""
+@pytest.mark.parametrize("first_name,last_name", [("Max", "   "), ("", ""), (None, "")])
+def test_create_person_leerer_nachname_ist_valuefehler(app_user, first_name, last_name):
+    """Ein leerer NACHNAME ist ein Fachfehler (ValueError → 422), kein roher
+    DB-IntegrityError (500): display_name trägt den CHECK btrim(...) <> ''.
+
+    Seit Migration 0125 gilt das **nur noch für den Nachnamen** — der Vorname
+    ist optional (Befund B1/B3), siehe den Test darunter.
+    """
     vorher = Party.objects.count()
     with pytest.raises(ValueError):
         identity_service.create_person(
             app_user.id, first_name=first_name, last_name=last_name
         )
     assert Party.objects.count() == vorher
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("first_name", ["  ", "", None])
+def test_create_person_ohne_vornamen_geht(app_user, first_name):
+    """Befund B1: Am Telefon fällt der Vorname oft nicht.
+
+    Leer und nur-Leerzeichen werden dabei zu **NULL** normalisiert — die DB
+    verbietet den Leerstring (`person_first_name_nicht_leer`), und „erhoben und
+    leer" soll es nicht geben. Der Anzeigename ist dann schlicht der Nachname.
+    """
+    party = identity_service.create_person(
+        app_user.id, first_name=first_name, last_name="Özdemir"
+    )
+    assert party.display_name == "Özdemir"
+    assert party.person.first_name is None
 
 
 # --- Ansprechpartner --------------------------------------------------------

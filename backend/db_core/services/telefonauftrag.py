@@ -169,10 +169,10 @@ def anruf_durchstich(
     if not title or not title.strip():
         raise ValueError("Für den Auftrag ist ein Titel Pflicht.")
 
-    if existing_party_id is None and not (
-        first_name and first_name.strip() and last_name and last_name.strip()
-    ):
-        raise ValueError("Für einen neuen Kontakt sind Vor- und Nachname Pflicht.")
+    # Nur der Nachname ist Pflicht (Befund B1/B3, Migration 0125). Ausgerechnet
+    # hier — beim Annehmen eines Anrufs — fällt der Vorname am seltensten.
+    if existing_party_id is None and not (last_name and last_name.strip()):
+        raise ValueError("Für einen neuen Kontakt ist der Nachname Pflicht.")
 
     if existing_property_id is None:
         if not (

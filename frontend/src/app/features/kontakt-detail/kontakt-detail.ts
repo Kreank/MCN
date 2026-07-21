@@ -150,7 +150,12 @@ export class KontaktDetail {
   protected readonly tabs = computed<MappeTab[]>(() => {
     const basis: MappeTab[] = [
       { id: 'stammdaten', label: 'Stammdaten' },
-      { id: 'objektadressen', label: 'Objektadressen' },
+      // Befund F5: Der Reiter hieß „Objektadressen", zeigt aber
+      // `identity.party_address` — die Adressen des KONTAKTS, nicht die von
+      // Liegenschaften. Die Blocküberschrift darunter sagte schon immer
+      // „Adressen"; Reiter und Inhalt widersprachen sich also intern.
+      // Die ID bleibt `objektadressen`, damit bestehende Links tragen.
+      { id: 'objektadressen', label: 'Adressen' },
     ];
     if (this.istOrganisation()) {
       basis.push({ id: 'ansprechpartner', label: 'Ansprechpartner' });
@@ -471,7 +476,9 @@ export class KontaktDetail {
     const neu = this.ansprechNeu();
     const c = this.ansprechForm.controls;
     c.person_party_id.setValidators(neu ? [] : [Validators.required]);
-    c.first_name.setValidators(neu ? [Validators.required] : []);
+    // Vorname nie Pflicht (Befund B1, Migration 0125) — auch beim
+    // Ansprechpartner ist er am Telefon oft unbekannt. Nachname bleibt Pflicht.
+    c.first_name.setValidators([]);
     c.last_name.setValidators(neu ? [Validators.required] : []);
     c.person_party_id.updateValueAndValidity();
     c.first_name.updateValueAndValidity();

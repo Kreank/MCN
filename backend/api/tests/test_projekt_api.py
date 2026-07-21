@@ -775,20 +775,42 @@ def test_quick_intake_ohne_recht_403(client_with_role, db):
 
 
 @pytest.mark.django_db
-def test_quick_intake_leerer_name_422_statt_500(admin_client, db):
-    """Nur-Leerzeichen-Name ist ein Fachfehler → 422 (nicht 500), und der erste
-    Schritt scheitert vor jeder Anlage: keine Waisen."""
+def test_quick_intake_leerer_nachname_422_statt_500(admin_client, db):
+    """Nur-Leerzeichen-Nachname ist ein Fachfehler → 422 (nicht 500), und der
+    erste Schritt scheitert vor jeder Anlage: keine Waisen.
+
+    Seit Migration 0125 gilt das nur noch für den NACHNAMEN (Befund B1/B3).
+    """
     from db_core.models import Party
 
     parties_vorher = Party.objects.count()
     payload = _quick_intake_payload(
-        person={"first_name": "   ", "last_name": "Mustermann"}
+        person={"first_name": "Erika", "last_name": "   "}
     )
     r = admin_client.post(
         "/api/workflow/quick-intake", data=payload, content_type="application/json"
     )
     assert r.status_code == 422, r.content
     assert Party.objects.count() == parties_vorher
+
+
+@pytest.mark.django_db
+def test_quick_intake_ohne_vornamen(admin_client, db):
+    """Befund B1: „Frau Özdemir aus der Ahornstraße meldet einen Wasserschaden"
+    ist eine vollständige Meldung — der Vorname kommt darin nicht vor.
+
+    Vorher erzwang die Schnellerfassung ihn und provozierte damit erfundene
+    Werte wie „X", die anschließend in Anrede und Anschreiben landeten.
+    """
+    from db_core.models import Party
+
+    payload = _quick_intake_payload(person={"last_name": "Özdemir"})
+    r = admin_client.post(
+        "/api/workflow/quick-intake", data=payload, content_type="application/json"
+    )
+    assert r.status_code == 201, r.content
+    party = Party.objects.get(display_name="Özdemir")
+    assert party.person.first_name is None
 
 
 @pytest.mark.django_db

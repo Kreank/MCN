@@ -100,9 +100,13 @@ export class Kontakte {
   protected readonly personForm = this.fb.group({
     salutation: this.fb.control('', { nonNullable: true }),
     title: this.fb.control('', { nonNullable: true }),
+    // Vorname OHNE `required` (Befund B1, Migration 0125): Am Telefon fällt er
+    // oft nicht, und ein erfundenes „X" ist schlechter als gar keiner — es
+    // sieht aus wie ein Wert, landet in Anrede und Anschreiben und macht jede
+    // spätere Dublettensuche unschärfer. Der Nachname bleibt Pflicht (B3).
     first_name: this.fb.control('', {
       nonNullable: true,
-      validators: [Validators.required, Validators.maxLength(200)],
+      validators: [Validators.maxLength(200)],
     }),
     last_name: this.fb.control('', {
       nonNullable: true,
@@ -365,7 +369,9 @@ export class Kontakte {
 
     const v = this.personForm.getRawValue();
     const payload: PersonIn = {
-      first_name: v.first_name.trim(),
+      // Leerer Vorname wird zu null — die DB verbietet den Leerstring
+      // (person_first_name_nicht_leer), „nicht erhoben" ist NULL.
+      first_name: v.first_name.trim() || null,
       last_name: v.last_name.trim(),
       salutation: v.salutation.trim() || null,
       title: v.title.trim() || null,
@@ -377,12 +383,12 @@ export class Kontakte {
       next: (party) => {
         this.neuLaedt.set(false);
         this.personOffen.set(false);
-        this.meldung.set({
-          art: 'erfolg',
-          text: `Person „${party.display_name}“ wurde angelegt.`,
-        });
-        this.page.set(1);
-        this.fetch();
+        // Befund F2: Bisher wurde nur die Liste neu geladen — und `fetch()`
+        // setzt sogar die Auswahl zurück. Wer eine Person anlegte, musste sie
+        // anschließend in der Liste WIEDERFINDEN, um Telefonnummer und Adresse
+        // nachzutragen. Jetzt geht es direkt in die Mappe, wo beides liegt.
+        // Dasselbe Muster nutzt die Organisation längst (`zumAnsprechpartner`).
+        this.router.navigate(['/kontakte', party.id]);
       },
       error: (err) => {
         this.neuLaedt.set(false);

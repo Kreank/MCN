@@ -38,7 +38,8 @@ export interface PartyQuery {
 export interface Person {
   salutation: string | null;
   title: string | null;
-  first_name: string;
+  /** Optional seit Migration 0125 (Befund B1) — `null` = nicht erhoben. */
+  first_name: string | null;
   last_name: string;
   birth_date: string | null;
 }
@@ -73,7 +74,8 @@ export interface PartyNoteInput {
 
 // --- Anlage (POST /api/identity/parties/person | /organization) ------------
 export interface PersonIn {
-  first_name: string;
+  /** Optional (B1) — leer lassen heißt „nicht erhoben", nicht Leerstring. */
+  first_name?: string | null;
   last_name: string;
   salutation?: string | null;
   title?: string | null;

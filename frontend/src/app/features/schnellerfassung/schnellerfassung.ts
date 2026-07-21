@@ -104,9 +104,11 @@ export class Schnellerfassung {
     existing_party_id: this.fb.control('', { nonNullable: true }),
     // Person
     salutation: this.fb.control('', { nonNullable: true }),
+    // Vorname ohne `required` (Befund B1, Migration 0125) — der Nachname
+    // bleibt Pflicht (B3).
     first_name: this.fb.control('', {
       nonNullable: true,
-      validators: [Validators.required, Validators.maxLength(200)],
+      validators: [Validators.maxLength(200)],
     }),
     last_name: this.fb.control('', {
       nonNullable: true,
@@ -175,11 +177,12 @@ export class Schnellerfassung {
       .subscribe((val) => {
         const gewaehlt = !!val;
         this.bestehenderKontaktId.set(val ?? '');
-        for (const f of [this.form.controls.first_name, this.form.controls.last_name]) {
-          if (gewaehlt) f.clearValidators();
-          else f.setValidators([Validators.required, Validators.maxLength(200)]);
-          f.updateValueAndValidity({ emitEvent: false });
-        }
+        // Nur der NACHNAME trägt die Pflicht (B1/B3).
+        const ln = this.form.controls.last_name;
+        ln.setValidators(
+          gewaehlt ? [] : [Validators.required, Validators.maxLength(200)],
+        );
+        ln.updateValueAndValidity({ emitEvent: false });
       });
 
     // Live-Dublettenwarnung: Wer die Adresse eintippt, sieht sofort, ob es das

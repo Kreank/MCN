@@ -229,7 +229,7 @@
           <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
         </div>
       }
-      <app-feld [control]="personForm.controls.first_name" label="Vorname" [pflicht]="true" autocomplete="given-name" />
+      <app-feld [control]="personForm.controls.first_name" label="Vorname" autocomplete="given-name" hinweis="Optional — wenn er am Telefon nicht fällt, einfach leer lassen." />
       <app-feld [control]="personForm.controls.last_name" label="Nachname" [pflicht]="true" autocomplete="family-name" />
       <app-feld [control]="personForm.controls.salutation" label="Anrede" hinweis="Optional, z. B. Herr, Frau." />
       <app-feld [control]="personForm.controls.title" label="Titel" hinweis="Optional, z. B. Dr., Prof." />

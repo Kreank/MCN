@@ -101,7 +101,9 @@
           <dl class="feld-raster">
             <div class="feld"><dt class="feld__label">Anrede</dt><dd class="feld__wert" [class.feld__wert--leer]="!p.salutation">{{ p.salutation || '—' }}</dd></div>
             <div class="feld"><dt class="feld__label">Titel</dt><dd class="feld__wert" [class.feld__wert--leer]="!p.title">{{ p.title || '—' }}</dd></div>
-            <div class="feld"><dt class="feld__label">Vorname</dt><dd class="feld__wert">{{ p.first_name }}</dd></div>
+            <!-- Seit Migration 0125 NULL-fähig — sonst stünde hier eine leere Zelle,
+               während die Nachbarfelder „—" zeigen. -->
+          <div class="feld"><dt class="feld__label">Vorname</dt><dd class="feld__wert" [class.feld__wert--leer]="!p.first_name">{{ p.first_name || '—' }}</dd></div>
             <div class="feld"><dt class="feld__label">Nachname</dt><dd class="feld__wert">{{ p.last_name }}</dd></div>
             <div class="feld"><dt class="feld__label">Geburtsdatum</dt><dd class="feld__wert" [class.feld__wert--leer]="!p.birth_date">{{ p.birth_date || '—' }}</dd></div>
           </dl>
@@ -447,7 +449,7 @@
         @if (ansprechNeu()) {
           <app-feld [control]="ansprechForm.controls.salutation" label="Anrede" />
           <app-feld [control]="ansprechForm.controls.title" label="Titel" />
-          <app-feld [control]="ansprechForm.controls.first_name" label="Vorname" [pflicht]="true" />
+          <app-feld [control]="ansprechForm.controls.first_name" label="Vorname" hinweis="Optional." />
           <app-feld [control]="ansprechForm.controls.last_name" label="Nachname" [pflicht]="true" />
         } @else {
           <app-referenz-wahl

@@ -47,11 +47,12 @@
             hinweis="Optional, z. B. Herr, Frau."
             autocomplete="honorific-prefix"
           />
+          <!-- Optional seit 0125 (B1). -->
           <app-feld
             [control]="form.controls.first_name"
             label="Vorname"
-            [pflicht]="true"
             autocomplete="given-name"
+            hinweis="Optional."
           />
           <app-feld
             [control]="form.controls.last_name"

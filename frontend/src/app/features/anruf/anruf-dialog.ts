@@ -153,9 +153,11 @@ export class AnrufDialog {
   protected readonly form = this.fb.group({
     existing_party_id: this.fb.control('', { nonNullable: true }),
     salutation: this.fb.control('', { nonNullable: true }),
+    // Vorname ohne `required` (Befund B1, Migration 0125): Ausgerechnet beim
+    // Annehmen eines Anrufs fällt er am seltensten.
     first_name: this.fb.control('', {
       nonNullable: true,
-      validators: [Validators.required, Validators.maxLength(200)],
+      validators: [Validators.maxLength(200)],
     }),
     last_name: this.fb.control('', {
       nonNullable: true,
@@ -250,11 +252,13 @@ export class AnrufDialog {
       .subscribe((val) => {
         const gewaehlt = !!val;
         this.bestehenderKontaktId.set(val ?? '');
-        for (const f of [this.form.controls.first_name, this.form.controls.last_name]) {
-          if (gewaehlt) f.clearValidators();
-          else f.setValidators([Validators.required, Validators.maxLength(200)]);
-          f.updateValueAndValidity({ emitEvent: false });
-        }
+        // Nur der NACHNAME trägt die Pflicht (B1/B3): Der Vorname behält
+        // durchgehend allein die Längengrenze.
+        const ln = this.form.controls.last_name;
+        ln.setValidators(
+          gewaehlt ? [] : [Validators.required, Validators.maxLength(200)],
+        );
+        ln.updateValueAndValidity({ emitEvent: false });
         // Auch die E-Mail: Das Feld verschwindet mit dem Block. Bliebe
         // `Validators.email` daran hängen, wäre eine halb getippte Adresse ein
         // Fehler an einem unsichtbaren Feld — `absenden()` bräche wortlos ab

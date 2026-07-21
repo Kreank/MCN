@@ -33,11 +33,12 @@
       } @else {
         <div class="anruf__raster">
           <app-feld [control]="form.controls.salutation" label="Anrede" autocomplete="honorific-prefix" />
+          <!-- Optional seit 0125 (B1): Am Telefon fällt der Vorname am seltensten. -->
           <app-feld
             [control]="form.controls.first_name"
             label="Vorname"
-            [pflicht]="true"
             autocomplete="given-name"
+            hinweis="Optional."
           />
           <app-feld
             [control]="form.controls.last_name"

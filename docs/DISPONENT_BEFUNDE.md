@@ -42,9 +42,11 @@ Status: `offen` · `entschieden` · `umgesetzt`
 
 | # | Befund | Art | Fundstelle | Status |
 |---|---|---|---|---|
-| B1 | Vorname ist Pflichtfeld — soll optional werden. Vierfach abgesichert: Frontend-Validator, API-Schema, Service-Guard, DB-CHECK `NOT NULL CHECK (btrim <> '')`. | MODELL | `kontakte.ts:103`, `api/identity.py:141`, `services/identity.py:74`, `0002_...sql:99` | offen |
-| B2 | Betroffen sind vier weitere Formulare: Kontakt-Detail, Anruf-Dialog, Schnellerfassung, `identity.py:578`. | UI | — | offen |
-| B3 | Nachname soll Pflicht bleiben (Vorschlag, Bestätigung offen). | — | — | offen |
+| B1 | Vorname ist Pflichtfeld — soll optional werden. Vierfach abgesichert: Frontend-Validator, API-Schema, Service-Guard, DB-CHECK `NOT NULL CHECK (btrim <> '')`. | MODELL | Migration **0125** | **umgesetzt 2026-07-21** |
+| B2 | Betroffen sind vier weitere Formulare: Kontakt-Detail, Anruf-Dialog, Schnellerfassung, `identity.py:578`. | UI | — | **umgesetzt** |
+| B3 | Nachname soll Pflicht bleiben. | — | — | **bestätigt, umgesetzt** |
+| B5 | **Die Aufnahme fand mehr als die vier Ebenen:** zusätzlich vier `[pflicht]="true"`-Markierungen in den Templates (die sonst das Sternchen und `aria-required` weiterlügen), ein **zweites** serverseitiges Tor in `api/projekt.py:1232` (quick-intake), das Ausgabeschema `PersonOut` (Pydantic validiert die Response — ohne Anpassung bräche jede Person ohne Vornamen beim Lesen), `_person_display_name` (`.strip()` auf None wäre ein AttributeError) und das Anzeigetemplate `kontakt-detail.html:104` (leere Zelle statt „—"). Alle mitgezogen. **Merksatz: ein Pflichtfeld hat mehr Ebenen, als die Suche nach `required` zeigt.** | — | — | geklärt |
+| B6 | **Leer wird zu NULL, nicht zu Leerstring.** Der DB-CHECK lautet jetzt `first_name IS NULL OR btrim(first_name) <> ''` (Muster wie `room.storey`/`unit.storey`). Damit ist „nicht erhoben" sauber von „erhoben und leer" getrennt — Letzteres kann gar nicht entstehen. | — | `0125_vorname_optional.py` | umgesetzt |
 | B4 | Geburtsdatum ist **bereits überall optional** — kein Handlungsbedarf, evtl. nur Feld-Optik missverständlich. | — | `0002_...sql:101` | geklärt |
 
 ---
@@ -89,10 +91,12 @@ Status: `offen` · `entschieden` · `umgesetzt`
 | # | Befund | Art | Fundstelle | Status |
 |---|---|---|---|---|
 | F1 | Anlage-Dialog kennt nur Namensfelder. Telefon/Mail und Adresse erst danach, in **zwei verschiedenen Reitern** der Kontaktmappe. | UI | `kontakte.html:224-269`, `kontakt-detail.ts:150-168` | offen |
-| F2 | Nach dem Anlegen wird **nicht** in die Mappe navigiert — der Kontakt muss in der Liste wiedergefunden werden. | UI | `kontakte.ts:376-386` | offen |
+| F2 | Nach dem Anlegen wird **nicht** in die Mappe navigiert — der Kontakt muss in der Liste wiedergefunden werden. | UI | `kontakte.ts:376-386` | **umgesetzt 2026-07-21** |
+| F2a | Nebenbefund: `fetch()` setzte sogar die **Auswahl zurück** — der frisch angelegte Kontakt war also nicht nur ungeöffnet, sondern auch nicht markiert. Das Absprung-Muster existierte für **Organisationen** längst (`zumAnsprechpartner`, Query-Param `neu=`); für Personen fehlte es schlicht. | — | — | geklärt |
 | F3 | Zwei Endpunkte können Person + Telefon + Mail + Adresse bereits atomar: `POST /workflow/quick-intake` und `POST /planung/anruf`. Beweis, dass der kombinierte Weg fachlich zulässig ist. | UI | `api/projekt.py:1204`, `api/telefonauftrag.py:129` | offen |
 | F4 | Einschränkung: beide erzeugen Kontaktwege, aber **keine `party_address`** — die Adresse landet nur an der Liegenschaft. | UI | `services/telefonauftrag.py:269-283` | offen |
-| F5 | Reiter heißt „Objektadressen", zeigt aber Kontaktadressen (`party_address`). Irreführend. | UI | `kontakt-detail.ts:153` | offen |
+| F5 | Reiter heißt „Objektadressen", zeigt aber Kontaktadressen (`party_address`). Irreführend. | UI | `kontakt-detail.ts:153` | **umgesetzt 2026-07-21** (heißt jetzt „Adressen") |
+| F5a | **Stärker als beschrieben:** Reiterlabel („Objektadressen") und Blocküberschrift darunter („Adressen") widersprachen sich bereits **innerhalb derselben Ansicht**. Die Tab-**ID** bleibt `objektadressen`, damit bestehende Links tragen. Der Begriff steckt außerdem noch in `api/identity.py:181,196` und `services/identity.py:366` — dort ist es Backend-Prosa ohne Nutzerkontakt, bewusst nicht angefasst. | — | — | geklärt |
 
 ---
 
@@ -195,12 +199,19 @@ Bearbeiten-Dialog für Gebäude und Einheit. Damit sind **I1, I7, I12, I2, I2b**
 Ein namenloses Gebäude ist benennbar, eine vertippte Einheitsnummer korrigierbar, die Etage
 erfassbar — und jede dieser Änderungen hinterlässt einen Audit-Eintrag.
 
-**Was offen bleibt:** **I13** (der eigentliche *ein* Screen mit Ebene 3 = Räume im Baum) und
-**I10** (Belegungs-Infos am Raum). Der Baum zeigt weiterhin zwei Ebenen. Bewusste
-Entscheidung: Räume haben mit `features/raumaufmass/` (5.924 Zeilen) ein voll ausgebautes
-eigenes Modul; es in den Baum zu duplizieren wäre ein eigener Slice, kein Anhängsel. Der
-sinnvolle nächste Schritt ist eine **read-only dritte Ebene** mit Sprung in den Raum-Editor,
-nicht ein zweiter Raum-Editor im Baum.
+**Was offen bleibt:** **I13** (Ebene 3 = Räume im Baum) und **I10** (Belegungs-Infos am
+Raum). Der Baum zeigt weiterhin zwei Ebenen.
+
+**Zuschnitt für I13 — Sascha-Entscheidung 2026-07-21:** Räume sollen im Baum **anlegbar,
+umbenennbar und einer Einheit zuordenbar** sein — nicht nur lesend. Damit läuft die
+*Erfassung* einer Liegenschaft komplett auf einem Screen. Der Vorschlag „read-only mit
+Sprung in den Editor" wurde ausdrücklich verworfen.
+
+**Grenze dieser Entscheidung:** Das **Aufmaß** (Geometrie, Hüllflächen, Umriss, Heizlast,
+Auslegung) bleibt im Raum-Modul `features/raumaufmass/` (5.924 Zeilen über 16 Dateien). Im
+Baum entsteht also *kein zweiter Raum-Editor*, sondern nur die Erfassungsebene: Name, Etage,
+Raumtyp, Zuordnung. Alles Weitere verlinkt in den bestehenden Editor. Wird diese Grenze
+verwischt, hat das Repo zwei Wahrheiten über denselben Raum.
 
 
 

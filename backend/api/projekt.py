@@ -1227,15 +1227,12 @@ def quick_intake(request, payload: QuickIntakeIn):
     """
     existing_party_id = payload.person.existing_party_id
     if existing_party_id is None:
-        # Neuer Kontakt: identity-Schreibrecht nötig, Name Pflicht.
+        # Neuer Kontakt: identity-Schreibrecht nötig, Nachname Pflicht.
+        # Der Vorname ist seit Migration 0125 optional (Befund B1) — gerade in
+        # der Schnellerfassung am Telefon fällt er häufig nicht.
         actor, _ = require(request, "identity", "ANLEGEN")
-        if not (
-            payload.person.first_name
-            and payload.person.first_name.strip()
-            and payload.person.last_name
-            and payload.person.last_name.strip()
-        ):
-            raise HttpError(422, "Für einen neuen Kontakt sind Vor- und Nachname Pflicht.")
+        if not (payload.person.last_name and payload.person.last_name.strip()):
+            raise HttpError(422, "Für einen neuen Kontakt ist der Nachname Pflicht.")
     else:
         # Bestehenden Kontakt nur als Melder referenzieren → Lese-Recht genügt.
         actor, _ = require(request, "identity", "LESEN")

@@ -147,6 +147,37 @@ def test_create_person_eingeloggt(client, db):
 
 
 @pytest.mark.django_db
+def test_create_person_ohne_vornamen(client, db):
+    """Befund B1 (Migration 0125): Der Vorname ist optional.
+
+    Der Anzeigename ist dann der Nachname allein — er darf nicht mit einem
+    führenden Leerzeichen entstehen.
+    """
+    c = _logged_in_client(client, with_app_user=True)
+    r = c.post(
+        "/api/identity/parties/person",
+        data={"last_name": "Özdemir"},
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    body = r.json()
+    assert body["display_name"] == "Özdemir"
+    assert body["person"]["first_name"] is None
+
+
+@pytest.mark.django_db
+def test_create_person_ohne_nachnamen_ist_422(client, db):
+    """Der Nachname bleibt Pflicht (Befund B3) — ohne ihn kein Anzeigename."""
+    c = _logged_in_client(client, with_app_user=True)
+    r = c.post(
+        "/api/identity/parties/person",
+        data={"first_name": "Erika"},
+        content_type="application/json",
+    )
+    assert r.status_code == 422, r.content
+
+
+@pytest.mark.django_db
 def test_create_organisation_eingeloggt(client, db):
     c = _logged_in_client(client, with_app_user=True)
     r = c.post(
