@@ -204,6 +204,75 @@
             </a>
           }
         </div>
+
+        <!-- Kalkulation in der LESEANSICHT (Befund G2). Im Editor gibt es sie
+             längst; wer den Beleg nur ansieht, sah sie nicht. „Der Chef darf
+             ruhig gleich sehen, wie die Kalkulation aussieht."
+             Ohne pricing/LESEN antwortet der Endpunkt mit 403 — dann ist der
+             Block gar nicht da, statt einen Fehler zu zeigen. -->
+        @if (kalk(); as k) {
+          <section class="kalk-block" aria-labelledby="kalk-titel">
+            <div class="kalk-block__kopf">
+              <h3 id="kalk-titel" class="kalk-block__titel">Kalkulation</h3>
+              @if (!k.gesamt.ek_vollstaendig) {
+                <!-- Ehrlichkeit vor Vollständigkeit: „unbekannt" nie als 0. -->
+                <p class="kalk-block__luecke">
+                  <span aria-hidden="true">!</span>
+                  {{ k.gesamt.positionen_ohne_ek }}
+                  {{ k.gesamt.positionen_ohne_ek === 1 ? 'Position' : 'Positionen' }}
+                  ohne Einkaufspreis — Marge unbekannt
+                </p>
+              }
+            </div>
+
+            <dl class="kalk-block__kpi">
+              <div class="kalk-block__zelle">
+                <dt class="kalk-block__label">Netto</dt>
+                <dd class="kalk-block__wert">{{ euro(k.gesamt.netto) }}</dd>
+              </div>
+              <div class="kalk-block__zelle">
+                <dt class="kalk-block__label">Einkauf</dt>
+                <dd class="kalk-block__wert">{{ euro(k.gesamt.ek) }}</dd>
+              </div>
+              <div class="kalk-block__zelle">
+                <dt class="kalk-block__label">Deckungsbeitrag</dt>
+                <dd class="kalk-block__wert">{{ dbText(k.gesamt) }}</dd>
+              </div>
+              <div class="kalk-block__zelle">
+                <dt class="kalk-block__label">Marge</dt>
+                <dd class="kalk-block__wert">{{ margeText(k.gesamt) }}</dd>
+              </div>
+            </dl>
+
+            <!-- Je Abschnitt nur, wenn es mehr als einen gibt — sonst stünde
+                 dieselbe Zahl zweimal untereinander. -->
+            @if (k.abschnitte.length > 1) {
+              <table class="kalk-block__tabelle">
+                <caption class="sr-only">Kalkulation je Abschnitt</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Abschnitt</th>
+                    <th scope="col" class="kalk-block__num">Netto</th>
+                    <th scope="col" class="kalk-block__num">Einkauf</th>
+                    <th scope="col" class="kalk-block__num">Deckungsbeitrag</th>
+                    <th scope="col" class="kalk-block__num">Marge</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (a of k.abschnitte; track a.rubrik) {
+                    <tr>
+                      <td>{{ a.title }}</td>
+                      <td class="kalk-block__num">{{ euro(a.netto) }}</td>
+                      <td class="kalk-block__num">{{ euro(a.ek) }}</td>
+                      <td class="kalk-block__num">{{ dbText(a) }}</td>
+                      <td class="kalk-block__num">{{ margeText(a) }}</td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            }
+          </section>
+        }
       }
 
       <!-- ------------------------------ Dateien --------------------------- -->

@@ -10,6 +10,8 @@ import { PropertyService } from '../../core/property.service';
 import { ProjektService } from '../../core/projekt.service';
 import { AuthService } from '../../core/auth.service';
 import {
+  KalkAbschnitt,
+  Kalkulation,
   LINE_TYPE_LABEL,
   LineType,
   QUOTE_STATUS_LABEL,
@@ -207,6 +209,50 @@ export class BelegDetail {
     { id: 'dateien', label: 'Dateien' },
   ];
 
+  // --- Kalkulation in der LESEANSICHT (Befund G2) --------------------------
+  // Sascha: „Mir fehlt die Kalkulationsübersicht aus dem Editor. Der Chef darf
+  // ruhig gleich sehen, wie die Kalkulation aussieht." Im Editor gibt es sie
+  // längst — nur wer den Beleg bloß ANSIEHT, sah sie nicht.
+  //
+  // `kalkVerborgen` statt Fehlerzustand: Ohne `pricing/LESEN` antwortet der
+  // Endpunkt mit 403. Das ist kein Fehler, sondern die Auskunft „nicht für
+  // dich" — der Block verschwindet dann still, wie im Editor auch.
+  protected readonly kalk = signal<Kalkulation | null>(null);
+  protected readonly kalkVerborgen = signal(false);
+  private kalkFuer: string | null = null;
+
+  private ladeKalkulation(id: string): void {
+    if (this.kalkFuer === id) return;
+    this.kalkFuer = id;
+    this.svc.kalkulation(id).subscribe({
+      next: (k) => {
+        this.kalk.set(k);
+        this.kalkVerborgen.set(false);
+      },
+      error: (err) => {
+        this.kalk.set(null);
+        this.kalkVerborgen.set(istVerboten(err));
+      },
+    });
+  }
+
+  /** Marge als Text — „unbekannt" statt 0, wenn ein Einkaufspreis fehlt.
+   *  Dieselbe Ehrlichkeitsregel wie im Editor und in der DB-Kalkulation:
+   *  Eine Position ohne EK hat keine Marge von null Prozent, sie hat keine. */
+  margeText(a: KalkAbschnitt): string {
+    if (a.marge_prozent === null) return 'unbekannt';
+    return (
+      new Intl.NumberFormat('de-DE', {
+        minimumFractionDigits: 1,
+        maximumFractionDigits: 2,
+      }).format(Number(a.marge_prozent)) + ' %'
+    );
+  }
+
+  dbText(a: KalkAbschnitt): string {
+    return a.deckungsbeitrag === null ? 'unbekannt' : this.euro(a.deckungsbeitrag);
+  }
+
   protected readonly daten = computed(() => {
     const s = this.state();
     return s.kind === 'ready' ? s.data : null;
@@ -257,7 +303,10 @@ export class BelegDetail {
     this.state.set({ kind: 'loading' });
     this.svc.get(id).subscribe({
       next: (data) => {
-        if (rid === this.reqId) this.state.set({ kind: 'ready', data });
+        if (rid === this.reqId) {
+          this.state.set({ kind: 'ready', data });
+          this.ladeKalkulation(id);
+        }
       },
       error: (err) => {
         if (rid === this.reqId) this.state.set(fehlerState(err));
