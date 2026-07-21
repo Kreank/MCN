@@ -54,11 +54,28 @@ def ensure_standort(property_id, building_id, unit_id):
 
     (Lag bis zum Anlagen-Review als `raum._pruefe_zuordnung` modulintern. Der
     Unterstrich log, sobald ein zweites Modul sie brauchte.)
+
+    **Gibt `(building_id, unit_id)` zurück** — mit abgeleitetem Gebäude, falls
+    nur die Einheit kam (Befund I11). Die Einheit kennt ihr Gebäude; danach zu
+    fragen, war eine Bringschuld, die diese Funktion selbst erfüllen kann. Sie
+    las den Wert ohnehin schon, um ihn zu vergleichen — und warf dann einen
+    Fehler, statt ihn zu setzen. Die Folge war eine dreifach kopierte
+    Auswahlkaskade im Frontend (Raum-Editor, Anlagen-Dialog, Plantafel), die
+    jeder neue Aufrufer ein weiteres Mal abschreiben müsste.
+
+    Aufrufer, die den Rückgabewert ignorieren, verhalten sich unverändert —
+    außer dass „Einheit ohne Gebäude" jetzt durchgeht statt zu scheitern.
     """
     if unit_id is not None and building_id is None:
-        raise ValueError(
-            "Eine Einheit setzt ein Gebäude voraus (unit_id ohne building_id)."
+        # Ableiten statt abweisen: Die Einheit bestimmt ihr Gebäude eindeutig.
+        # Die Existenzprüfung übernimmt der Block weiter unten.
+        building_id = (
+            Unit.objects.filter(pk=unit_id)
+            .values_list("building_id", flat=True)
+            .first()
         )
+        if building_id is None:
+            raise ValueError(f"Einheit {unit_id} existiert nicht")
     if building_id is not None:
         b_prop = (
             Building.objects.filter(pk=building_id)
@@ -79,6 +96,7 @@ def ensure_standort(property_id, building_id, unit_id):
             raise ValueError(f"Einheit {unit_id} existiert nicht")
         if u_build != building_id:
             raise ValueError("Die Einheit gehört nicht zum angegebenen Gebäude")
+    return building_id, unit_id
 
 
 def ensure_party_usable(party_id, label="Partei"):

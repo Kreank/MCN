@@ -282,12 +282,27 @@ def test_einheit_fremden_gebaeudes_wird_abgewiesen(admin_client, app_user, objek
 
 
 @pytest.mark.django_db
-def test_einheit_ohne_gebaeude_wird_abgewiesen(admin_client, app_user, objekt):
+def test_einheit_ohne_gebaeude_wird_abgeleitet(admin_client, app_user, objekt):
+    """Befund I11 — **umgekehrtes Verhalten seit 2026-07-21.**
+
+    Vorher wies `ensure_standort` eine Einheit ohne Gebäude ab („Eine Einheit
+    setzt ein Gebäude voraus"). Das war eine Bringschuld für jeden Aufrufer,
+    obwohl die Funktion die Gebäude-ID der Einheit an derselben Stelle bereits
+    las, um sie zu vergleichen. Sie leitet den Wert jetzt ab.
+
+    Der zusammengesetzte FK verlangt ihn trotzdem — also muss er auch
+    **geschrieben** werden, nicht nur geprüft.
+    """
+    from db_core.models import TechnicalAsset
+
     g = _gebaeude(app_user, objekt)
     u = _einheit(app_user, g)
     r = _post(admin_client, objekt, unit_id=str(u.id))
-    assert r.status_code == 422, r.content
-    assert "setzt ein Gebäude voraus" in r.json()["detail"]
+    assert r.status_code == 201, r.content
+
+    zeile = TechnicalAsset.objects.get(id=r.json()["id"])
+    assert zeile.unit_id == u.id
+    assert zeile.building_id == g.id, "Das Gebäude muss abgeleitet gespeichert sein"
 
 
 @pytest.mark.django_db

@@ -333,11 +333,26 @@
           </div>
         }
         <app-feld [control]="einheitForm.controls.unit_type" label="Einheitstyp" typ="select" [pflicht]="true" platzhalter="Bitte wählen" [optionen]="unitTypOptionen" />
-        <app-feld [control]="einheitForm.controls.unit_number" label="Einheitsnummer" [pflicht]="true" hinweis="Je Liegenschaft eindeutig." />
+        <!-- Wrapper nur, damit „Speichern und noch eine" den Fokus zurück ins
+             Nummernfeld setzen kann (app-feld nimmt keine id entgegen). -->
+        <div id="einheit-nummer">
+          <app-feld [control]="einheitForm.controls.unit_number" label="Einheitsnummer" [pflicht]="true" hinweis="Je Liegenschaft eindeutig." />
+        </div>
         <app-feld [control]="einheitForm.controls.storey" label="Etage" hinweis="Optional, Freitext — z. B. EG, 3. OG, Souterrain." />
       </form>
       <div dialog-aktionen class="dialog__aktionen">
         <button type="button" class="btn" [disabled]="dialogLaedt()" (click)="einheitSchliessen()">Abbrechen</button>
+        <!-- Serienanlage light (Befund I11): Typ und Etage bleiben stehen, nur
+             die Nummer wird geleert. „EG bis 4. OG, je vier Wohnungen" waren
+             sonst 20 Dialogdurchläufe mit 20-mal demselben Einheitstyp. -->
+        <button
+          type="button"
+          class="btn"
+          [disabled]="dialogLaedt()"
+          (click)="einheitAbsendenUndWeiter()"
+        >
+          Speichern und noch eine
+        </button>
         <button type="submit" form="neu-einheit-form" class="btn btn--primary" [disabled]="dialogLaedt()" [attr.aria-busy]="dialogLaedt()">
           {{ dialogLaedt() ? 'Wird angelegt …' : 'Einheit anlegen' }}
         </button>

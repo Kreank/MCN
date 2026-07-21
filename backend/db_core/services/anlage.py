@@ -356,7 +356,13 @@ def create_asset(actor_app_user_id, property_id, daten):
         # Die DB verlangt es seit 0101 (NOT NULL) — und mit gutem Grund: Eine
         # Anlage, deren Art niemand kennt, hilft dem Monteur nicht.
         raise ValueError("asset_type ist ein Pflichtfeld.")
-    ensure_standort(property_id, werte.get("building_id"), werte.get("unit_id"))
+    # Rückgabewert übernehmen: Kam nur die Einheit, leitet `ensure_standort`
+    # ihr Gebäude ab (Befund I11) — die DB verlangt es im zusammengesetzten FK.
+    b, u = ensure_standort(
+        property_id, werte.get("building_id"), werte.get("unit_id")
+    )
+    if u is not None:
+        werte["building_id"] = b
 
     zeile = {"id": uuid.uuid4(), "property_id": property_id}
     zeile.update(werte)
@@ -391,7 +397,11 @@ def update_asset(actor_app_user_id, asset_id, daten):
     # dem `building_id` messen lassen, das die Anlage bereits trägt.
     ziel_building = werte.get("building_id", asset.building_id)
     ziel_unit = werte.get("unit_id", asset.unit_id)
-    ensure_standort(asset.property_id, ziel_building, ziel_unit)
+    ziel_building, _ = ensure_standort(asset.property_id, ziel_building, ziel_unit)
+    # Wer eine Einheit setzt, ohne das Gebäude mitzuschicken, bekommt es
+    # abgeleitet — sonst schlüge der zusammengesetzte FK zu (Befund I11).
+    if ziel_unit is not None and "building_id" not in werte:
+        werte["building_id"] = ziel_building
 
     try:
         with business_transaction(actor_app_user_id):

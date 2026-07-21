@@ -673,8 +673,11 @@ def _pruefe_zuordnung(property_id, building_id, unit_id):
     Die Regel liegt in `_validation.ensure_standort` — sie gilt gleichlautend für
     die technische Anlage (0004) und den Raum (0086). Hier bleibt nur der
     hausinterne Name stehen.
+
+    Gibt `(building_id, unit_id)` durch: Kam nur die Einheit, ist das Gebäude
+    darin abgeleitet (Befund I11).
     """
-    ensure_standort(property_id, building_id, unit_id)
+    return ensure_standort(property_id, building_id, unit_id)
 
 
 def _pruefe_raum(daten):
@@ -740,7 +743,13 @@ def create_room(actor_app_user_id, property_id, daten):
     fehlend = [f for f in ROOM_PFLICHT if werte.get(f) is None]
     if fehlend:
         raise ValueError(f"Pflichtfelder fehlen: {', '.join(fehlend)}.")
-    _pruefe_zuordnung(property_id, werte.get("building_id"), werte.get("unit_id"))
+    # Rückgabewert übernehmen: Kam nur die Einheit, ist ihr Gebäude jetzt
+    # abgeleitet (Befund I11) — die DB verlangt es im zusammengesetzten FK.
+    b, u = _pruefe_zuordnung(
+        property_id, werte.get("building_id"), werte.get("unit_id")
+    )
+    if u is not None:
+        werte["building_id"] = b
 
     zeile = {"id": uuid.uuid4(), "property_id": property_id}
     for feld in ROOM_FIELDS:
@@ -789,7 +798,9 @@ def update_room(actor_app_user_id, room_id, daten):
     # sich an dem building_id messen lassen, das der Raum schon trägt.
     ziel_building = werte.get("building_id", room.building_id)
     ziel_unit = werte.get("unit_id", room.unit_id)
-    _pruefe_zuordnung(room.property_id, ziel_building, ziel_unit)
+    ziel_building, _ = _pruefe_zuordnung(room.property_id, ziel_building, ziel_unit)
+    if ziel_unit is not None and "building_id" not in werte:
+        werte["building_id"] = ziel_building
 
     try:
         with business_transaction(actor_app_user_id):

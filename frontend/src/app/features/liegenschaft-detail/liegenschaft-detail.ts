@@ -417,6 +417,26 @@ export class LiegenschaftDetail {
     this.einheitOffen.set(false);
   }
 
+  /**
+   * Serienanlage light (Befund I11): „Speichern und noch eine".
+   *
+   * Saschas Beispiel war „EG bis 4. OG, je vier Wohnungen" — heute 20
+   * Dialogdurchläufe, bei denen der Einheitstyp 20-mal und die Etage
+   * blockweise identisch ist und trotzdem jedes Mal neu gesetzt werden muss,
+   * weil der Dialog schließt und ALLE Felder zurücksetzt.
+   *
+   * Hier bleibt der Dialog offen, Typ und Etage stehen, nur die Nummer wird
+   * geleert und bekommt den Fokus. Halbiert den Aufwand, ohne einen
+   * Bulk-Endpunkt zu brauchen (der wäre der nächste Schritt, mit Vorschau und
+   * Kollisionsbehandlung gegen `UNIQUE (property_id, unit_number)`).
+   */
+  protected readonly einheitSerie = signal(false);
+
+  einheitAbsendenUndWeiter(): void {
+    this.einheitSerie.set(true);
+    this.einheitAbsenden();
+  }
+
   einheitAbsenden(): void {
     const geb = this.einheitGebaeude();
     if (this.dialogLaedt() || !geb) return;
@@ -435,15 +455,31 @@ export class LiegenschaftDetail {
     this.svc.addUnit(geb.id, payload).subscribe({
       next: (u) => {
         this.dialogLaedt.set(false);
-        this.einheitOffen.set(false);
         this.meldung.set({ art: 'erfolg', text: `Einheit ${u.unit_number} wurde angelegt.` });
+        if (this.einheitSerie()) {
+          // Typ und Etage bleiben — genau die beiden Angaben, die bei einer
+          // Serie konstant sind. Nur die Nummer ist je Einheit verschieden.
+          this.einheitSerie.set(false);
+          this.einheitForm.controls.unit_number.reset('');
+          this.formularMeldung.set(null);
+          queueMicrotask(() => this.einheitNummerFokussieren());
+        } else {
+          this.einheitOffen.set(false);
+        }
         this.reload();
       },
       error: (err) => {
         this.dialogLaedt.set(false);
+        this.einheitSerie.set(false);
         this.formularMeldung.set(apiFehlerZuweisen(err, this.einheitForm).formular);
       },
     });
+  }
+
+  /** Fokus zurück ins Nummernfeld — sonst müsste der Anwender hinklicken. */
+  private einheitNummerFokussieren(): void {
+    const feld = document.querySelector<HTMLInputElement>('#einheit-nummer input');
+    feld?.focus();
   }
 
   // ---- Beteiligte(r) zuordnen --------------------------------------------

@@ -143,9 +143,22 @@ export class RaumEditor {
     if (!b) return [];
     return b.units.map((u) => ({
       wert: u.id,
-      label: `${u.unit_number} · ${unitTypeLabel(u.unit_type)}`,
+      // Die Etage mit anzeigen: Sie wird beim Wählen übernommen (I11), also
+      // soll vorher sichtbar sein, was da kommt.
+      label:
+        `${u.unit_number} · ${unitTypeLabel(u.unit_type)}` +
+        (u.storey ? ` · ${u.storey}` : ''),
     }));
   });
+
+  /** Etage einer Einheit über alle Gebäude hinweg (für die Übernahme, I11). */
+  private etageDerEinheit(unitId: string): string | null {
+    for (const b of this.gebaeude()) {
+      const u = b.units.find((x) => x.id === unitId);
+      if (u) return u.storey?.trim() || null;
+    }
+    return null;
+  }
 
   // --- Zustand -------------------------------------------------------------
   protected readonly huellen = signal<Huelle[]>([]);
@@ -252,8 +265,34 @@ export class RaumEditor {
     // wird geleert, statt mitgeschleift zu werden (siehe Kommentar oben).
     this.form.controls.building_id.valueChanges.pipe(takeUntilDestroyed()).subscribe((b) => {
       if (b === this.gewaehltesGebaeude()) return;
+      const hatteEinheit = !!this.form.controls.unit_id.value;
       this.gewaehltesGebaeude.set(b);
       this.form.controls.unit_id.setValue('', { emitEvent: false });
+      // Die Auswahl verschwand bisher kommentarlos — bei jedem anderen
+      // Zustandswechsel in diesem Editor gibt es eine Ansage.
+      if (hatteEinheit) {
+        this.ansage.set('Gebäude gewechselt — die Einheit wurde zurückgesetzt.');
+      }
+    });
+
+    // Einheit gewählt: Die Etage der Wohnung übernehmen (Befund I11).
+    //
+    // `unit.storey` gibt es seit Migration 0124, und der Editor hat die
+    // Einheiten samt Etage ohnehin im Speicher. Sie bei jedem Raum erneut
+    // abzutippen war reine Handarbeit für eine Angabe, die die Wohnung kennt —
+    // und ein leer gelassenes Geschoss wirft den Raum in die Sammelgruppe
+    // „Ohne Geschossangabe", also ausgerechnet aus der einzigen Ordnung, die
+    // die Raumliste hat.
+    //
+    // NUR bei leerem Feld: Ein Maisonette-Raum liegt womöglich anders als
+    // seine Wohnung, und eine getippte Angabe gehört dem Anwender. Gleiche
+    // Zurückhaltung wie bei `flaecheManuell`.
+    this.form.controls.unit_id.valueChanges.pipe(takeUntilDestroyed()).subscribe((u) => {
+      if (!u || this.form.controls.storey.value.trim()) return;
+      const etage = this.etageDerEinheit(u);
+      if (!etage) return;
+      this.form.controls.storey.setValue(etage, { emitEvent: false });
+      this.ansage.set(`Geschoss „${etage}" von der Einheit übernommen.`);
     });
 
     this.form.valueChanges.pipe(takeUntilDestroyed()).subscribe(() => {
@@ -274,9 +313,30 @@ export class RaumEditor {
       // Zuordnung eines neuen Raumes: die Gruppe, aus der „＋ Raum" geklickt wurde,
       // gibt Gebäude/Einheit vor. `reset()` hat sie eben geleert — hier zurück.
       const vor = this.vorbelegung();
-      this.form.controls.building_id.setValue(vor?.building_id ?? '', { emitEvent: false });
-      this.form.controls.unit_id.setValue(vor?.unit_id ?? '', { emitEvent: false });
-      this.gewaehltesGebaeude.set(vor?.building_id ?? '');
+      // Genau EIN Gebäude? Dann ist die Frage keine (Befund I11). Das Muster
+      // gibt es im Repo schon dreimal (ids-bestellung, auftrag-detail,
+      // bericht-positionen) — nur auf die Objektstruktur war es nie angewandt,
+      // obwohl das Einfamilienhaus laut Anruf-Dialog der häufigste Fall ist.
+      // Nur beim NEUEN Raum und nur ohne Vorbelegung: „kein Gebäude"
+      // (Altbestand) ist ein gültiger Zustand, den niemand überschreiben darf,
+      // wenn er einmal bewusst gewählt wurde.
+      const gebaeude = this.gebaeude();
+      const einzigesGebaeude = gebaeude.length === 1 ? gebaeude[0] : null;
+      const b = vor?.building_id ?? einzigesGebaeude?.id ?? '';
+      const einzigeEinheit =
+        !vor?.unit_id && einzigesGebaeude?.units.length === 1
+          ? einzigesGebaeude.units[0]
+          : null;
+      const u = vor?.unit_id ?? einzigeEinheit?.id ?? '';
+
+      this.form.controls.building_id.setValue(b, { emitEvent: false });
+      this.form.controls.unit_id.setValue(u, { emitEvent: false });
+      this.gewaehltesGebaeude.set(b);
+      // Die Etage der (automatisch oder vorbelegt) gewählten Einheit mitnehmen.
+      if (u) {
+        const etage = this.etageDerEinheit(u);
+        if (etage) this.form.controls.storey.setValue(etage, { emitEvent: false });
+      }
       this.flaecheManuell.set(false);
       this.huellen.set([]);
       this.oeffnungen.set([]);
