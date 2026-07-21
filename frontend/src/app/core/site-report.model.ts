@@ -7,8 +7,36 @@
 
 export type SiteReportStatus = 'ENTWURF' | 'UNTERZEICHNET';
 
+/**
+ * Briefkopf des Berichts (Befund B3/B8) — „das übliche Briefkopf-Gedöns".
+ *
+ * Nur im Detail befüllt, in Listen `null`: Er kostet je Bericht mehrere
+ * Abfragen (Auftraggeber, Adresse, Belegung, Eigentümer) und wäre in einer
+ * Liste ein N+1 für Angaben, die dort niemand liest.
+ *
+ * Alle Felder optional — ein Bericht am freien Termin hat keinen Auftrag und
+ * damit keinen Auftraggeber; ein Auftrag am Gemeinschaftseigentum keine
+ * Wohnung und damit keinen Mieter. Leer heißt „gibt es nicht".
+ */
+export interface SiteReportKopf {
+  order_number: string | null;
+  order_title: string | null;
+  auftraggeber: string | null;
+  auftraggeber_adresse: string | null;
+  objekt_name: string | null;
+  objekt_nummer: string | null;
+  objekt_adresse: string | null;
+  gebaeude: string | null;
+  einheit: string | null;
+  etage: string | null;
+  /** Mehrere sind der Normalfall (Ehepaar = zwei Beteiligte). */
+  mieter: string[];
+  eigentuemer: string[];
+}
+
 export interface SiteReport {
   id: string;
+  kopf: SiteReportKopf | null;
   work_order_id: string | null;
   service_job_id: string | null;
   report_date: string;

@@ -17,6 +17,7 @@ import { SiteReportService } from '../../core/site-report.service';
 import {
   SiteReport,
   SiteReportCreate,
+  SiteReportKopf,
   SiteReportUpdate,
   siteReportStatusClass,
   siteReportStatusLabel,
@@ -394,6 +395,23 @@ export class Berichte {
   private readonly datumFmt = new Intl.DateTimeFormat('de-DE', {
     day: '2-digit', month: '2-digit', year: 'numeric',
   });
+  /**
+   * Lage der Wohnung als eine Zeile: „Vorderhaus · Einheit WE 12 · 3. OG".
+   *
+   * Genau die Angabe, nach der der Monteur sucht — sie war bis Befund I11f
+   * überhaupt nicht setzbar (`auftrag.unit_id` lag ungenutzt in der DB).
+   * Leere Teile fallen weg; ohne jeden Teil gibt es keine Zeile.
+   */
+  lage(kopf: SiteReportKopf): string {
+    return [
+      kopf.gebaeude,
+      kopf.einheit ? `Einheit ${kopf.einheit}` : null,
+      kopf.etage,
+    ]
+      .filter((t): t is string => !!t)
+      .join(' · ');
+  }
+
   datum(iso: string): string {
     const d = new Date(iso + 'T00:00:00');
     return isNaN(d.getTime()) ? iso : this.datumFmt.format(d);

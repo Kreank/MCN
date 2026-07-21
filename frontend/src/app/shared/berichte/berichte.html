@@ -107,6 +107,68 @@
               </p>
             }
 
+            <!-- Briefkopf (Befund B3/B8): Auftraggeber, Adresse, Mieter, Lage
+                 der Wohnung, Auftragsnummer, Eigentümer — „halt das übliche
+                 Briefkopf-Gedöns", wie bei Angebot und Rechnung. Steht oben,
+                 weil das Dokument so gelesen wird.
+                 Leere Felder werden weggelassen statt mit „—" gefüllt: Ein
+                 Bericht am freien Termin hat legitim keinen Auftraggeber, und
+                 eine Spalte voller Gedankenstriche ist kein Briefkopf. -->
+            @if (r.kopf; as k) {
+              <dl class="briefkopf">
+                @if (k.order_number) {
+                  <div class="briefkopf__feld">
+                    <dt class="briefkopf__label">Auftragsnummer</dt>
+                    <dd class="briefkopf__wert briefkopf__wert--mono">{{ k.order_number }}</dd>
+                  </div>
+                }
+                @if (k.auftraggeber) {
+                  <div class="briefkopf__feld">
+                    <dt class="briefkopf__label">Auftraggeber</dt>
+                    <dd class="briefkopf__wert">
+                      {{ k.auftraggeber }}
+                      @if (k.auftraggeber_adresse) {
+                        <span class="briefkopf__sub">{{ k.auftraggeber_adresse }}</span>
+                      }
+                    </dd>
+                  </div>
+                }
+                @if (k.eigentuemer.length) {
+                  <div class="briefkopf__feld">
+                    <dt class="briefkopf__label">
+                      {{ k.eigentuemer.length === 1 ? 'Eigentümer' : 'Eigentümer' }}
+                    </dt>
+                    <dd class="briefkopf__wert">{{ k.eigentuemer.join(', ') }}</dd>
+                  </div>
+                }
+                @if (k.objekt_name || k.objekt_adresse) {
+                  <div class="briefkopf__feld">
+                    <dt class="briefkopf__label">Objekt</dt>
+                    <dd class="briefkopf__wert">
+                      {{ k.objekt_name }}
+                      @if (k.objekt_adresse) {
+                        <span class="briefkopf__sub">{{ k.objekt_adresse }}</span>
+                      }
+                    </dd>
+                  </div>
+                }
+                @if (lage(k); as l) {
+                  <div class="briefkopf__feld">
+                    <dt class="briefkopf__label">Lage</dt>
+                    <dd class="briefkopf__wert">{{ l }}</dd>
+                  </div>
+                }
+                @if (k.mieter.length) {
+                  <div class="briefkopf__feld">
+                    <dt class="briefkopf__label">
+                      {{ k.mieter.length === 1 ? 'Mieter' : 'Mieter' }}
+                    </dt>
+                    <dd class="briefkopf__wert">{{ k.mieter.join(', ') }}</dd>
+                  </div>
+                }
+              </dl>
+            }
+
             <dl class="feld-raster">
               <div class="feld"><dt class="feld__label">Datum</dt><dd class="feld__wert">{{ datum(r.report_date) }}</dd></div>
               <div class="feld"><dt class="feld__label">Erfasst von</dt><dd class="feld__wert" [class.feld__wert--leer]="!r.author_name">{{ r.author_name || '—' }}</dd></div>
@@ -114,8 +176,12 @@
               <div class="feld"><dt class="feld__label">Arbeitsstunden</dt><dd class="feld__wert">{{ stunden(r.hours_worked) }}</dd></div>
             </dl>
 
-            <div class="bericht__block">
-              <h3 class="bericht__h">Tätigkeiten</h3>
+            <!-- Ausgeführte Arbeiten: der Freitext, aus dem später die KI den
+                 Bericht formt („Monteur gibt Notizen ein, KI macht sinnvollen
+                 Bericht daraus"). Steht deshalb VOR den Positionen und trägt
+                 mehr Gewicht als die Nebenfelder. -->
+            <div class="bericht__block bericht__block--haupt">
+              <h3 class="bericht__h">Ausgeführte Arbeiten</h3>
               <p class="bericht__text">{{ r.activity_text }}</p>
             </div>
             @if (r.materials_note) {
