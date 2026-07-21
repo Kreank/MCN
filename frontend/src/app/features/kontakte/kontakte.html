@@ -234,6 +234,27 @@
       <app-feld [control]="personForm.controls.salutation" label="Anrede" hinweis="Optional, z. B. Herr, Frau." />
       <app-feld [control]="personForm.controls.title" label="Titel" hinweis="Optional, z. B. Dr., Prof." />
       <app-feld [control]="personForm.controls.birth_date" label="Geburtsdatum" typ="datum" hinweis="Optional." />
+
+      <!-- Befund F1: Telefon, E-Mail und Adresse lagen bisher in ZWEI
+           verschiedenen Reitern der Kontaktmappe — für einen einzigen
+           zusammenhängenden Vorgang. Alles hier optional; wer nur den Namen
+           hat, trägt nur den Namen ein. -->
+      <fieldset class="dialog-form__gruppe">
+        <legend class="dialog-form__legende">Erreichbarkeit</legend>
+        <app-feld [control]="personForm.controls.phone" label="Telefon" typ="tel" autocomplete="tel" hinweis="Optional." />
+        <app-feld [control]="personForm.controls.email" label="E-Mail" typ="email" autocomplete="email" hinweis="Optional." />
+      </fieldset>
+
+      <fieldset class="dialog-form__gruppe">
+        <legend class="dialog-form__legende">Adresse</legend>
+        <p class="dialog-form__hinweis">
+          Optional — entweder ganz ausfüllen (Straße, PLZ, Ort) oder ganz leer lassen.
+        </p>
+        <app-feld [control]="personForm.controls.street" label="Straße" [pflicht]="personAdressPflicht()" autocomplete="address-line1" />
+        <app-feld [control]="personForm.controls.house_number" label="Hausnummer" />
+        <app-feld [control]="personForm.controls.postal_code" label="PLZ" [pflicht]="personAdressPflicht()" autocomplete="postal-code" />
+        <app-feld [control]="personForm.controls.city" label="Ort" [pflicht]="personAdressPflicht()" autocomplete="address-level2" />
+      </fieldset>
     </form>
     <div dialog-aktionen class="dialog__aktionen">
       <button type="button" class="btn" [disabled]="neuLaedt()" (click)="personSchliessen()">Abbrechen</button>
@@ -259,6 +280,24 @@
       <app-feld [control]="orgForm.controls.registration_number" label="Registernummer" hinweis="Optional, z. B. HRB 12345." />
       <app-feld [control]="orgForm.controls.tax_number" label="Steuernummer" hinweis="Optional." />
       <app-feld [control]="orgForm.controls.vat_id" label="USt-IdNr." hinweis="Optional." />
+
+      <!-- Wie bei der Person (F1) — eine Firma hat fast immer beides. -->
+      <fieldset class="dialog-form__gruppe">
+        <legend class="dialog-form__legende">Erreichbarkeit</legend>
+        <app-feld [control]="orgForm.controls.phone" label="Telefon" typ="tel" autocomplete="tel" hinweis="Optional." />
+        <app-feld [control]="orgForm.controls.email" label="E-Mail" typ="email" autocomplete="email" hinweis="Optional." />
+      </fieldset>
+
+      <fieldset class="dialog-form__gruppe">
+        <legend class="dialog-form__legende">Geschäftsanschrift</legend>
+        <p class="dialog-form__hinweis">
+          Optional — entweder ganz ausfüllen (Straße, PLZ, Ort) oder ganz leer lassen.
+        </p>
+        <app-feld [control]="orgForm.controls.street" label="Straße" [pflicht]="orgAdressPflicht()" autocomplete="address-line1" />
+        <app-feld [control]="orgForm.controls.house_number" label="Hausnummer" />
+        <app-feld [control]="orgForm.controls.postal_code" label="PLZ" [pflicht]="orgAdressPflicht()" autocomplete="postal-code" />
+        <app-feld [control]="orgForm.controls.city" label="Ort" [pflicht]="orgAdressPflicht()" autocomplete="address-level2" />
+      </fieldset>
     </form>
     <div dialog-aktionen class="dialog__aktionen">
       <button type="button" class="btn" [disabled]="neuLaedt()" (click)="orgSchliessen()">Abbrechen</button>

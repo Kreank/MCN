@@ -454,6 +454,37 @@ button {
   gap: var(--space-4);
 }
 
+/* Abschnitte innerhalb eines Anlage-Dialogs (Erreichbarkeit, Adresse …).
+   Bewusst <fieldset>/<legend> und nicht <div>/<p>: Screenreader kuendigen die
+   Legende bei JEDEM Feld der Gruppe mit an — „Adresse, Strasse" statt nur
+   „Strasse". Bei einem Dialog, der jetzt Name, Erreichbarkeit UND Anschrift
+   in einem Rutsch erfasst, ist das der Unterschied zwischen Orientierung und
+   Ratespiel. Der UA-Rahmen des fieldset wird entfernt, die Gruppierung traegt
+   die Legende. */
+.dialog-form__gruppe {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin: 0;
+  padding: var(--space-4) 0 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  min-width: 0; /* fieldset bricht sonst aus Flex-Containern aus */
+}
+.dialog-form__legende {
+  padding: 0 0 var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.dialog-form__hinweis {
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
 // ============================================================================
 // Melde-Banner (Erfolg/Fehler nach einer Aktion). Status nie nur ueber Farbe:
 // stets Icon + Wortmarke („Erledigt"/„Fehler") + Text.

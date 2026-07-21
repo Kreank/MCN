@@ -1310,6 +1310,28 @@ def quick_intake(request, payload: QuickIntakeIn):
                 role="PROPERTY_OWNER",
                 valid_from=date.today(),
             )
+            # Befund F4 (die Anschrift endet nur an der Liegenschaft, der
+            # Melder bleibt ohne) wird hier BEWUSST NICHT behoben.
+            #
+            # Der naheliegende Griff wäre, dem Melder dieselbe Adresszeile
+            # zuzuordnen. Er war einmal gebaut und ist wieder zurückgenommen:
+            # „Liegenschaft neu" belegt, dass das OBJEKT noch nicht erfasst
+            # war — nicht, dass der Anrufer dort wohnt. Ein Vermieter, der sein
+            # Mietobjekt erstmals meldet, bekäme dessen Anschrift als
+            # Privatadresse. Dieselbe Skepsis, die unten die Eigentümerrolle
+            # bei einer BESTEHENDEN Liegenschaft verhindert, gilt hier auch.
+            #
+            # Die Folgen wären nicht kosmetisch: `beleg._ADDRESS_PREFERENCE`
+            # fällt bis PRIVATE durch, die Anschrift landete also als
+            # Empfängeradresse im Snapshot GoBD-relevanter Belege — wo heute
+            # ehrlich keine steht. Und `excl_party_address_primary` verbaut mit
+            # `is_primary` den Platz für die echte Privatanschrift, während
+            # `party_address` außer POST keine Schreiboperation hat (H3): Der
+            # Fehlgriff wäre nicht rücknehmbar.
+            #
+            # Voraussetzung für eine Umsetzung ist also AP4 (Korrigieren und
+            # Beenden von Zuordnungen) plus eine ausdrückliche Bestätigung im
+            # Dialog („wohnt an dieser Adresse").
             property_id = prop.id
         else:
             # Existenz prüft create_service_case selbst (ensure_exists → 422).

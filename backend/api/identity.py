@@ -139,6 +139,36 @@ class NoteIn(Schema):
     note: str | None = None
 
 
+class KontaktwegeIn(Schema):
+    """Telefon und E-Mail gleich bei der Anlage (Befund F1/F3).
+
+    Beide optional: Nicht jeder Kontakt hinterlässt beides, und ein erzwungenes
+    Feld führt zu erfundenen Werten. Was gesetzt ist, wird primär angelegt.
+    """
+
+    phone: str | None = None
+    email: str | None = None
+
+
+class AdresseIn(Schema):
+    """Adresse gleich bei der Anlage (Befund F1).
+
+    Sie landet als `identity.party_address` — also im Reiter „Adressen" der
+    Kontaktmappe. Genau das fehlte bisher auch den atomaren Durchstichen
+    (`quick-intake`, `/planung/anruf`): Dort entsteht die Anschrift nur an der
+    Liegenschaft, der Kontakt selbst bleibt ohne (Befund F4).
+    """
+
+    street: str
+    postal_code: str
+    city: str
+    house_number: str | None = None
+    address_addition: str | None = None
+    country_code: str = "DE"
+    address_type: str = "PRIVATE"
+    label: str | None = None
+
+
 class PersonIn(Schema):
     # Vorname optional seit Migration 0125 (Befund B1): Am Telefon fällt er
     # oft nicht, und ein erfundenes „X" ist schlechter als gar keiner. Der
@@ -148,6 +178,9 @@ class PersonIn(Schema):
     salutation: str | None = None
     title: str | None = None
     birth_date: date | None = None
+    # Optionale Blöcke: Ohne sie verhält sich der Endpunkt exakt wie bisher.
+    kontakt: KontaktwegeIn | None = None
+    adresse: AdresseIn | None = None
 
 
 class OrganizationIn(Schema):
@@ -158,6 +191,10 @@ class OrganizationIn(Schema):
     registration_number: str | None = None
     tax_number: str | None = None
     vat_id: str | None = None
+    # Eine Firma hat fast immer beides — der Anlage-Dialog verlangte bisher
+    # trotzdem zwei weitere Reiterwechsel dafür.
+    kontakt: KontaktwegeIn | None = None
+    adresse: AdresseIn | None = None
 
 
 class PartyFilter(Schema):
@@ -387,18 +424,46 @@ def _party_detail(party_id):
 # Vor der {party_id}-Detailroute registriert: der Pfad-Konverter würde sonst
 # die literalen Pfade /person bzw. /organization schlucken.
 
+def _adress_argumente(adresse):
+    """`AdresseIn` → Argumente für `identity_service.add_address`."""
+    if adresse is None:
+        return None
+    return {
+        "address_type": adresse.address_type,
+        "street": adresse.street,
+        "postal_code": adresse.postal_code,
+        "city": adresse.city,
+        "house_number": adresse.house_number,
+        "address_addition": adresse.address_addition,
+        "country_code": adresse.country_code,
+        "label": adresse.label,
+    }
+
+
 @router.post("/parties/person", response={201: PartyDetailOut}, auth=django_auth)
 def create_person(request, payload: PersonIn):
-    """Neue Person anlegen (Party PERSON + identity.person)."""
+    """Neue Person anlegen — optional gleich mit Telefon, E-Mail und Adresse.
+
+    Befund F1: Der Dialog kannte nur Namensfelder, Telefon und Adresse waren
+    danach in zwei verschiedenen Reitern der Kontaktmappe nachzutragen. Die
+    Blöcke `kontakt` und `adresse` sind optional — ohne sie verhält sich der
+    Endpunkt wie zuvor.
+    """
     actor, _ = require(request, "identity", "ANLEGEN")
     try:
-        party = identity_service.create_person(
+        party = identity_service.kontakt_durchstich(
             actor,
-            first_name=payload.first_name,
-            last_name=payload.last_name,
-            salutation=payload.salutation,
-            title=payload.title,
-            birth_date=payload.birth_date,
+            anlegen=lambda: identity_service.create_person(
+                actor,
+                first_name=payload.first_name,
+                last_name=payload.last_name,
+                salutation=payload.salutation,
+                title=payload.title,
+                birth_date=payload.birth_date,
+            ),
+            phone=payload.kontakt.phone if payload.kontakt else None,
+            email=payload.kontakt.email if payload.kontakt else None,
+            adresse=_adress_argumente(payload.adresse),
         )
     except ValueError as exc:
         raise HttpError(422, str(exc))
@@ -407,18 +472,34 @@ def create_person(request, payload: PersonIn):
 
 @router.post("/parties/organization", response={201: PartyDetailOut}, auth=django_auth)
 def create_organization(request, payload: OrganizationIn):
-    """Neue Organisation anlegen (Party ORGANIZATION + identity.organization)."""
+    """Neue Organisation anlegen — optional gleich mit Telefon, E-Mail, Adresse.
+
+    Wie bei der Person (F1); eine Firma hat fast immer beides. Der Adresstyp
+    ist hier standardmäßig BUSINESS statt PRIVATE, wenn nichts anderes kommt.
+    """
     actor, _ = require(request, "identity", "ANLEGEN")
+    adresse = _adress_argumente(payload.adresse)
+    if adresse is not None and payload.adresse.address_type == "PRIVATE":
+        # Der Schema-Default passt für Personen; bei einer Organisation ist die
+        # Geschäftsanschrift der Normalfall. Wer BUSINESS ausdrücklich nicht
+        # will, sendet einen anderen Typ — der bleibt dann stehen.
+        adresse["address_type"] = "BUSINESS"
     try:
-        party = identity_service.create_organization(
+        party = identity_service.kontakt_durchstich(
             actor,
-            legal_name=payload.legal_name,
-            organization_type=payload.organization_type,
-            display_name=payload.display_name,
-            legal_form=payload.legal_form,
-            registration_number=payload.registration_number,
-            tax_number=payload.tax_number,
-            vat_id=payload.vat_id,
+            anlegen=lambda: identity_service.create_organization(
+                actor,
+                legal_name=payload.legal_name,
+                organization_type=payload.organization_type,
+                display_name=payload.display_name,
+                legal_form=payload.legal_form,
+                registration_number=payload.registration_number,
+                tax_number=payload.tax_number,
+                vat_id=payload.vat_id,
+            ),
+            phone=payload.kontakt.phone if payload.kontakt else None,
+            email=payload.kontakt.email if payload.kontakt else None,
+            adresse=adresse,
         )
     except ValueError as exc:
         raise HttpError(422, str(exc))

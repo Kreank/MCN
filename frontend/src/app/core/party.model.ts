@@ -73,10 +73,38 @@ export interface PartyNoteInput {
 }
 
 // --- Anlage (POST /api/identity/parties/person | /organization) ------------
+/**
+ * Telefon und E-Mail gleich bei der Anlage (Befund F1/F3). Beide optional;
+ * was gesetzt ist, wird als primärer Kommunikationsweg angelegt.
+ */
+export interface KontaktwegeIn {
+  phone?: string | null;
+  email?: string | null;
+}
+
+/**
+ * Adresse gleich bei der Anlage (Befund F1). Sie landet als `party_address` —
+ * also im Reiter „Adressen" der Kontaktmappe.
+ */
+export interface AdresseIn {
+  street: string;
+  postal_code: string;
+  city: string;
+  house_number?: string | null;
+  address_addition?: string | null;
+  country_code?: string;
+  /** Vorgabe: PRIVATE bei Personen, BUSINESS bei Organisationen. */
+  address_type?: string;
+  label?: string | null;
+}
+
 export interface PersonIn {
   /** Optional (B1) — leer lassen heißt „nicht erhoben", nicht Leerstring. */
   first_name?: string | null;
   last_name: string;
+  /** Optionale Blöcke — ohne sie verhält sich der Endpunkt wie zuvor. */
+  kontakt?: KontaktwegeIn | null;
+  adresse?: AdresseIn | null;
   salutation?: string | null;
   title?: string | null;
   birth_date?: string | null;
@@ -98,6 +126,9 @@ export interface OrganizationIn {
   registration_number?: string | null;
   tax_number?: string | null;
   vat_id?: string | null;
+  /** Wie bei der Person (F1) — eine Firma hat fast immer beides. */
+  kontakt?: KontaktwegeIn | null;
+  adresse?: AdresseIn | null;
 }
 
 // --- Kontaktmappe: Adressen / Kontaktwege / Ansprechpartner ----------------

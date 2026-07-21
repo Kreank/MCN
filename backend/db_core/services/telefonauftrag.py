@@ -294,6 +294,14 @@ def anruf_durchstich(
                 role="PROPERTY_OWNER",
                 valid_from=date.today(),
             )
+            # Befund F4 wird hier BEWUSST NICHT behoben — dieselbe Begründung
+            # wie in `api/projekt.py` (quick-intake): „Liegenschaft neu" belegt,
+            # dass das OBJEKT noch nicht erfasst war, nicht dass der Anrufer
+            # dort wohnt. Es war einmal gebaut und wieder zurückgenommen; die
+            # Anschrift landete sonst über `beleg._ADDRESS_PREFERENCE` als
+            # Empfängeradresse auf GoBD-relevanten Belegen, und `is_primary`
+            # hätte den Platz für die echte Privatanschrift verbaut, ohne dass
+            # es einen Weg zurück gibt (H3: `party_address` kennt nur POST).
             property_id = prop.id
         else:
             property_id = existing_property_id

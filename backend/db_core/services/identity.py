@@ -15,12 +15,13 @@ niemals als 500. DSGVO: es werden keine personenbezogenen Werte (Adressen,
 Kontaktwege) in Fehlermeldungen aufgenommen.
 """
 import datetime
+import re
 import uuid
 
 from django.db import IntegrityError, transaction
 from django.db.models import Count
 
-from db_core.db_context import business_transaction
+from db_core.db_context import business_transaction, run_business_transaction
 from db_core.gate_errors import as_business_error
 from db_core.models import (
     AcquisitionSource,
@@ -354,6 +355,67 @@ def contact_person_case_counts(person_party_ids, *, scope="ALLE", actor_id=None)
 
 
 # ---------------------------------------------------------------------------
+# Kontakt in einem Rutsch (Befunde F1/F3)
+# ---------------------------------------------------------------------------
+
+def kontakt_durchstich(
+    actor_app_user_id,
+    *,
+    anlegen,
+    phone=None,
+    email=None,
+    adresse=None,
+):
+    """Kontakt + Kommunikationswege + Adresse in EINER Transaktion.
+
+    Der Anlage-Dialog kannte bisher nur Namensfelder (Befund F1). Telefon und
+    Adresse waren danach in **zwei verschiedenen Reitern** der Kontaktmappe
+    nachzutragen — und weil nach dem Anlegen nicht einmal dorthin navigiert
+    wurde (F2), musste der Kontakt vorher in der Liste wiedergefunden werden.
+    Für einen einzigen zusammenhängenden Vorgang.
+
+    Dass das fachlich zulässig ist, war nie die Frage: `quick-intake` und
+    `/planung/anruf` legen Person und Kontaktwege längst atomar an (F3). Was
+    beiden fehlt, ist die **Adresse am Kontakt** (F4) — die entsteht dort nur an
+    der Liegenschaft. Hier ist sie dabei.
+
+    `anlegen` ist ein Aufruf ohne Argumente, der die Party erzeugt und
+    zurückgibt (`create_person` oder `create_organization`, jeweils vorbelegt).
+    So trägt diese Funktion die Reihenfolge und die Transaktionsklammer, ohne
+    Personen- und Organisationsfelder doppelt zu kennen.
+
+    **Alles oder nichts:** Die service-internen `business_transaction`-Aufrufe
+    werden hier zu Savepoints. Scheitert die Adresse, entsteht keine Person ohne
+    sie — und das wäre sonst eine Waise, die der No-Delete-Schutz nicht mehr
+    entfernen könnte (dasselbe Argument wie bei `quick_intake`).
+    """
+
+    def _durchstich():
+        party = anlegen()
+        if phone and phone.strip():
+            add_contact_point(
+                actor_app_user_id,
+                party.id,
+                contact_type="PHONE",
+                value=phone,
+                is_primary=True,
+            )
+        if email and email.strip():
+            add_contact_point(
+                actor_app_user_id,
+                party.id,
+                contact_type="EMAIL",
+                value=email,
+                is_primary=True,
+            )
+        if adresse:
+            add_address(actor_app_user_id, party.id, **adresse)
+        return party
+
+    return run_business_transaction(actor_app_user_id, _durchstich)
+
+
+# ---------------------------------------------------------------------------
 # Adressen — address + party_address
 # ---------------------------------------------------------------------------
 
@@ -363,6 +425,45 @@ def list_addresses(party_id, *, include_ended=False):
     if not include_ended:
         qs = qs.filter(valid_until__isnull=True)
     return list(qs.order_by("-is_primary", "address_type", "-valid_from", "id"))
+
+
+def _party_address_anlegen(
+    party_id, address_id, *, address_type, is_primary, valid_from, label
+):
+    """Die Zuordnungszeile selbst — ohne eigene Transaktion.
+
+    Getrennt gehalten, weil das Zuordnen einer BESTEHENDEN Adresse (der von
+    Befund G3 vermisste Weg) genau hier ansetzt: `identity.address` ist ein
+    gemeinsamer Topf und append-only, `party_address.address_id` und
+    `property.address_id` dürfen dieselbe Zeile referenzieren. Es fehlt nur der
+    Aufrufer — siehe die Begründung in `api/projekt.py` (quick-intake), warum
+    das NICHT automatisch geschehen darf.
+    """
+    return PartyAddress.objects.create(
+        id=uuid.uuid4(),
+        party_id=party_id,
+        address_id=address_id,
+        address_type=address_type,
+        is_primary=is_primary,
+        valid_from=valid_from,
+        label=(label.strip() if label and label.strip() else None),
+    )
+
+
+def _adress_dublette(exc):
+    """Der Exclusion-Constraint als Fachfehler statt als 500.
+
+    Gibt `None` zurück, wenn es NICHT die Dublette war — die Aufrufstelle
+    reicht dann blank weiter. `raise exc from exc` wäre der bequemere Weg,
+    setzte aber `__cause__` auf die Exception selbst und unterdrückte damit
+    die echte Ursachenkette in der Ausgabe.
+    """
+    if "excl_party_address_primary" in str(exc):
+        return ValueError(
+            "Für diesen Kontakt existiert im angegebenen Zeitraum bereits "
+            "eine primäre Adresse dieses Typs."
+        )
+    return None
 
 
 def add_address(
@@ -393,6 +494,20 @@ def add_address(
             f"Ungültiger Adresstyp '{address_type}'. "
             f"Erlaubt: {', '.join(ADDRESS_TYPES)}."
         )
+    # Die DB trägt CHECKs auf street/postal_code/city (btrim <> '') und auf
+    # country_code (^[A-Z]{2}$). Vorab prüfen, sonst enden Fehleingaben als
+    # roher IntegrityError — also 500 statt Meldung. Dieselbe Politik wie bei
+    # den Namen in `create_person` und bei `create_property`.
+    for feldname, wert in (
+        ("Die Straße", street), ("Die PLZ", postal_code), ("Der Ort", city),
+    ):
+        if not wert or not str(wert).strip():
+            raise ValueError(f"{feldname} darf nicht leer sein.")
+    if not re.fullmatch(r"[A-Z]{2}", str(country_code or "")):
+        raise ValueError(
+            f"Ungültiges Länderkürzel '{country_code}'. "
+            "Erwartet werden zwei Großbuchstaben (z. B. DE)."
+        )
     ensure_party_usable(party_id, label="Kontakt")
     valid_from = valid_from or datetime.date.today()
 
@@ -407,22 +522,19 @@ def add_address(
                 city=city,
                 country_code=country_code,
             )
-            link = PartyAddress.objects.create(
-                id=uuid.uuid4(),
-                party_id=party_id,
-                address_id=address.id,
+            link = _party_address_anlegen(
+                party_id,
+                address.id,
                 address_type=address_type,
                 is_primary=is_primary,
                 valid_from=valid_from,
-                label=(label.strip() if label and label.strip() else None),
+                label=label,
             )
     except IntegrityError as exc:
-        if "excl_party_address_primary" in str(exc):
-            raise ValueError(
-                "Für diesen Kontakt existiert im angegebenen Zeitraum bereits "
-                "eine primäre Adresse dieses Typs."
-            ) from exc
-        raise
+        fachlich = _adress_dublette(exc)
+        if fachlich is None:
+            raise
+        raise fachlich from exc
     return link
 
 

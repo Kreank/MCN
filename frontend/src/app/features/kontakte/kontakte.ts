@@ -1,11 +1,25 @@
-import { Component, computed, inject, signal } from '@angular/core';
+import {
+  Component,
+  DestroyRef,
+  WritableSignal,
+  computed,
+  inject,
+  signal,
+} from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { Router, RouterLink } from '@angular/router';
-import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
+import {
+  FormBuilder,
+  FormControl,
+  ReactiveFormsModule,
+  Validators,
+} from '@angular/forms';
 import { Subject, debounceTime, distinctUntilChanged } from 'rxjs';
 import { PartyService } from '../../core/party.service';
 import { AuthService } from '../../core/auth.service';
 import {
+  AdresseIn,
+  KontaktwegeIn,
   OrganizationIn,
   OrganizationTypeCode,
   Party,
@@ -19,6 +33,7 @@ import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 import { Dialog } from '../../shared/dialog/dialog';
 import { Feld, FeldOption } from '../../shared/formular/feld';
 import { apiFehlerZuweisen } from '../../shared/formular/api-fehler';
+import { erforderlichGetrimmt } from '../../shared/formular/text';
 import {
   felderAlsBeruehrtMarkieren,
   serverFehlerZuruecksetzen,
@@ -113,6 +128,20 @@ export class Kontakte {
       validators: [Validators.required, Validators.maxLength(200)],
     }),
     birth_date: this.fb.control('', { nonNullable: true }),
+    // --- Kontaktwege und Adresse gleich mit (Befund F1) ---------------------
+    // Alle optional. Der Sinn ist nicht, mehr abzufragen, sondern den Vorgang
+    // nicht zu zerreißen: Wer beim Anlegen die Nummer und die Anschrift zur
+    // Hand hat, soll sie eintragen können, statt danach durch zwei Reiter der
+    // Kontaktmappe zu wandern.
+    phone: this.fb.control('', { nonNullable: true }),
+    email: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.email],
+    }),
+    street: this.fb.control('', { nonNullable: true }),
+    house_number: this.fb.control('', { nonNullable: true }),
+    postal_code: this.fb.control('', { nonNullable: true }),
+    city: this.fb.control('', { nonNullable: true }),
   });
 
   protected readonly orgForm = this.fb.group({
@@ -129,7 +158,89 @@ export class Kontakte {
     registration_number: this.fb.control('', { nonNullable: true }),
     tax_number: this.fb.control('', { nonNullable: true }),
     vat_id: this.fb.control('', { nonNullable: true }),
+    // Wie bei der Person (F1) — eine Firma hat fast immer beides.
+    phone: this.fb.control('', { nonNullable: true }),
+    email: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.email],
+    }),
+    street: this.fb.control('', { nonNullable: true }),
+    house_number: this.fb.control('', { nonNullable: true }),
+    postal_code: this.fb.control('', { nonNullable: true }),
+    city: this.fb.control('', { nonNullable: true }),
   });
+
+  /**
+   * Die Adresse ist ganz oder gar nicht: Eine Anschrift ohne Ort ist keine.
+   *
+   * Umgesetzt als **bedingte Pflicht** statt als Prüfung beim Absenden. Der
+   * Unterschied ist nicht kosmetisch: Eine Meldung im Banner oben stünde weit
+   * entfernt von den Adressfeldern, die jetzt ganz unten in einem deutlich
+   * längeren Dialog liegen — wer unten „Anlegen" drückt, sähe nichts. Feldnah
+   * bekommt jedes fehlende Feld sein eigenes `aria-invalid` und seine eigene
+   * Meldung (WCAG 3.3.1: der Nutzer sieht, WAS zu beheben ist), und es
+   * verhält sich wie jede andere Validierung in diesem Formular.
+   *
+   * Solange alle vier Felder leer sind, ist keines Pflicht — wer nur den Namen
+   * erfassen will, wird nicht angemeckert.
+   */
+  private adressPflichtVerdrahten(
+    c: {
+      street: FormControl<string>;
+      house_number: FormControl<string>;
+      postal_code: FormControl<string>;
+      city: FormControl<string>;
+    },
+    anzeige: WritableSignal<boolean>,
+  ): void {
+    const alle = [c.street, c.house_number, c.postal_code, c.city];
+    const pflicht = [c.street, c.postal_code, c.city];
+    for (const feld of alle) {
+      feld.valueChanges.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(() => {
+        const etwasGetippt = alle.some((f) => f.value.trim() !== '');
+        // Das Signal treibt `[pflicht]` im Template: Stern und `aria-required`
+        // müssen dem tatsächlichen Zustand folgen, sonst sehen drei
+        // Pflichtfelder aus wie die optionalen darüber.
+        anzeige.set(etwasGetippt);
+        for (const p of pflicht) {
+          const hat = p.hasValidator(erforderlichGetrimmt);
+          if (etwasGetippt && !hat) p.addValidators(erforderlichGetrimmt);
+          else if (!etwasGetippt && hat) p.removeValidators(erforderlichGetrimmt);
+          else continue;
+          // `emitEvent: false` — sonst löst die Neubewertung wieder
+          // valueChanges aus und wir drehen uns im Kreis.
+          p.updateValueAndValidity({ emitEvent: false });
+        }
+      });
+    }
+  }
+
+  /** Ob die Adressfelder gerade Pflicht sind (steuert Stern + aria-required). */
+  protected readonly personAdressPflicht = signal(false);
+  protected readonly orgAdressPflicht = signal(false);
+
+  /** Adressblock fürs Payload; `null`, wenn nichts eingetragen wurde. */
+  private adressBlock(v: {
+    street: string;
+    house_number: string;
+    postal_code: string;
+    city: string;
+  }): AdresseIn | null {
+    const street = v.street.trim();
+    const postal_code = v.postal_code.trim();
+    const city = v.city.trim();
+    const house_number = v.house_number.trim();
+    if (!street && !postal_code && !city && !house_number) return null;
+    return { street, postal_code, city, house_number: house_number || null };
+  }
+
+  /** Kontaktwege-Block; `null`, wenn weder Telefon noch E-Mail gesetzt sind. */
+  private kontaktBlock(v: { phone: string; email: string }): KontaktwegeIn | null {
+    const phone = v.phone.trim();
+    const email = v.email.trim();
+    if (!phone && !email) return null;
+    return { phone: phone || null, email: email || null };
+  }
 
   private readonly searchInput$ = new Subject<string>();
   private reqId = 0;
@@ -175,7 +286,13 @@ export class Kontakte {
     return items.some((p) => sel.has(p.id)) && !this.allOnPageSelected();
   });
 
+  private readonly destroyRef = inject(DestroyRef);
+
   constructor() {
+    // Adressfelder: ganz oder gar nicht (siehe `adressPflichtVerdrahten`).
+    this.adressPflichtVerdrahten(this.personForm.controls, this.personAdressPflicht);
+    this.adressPflichtVerdrahten(this.orgForm.controls, this.orgAdressPflicht);
+
     this.searchInput$
       .pipe(debounceTime(300), distinctUntilChanged(), takeUntilDestroyed())
       .subscribe((v) => {
@@ -350,6 +467,12 @@ export class Kontakte {
       first_name: '',
       last_name: '',
       birth_date: '',
+      phone: '',
+      email: '',
+      street: '',
+      house_number: '',
+      postal_code: '',
+      city: '',
     });
     this.formularMeldung.set(null);
     this.personOffen.set(true);
@@ -376,6 +499,8 @@ export class Kontakte {
       salutation: v.salutation.trim() || null,
       title: v.title.trim() || null,
       birth_date: v.birth_date || null,
+      kontakt: this.kontaktBlock(v),
+      adresse: this.adressBlock(v),
     };
 
     this.neuLaedt.set(true);
@@ -407,6 +532,12 @@ export class Kontakte {
       registration_number: '',
       tax_number: '',
       vat_id: '',
+      phone: '',
+      email: '',
+      street: '',
+      house_number: '',
+      postal_code: '',
+      city: '',
     });
     this.formularMeldung.set(null);
     this.orgOffen.set(true);
@@ -433,6 +564,9 @@ export class Kontakte {
       registration_number: v.registration_number.trim() || null,
       tax_number: v.tax_number.trim() || null,
       vat_id: v.vat_id.trim() || null,
+      kontakt: this.kontaktBlock(v),
+      // Der Server setzt hier BUSINESS als Vorgabe (Geschäftsanschrift).
+      adresse: this.adressBlock(v),
     };
 
     this.neuLaedt.set(true);

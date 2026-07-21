@@ -795,6 +795,38 @@ def test_quick_intake_leerer_nachname_422_statt_500(admin_client, db):
 
 
 @pytest.mark.django_db
+def test_quick_intake_gibt_dem_melder_KEINE_adresse(admin_client, db):
+    """Befund F4 wird bewusst NICHT automatisch behoben — dieser Test hält das fest.
+
+    Die Anschrift landet nur an der Liegenschaft; der Melder bekommt keine
+    `party_address`. Der naheliegende Griff (dieselbe Adresszeile zuordnen) war
+    einmal gebaut und wurde zurückgenommen:
+
+    „Liegenschaft neu" belegt, dass das OBJEKT noch nicht erfasst war — nicht,
+    dass der Anrufer dort wohnt. Ein Vermieter, der sein Mietobjekt erstmals
+    meldet, bekäme dessen Anschrift als Privatadresse. Über
+    `beleg._ADDRESS_PREFERENCE` (das bis PRIVATE durchfällt) stünde sie
+    anschließend als Empfängeranschrift im Snapshot GoBD-relevanter Belege, wo
+    heute ehrlich keine steht — und `excl_party_address_primary` verbaute den
+    Platz für die echte Adresse, ohne dass es einen Weg zurück gibt
+    (`party_address` kennt außer POST keine Schreiboperation, Befund H3).
+
+    Wird das je umgesetzt, braucht es AP4 (Zuordnungen korrigieren/beenden)
+    UND eine ausdrückliche Bestätigung im Dialog. Dann ist dieser Test zu
+    ändern — mit Absicht, nicht aus Versehen.
+    """
+    from db_core.models import PartyAddress
+
+    r = admin_client.post(
+        "/api/workflow/quick-intake",
+        data=_quick_intake_payload(),
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    assert not PartyAddress.objects.filter(party_id=r.json()["party_id"]).exists()
+
+
+@pytest.mark.django_db
 def test_quick_intake_ohne_vornamen(admin_client, db):
     """Befund B1: „Frau Özdemir aus der Ahornstraße meldet einen Wasserschaden"
     ist eine vollständige Meldung — der Vorname kommt darin nicht vor.

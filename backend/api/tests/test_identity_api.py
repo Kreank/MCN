@@ -166,6 +166,170 @@ def test_create_person_ohne_vornamen(client, db):
 
 
 @pytest.mark.django_db
+def test_create_person_in_einem_rutsch(client, db):
+    """Befund F1/F3: Telefon, E-Mail und Adresse gleich bei der Anlage.
+
+    Vorher: Dialog → Liste → Kontakt wiederfinden → Mappe → Reiter Stammdaten →
+    Dialog Kontaktweg (zweimal) → Reiter Adressen → Dialog Adresse. Für einen
+    einzigen zusammenhängenden Vorgang.
+    """
+    from db_core.models import ContactPoint, PartyAddress
+
+    c = _logged_in_client(client, with_app_user=True)
+    r = c.post(
+        "/api/identity/parties/person",
+        data={
+            "first_name": "Erika",
+            "last_name": "Mustermann",
+            "kontakt": {"phone": "030 1234567", "email": "e.mustermann@example.org"},
+            "adresse": {
+                "street": "Ahornweg",
+                "house_number": "7",
+                "postal_code": "10115",
+                "city": "Berlin",
+            },
+        },
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    pid = r.json()["id"]
+
+    wege = ContactPoint.objects.filter(party_id=pid)
+    assert {w.contact_type for w in wege} == {"PHONE", "EMAIL"}
+    assert all(w.is_primary for w in wege)
+
+    adressen = PartyAddress.objects.filter(party_id=pid).select_related("address")
+    assert adressen.count() == 1
+    zuordnung = adressen.first()
+    assert zuordnung.address_type == "PRIVATE"
+    assert zuordnung.address.street == "Ahornweg"
+    assert zuordnung.address.city == "Berlin"
+
+
+@pytest.mark.django_db
+def test_create_person_ohne_zusatzbloecke_unveraendert(client, db):
+    """Die Blöcke sind optional — ohne sie muss der Endpunkt sich wie bisher
+    verhalten. Sonst wäre die Erweiterung ein verstecktes Pflichtfeld."""
+    from db_core.models import ContactPoint, PartyAddress
+
+    c = _logged_in_client(client, with_app_user=True)
+    r = c.post(
+        "/api/identity/parties/person",
+        data={"first_name": "Ohne", "last_name": "Zusatz"},
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    pid = r.json()["id"]
+    assert not ContactPoint.objects.filter(party_id=pid).exists()
+    assert not PartyAddress.objects.filter(party_id=pid).exists()
+
+
+@pytest.mark.django_db
+def test_durchstich_ist_alles_oder_nichts(client, db):
+    """Scheitert die Adresse, darf keine Person ohne sie zurückbleiben.
+
+    Eine solche Waise wäre nicht mehr zu entfernen — `identity.party` trägt den
+    No-Delete-Schutz. Derselbe Grund wie bei `quick_intake`.
+
+    Hier scheitert die Vorabprüfung des Service (unbekannter Adresstyp), also
+    noch vor jedem Schreibzugriff. Den Pfad, bei dem erst die DATENBANK ablehnt
+    und ein Savepoint zurückrollt, prüft `test_durchstich_savepoint_rollt_zurueck`.
+    """
+    from db_core.models import Party
+
+    c = _logged_in_client(client, with_app_user=True)
+    vorher = Party.objects.count()
+    r = c.post(
+        "/api/identity/parties/person",
+        data={
+            "last_name": "Waise",
+            "adresse": {
+                "street": "Ahornweg",
+                "postal_code": "10115",
+                "city": "Berlin",
+                "address_type": "GIBTESNICHT",
+            },
+        },
+        content_type="application/json",
+    )
+    assert r.status_code == 422, r.content
+    assert Party.objects.count() == vorher
+    assert not Party.objects.filter(display_name="Waise").exists()
+
+
+@pytest.mark.django_db
+def test_durchstich_savepoint_rollt_zurueck(app_user):
+    """Der Pfad, den `kontakt_durchstich` im Docstring zusagt.
+
+    Scheitert die Adresse erst **in der Datenbank**, muss der innere Savepoint
+    zurückrollen UND die äußere Klammer alles davor mitnehmen — auch den
+    Kommunikationsweg, der zwischen Party und Adresse entsteht.
+
+    Ausgelöst über `excl_party_address_primary`: Die Party trägt bereits eine
+    primäre PRIVATE-Adresse, eine zweite im selben Zeitraum ist unzulässig.
+    Das ist ein echter DB-Constraint, keine Vorabprüfung — genau der Fall, um
+    den es geht.
+    """
+    from db_core.models import ContactPoint, PartyAddress
+    from db_core.services import identity as identity_service
+
+    bestand = identity_service.create_person(
+        app_user.id, first_name="Bereits", last_name="Vorhanden"
+    )
+    identity_service.add_address(
+        app_user.id, bestand.id, address_type="PRIVATE",
+        street="Erstweg", postal_code="10115", city="Berlin",
+    )
+
+    with pytest.raises(ValueError, match="primäre Adresse"):
+        identity_service.kontakt_durchstich(
+            app_user.id,
+            # Statt eine neue Party zu bauen, die vorhandene zurückgeben: So
+            # trifft die zweite Primäradresse zuverlässig den Constraint.
+            anlegen=lambda: bestand,
+            phone="030 000111",
+            adresse={
+                "address_type": "PRIVATE",
+                "street": "Zweitweg",
+                "postal_code": "10115",
+                "city": "Berlin",
+            },
+        )
+
+    # Der Kommunikationsweg entstand VOR der Adresse — er muss mit zurück.
+    assert not ContactPoint.objects.filter(
+        party_id=bestand.id, value="030 000111"
+    ).exists()
+    # Und die Erstadresse steht unversehrt.
+    assert PartyAddress.objects.filter(party_id=bestand.id).count() == 1
+
+
+@pytest.mark.django_db
+def test_create_organisation_mit_kontaktdaten(client, db):
+    """Auch die Organisation — und ihre Adresse ist per Vorgabe BUSINESS."""
+    from db_core.models import PartyAddress
+
+    c = _logged_in_client(client, with_app_user=True)
+    r = c.post(
+        "/api/identity/parties/organization",
+        data={
+            "legal_name": "Sanitär Wolff GmbH",
+            "organization_type": "COMPANY",
+            "kontakt": {"phone": "030 999888"},
+            "adresse": {
+                "street": "Kantstraße",
+                "postal_code": "10625",
+                "city": "Berlin",
+            },
+        },
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    zuordnung = PartyAddress.objects.get(party_id=r.json()["id"])
+    assert zuordnung.address_type == "BUSINESS"
+
+
+@pytest.mark.django_db
 def test_create_person_ohne_nachnamen_ist_422(client, db):
     """Der Nachname bleibt Pflicht (Befund B3) — ohne ihn kein Anzeigename."""
     c = _logged_in_client(client, with_app_user=True)

@@ -18,6 +18,23 @@ import { AbstractControl, ValidationErrors } from '@angular/forms';
  * Leer bleibt hier gültig; das Pflichtfeld-Thema gehört `Validators.required`.
  * Beide zusammen ergeben „nicht leer und nicht nur Leerraum".
  */
+/**
+ * Pflichtfeld, das Leerraum NICHT als Inhalt gelten lässt.
+ *
+ * `Validators.required` prüft nur `length === 0` — drei Leerzeichen kommen
+ * also durch, werden beim Absenden getrimmt und landen als Leerstring am
+ * Server. Der weist sie dann zwar sauber ab, aber die Meldung erscheint als
+ * Banner statt am Feld, und der Nutzer sieht nicht, welches Feld gemeint ist.
+ *
+ * Meldet denselben Fehlerschlüssel wie `required`, damit `feld-fehler.ts` und
+ * die `[pflicht]`-Anzeige ohne Sonderfall funktionieren.
+ */
+export function erforderlichGetrimmt(control: AbstractControl): ValidationErrors | null {
+  const roh = control.value;
+  if (roh == null || String(roh).trim() === '') return { required: true };
+  return null;
+}
+
 export function nichtNurLeerraumValidator(control: AbstractControl): ValidationErrors | null {
   const roh = control.value;
   if (roh == null || String(roh) === '') return null;

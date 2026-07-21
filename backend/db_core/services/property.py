@@ -8,6 +8,7 @@ Konsistenztrigger greifen. Transaktionen bleiben kurz und fachlich abgeschlossen
 Codelisten werden gegen die in der Migration 0004 beschlossenen Werte geprüft,
 damit Fehleingaben schon vor dem DB-CHECK eine klare Meldung bekommen.
 """
+import re
 import uuid
 
 from django.db import IntegrityError, ProgrammingError
@@ -73,6 +74,14 @@ def create_property(
     ):
         if not wert or not wert.strip():
             raise ValueError(f"{feldname} darf nicht leer sein.")
+    # Dieselbe Adresstabelle, derselbe CHECK (country_code ~ '^[A-Z]{2}$',
+    # 0003) — und bis hierher dieselbe Lücke wie in `identity.add_address`:
+    # Ein Kürzel wie „xx" endete als roher IntegrityError, also 500.
+    if not re.fullmatch(r"[A-Z]{2}", str(country_code or "")):
+        raise ValueError(
+            f"Ungültiges Länderkürzel '{country_code}'. "
+            "Erwartet werden zwei Großbuchstaben (z. B. DE)."
+        )
 
     with business_transaction(actor_app_user_id):
         address = Address.objects.create(
