@@ -114,10 +114,22 @@ export interface EmployeeDetail extends Employee {
 // --- Schreib-Verträge (POST/PUT-Payloads) ----------------------------------
 // Decimal-Felder (Stunden, Urlaubstage) sind Punkt-Strings, niemals number.
 
+/**
+ * Neuer Personalsatz (Befund F1).
+ *
+ * Entweder Namensfelder — dann entsteht die `identity.person` serverseitig im
+ * Hintergrund — oder `party_id`, wenn die Person bereits existiert (der
+ * Monteur, der zugleich Kunde ist). Vorher war `party_id` Pflicht und man
+ * musste den Mitarbeiter erst als Kontakt im Kundenstamm anlegen.
+ */
 export interface EmployeeCreate {
   app_user_id: string;
-  party_id: string;
   hired_on: string;
+  last_name?: string | null;
+  first_name?: string | null;
+  salutation?: string | null;
+  birth_date?: string | null;
+  party_id?: string | null;
   wage_group_id?: string | null;
   notes?: string | null;
 }

@@ -4,7 +4,6 @@ import { RouterLink } from '@angular/router';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Subject, debounceTime, distinctUntilChanged, map } from 'rxjs';
 import { MitarbeiterService } from '../../core/mitarbeiter.service';
-import { PartyService } from '../../core/party.service';
 import { EinsatzService } from '../../core/einsatz.service';
 import { ArtikelService } from '../../core/artikel.service';
 import { AuthService } from '../../core/auth.service';
@@ -21,6 +20,7 @@ import { Dialog } from '../../shared/dialog/dialog';
 import { Feld, FeldOption } from '../../shared/formular/feld';
 import { ReferenzWahl, RefSuche } from '../../shared/formular/referenz-wahl';
 import { apiFehlerZuweisen } from '../../shared/formular/api-fehler';
+import { erforderlichGetrimmt } from '../../shared/formular/text';
 import {
   felderAlsBeruehrtMarkieren,
   serverFehlerZuruecksetzen,
@@ -43,7 +43,6 @@ type Meldung = { art: 'erfolg' | 'fehler'; text: string };
 })
 export class Mitarbeiter {
   private readonly svc = inject(MitarbeiterService);
-  private readonly partySvc = inject(PartyService);
   private readonly planungSvc = inject(EinsatzService);
   private readonly artikelSvc = inject(ArtikelService);
   private readonly auth = inject(AuthService);
@@ -75,9 +74,26 @@ export class Mitarbeiter {
   /** Lohngruppen als Auswahl; leer, falls kein pricing-LESEN-Recht (siehe Hinweis). */
   protected readonly lohngruppen = signal<FeldOption[]>([]);
   protected readonly lohngruppenGeladen = signal(false);
+  /**
+   * Anlage-Formular (Befund F1).
+   *
+   * Vorher: `party_id` war Pflicht und kam aus einer Suche über den
+   * **Kontaktstamm** — man musste den Mitarbeiter also erst als Kunde anlegen
+   * und fand ihn dann in derselben Trefferliste wie die Kundschaft. Kein
+   * einziges Namensfeld.
+   *
+   * Jetzt: Vor- und Nachname direkt; die Person entsteht im Hintergrund.
+   * Der Nachname ist Pflicht (wie überall seit 0125), der Vorname nicht.
+   */
   protected readonly neuForm = this.fb.group({
     app_user_id: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
-    party_id: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
+    salutation: this.fb.control('', { nonNullable: true }),
+    first_name: this.fb.control('', { nonNullable: true }),
+    last_name: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.required, erforderlichGetrimmt],
+    }),
+    birth_date: this.fb.control('', { nonNullable: true }),
     hired_on: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
     wage_group_id: this.fb.control('', { nonNullable: true }),
     notes: this.fb.control('', { nonNullable: true }),
@@ -89,11 +105,6 @@ export class Mitarbeiter {
       map((users) => users.map((u) => ({ id: u.id, label: u.display_name }))),
     );
 
-  /** Personensuche — der Endpunkt filtert serverseitig auf party_type=PERSON. */
-  protected readonly personSuche: RefSuche = (q) =>
-    this.partySvc.list({ page: 1, page_size: 20, q, party_type: 'PERSON' }).pipe(
-      map((p) => p.items.map((o) => ({ id: o.id, label: o.display_name }))),
-    );
 
   private readonly searchInput$ = new Subject<string>();
   private reqId = 0;
@@ -186,7 +197,10 @@ export class Mitarbeiter {
   neuOeffnen(): void {
     this.neuForm.reset({
       app_user_id: '',
-      party_id: '',
+      salutation: '',
+      first_name: '',
+      last_name: '',
+      birth_date: '',
       hired_on: '',
       wage_group_id: '',
       notes: '',
@@ -223,7 +237,13 @@ export class Mitarbeiter {
     const v = this.neuForm.getRawValue();
     const payload: EmployeeCreate = {
       app_user_id: v.app_user_id,
-      party_id: v.party_id,
+      // Kein `party_id` mehr: Die Person entsteht serverseitig aus diesen
+      // Feldern (Befund F1). Leerer Vorname wird zu null — „nicht erhoben"
+      // ist NULL, nicht Leerstring.
+      salutation: v.salutation.trim() || null,
+      first_name: v.first_name.trim() || null,
+      last_name: v.last_name.trim(),
+      birth_date: v.birth_date || null,
       hired_on: v.hired_on,
       wage_group_id: v.wage_group_id || null,
       notes: v.notes.trim() || null,

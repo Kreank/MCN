@@ -60,6 +60,17 @@
       </div>
     </div>
 
+    <!-- Mitarbeiter sind standardmäßig ausgeblendet (Befund F1). Der Schalter
+         holt sie zurück — ein Monteur kann auch privat Kunde sein. -->
+    <label class="mitarbeiter-schalter">
+      <input
+        type="checkbox"
+        [checked]="mitarbeiterZeigen()"
+        (change)="mitarbeiterUmschalten()"
+      />
+      <span>Mitarbeiter einblenden</span>
+    </label>
+
     <div class="segment" role="group" aria-label="Nach Typ filtern">
       @for (seg of segments; track seg.label) {
         <button

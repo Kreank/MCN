@@ -81,6 +81,25 @@ export class Kontakte {
 
   protected readonly query = signal('');
   protected readonly partyType = signal<PartyType | null>(null);
+
+  /**
+   * Mitarbeiter in der Kontaktliste zeigen? Vorgabe: **nein** (Befund F1).
+   *
+   * Sascha: „Ich lege meine Mitarbeiter ja nicht wie einen Kunden an!" Die
+   * Kontaktliste ist das Kundenregister; Beschäftigte gehören dort nicht
+   * standardmäßig hinein — sie haben eine andere Rechtsgrundlage, andere
+   * Zwecke und andere Löschfristen.
+   *
+   * Ein Schalter statt eines harten Ausschlusses: Ein Monteur kann durchaus
+   * auch privat Kunde sein, und dann soll er auffindbar bleiben.
+   */
+  protected readonly mitarbeiterZeigen = signal(false);
+
+  mitarbeiterUmschalten(): void {
+    this.mitarbeiterZeigen.update((v) => !v);
+    this.page.set(1);
+    this.fetch();
+  }
   protected readonly page = signal(1);
   protected readonly state = signal<ViewState>({ kind: 'loading' });
 
@@ -448,6 +467,7 @@ export class Kontakte {
         page_size: this.pageSize,
         q: this.query(),
         party_type: this.partyType(),
+        mitarbeiter_zeigen: this.mitarbeiterZeigen(),
       })
       .subscribe({
         next: (data) => {

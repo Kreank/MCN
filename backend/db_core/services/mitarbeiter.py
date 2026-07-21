@@ -32,7 +32,7 @@ from decimal import Decimal
 from django.db import transaction
 from django.db.models import Q
 
-from db_core.db_context import business_transaction
+from db_core.db_context import business_transaction, run_business_transaction
 from db_core.gate_errors import as_business_error
 from db_core.models import (
     Absence,
@@ -47,6 +47,7 @@ from db_core.models import (
     WageGroup,
 )
 from db_core.services._validation import ensure_exists
+from db_core.services import identity as identity_service
 from db_core.services.identity import personenname
 
 EMPLOYEE_STATUS = ("AKTIV", "INAKTIV", "AUSGETRETEN")
@@ -214,32 +215,85 @@ def create_employee(
     actor_app_user_id,
     *,
     app_user_id,
-    party_id,
     hired_on,
+    party_id=None,
+    first_name=None,
+    last_name=None,
+    salutation=None,
+    birth_date=None,
     wage_group_id=None,
     notes=None,
 ):
-    """Legt einen Personalsatz an. party_id muss eine identity.person sein (FK)."""
+    """Legt einen Personalsatz an — Personendaten **direkt**, nicht ausgewählt.
+
+    Befund F1. Sascha wörtlich: „Warum kann ich Personen aus meinen Kontakten
+    da finden? Ich lege meine Mitarbeiter ja nicht wie einen Kunden an!"
+
+    Das Datenmodell ist nicht das Problem: `hr.employee` ist ein eigenes Schema
+    mit Personalnummer, Verträgen und Abwesenheiten; die Party trägt für
+    Mitarbeiter faktisch nur Vor- und Nachname. Lohn läuft über die Lohngruppe,
+    Zeiterfassung über das Login-Konto — **nicht** über die Party.
+
+    Das Problem war der Weg dorthin: Wer einen Mitarbeiter anlegen wollte,
+    musste ihn **vorher als Kontakt im Kundenstamm** erfassen und fand ihn dann
+    in derselben Trefferliste wie die Kundschaft. Datenschutzrechtlich ist das
+    die falsche Richtung — Beschäftigten- und Kundendaten haben verschiedene
+    Rechtsgrundlagen, Zwecke und Löschfristen.
+
+    Deshalb: Wer `first_name`/`last_name` schickt, bekommt die `identity.person`
+    **im Hintergrund** angelegt; den Kontakt-Picker sieht niemand mehr. Wer
+    stattdessen `party_id` schickt, verknüpft eine bestehende Person — der
+    Monteur, der zugleich Kunde ist, bleibt damit möglich. Dasselbe Verhalten
+    hat Odoo (`hr.employee.work_contact_id` ist dort ausdrücklich optional).
+
+    Alles in EINER Transaktion: Scheitert der Personalsatz, bleibt keine
+    Person-Waise zurück, die der No-Delete-Schutz nicht mehr entfernen könnte.
+    """
     ensure_exists(AppUser, app_user_id, "Benutzerkonto")
-    ensure_exists(Person, party_id, "Person")
     ensure_exists(WageGroup, wage_group_id, "Lohngruppe")
+    if party_id is None and not (last_name and last_name.strip()):
+        raise ValueError(
+            "Für einen neuen Mitarbeiter ist der Nachname Pflicht — oder wähle "
+            "eine bestehende Person."
+        )
+    if party_id is not None:
+        ensure_exists(Person, party_id, "Person")
     if Employee.objects.filter(app_user_id=app_user_id).exists():
         raise ValueError("Für dieses Benutzerkonto existiert bereits ein Personalsatz")
-    if Employee.objects.filter(party_id=party_id).exists():
+    if party_id is not None and Employee.objects.filter(party_id=party_id).exists():
         raise ValueError("Für diese Person existiert bereits ein Personalsatz")
 
-    with as_business_error():
-        with business_transaction(actor_app_user_id):
-            employee = Employee.objects.create(
-                id=uuid.uuid4(),
-                app_user_id=app_user_id,
-                party_id=party_id,
-                wage_group_id=wage_group_id,
-                status="AKTIV",
-                hired_on=hired_on,
-                notes=notes,
-                created_by_id=actor_app_user_id,
+    def _anlegen():
+        ziel_party = party_id
+        if ziel_party is None:
+            # Die Person entsteht im Hintergrund — der Anwender sieht keinen
+            # Kontakt-Picker. `create_person` macht den Vornamen seit 0125
+            # optional und wirft bei leerem Nachnamen.
+            person = identity_service.create_person(
+                actor_app_user_id,
+                first_name,
+                last_name,
+                salutation=salutation,
+                birth_date=birth_date,
             )
+            ziel_party = person.id
+        return Employee.objects.create(
+            id=uuid.uuid4(),
+            app_user_id=app_user_id,
+            party_id=ziel_party,
+            wage_group_id=wage_group_id,
+            status="AKTIV",
+            hired_on=hired_on,
+            notes=notes,
+            created_by_id=actor_app_user_id,
+        )
+
+    # EINE Klammer über Person und Personalsatz: Scheitert der Personalsatz,
+    # bleibt keine Person-Waise zurück, die der No-Delete-Schutz nicht mehr
+    # entfernen könnte. Die service-internen `business_transaction`-Aufrufe
+    # werden dabei zu Savepoints.
+    with as_business_error():
+        employee = run_business_transaction(actor_app_user_id, _anlegen)
     employee.refresh_from_db()
     return employee
 

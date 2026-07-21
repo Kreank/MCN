@@ -32,6 +32,10 @@ export class PartyService {
     if (query.party_type) {
       params = params.set('party_type', query.party_type);
     }
+    // Nur senden, wenn ausgeschaltet — die Server-Vorgabe ist `true`.
+    if (query.mitarbeiter_zeigen === false) {
+      params = params.set('mitarbeiter_zeigen', 'false');
+    }
     return this.http.get<PartyPage>(this.base, { params });
   }
 

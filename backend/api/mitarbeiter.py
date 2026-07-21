@@ -152,9 +152,28 @@ class EmployeeFilter(Schema):
 
 
 class EmployeeIn(Schema):
+    """Neuer Personalsatz — Personendaten **direkt** (Befund F1).
+
+    Vorher war `party_id` Pflicht: Wer einen Mitarbeiter anlegen wollte, musste
+    ihn erst als Kontakt im Kundenstamm erfassen und fand ihn dann in derselben
+    Trefferliste wie die Kundschaft.
+
+    Jetzt gilt: Entweder Vor-/Nachname (die Person entsteht im Hintergrund) —
+    oder `party_id`, wenn die Person bereits existiert. Letzteres bleibt für
+    den Fall, dass ein Mitarbeiter zugleich Kunde ist; im Handwerk kommt das
+    vor. Dasselbe Verhalten hat Odoo, wo `hr.employee.work_contact_id`
+    ausdrücklich optional ist.
+    """
+
     app_user_id: UUID
-    party_id: UUID
     hired_on: date
+    # Entweder diese …
+    last_name: str | None = None
+    first_name: str | None = None
+    salutation: str | None = None
+    birth_date: date | None = None
+    # … oder diese.
+    party_id: UUID | None = None
     wage_group_id: UUID | None = None
     notes: str | None = None
 
@@ -430,6 +449,10 @@ def create_employee(request, payload: EmployeeIn):
             actor,
             app_user_id=payload.app_user_id,
             party_id=payload.party_id,
+            first_name=payload.first_name,
+            last_name=payload.last_name,
+            salutation=payload.salutation,
+            birth_date=payload.birth_date,
             hired_on=payload.hired_on,
             wage_group_id=payload.wage_group_id,
             notes=payload.notes,

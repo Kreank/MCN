@@ -153,13 +153,32 @@
         hinweis="Das Leitstellen-Login, das zu diesem Mitarbeiter gehört."
         [suche]="benutzerSuche"
       />
-      <app-referenz-wahl
-        [control]="neuForm.controls.party_id"
-        label="Person"
+      <!-- Befund F1: Hier stand eine Suche über den KONTAKTSTAMM — man musste
+           den Mitarbeiter also erst als Kunde anlegen und fand ihn dann in
+           derselben Trefferliste wie die Kundschaft. Jetzt Namensfelder; die
+           Person entsteht im Hintergrund. -->
+      <app-feld
+        [control]="neuForm.controls.salutation"
+        label="Anrede"
+        hinweis="Optional, z. B. Herr, Frau."
+      />
+      <app-feld
+        [control]="neuForm.controls.first_name"
+        label="Vorname"
+        autocomplete="given-name"
+        hinweis="Optional."
+      />
+      <app-feld
+        [control]="neuForm.controls.last_name"
+        label="Nachname"
         [pflicht]="true"
-        platzhalter="Name der Person suchen"
-        hinweis="Die Personendaten (Name, Anrede) stammen aus dem Kontaktstamm — nur natürliche Personen."
-        [suche]="personSuche"
+        autocomplete="family-name"
+      />
+      <app-feld
+        [control]="neuForm.controls.birth_date"
+        label="Geburtsdatum"
+        typ="datum"
+        hinweis="Optional."
       />
       <app-feld
         [control]="neuForm.controls.hired_on"

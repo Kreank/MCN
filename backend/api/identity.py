@@ -248,6 +248,17 @@ class PartyFilter(Schema):
     q: str | None = None
     party_type: str | None = None
     status: str | None = None
+    # Mitarbeiter aus der Kontaktliste heraushalten (Befund F1).
+    #
+    # `identity.party` kennt **keinen** Rollen-Diskriminator — Rollen liegen
+    # ausschließlich in Verknüpfungstabellen. Eine Mitarbeiter-Person ist in
+    # der Kontaktliste deshalb von einem Kunden nicht zu unterscheiden. Das ist
+    # genau der Punkt, an dem SAPs Business-Partner-Modell funktioniert und
+    # dieses hier nicht: Dort ist die Rolle ein sichtbares, filterbares Objekt.
+    #
+    # Ein Schalter statt eines harten Ausschlusses, weil ein Monteur durchaus
+    # auch privat Kunde sein kann — er soll dann auffindbar bleiben.
+    mitarbeiter_zeigen: bool = True
 
 
 # --- Kontaktmappe: Adressen / Kontaktwege / Ansprechpartner ----------------
@@ -373,6 +384,11 @@ def list_parties(
         qs = qs.filter(status=filters.status)
     else:
         qs = qs.exclude(status="MERGED")
+    if not filters.mitarbeiter_zeigen:
+        # Über die Rückbeziehung von `hr.employee.party_id`. Kein zusätzliches
+        # Feld an der Party — Beschäftigung ist eine Rolle, keine Eigenschaft
+        # des Kontakts.
+        qs = qs.filter(person__employee__isnull=True)
 
     qs = qs.order_by("display_name", "id")
 

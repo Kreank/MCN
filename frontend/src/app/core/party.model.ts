@@ -32,6 +32,15 @@ export interface PartyQuery {
   page_size: number;
   q?: string;
   party_type?: PartyType | null;
+  /**
+   * Mitarbeiter in der Liste zeigen? Vorgabe des Servers ist `true`.
+   *
+   * `identity.party` kennt keinen Rollen-Diskriminator — eine
+   * Mitarbeiter-Person ist von einem Kunden nicht zu unterscheiden. Ein
+   * Schalter statt eines harten Ausschlusses, weil ein Monteur durchaus auch
+   * privat Kunde sein kann (Befund F1).
+   */
+  mitarbeiter_zeigen?: boolean;
 }
 
 // --- Detail (GET /api/identity/parties/{id}) -------------------------------
