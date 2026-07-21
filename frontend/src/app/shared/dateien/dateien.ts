@@ -2,13 +2,16 @@ import { HttpErrorResponse, HttpEventType } from '@angular/common/http';
 import {
   Component,
   DestroyRef,
+  ElementRef,
   computed,
   effect,
   inject,
   input,
   signal,
+  viewChild,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { map } from 'rxjs';
 import { AuthService } from '../../core/auth.service';
 import { Datei, LinkKategorie, ZielFilter } from '../../core/datei.model';
 import { DateiService } from '../../core/datei.service';
@@ -118,6 +121,10 @@ export class Dateien {
       const z = this.ziel();
       this.laden(z);
     });
+
+    // Object-URLs der Bildvorschauen freigeben — sonst haelt der Browser jedes
+    // je angesehene Bild im Speicher, solange die Seite lebt.
+    this.destroyRef.onDestroy(() => this.urlsFreigeben());
   }
 
   protected readonly dateien = computed(() => {
@@ -137,7 +144,11 @@ export class Dateien {
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: (d) => {
-          if (rid === this.ladeReqId) this.zustand.set({ kind: 'ready', items: d.items });
+          if (rid !== this.ladeReqId) return;
+          this.zustand.set({ kind: 'ready', items: d.items });
+          // Bildvorschauen nachziehen (Befund A1) — nur fuer Bilder und nur
+          // unterhalb der Groessengrenze, siehe `vorschauenLaden`.
+          this.vorschauenLaden(d.items);
         },
         error: (err) => {
           if (rid === this.ladeReqId) this.zustand.set(fehlerState(err));
@@ -337,6 +348,100 @@ export class Dateien {
       BELEG_PDF: 'Beleg-PDF',
     };
     return map[code] ?? code;
+  }
+
+  // --- Bildvorschau und Grossansicht (Befunde A1/A2/A3) --------------------
+  //
+  // Sascha: „Bilder sollten gleich sichtbar sein im Frontend. Ausserdem
+  // klickbar! Wenn man drauf klickt, oeffnet sich das Bild in gross."
+  // Bisher stand da nur das Kuerzel „IMG".
+  //
+  // Der Weg ist vorgezeichnet: Der Download-Endpunkt setzt bewusst
+  // `Content-Disposition: attachment` (damit hochgeladener Inhalt nie im
+  // Origin der Anwendung gerendert wird), also geht `<img src="/api/...">`
+  // nicht. Stattdessen Blob durch die Anwendung holen und `createObjectURL` —
+  // genau das Muster, das `artikel-detail` fuer das Artikelbild schon nutzt.
+  //
+  // **Die Kosten sind ehrlich zu nennen:** Es gibt keine Thumbnails
+  // (`content.file.media_metadata` ist dafuer vorgesehen, wird aber leer
+  // geschrieben). Jede Vorschau laedt die VOLLE Datei. Deshalb laden wir
+  // automatisch nur unterhalb einer Grenze; groessere Bilder bekommen ihre
+  // Vorschau erst beim Oeffnen der Grossansicht.
+  private static readonly VORSCHAU_MAX_BYTES = 3_000_000;
+
+  /** file_id → Object-URL. Wird beim Zerstoeren freigegeben. */
+  protected readonly vorschauen = signal<Record<string, string>>({});
+  private objectUrls: string[] = [];
+  /** Der Schliessen-Knopf der Grossansicht (Fokusziel beim Oeffnen). */
+  private readonly lightboxZu = viewChild<ElementRef<HTMLButtonElement>>('lightboxZu');
+  /** Die Datei in der Grossansicht (null = zu). */
+  protected readonly grossansicht = signal<Datei | null>(null);
+  protected readonly grossansichtUrl = signal<string | null>(null);
+  protected readonly grossansichtLaedt = signal(false);
+
+  istBild(d: Datei): boolean {
+    return d.mime_type.startsWith('image/');
+  }
+
+  /** Vorschauen der Bilder einer frisch geladenen Liste holen. */
+  private vorschauenLaden(dateien: readonly Datei[]): void {
+    for (const d of dateien) {
+      if (!this.istBild(d)) continue;
+      if (d.size_bytes > Dateien.VORSCHAU_MAX_BYTES) continue;
+      if (this.vorschauen()[d.file_id]) continue;
+      this.blobUrl(d).subscribe({
+        next: (url) => {
+          this.vorschauen.update((v) => ({ ...v, [d.file_id]: url }));
+        },
+        // Eine fehlgeschlagene Vorschau ist kein Fehlerzustand — die Zeile
+        // faellt dann auf das Typkuerzel zurueck.
+        error: () => {},
+      });
+    }
+  }
+
+  /** Laedt den Inhalt und gibt eine Object-URL zurueck (wird mitverwaltet). */
+  private blobUrl(d: Datei) {
+    return this.svc.herunterladen(d.file_id, d.original_filename).pipe(
+      map(({ blob }: { blob: Blob }) => {
+        const url = URL.createObjectURL(blob);
+        this.objectUrls.push(url);
+        return url;
+      }),
+    );
+  }
+
+  grossOeffnen(d: Datei): void {
+    if (!this.istBild(d)) return;
+    this.grossansicht.set(d);
+    // Fokus ins Overlay holen — sonst stünde er hinter dem Bild in der Liste,
+    // und Tastaturbedienung wie Screenreader landeten im Nichts.
+    queueMicrotask(() => this.lightboxZu()?.nativeElement.focus());
+    const vorhanden = this.vorschauen()[d.file_id];
+    if (vorhanden) {
+      this.grossansichtUrl.set(vorhanden);
+      return;
+    }
+    // Grosses Bild: erst jetzt laden (siehe VORSCHAU_MAX_BYTES).
+    this.grossansichtUrl.set(null);
+    this.grossansichtLaedt.set(true);
+    this.blobUrl(d).subscribe({
+      next: (url) => {
+        this.grossansichtLaedt.set(false);
+        if (this.grossansicht()?.file_id === d.file_id) this.grossansichtUrl.set(url);
+      },
+      error: () => this.grossansichtLaedt.set(false),
+    });
+  }
+
+  grossSchliessen(): void {
+    this.grossansicht.set(null);
+    this.grossansichtUrl.set(null);
+  }
+
+  private urlsFreigeben(): void {
+    for (const url of this.objectUrls) URL.revokeObjectURL(url);
+    this.objectUrls = [];
   }
 
   /** Grobes Icon-Kuerzel je MIME-Gruppe (nur dekorativ, aria-hidden). */

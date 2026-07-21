@@ -131,7 +131,28 @@
         <ul class="datei-liste">
           @for (d of dateien(); track d.link_id) {
             <li class="datei">
-              <span class="datei__typ" aria-hidden="true">{{ typKuerzel(d.mime_type) }}</span>
+              <!-- Bild sichtbar und klickbar (Befunde A1/A2). Ein echter
+                   <button>, kein klickbares <div>: Tastaturbedienung und
+                   Fokus kommen so von selbst. Nicht-Bilder behalten das
+                   Typkürzel. -->
+              @if (istBild(d)) {
+                <button
+                  type="button"
+                  class="datei__vorschau"
+                  (click)="grossOeffnen(d)"
+                  [attr.aria-label]="'Bild „' + d.original_filename + '“ groß anzeigen'"
+                >
+                  @if (vorschauen()[d.file_id]; as url) {
+                    <img class="datei__bild" [src]="url" alt="" />
+                  } @else {
+                    <!-- Noch nicht geladen oder über der Vorschaugrenze —
+                         die Großansicht holt es dann beim Klick. -->
+                    <span class="datei__typ" aria-hidden="true">IMG</span>
+                  }
+                </button>
+              } @else {
+                <span class="datei__typ" aria-hidden="true">{{ typKuerzel(d.mime_type) }}</span>
+              }
               <div class="datei__haupt">
                 <span class="datei__name">{{ d.original_filename }}</span>
                 <span class="datei__meta">
@@ -178,3 +199,40 @@
   (bestaetigen)="loesenBestaetigen()"
   (abbrechen)="loesenAbbrechen()"
 />
+
+<!-- Grossansicht (Befund A2).
+     `role="dialog"` + `aria-modal` statt eines nativen <dialog>: Der Inhalt
+     ist ein Bild, kein Formular — es gibt genau ein fokussierbares Element
+     (Schließen). Escape hängt deshalb an einem eigenen Listener, und der
+     Fokus wandert beim Öffnen auf den Schließen-Knopf; ohne das bliebe er
+     hinter dem Overlay in der Liste stehen. -->
+@if (grossansicht(); as g) {
+  <div
+    class="lightbox"
+    role="dialog"
+    aria-modal="true"
+    [attr.aria-label]="g.original_filename"
+    (keydown.escape)="grossSchliessen()"
+  >
+    <div class="lightbox__kopf">
+      <span class="lightbox__name">{{ g.original_filename }}</span>
+      <button
+        #lightboxZu
+        type="button"
+        class="btn lightbox__zu"
+        (click)="grossSchliessen()"
+      >
+        <span aria-hidden="true">✕</span> Schließen
+      </button>
+    </div>
+    <div class="lightbox__buehne">
+      @if (grossansichtLaedt()) {
+        <p class="lightbox__laedt" role="status">Bild wird geladen …</p>
+      } @else if (grossansichtUrl(); as url) {
+        <img class="lightbox__bild" [src]="url" [alt]="g.original_filename" />
+      } @else {
+        <p class="lightbox__laedt" role="alert">Das Bild konnte nicht geladen werden.</p>
+      }
+    </div>
+  </div>
+}
