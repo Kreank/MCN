@@ -64,8 +64,36 @@ router = Router()
 
 # --- Schemas ---------------------------------------------------------------
 
+class SiteReportKopfOut(Schema):
+    """Briefkopf des Berichts (Befund B3/B8) — „das übliche Briefkopf-Gedöns".
+
+    Alle Felder optional: Ein Bericht am **freien Termin** hat keinen Auftrag
+    und damit weder Auftraggeber noch Auftragsnummer; ein Auftrag am
+    Gemeinschaftseigentum hat keine Einheit und damit keinen Mieter. Leer
+    heißt „gibt es nicht", nicht „nicht geladen".
+    """
+
+    order_number: str | None = None
+    order_title: str | None = None
+    auftraggeber: str | None = None
+    auftraggeber_adresse: str | None = None
+    objekt_name: str | None = None
+    objekt_nummer: str | None = None
+    objekt_adresse: str | None = None
+    gebaeude: str | None = None
+    einheit: str | None = None
+    etage: str | None = None
+    # Mehrere sind der Normalfall (Ehepaar = zwei Beteiligte).
+    mieter: list[str] = []
+    eigentuemer: list[str] = []
+
+
 class SiteReportOut(Schema):
     id: UUID
+    # Der Briefkopf. Bisher kannte der Bericht seinen Auftrag nur als UUID —
+    # weder Auftraggeber noch Adresse, Mieter, Wohnung oder Auftragsnummer
+    # waren über die API erreichbar (Befund B8).
+    kopf: SiteReportKopfOut | None = None
     work_order_id: UUID | None = None
     service_job_id: UUID | None = None
     report_date: date
@@ -218,9 +246,20 @@ class SiteReportSignIn(Schema):
 
 # --- Mapper ----------------------------------------------------------------
 
-def _out(report):
+def _out(report, *, mit_kopf=False):
+    """Bericht als Ausgabeschema.
+
+    `mit_kopf` nur im Detail: Der Briefkopf kostet je Bericht mehrere Abfragen
+    (Auftraggeber, Adresse, Belegung, Eigentümer). In einer Liste mit dreißig
+    Berichten wäre das ein N+1 für Angaben, die dort niemand liest.
+    """
     return SiteReportOut(
         id=report.id,
+        kopf=(
+            SiteReportKopfOut(**report_service.kopfdaten(report))
+            if mit_kopf
+            else None
+        ),
         work_order_id=report.work_order_id,
         service_job_id=report.service_job_id,
         report_date=report.report_date,
@@ -257,8 +296,9 @@ def _line_out(line):
 
 
 def _detail_out(report):
+    # Nur hier der Briefkopf — in der Liste wäre er ein N+1 (siehe `_out`).
     return SiteReportDetailOut(
-        **_out(report).dict(),
+        **_out(report, mit_kopf=True).dict(),
         lines=[_line_out(l) for l in report_service.list_report_lines(report.id)],
     )
 

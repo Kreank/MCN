@@ -53,8 +53,10 @@ Auftrags, während das Ist nur aus dessen eigenen Berichten käme.
 import hashlib
 import uuid
 from collections import OrderedDict
-from datetime import datetime, timezone as dt_timezone
+from datetime import date, datetime, timezone as dt_timezone
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+
+from django.db.models import Q
 
 from db_core import storage as storage_module
 from db_core.db_context import business_transaction
@@ -63,14 +65,21 @@ from db_core.models import (
     Article,
     Assembly,
     File,
+    Occupancy,
+    PartyAddress,
     Quote,
     QuoteLine,
     ServiceJob,
     SiteReport,
     SiteReportLine,
     WorkOrder,
+    WorkOrderParty,
 )
 from db_core.services._validation import ensure_exists
+# Fertige Bausteine fuer den Briefkopf (Befund B8) — sie existierten alle,
+# waren nur nie am Bericht verdrahtet.
+from db_core.services.belegung import aktive_mieter
+from db_core.services.property_steckbrief import adresszeile, steckbriefe
 
 _EDITIERBAR = ("ENTWURF",)
 
@@ -168,7 +177,118 @@ def list_reports(work_order_id=None, service_job_id=None):
 
 
 def get_report(report_id):
-    return SiteReport.objects.filter(id=report_id).select_related("author").first()
+    # Die Briefkopf-Kette gleich mitladen (Befund B8) — sonst wäre `kopfdaten`
+    # ein Dutzend Einzelabfragen je Bericht.
+    return (
+        SiteReport.objects.filter(id=report_id)
+        .select_related(
+            "author",
+            "work_order__property__address",
+            "work_order__building",
+            "work_order__unit",
+            "service_job__property__address",
+            "service_job__building",
+            "service_job__unit",
+        )
+        .first()
+    )
+
+
+def kopfdaten(report):
+    """Briefkopf eines Baustellenberichts — Befund B3/B8 aus Runde 2.
+
+    Der Bericht kannte seinen Auftrag bisher nur als UUID. Im PDF stand
+    „Auftrag: <Titel>" und „Objekt: <Name · Stadt>" — kein Auftraggeber, keine
+    Auftragsnummer, keine Straße, kein Mieter, keine Wohnungsnummer, kein
+    Eigentümer. Sascha zu dem, was auf einem Bericht stehen muss: „halt das
+    übliche Briefkopf-Gedöns", genau wie bei Angebot und Rechnung.
+
+    Alle Angaben lagen bereits im Datenmodell und in fertigen Services; sie
+    waren nur nie verdrahtet. Hier laufen sie zusammen.
+
+    **Der freie Termin muss das aushalten** (`work_order_id` ist seit 0064
+    nullable): Ein Begehungsprotokoll ohne Auftrag hat keinen Auftraggeber und
+    keine Auftragsnummer. Dann bleiben die Felder schlicht leer, statt dass
+    etwas erfunden wird — die Liegenschaft kommt in dem Fall über den Einsatz.
+
+    **Kein Snapshot.** Anders als der Beleg friert der Bericht nichts ein
+    (`site_report_pdf` sagt das ausdrücklich: „kein GoBD-Beleg mit
+    eingefrorenem Stammdaten-Snapshot"). Ein Mieterwechsel ändert damit
+    rückwirkend, was auf einem bereits unterschriebenen Bericht steht — das ist
+    als Befund B9 notiert und bewusst noch nicht gelöst, weil es eine eigene
+    Entscheidung über die Versiegelung ist.
+    """
+    leer = {
+        "order_number": None, "order_title": None,
+        "auftraggeber": None, "auftraggeber_adresse": None,
+        "objekt_name": None, "objekt_nummer": None, "objekt_adresse": None,
+        "gebaeude": None, "einheit": None, "etage": None,
+        "mieter": [], "eigentuemer": [],
+    }
+    if report is None:
+        return leer
+
+    wo = report.work_order
+    job = report.service_job
+    # Die Liegenschaft kommt vom Auftrag; beim freien Termin vom Einsatz.
+    prop = (wo.property if wo else None) or (job.property if job else None)
+    building = (wo.building if wo else None) or (job.building if job else None)
+    unit = (wo.unit if wo else None) or (job.unit if job else None)
+
+    daten = dict(leer)
+    if wo is not None:
+        daten["order_number"] = wo.order_number
+        daten["order_title"] = wo.title
+        principal = (
+            WorkOrderParty.objects.filter(work_order_id=wo.id, role="PRINCIPAL")
+            .select_related("party")
+            .order_by("-is_primary", "created_at")
+            .first()
+        )
+        if principal is not None:
+            daten["auftraggeber"] = principal.party.display_name
+            zuordnung = (
+                PartyAddress.objects.filter(
+                    party_id=principal.party_id, valid_until__isnull=True
+                )
+                .select_related("address")
+                .order_by("-is_primary", "address_type")
+                .first()
+            )
+            if zuordnung is not None:
+                daten["auftraggeber_adresse"] = adresszeile(zuordnung.address)
+
+    if prop is not None:
+        daten["objekt_name"] = prop.name
+        daten["objekt_nummer"] = prop.property_number
+        daten["objekt_adresse"] = adresszeile(prop.address)
+        steckbrief = steckbriefe([prop.id]).get(prop.id)
+        if steckbrief is not None:
+            # `Steckbrief.eigentuemer` ist eine Liste von Anzeigenamen (Strings),
+            # bereits dublettenfrei — siehe `property_steckbrief._bauen`.
+            daten["eigentuemer"] = list(steckbrief.eigentuemer)
+
+    if building is not None:
+        daten["gebaeude"] = building.name or f"Gebäude {building.building_number}"
+    if unit is not None:
+        daten["einheit"] = unit.unit_number
+        daten["etage"] = unit.storey
+        # Mieter über die Belegung der Einheit — mehrere sind der Normalfall
+        # (Ehepaar = zwei Beteiligte). COMMON_AREA/TECHNICAL_ROOM tragen laut
+        # Trigger (F-12) gar keine Belegung; dann bleibt die Liste leer.
+        heute = date.today()
+        for belegung in (
+            Occupancy.objects.filter(unit_id=unit.id)
+            .filter(Q(valid_until__isnull=True) | Q(valid_until__gt=heute))
+            .filter(valid_from__lte=heute)
+            .prefetch_related("parties__party")
+        ):
+            for beteiligt in aktive_mieter(belegung, heute):
+                name = beteiligt.party.display_name
+                if name and name not in daten["mieter"]:
+                    daten["mieter"].append(name)
+
+    return daten
 
 
 def _anker(work_order_id, service_job_id):

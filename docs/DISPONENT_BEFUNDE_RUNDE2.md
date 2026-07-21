@@ -58,6 +58,10 @@ Dokumenttyp.
 | B3 | Briefkopf muss tragen: **Auftraggeber, Adresse, Name des Mieters, Lage der Wohnung/Wohnungsnummer, Auftragsnummer, Eigentümer** (falls vorhanden). | UI | offen |
 | B4 | Freitext „Ausgeführte Arbeiten". **Zugleich KI-Andockpunkt:** „Monteur gibt Notizen ein, KI macht sinnvollen Bericht daraus." | UI + KI | offen |
 | B5 | Darunter Positionen wie gewohnt: Material, Arbeitszeit; Artikel/Leistungen **suchbar und hinzufügbar wie bei Angebot und Rechnung**. | ARCHITEKTUR | offen |
+| B6 | **Klarstellung Sascha 2026-07-21 — kein Konflikt mit Migration 0080:** „Nein, in Baustellenberichten **keine Kalkulationen** anzeigen! Das hast du falsch verstanden." Die vermisste Kalkulation betrifft die **Angebots-Übersicht** (siehe G2), nicht den Bericht. Die Invariante aus `0080_berichtspositionen.py` („Der Bericht führt KEINE PREISE", weil er unterschrieben und versiegelt wird) bleibt **unangetastet** — der Bericht bekommt Briefkopf, Freitext und Positionen **ohne Geld**. | — | geklärt |
+| B7 | **Bestandsaufnahme 2026-07-21:** Positionen für Material und Arbeitszeit **existieren bereits** (`workflow.site_report_line`, Migration 0080), inklusive `planned_quantity` für den Soll-Ist-Abgleich gegen das Angebot. Es fehlt also **nicht das Datenmodell**, sondern Briefkopf, ein ordentlicher Freitext und die Oberfläche. | — | geklärt |
+| B8 | **Der eigentliche Mangel:** Der Bericht kennt seinen Auftrag nur als UUID. **Keines** der sechs Briefkopf-Felder ist über die Bericht-API oder im PDF erreichbar; das PDF zeigt `Auftrag: <Titel>` und `Objekt: <Name · Stadt>`, sonst nichts. Die Daten sind vollständig da, für fünf der sechs Felder gibt es fertige Services (`auftrag.py` PRINCIPAL, `beleg.delivery_stammdaten`, `property_steckbrief` Eigentümer, `belegung.aktive_mieter`). **Reine Verdrahtung.** | UI | **in Arbeit** |
+| B9 | **Zwei Fallstricke für den Briefkopf:** (1) `site_report.work_order_id` ist seit 0064 **nullable** — ein Bericht am freien Termin (Begehungsprotokoll) hat gar keinen Auftrag und damit keinen Auftraggeber und keine Auftragsnummer. Der Briefkopf muss das aushalten. (2) Für den **unterschriebenen** Bericht gilt derselbe GoBD-Gedanke wie beim Beleg: Entweder die Briefkopfdaten werden beim Unterschreiben eingefroren, oder ein späterer Mieterwechsel ändert rückwirkend, was auf dem unterschriebenen Dokument steht. | — | offen |
 
 **Anmerkung zu B3:** Die Wohnungslage ist genau das, was I11f aus Runde 1
 blockiert — `auftrag.unit_id` existiert in der DB, ist aber nicht angebunden.
@@ -113,7 +117,7 @@ Ohne diese Anbindung kann der Briefkopf die Wohnungsnummer nicht führen.
 | # | Befund (Sascha) | Art | Status |
 |---|---|---|---|
 | G1 | Beim Öffnen eines Angebots: Positionen wirken „eingebacken", „festgesetzt" — auch ein internes Dokument soll sich wie ein Dokument anfühlen, nicht wie eine starre Maske. | UI | offen — **Rückfrage** |
-| G2 | „Mir fehlt die **Kalkulationsübersicht** aus dem Editor. Der Chef darf ruhig gleich sehen, wie die Kalkulation aussieht." | UI | offen |
+| G2 | „Mir fehlt die **Kalkulationsübersicht** aus dem Editor. Der Chef darf ruhig gleich sehen, wie die Kalkulation aussieht." **Klarstellung 2026-07-21:** Gemeint ist die **Leseansicht** eines Angebots (Dokumente → Angebot anklicken → Übersicht/Positionen). Im **Editor** ist die Kalkulation vorhanden — sie fehlt nur dort, wo man das Angebot nur ansieht. Betrifft **nicht** den Baustellenbericht (siehe B6). | UI | offen |
 
 **G1 ist der einzige Befund dieser Runde, den ich nicht sicher verstehe.**
 Sascha sagt selbst „keine Ahnung, wie ich das sagen soll". Vor der Umsetzung

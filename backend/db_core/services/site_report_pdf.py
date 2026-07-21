@@ -276,18 +276,47 @@ def render_site_report_pdf(report_id):
     pdf = new_beleg_pdf(issuer=issuer, logo_bytes=logo,
                         entwurf=report.status != "UNTERZEICHNET")
 
-    # Kontextzeilen: Auftrag/Einsatz + Liegenschaft (vom Anker, Migration 0064)
+    # Briefkopf (Befund B3/B8, Runde 2). Bis hierher stand im PDF nur
+    # „Auftrag: <Titel>" und „Objekt: <Name · Stadt>" — kein Auftraggeber, keine
+    # Auftragsnummer, keine Straße, kein Mieter, keine Wohnungsnummer, kein
+    # Eigentümer. Sascha zum Bericht: „halt das übliche Briefkopf-Gedöns", wie
+    # bei Angebot und Rechnung.
+    #
+    # Kein Anschriftfeld: Der Bericht bleibt kein Brief (siehe Modulkopf). Die
+    # Angaben stehen als Kontextzeilen, dieselbe Form wie bisher.
+    kopf = report_service.kopfdaten(report)
     kontext = []
-    wo = report.work_order
-    if wo is not None:
-        kontext.append(("Auftrag", wo.title))
-        prop = getattr(wo, "property", None)
-        if prop is not None:
-            ort = " · ".join(b for b in (
-                prop.name, getattr(getattr(prop, "address", None), "city", None)
-            ) if b)
-            if ort:
-                kontext.append(("Objekt", ort))
+    if kopf["order_number"]:
+        kontext.append(("Auftragsnummer", kopf["order_number"]))
+    if kopf["order_title"]:
+        kontext.append(("Auftrag", kopf["order_title"]))
+    if kopf["auftraggeber"]:
+        kontext.append((
+            "Auftraggeber",
+            " · ".join(t for t in (
+                kopf["auftraggeber"], kopf["auftraggeber_adresse"]
+            ) if t),
+        ))
+    if kopf["eigentuemer"]:
+        kontext.append(("Eigentümer", ", ".join(kopf["eigentuemer"])))
+    if kopf["objekt_name"] or kopf["objekt_adresse"]:
+        kontext.append((
+            "Objekt",
+            " · ".join(t for t in (
+                kopf["objekt_name"], kopf["objekt_adresse"]
+            ) if t),
+        ))
+    # Lage der Wohnung — die Angabe, nach der der Monteur sucht.
+    lage = " · ".join(t for t in (
+        kopf["gebaeude"],
+        f"Einheit {kopf['einheit']}" if kopf["einheit"] else None,
+        kopf["etage"],
+    ) if t)
+    if lage:
+        kontext.append(("Lage", lage))
+    if kopf["mieter"]:
+        kontext.append(("Mieter", ", ".join(kopf["mieter"])))
+
     sj = report.service_job
     if sj is not None and sj.title:
         kontext.append(("Einsatz", sj.title))

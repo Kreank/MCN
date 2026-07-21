@@ -32,7 +32,11 @@ from db_core.models import (
     WorkOrder,
     WorkOrderParty,
 )
-from db_core.services._validation import ensure_exists, ensure_party_usable
+from db_core.services._validation import (
+    ensure_exists,
+    ensure_party_usable,
+    ensure_standort,
+)
 
 
 def kundenhistorie(work_order_id):
@@ -132,6 +136,8 @@ def create_work_order(
     is_emergency=False,
     asset_id=None,
     trade_id=None,
+    building_id=None,
+    unit_id=None,
 ):
     """Legt einen workflow.work_order (Auftrag) im Initialstatus ENTWURF an.
 
@@ -184,6 +190,9 @@ def create_work_order(
             raise ValueError(f"Anlage {asset_id} existiert nicht")
         if asset_property_id != property_id:
             raise ValueError("Die Anlage gehört nicht zur angegebenen Liegenschaft")
+    # Standortkonsistenz zentral (dieselbe Regel wie Raum und Anlage) und
+    # zugleich die Ableitung: nur `unit_id` genügt.
+    building_id, unit_id = ensure_standort(property_id, building_id, unit_id)
 
     with business_transaction(actor_app_user_id):
         order = WorkOrder.objects.create(
@@ -194,6 +203,8 @@ def create_work_order(
             description=description,
             property_id=property_id,
             asset_id=asset_id,
+            building_id=building_id,
+            unit_id=unit_id,
             responsibility_scope="UNKNOWN",
             status="ENTWURF",
             priority=priority,
