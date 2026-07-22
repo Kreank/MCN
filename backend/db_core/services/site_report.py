@@ -211,12 +211,19 @@ def kopfdaten(report):
     keine Auftragsnummer. Dann bleiben die Felder schlicht leer, statt dass
     etwas erfunden wird — die Liegenschaft kommt in dem Fall über den Einsatz.
 
-    **Kein Snapshot.** Anders als der Beleg friert der Bericht nichts ein
-    (`site_report_pdf` sagt das ausdrücklich: „kein GoBD-Beleg mit
-    eingefrorenem Stammdaten-Snapshot"). Ein Mieterwechsel ändert damit
-    rückwirkend, was auf einem bereits unterschriebenen Bericht steht — das ist
-    als Befund B9 notiert und bewusst noch nicht gelöst, weil es eine eigene
-    Entscheidung über die Versiegelung ist.
+    **Eingefroren ab der Unterschrift** (Migration 0132, Befund B9). Solange der
+    Bericht Entwurf ist, wird live aufgelöst — ändert sich etwas, soll er es
+    zeigen. Mit der Unterschrift wird der Kopf in `header_snapshot` festgehalten
+    und von da an von dort gelesen.
+
+    Der Grund ist derselbe wie beim Beleg (B-30): Der Mieter unterschreibt ein
+    Dokument mit seinem Namen darauf. Zieht er aus und wird der Nachmieter
+    erfasst, stünde ohne Snapshot **dessen** Name auf dem Papier, das der
+    Vormieter unterschrieben hat.
+
+    Berichte, die vor 0132 unterschrieben wurden, tragen keinen Snapshot und
+    werden weiterhin live aufgelöst — sie nachträglich zu befüllen hieße, eine
+    Aussage über einen Zeitpunkt zu erfinden, an dem niemand hingesehen hat.
     """
     leer = {
         "order_number": None, "order_title": None,
@@ -227,6 +234,13 @@ def kopfdaten(report):
     }
     if report is None:
         return leer
+
+    # Der eingefrorene Kopf gewinnt immer. `{**leer, **snapshot}` und nicht der
+    # Snapshot allein: Käme später ein Feld hinzu, fehlte es sonst an allen
+    # Altsnapshots und das Template liefe in einen KeyError.
+    snapshot = getattr(report, "header_snapshot", None)
+    if snapshot:
+        return {**leer, **snapshot}
 
     wo = report.work_order
     job = report.service_job
@@ -480,9 +494,13 @@ def sign_report(actor_app_user_id, *, report_id, signed_by_name, signature_png):
             report.signed_at = datetime.now(dt_timezone.utc)
             report.signature_file_id = datei.id
             report.status = "UNTERZEICHNET"
+            # Den Briefkopf einfrieren (Befund B9, Migration 0132) — IN
+            # derselben Transaktion und VOR dem Statuswechsel-Save, sonst
+            # sperrte der Versiegelungs-Trigger das Nachtragen.
+            report.header_snapshot = kopfdaten(report)
             report.save(update_fields=[
                 "signed_by_name", "signed_at", "signature_file_id", "status",
-                "updated_at",
+                "header_snapshot", "updated_at",
             ])
     report.refresh_from_db()
     return report

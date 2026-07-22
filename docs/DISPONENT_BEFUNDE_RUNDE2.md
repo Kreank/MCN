@@ -61,7 +61,15 @@ Dokumenttyp.
 | B6 | **Klarstellung Sascha 2026-07-21 — kein Konflikt mit Migration 0080:** „Nein, in Baustellenberichten **keine Kalkulationen** anzeigen! Das hast du falsch verstanden." Die vermisste Kalkulation betrifft die **Angebots-Übersicht** (siehe G2), nicht den Bericht. Die Invariante aus `0080_berichtspositionen.py` („Der Bericht führt KEINE PREISE", weil er unterschrieben und versiegelt wird) bleibt **unangetastet** — der Bericht bekommt Briefkopf, Freitext und Positionen **ohne Geld**. | — | geklärt |
 | B7 | **Bestandsaufnahme 2026-07-21:** Positionen für Material und Arbeitszeit **existieren bereits** (`workflow.site_report_line`, Migration 0080), inklusive `planned_quantity` für den Soll-Ist-Abgleich gegen das Angebot. Es fehlt also **nicht das Datenmodell**, sondern Briefkopf, ein ordentlicher Freitext und die Oberfläche. | — | geklärt |
 | B8 | **Der eigentliche Mangel:** Der Bericht kennt seinen Auftrag nur als UUID. **Keines** der sechs Briefkopf-Felder ist über die Bericht-API oder im PDF erreichbar; das PDF zeigt `Auftrag: <Titel>` und `Objekt: <Name · Stadt>`, sonst nichts. Die Daten sind vollständig da, für fünf der sechs Felder gibt es fertige Services (`auftrag.py` PRINCIPAL, `beleg.delivery_stammdaten`, `property_steckbrief` Eigentümer, `belegung.aktive_mieter`). **Reine Verdrahtung.** | UI | **in Arbeit** |
-| B9 | **Zwei Fallstricke für den Briefkopf:** (1) `site_report.work_order_id` ist seit 0064 **nullable** — ein Bericht am freien Termin (Begehungsprotokoll) hat gar keinen Auftrag und damit keinen Auftraggeber und keine Auftragsnummer. Der Briefkopf muss das aushalten. (2) Für den **unterschriebenen** Bericht gilt derselbe GoBD-Gedanke wie beim Beleg: Entweder die Briefkopfdaten werden beim Unterschreiben eingefroren, oder ein späterer Mieterwechsel ändert rückwirkend, was auf dem unterschriebenen Dokument steht. | — | offen |
+| B9 | **Zwei Fallstricke für den Briefkopf:** (1) `site_report.work_order_id` ist seit 0064 **nullable** — ein Bericht am freien Termin (Begehungsprotokoll) hat gar keinen Auftrag und damit keinen Auftraggeber und keine Auftragsnummer. Der Briefkopf muss das aushalten. (2) Für den **unterschriebenen** Bericht gilt derselbe GoBD-Gedanke wie beim Beleg: Entweder die Briefkopfdaten werden beim Unterschreiben eingefroren, oder ein späterer Mieterwechsel ändert rückwirkend, was auf dem unterschriebenen Dokument steht. | — | **beide erledigt** — (1) mit dem Briefkopf-Slice, (2) mit Migration 0132: `header_snapshot` wird beim Unterzeichnen gesetzt und von `protect_site_report` versiegelt |
+
+**Zu B9 (2) — was die Kontrollprobe zeigte.** Der erste Anlauf des Regressionstests
+war wertlos: Er ließ die Vormieterin zum 1. August ausziehen, während „heute" der
+22. Juli war — am Stichtag war sie also ohnehin noch die aktive Mieterin, und der
+Test hätte auch ohne Snapshot bestanden. Mit vollzogenem Wechsel und
+abgeschaltetem Snapshot-Pfad liefert er jetzt genau die Aussage, um die es geht:
+`['Norbert Nachmieter'] == ['Erika Vormieterin']` — ohne die Migration steht der
+Nachmieter auf einem Dokument, das die Vormieterin unterschrieben hat.
 
 **Anmerkung zu B3:** Die Wohnungslage ist genau das, was I11f aus Runde 1
 blockiert — `auftrag.unit_id` existiert in der DB, ist aber nicht angebunden.

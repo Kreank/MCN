@@ -3753,6 +3753,11 @@ class SiteReport(models.Model):
     signed_by_name = models.TextField(null=True, blank=True)
     signed_at = models.DateTimeField(null=True, blank=True)
     signature_file_id = models.UUIDField(null=True, blank=True)
+    # Briefkopf zum Zeitpunkt der Unterschrift (Migration 0132). NULL bei
+    # Entwürfen und bei Berichten, die vor 0132 unterschrieben wurden. Nach dem
+    # Unterzeichnen unveränderlich — sonst schriebe ein Mieterwechsel
+    # rückwirkend einen anderen Namen auf ein unterschriebenes Blatt.
+    header_snapshot = models.JSONField(null=True, blank=True)
     version = models.IntegerField(db_default=models.Value(1))
     created_at = models.DateTimeField(db_default=Now())
     updated_at = models.DateTimeField(db_default=Now())
