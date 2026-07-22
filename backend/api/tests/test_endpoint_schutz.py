@@ -23,6 +23,7 @@ automatisch mitgeprüft, ohne dass dieser Test gepflegt werden muss.
 import inspect
 import re
 from functools import lru_cache
+from urllib.parse import urlencode
 from uuid import uuid4
 
 import pytest
@@ -89,10 +90,34 @@ PROTECTED = [(p, m, vf) for (p, m, vf) in ALL_OPS if p not in WHITELIST]
 PROTECTED_GET = [(p, vf) for (p, m, vf) in PROTECTED if m == "GET"]
 
 
+# Pflicht-Query-Parameter je Pfad.
+#
+# django-ninja validiert die Query VOR dem View — fehlt ein Pflichtparameter,
+# antwortet der Endpunkt mit 422, bevor `require*` überhaupt läuft. Der
+# 403-Nachweis liefe dann ins Leere, und zwar STILL: Der Test würde nicht etwa
+# ein Loch melden, sondern gar nichts prüfen.
+#
+# Deshalb wird hier nachgereicht statt ausgenommen. Wer einen Endpunkt mit
+# Pflicht-Query anlegt, sieht den Test rotwerden und trägt ihn hier ein — die
+# Alternative (Pfad auf eine Ausnahmeliste) hätte denselben Endpunkt dauerhaft
+# ungeprüft gelassen.
+PFLICHT_QUERY = {
+    "/api/management/properties/{property_id}/darf-beauftragen": {
+        "party_id": str(uuid4()),
+    },
+}
+
+
 def _concrete(path):
     """Pfadparameter ({uuid}) durch eine beliebige UUID ersetzen, damit die
     Django-URL-Auflösung greift (alle Parameter sind UUIDs)."""
     return re.sub(r"\{[^}]+\}", str(uuid4()), path)
+
+
+def _query(path):
+    """Query-String für Pfade mit Pflichtparametern, sonst leer."""
+    p = PFLICHT_QUERY.get(path)
+    return "?" + urlencode(p) if p else ""
 
 
 def _op_id(val):
@@ -106,7 +131,7 @@ def _op_id(val):
 )
 def test_anonymer_zugriff_401(path, method, _vf):
     """Jede Nicht-Whitelist-Operation lehnt anonyme Zugriffe mit 401 ab."""
-    r = Client().generic(method, _concrete(path))
+    r = Client().generic(method, _concrete(path) + _query(path))
     assert r.status_code == 401, (
         f"{method} {path} -> {r.status_code} (erwartet 401 für anonym). "
         "Wurde hier versehentlich auth=None gesetzt?"
@@ -123,7 +148,7 @@ def test_ohne_rolle_403_bei_get(path, _vf):
     user, _app_user = make_role_user(None)  # app_user vorhanden, keine Rolle
     client = Client()
     client.force_login(user)
-    r = client.get(_concrete(path))
+    r = client.get(_concrete(path) + _query(path))
     assert r.status_code == 403, (
         f"GET {path} -> {r.status_code} (erwartet 403 ohne Rolle). "
         "Fehlt hier der require*-Aufruf?"

@@ -101,6 +101,18 @@
             </button>
           </div>
         }
+        @if (raeumeFehler()) {
+          <!-- Leer ist nicht dasselbe wie kaputt: Ohne diese Zeile hielte der
+               Nutzer einen Ladefehler für den Datenstand und legte Dubletten
+               an. Beim nächsten Öffnen des Reiters wird erneut versucht. -->
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text">
+              Die Räume konnten nicht geladen werden. Gebäude und Einheiten sind
+              vollständig — nur die Raumebene fehlt.
+            </span>
+          </div>
+        }
         @if (daten()!.buildings.length === 0) {
           <div class="tab-platzhalter"><p>Für diese Liegenschaft sind noch keine Gebäude erfasst.</p></div>
         } @else {
@@ -134,6 +146,18 @@
                     >
                       ＋ Einheit
                     </button>
+                    <!-- Ein Raum am GEBÄUDE, ohne Einheit: Heizungskeller,
+                         Treppenhaus, Waschküche. Ohne diesen Knopf ließen sich
+                         genau die Räume, die der Baum als eigene Gruppe zeigt,
+                         hier nicht anlegen. -->
+                    <button
+                      type="button"
+                      class="mini"
+                      (click)="raumOeffnen(null, b.id, gebaeudeLabel(b))"
+                      [attr.aria-label]="'Raum ohne Einheit in ' + gebaeudeLabel(b) + ' anlegen'"
+                    >
+                      ＋ Raum
+                    </button>
                   }
                 </div>
                 @if (b.units.length > 0) {
@@ -157,6 +181,43 @@
                             Bearbeiten
                           </button>
                         }
+                        @if (darfAnlegen()) {
+                          <button
+                            type="button"
+                            class="mini"
+                            (click)="raumOeffnen(u, b.id, gebaeudeLabel(b))"
+                            [attr.aria-label]="'Raum in Einheit ' + u.unit_number + ' anlegen'"
+                          >
+                            ＋ Raum
+                          </button>
+                        }
+
+                        <!-- Dritte Ebene (Befund I13): Gebäude ▸ Einheit ▸ Raum
+                             ohne Reiterwechsel. Hier steht nur, WAS es gibt —
+                             das Aufmaß (Fläche, Höhe, Heizlast) bleibt im
+                             Reiter „Räume": zwei Fragen, zwei Ansichten. -->
+                        @if (raeumeJeEinheit().get(u.id); as raeume) {
+                          <ul class="raeume">
+                            @for (r of raeume; track r.id) {
+                              <li class="raum">
+                                <span class="raum__name">{{ r.name }}</span>
+                                @if (r.floor_area_m2) {
+                                  <span class="raum__flaeche">{{ flaeche(r.floor_area_m2) }} m²</span>
+                                }
+                                @if (darfStrukturAendern()) {
+                                  <button
+                                    type="button"
+                                    class="mini raum__tat"
+                                    (click)="raumEditOeffnen(r)"
+                                    [attr.aria-label]="'Raum ' + r.name + ' umbenennen'"
+                                  >
+                                    Umbenennen
+                                  </button>
+                                }
+                              </li>
+                            }
+                          </ul>
+                        }
                       </li>
                     }
                   </ul>
@@ -164,6 +225,57 @@
               </li>
             }
           </ul>
+
+        }
+        <!-- Räume, die an KEINER Einheit hängen (`unit_id` ist nullable):
+             der Heizungskeller gehört zum Gebäude, nicht zu einer Wohnung.
+             Ohne diese Gruppe verschwänden sie aus dem Baum — sichtbar wären
+             sie nur im Aufmaß, und niemand wüsste, dass es sie gibt.
+             Nach Gebäude getrennt, seit sie hier je Gebäude angelegt werden. -->
+        @if (raeumeOhneEinheit().length > 0) {
+          <div class="baum__frei">
+            <h3 class="baum__frei-titel">Räume ohne Einheit</h3>
+            <p class="baum__frei-hinweis">
+              Diese Räume hängen am Gebäude oder direkt an der Liegenschaft —
+              etwa Heizungskeller, Treppenhaus oder Waschküche.
+            </p>
+            @for (g of raeumeOhneEinheitJeGebaeude(); track g.id) {
+              <h4 class="baum__frei-gebaeude">{{ g.label }}</h4>
+              <ul class="raeume">
+                @for (r of g.raeume; track r.id) {
+                  <li class="raum">
+                    <span class="raum__name">{{ r.name }}</span>
+                    @if (r.floor_area_m2) {
+                      <span class="raum__flaeche">{{ flaeche(r.floor_area_m2) }} m²</span>
+                    }
+                    @if (darfStrukturAendern()) {
+                      <button
+                        type="button"
+                        class="mini raum__tat"
+                        (click)="raumEditOeffnen(r)"
+                        [attr.aria-label]="'Raum ' + r.name + ' umbenennen'"
+                      >
+                        Umbenennen
+                      </button>
+                    }
+                  </li>
+                }
+              </ul>
+            }
+          </div>
+        }
+
+        <!-- Der Baum zeigt nur AKTIVE Räume. Der Dubletten-Constraint kennt
+             den Status aber nicht: Ein stillgelegtes „Bad" blockiert den Namen
+             weiterhin. Ohne diesen Hinweis stünde der Nutzer vor einer
+             Fehlermeldung über einen Raum, den er nirgends sieht.
+             Nicht neben der Ladefehler-Meldung: Wenn nichts geladen wurde, ist
+             eine Aussage darüber, was ausgeblendet ist, sinnlos. -->
+        @if (!raeumeFehler() && daten()!.buildings.length > 0) {
+          <p class="baum__hinweis">
+            Stillgelegte Räume sind hier ausgeblendet — sie stehen im Reiter
+            „Räume".
+          </p>
         }
       }
 
@@ -486,6 +598,94 @@
       <div dialog-aktionen class="dialog__aktionen">
         <button type="button" class="btn" [disabled]="dialogLaedt()" (click)="einheitEditSchliessen()">Abbrechen</button>
         <button type="submit" form="edit-einheit-form" class="btn btn--primary" [disabled]="dialogLaedt()" [attr.aria-busy]="dialogLaedt()">
+          {{ dialogLaedt() ? 'Wird gespeichert …' : 'Speichern' }}
+        </button>
+      </div>
+    </app-dialog>
+
+    <!-- ------------------------------ Raum anlegen ------------------------ -->
+    <!-- Befund I13: Der Raum entsteht im Baum, nicht in einem eigenen Reiter.
+         Drei Felder, nicht dreizehn: Fläche und Höhe verlangt die Datenbank
+         (NOT NULL, CHECK > 0 — `volume_m3` wird daraus berechnet), alles
+         Weitere (Heizlast, Umfang, Grundriss) gehört ins Aufmaß und würde hier
+         den Vorgang aufhalten, den dieser Befund beschleunigen soll. -->
+    <app-dialog
+      [offen]="raumZuEinheit() !== null"
+      [titel]="raumDialogTitel()"
+      (schliessen)="raumSchliessen()"
+    >
+      <form id="neu-raum-form" class="dialog-form" (submit)="$event.preventDefault(); raumAbsenden()" novalidate>
+        @if (formularMeldung(); as fm) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+          </div>
+        }
+        <app-feld
+          [control]="raumForm.controls.name"
+          label="Raumname"
+          [pflicht]="true"
+          hinweis="z. B. Bad, Küche, Wohnzimmer."
+        />
+        <div class="dialog-raster">
+          <app-feld
+            [control]="raumForm.controls.floor_area_m2"
+            label="Fläche (m²)"
+            typ="zahl"
+            [pflicht]="true"
+          />
+          <app-feld
+            [control]="raumForm.controls.room_height_m"
+            label="Höhe (m)"
+            typ="zahl"
+            [pflicht]="true"
+            hinweis="Vorbelegt mit 2,50 — bei Altbau überschreiben."
+          />
+        </div>
+        @if (raumZuEinheit() && !raumZuEinheit()!.unit) {
+          <!-- Der Dubletten-Constraint kennt das Gebäude nicht (UNIQUE über
+               property/unit/storey/name). „Heizungskeller" ist ohne Einheit also
+               liegenschaftsweit nur EINMAL vergebbar — im Vorderhaus wie im
+               Hinterhaus. Besser vorher gesagt als hinterher als Fehler. -->
+          <p class="dialog-hinweis">
+            Räume ohne Einheit teilen ihren Namen über alle Gebäude einer
+            Liegenschaft. Gibt es den Raum in mehreren Häusern, nehmen Sie das
+            Gebäude in den Namen auf — etwa „Heizungskeller Vorderhaus".
+          </p>
+        }
+        <p class="dialog-hinweis">
+          Heizlast, Umfang und Grundriss tragen Sie später im Reiter „Räume“ nach.
+        </p>
+      </form>
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="dialogLaedt()" (click)="raumSchliessen()">Abbrechen</button>
+        <button type="submit" form="neu-raum-form" class="btn btn--primary" [disabled]="dialogLaedt()" [attr.aria-busy]="dialogLaedt()">
+          {{ dialogLaedt() ? 'Wird angelegt …' : 'Raum anlegen' }}
+        </button>
+      </div>
+    </app-dialog>
+
+    <!-- ----------------------------- Raum umbenennen ---------------------- -->
+    <app-dialog
+      [offen]="raumBearbeiten() !== null"
+      titel="Raum umbenennen"
+      (schliessen)="raumEditSchliessen()"
+    >
+      <form id="edit-raum-form" class="dialog-form" (submit)="$event.preventDefault(); raumEditAbsenden()" novalidate>
+        @if (formularMeldung(); as fm) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+          </div>
+        }
+        <!-- `raumNameForm`, NICHT `raumForm`: Das Anlege-Formular verlangt Fläche
+             und Höhe, die dieser Dialog nicht zeigt — es wäre dauerhaft ungültig
+             und das Speichern bräche stumm ab. -->
+        <app-feld [control]="raumNameForm.controls.name" label="Raumname" [pflicht]="true" />
+      </form>
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="dialogLaedt()" (click)="raumEditSchliessen()">Abbrechen</button>
+        <button type="submit" form="edit-raum-form" class="btn btn--primary" [disabled]="dialogLaedt()" [attr.aria-busy]="dialogLaedt()">
           {{ dialogLaedt() ? 'Wird gespeichert …' : 'Speichern' }}
         </button>
       </div>

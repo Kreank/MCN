@@ -120,6 +120,9 @@
 }
 .einheit {
   display: flex;
+  /* `wrap` ist die Bedingung dafür, dass die Raumliste UNTER der Zeile landet
+     statt als weiteres Flex-Item rechts daneben (Befund I13). */
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-2) 0;
@@ -149,6 +152,86 @@
   font-size: var(--step--1);
   font-style: italic;
   color: var(--ink-muted);
+}
+
+/* Dritte Ebene des Baums: Räume unter ihrer Einheit (Befund I13).
+   Die Einrückung macht die Hierarchie sichtbar, ohne dass eine Zeile mehr
+   Gewicht bekäme als die Einheit darüber. */
+.raeume {
+  /* Volle Breite erzwingt den Umbruch im Flex-Elternteil `.einheit`.
+     `grid-column` stand hier zuerst und war eine tote Regel: `.einheit` ist
+     Flex, kein Grid — die Raumliste landete als weiteres Flex-Item RECHTS
+     neben den Knöpfen, auf Restbreite gestaucht. */
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: var(--space-2) 0 0 var(--space-4);
+  padding: 0 0 0 var(--space-3);
+  border-left: 2px solid var(--line);
+  list-style: none;
+}
+.raum {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-3);
+}
+.raum__name {
+  color: var(--ink);
+}
+.raum__flaeche {
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-muted);
+}
+.raum__tat {
+  flex: none;
+  margin-left: auto;
+}
+
+.baum__hinweis {
+  margin: var(--space-3) 0 0;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+/* Räume ohne Einheit — sie hängen am Gebäude oder an der Liegenschaft und
+   wären im Baum sonst unsichtbar. */
+.baum__frei {
+  margin-top: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+}
+.baum__frei-titel {
+  margin: 0;
+  font-size: var(--step-0);
+}
+.baum__frei-hinweis {
+  margin: var(--space-1) 0 var(--space-2);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+/* Zwischenüberschrift je Gebäude: Ohne sie stünden die Räume aller Häuser in
+   einem Topf und niemand wüsste, welche Waschküche gemeint ist. */
+.baum__frei-gebaeude {
+  margin: var(--space-3) 0 var(--space-1);
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  font-weight: 600;
+  color: var(--ink-muted);
+
+  &:first-of-type {
+    margin-top: 0;
+  }
+}
+
+.baum__frei .raeume {
+  margin-left: 0;
+  border-left: none;
+  padding-left: 0;
 }
 
 // ============================== Rollen-Liste ================================
@@ -277,4 +360,18 @@
   font-family: var(--font-mono);
   font-size: var(--step--1);
   color: var(--ink-muted);
+}
+
+/* Zweispaltiges Raster im Raum-Dialog (Fläche neben Höhe).
+   Lokal definiert: Angular kapselt Komponentenstile — die gleichnamige Klasse
+   im Eigentums-Dialog greift hier nicht, und global gibt es sie nicht. */
+.dialog-raster {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: var(--space-3);
+}
+.dialog-hinweis {
+  margin: var(--space-3) 0 0;
+  color: var(--ink-muted);
+  font-size: var(--step--1);
 }

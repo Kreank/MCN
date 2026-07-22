@@ -736,6 +736,54 @@ def _pruefe_raum(daten):
 
 # --- Schreiben: Raum -------------------------------------------------------
 
+def _dublette_text(unit_id, storey, name):
+    """Nennt den Bereich, in dem der Name schon vergeben ist — den echten.
+
+    `room_dublette` ist UNIQUE **NULLS NOT DISTINCT** über
+    `(property_id, unit_id, storey, name)` — das **Gebäude steht nicht darin**.
+    Ein Raum ohne Einheit und ohne Etage teilt sich seinen Namensraum deshalb
+    mit allen anderen Räumen ohne Einheit und ohne Etage DERSELBEN
+    LIEGENSCHAFT, gebäudeübergreifend.
+
+    Die alte Meldung sprach pauschal von „dieser Einheit/diesem Geschoss". Wer
+    im Hinterhaus einen zweiten „Heizungskeller" anlegte, las also einen Grund,
+    den er im Baum nicht wiederfand — der kollidierende Raum steht im
+    Vorderhaus. Vorder- und Hinterhaus sind im Handwerk kein Randfall.
+    """
+    if unit_id is None and storey is None:
+        return (
+            f"An dieser Liegenschaft existiert bereits ein Raum ohne Einheit "
+            f"mit dem Namen '{name}'. Räume ohne Einheit und ohne Etage teilen "
+            f"sich den Namen über alle Gebäude hinweg — hängen Sie das Gebäude "
+            f"an ('{name} Vorderhaus')."
+        )
+    if unit_id is None:
+        # Auch hier fehlt das Gebäude im Schlüssel: Zwei Häuser mit je einem
+        # „Treppenhaus" im EG kollidieren. „In dieser Etage" allein läse sich
+        # als „im EG DIESES Hauses" — und im anderen Haus sucht dann niemand.
+        return (
+            f"Auf der Etage '{storey}' existiert an dieser Liegenschaft bereits "
+            f"ein Raum ohne Einheit mit dem Namen '{name}'. Ohne Einheit gilt "
+            f"der Name gebäudeübergreifend — hängen Sie das Gebäude an "
+            f"('{name} Vorderhaus')."
+        )
+    if storey is not None:
+        # Die Etage steht MIT im Schlüssel, grenzt hier also wirklich ein: In
+        # einer Maisonette sind „Bad" im EG und „Bad" im OG erlaubt. Das zu
+        # verschweigen behauptete eine engere Grenze als die echte.
+        return (
+            f"In dieser Einheit existiert auf der Etage '{storey}' bereits ein "
+            f"Raum mit dem Namen '{name}'."
+        )
+    # „ohne Etagenangabe" ist keine Wortklauberei: Ein „Bad" auf 'OG' darf in
+    # derselben Einheit zulässig daneben stehen — es kollidiert nur der Raum,
+    # der wie dieser gar keine Etage trägt.
+    return (
+        f"In dieser Einheit existiert bereits ein Raum ohne Etagenangabe mit "
+        f"dem Namen '{name}'."
+    )
+
+
 def create_room(actor_app_user_id, property_id, daten):
     """Legt einen Raum an einer Liegenschaft an."""
     ensure_exists(Property, property_id, "Liegenschaft")
@@ -764,10 +812,7 @@ def create_room(actor_app_user_id, property_id, daten):
             _insert('property."room"', zeile)
     except IntegrityError as exc:
         if _constraint(exc) == "room_dublette":
-            raise ValueError(
-                "In dieser Einheit/diesem Geschoss existiert bereits ein Raum "
-                f"mit dem Namen '{zeile['name']}'."
-            ) from exc
+            raise ValueError(_dublette_text(zeile.get("unit_id"), zeile.get("storey"), zeile["name"])) from exc
         raise _db_fehler(exc) from exc
     except DataError as exc:
         raise _db_fehler(exc) from exc
@@ -839,10 +884,11 @@ def update_room(actor_app_user_id, room_id, daten):
                 _rechne_abgeleitete_flaechen(room_id, neue_hoehe, laengen)
     except IntegrityError as exc:
         if _constraint(exc) == "room_dublette":
-            raise ValueError(
-                "In dieser Einheit/diesem Geschoss existiert bereits ein Raum "
-                "mit diesem Namen."
-            ) from exc
+            # `ziel_unit` steht oben schon fest; Etage und Name kommen aus dem
+            # PATCH, unveränderte Felder aus dem Bestand.
+            ziel_storey = werte.get("storey", room.storey)
+            ziel_name = werte.get("name", room.name)
+            raise ValueError(_dublette_text(ziel_unit, ziel_storey, ziel_name)) from exc
         if _constraint(exc) == "room_opening_passt_in_flaeche":
             raise _flaeche_zu_klein(exc) from exc
         raise _db_fehler(exc) from exc

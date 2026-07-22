@@ -37,6 +37,8 @@ import { Dateien } from '../../shared/dateien/dateien';
 import { Belege, BelegKontext } from '../../shared/belege/belege';
 import { Anlagen } from '../anlagen/anlagen';
 import { Raumaufmass } from '../raumaufmass/raumaufmass';
+import { RaumService } from '../../core/raum.service';
+import { Room } from '../../core/raum.model';
 import { Belegung } from '../belegung/belegung';
 import { Eigentum } from '../eigentum/eigentum';
 import { LiegenschaftKopfzeile } from './kopfzeile';
@@ -46,7 +48,12 @@ import { VerbotenState, fehlerState } from '../../shared/http-fehler';
 import { Dialog } from '../../shared/dialog/dialog';
 import { Feld, FeldOption } from '../../shared/formular/feld';
 import { apiFehlerZuweisen } from '../../shared/formular/api-fehler';
-import { nichtNurLeerraumValidator } from '../../shared/formular/text';
+import { erforderlichGetrimmt, nichtNurLeerraumValidator } from '../../shared/formular/text';
+import {
+  apiZuDeAnzeige,
+  deZuApiDezimal,
+  dezimalValidator,
+} from '../../shared/formular/dezimal';
 import {
   felderAlsBeruehrtMarkieren,
   serverFehlerZuruecksetzen,
@@ -95,6 +102,7 @@ export class LiegenschaftDetail {
   private readonly einsatzSvc = inject(EinsatzService);
   private readonly fb = inject(FormBuilder);
   private readonly auth = inject(AuthService);
+  private readonly raumSvc = inject(RaumService);
 
   protected readonly tab = signal('uebersicht');
   protected readonly state = signal<ViewState>({ kind: 'loading' });
@@ -257,6 +265,136 @@ export class LiegenschaftDetail {
     name: this.fb.control('', { nonNullable: true }),
   });
 
+  // --- Räume im Strukturbaum (Befund I13) ---------------------------------
+  //
+  // Sascha: „Wirkt, als solle der User möglichst viel klicken statt zu
+  // arbeiten." Gebäude anlegen, Einheit hinzufügen, Raum erstellen — alles
+  // vorhanden, aber über drei bis sieben Reiter verstreut. Der Baum zeigt jetzt
+  // alle drei Ebenen, und Räume lassen sich hier anlegen und umbenennen.
+  //
+  // Der Reiter „Räume" bleibt: Dort steht das **Aufmaß** (Fläche, Höhe,
+  // Heizlast, Grundriss). Der Baum beantwortet „was gibt es", das Aufmaß „wie
+  // groß ist es" — zwei Fragen, zwei Ansichten.
+
+  protected readonly raeume = signal<Room[]>([]);
+  /** Ließen sich die Räume nicht laden? Leer ist nicht dasselbe wie kaputt. */
+  protected readonly raeumeFehler = signal(false);
+  private raeumeGeladenFuer: string | null = null;
+
+  /** Räume je Einheit — der Baum fragt danach, nicht nach einer flachen Liste. */
+  protected readonly raeumeJeEinheit = computed(() => {
+    const karte = new Map<string, Room[]>();
+    for (const r of this.raeume()) {
+      if (!r.unit_id) continue;
+      const liste = karte.get(r.unit_id);
+      if (liste) liste.push(r);
+      else karte.set(r.unit_id, [r]);
+    }
+    return karte;
+  });
+
+  /**
+   * Räume, die an KEINER Einheit hängen (`unit_id` ist nullable).
+   *
+   * Ein Heizungskeller gehört zum Gebäude, nicht zu einer Wohnung. Ohne diese
+   * Gruppe verschwänden solche Räume aus dem Baum — sichtbar wären sie nur noch
+   * im Aufmaß-Reiter, und niemand wüsste, dass es sie gibt.
+   */
+  protected readonly raeumeOhneEinheit = computed(() =>
+    this.raeume().filter((r) => !r.unit_id),
+  );
+
+  /**
+   * Dieselben Räume, aber nach Gebäude aufgeteilt.
+   *
+   * Solange man sie nur ansehen konnte, genügte eine flache Liste. Seit sie
+   * hier **je Gebäude** angelegt werden, genügt sie nicht mehr: „Waschküche,
+   * Trockenraum, Heizungskeller" in einem Topf beantwortet nicht, in welchem
+   * Haus sie stehen — und bei Vorder- und Hinterhaus ist genau das die Frage.
+   */
+  protected readonly raeumeOhneEinheitJeGebaeude = computed(() => {
+    const d = this.daten();
+    // Die `id` ist der Track-Key im Template. Nicht das Label: `gebaeudeLabel`
+    // fällt auf einen freien Namen zurück, und zwei Häuser einer Hofanlage
+    // dürfen beide „Haus" heißen — doppelte Keys sind in `@for` ein
+    // Laufzeitfehler. Die `building_id` ist eine UUID und damit eindeutig; der
+    // leere String bleibt der Gruppe ohne Gebäude vorbehalten.
+    const nach = new Map<string, { id: string; label: string; raeume: Room[] }>();
+    for (const r of this.raeumeOhneEinheit()) {
+      // Ein Raum kann auch am reinen Grundstück hängen (`building_id` null) —
+      // etwa ein freistehender Geräteschuppen. Er bekommt eine eigene Gruppe
+      // statt stillschweigend unter einem Gebäude zu landen.
+      const key = r.building_id ?? '';
+      if (!nach.has(key)) {
+        const b = d?.buildings.find((x) => x.id === r.building_id);
+        nach.set(key, {
+          id: key,
+          label: b ? this.gebaeudeLabel(b) : 'Ohne Gebäude (direkt an der Liegenschaft)',
+          raeume: [],
+        });
+      }
+      nach.get(key)!.raeume.push(r);
+    }
+    return [...nach.values()];
+  });
+
+  /**
+   * Ziel des Anlege-Dialogs: die Einheit, das Gebäude darüber und eine
+   * Beschriftung für den Titel.
+   *
+   * `unit` ist null, wenn der Raum am GEBÄUDE hängt (Heizungskeller,
+   * Treppenhaus). Die `buildingId` steht trotzdem daneben: Ein `Unit` trägt
+   * keine `building_id` — der Baum weiß aus seiner Verschachtelung, unter
+   * welchem Gebäude die Zeile steht, und gibt sie mit.
+   */
+  protected readonly raumZuEinheit = signal<{
+    unit: Unit | null;
+    buildingId: string;
+    label: string;
+  } | null>(null);
+  protected readonly raumBearbeiten = signal<Room | null>(null);
+  /**
+   * Umbenennen bekommt ein EIGENES Formular — nur der Name.
+   *
+   * Das Anlege-Formular mitzubenutzen war ein Fehler mit Folgen: Es trägt
+   * Fläche und Höhe als Pflichtfelder, und beim Befüllen aus dem Raum landeten
+   * die rohen API-Dezimalstrings darin („2.500"). Der `dezimalValidator` hält
+   * die für mehrdeutig (Tausenderpunkt oder Dezimalpunkt?) — das Formular war
+   * ungültig, das Speichern brach ab, und weil der Dialog die beiden Felder gar
+   * nicht zeigt, passierte schlicht nichts. Stumm.
+   */
+  protected readonly raumNameForm = this.fb.group({
+    name: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.required, nichtNurLeerraumValidator],
+    }),
+  });
+  protected readonly raumForm = this.fb.group({
+    name: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.required, nichtNurLeerraumValidator],
+    }),
+    // Fläche und Höhe sind NICHT optional: Die Datenbank verlangt beide als
+    // NOT NULL mit CHECK > 0 (Migration 0086), weil `volume_m3` daraus
+    // berechnet wird. Ein Raum „nur mit Namen" ist im Modell nicht vorgesehen.
+    // Die Höhe ist mit 2,50 m vorbelegt — der Regelfall im Wohnungsbau; wer
+    // eine Altbaudecke misst, überschreibt sie.
+    // `erforderlichGetrimmt` statt `Validators.required`: Ein Feld mit einem
+    // Leerzeichen gilt für `required` als gefüllt, wird aber zu einem leeren
+    // Wert getrimmt — der Server antwortete dann mit einem Pydantic-Fehler
+    // statt einer Feldmeldung. Die Meldung bleibt „Dieses Feld ist
+    // erforderlich."; die Leerraum-Variante spräche an einem Zahlenfeld
+    // unpassend von „Text".
+    floor_area_m2: this.fb.control('', {
+      nonNullable: true,
+      validators: [erforderlichGetrimmt, dezimalValidator],
+    }),
+    room_height_m: this.fb.control('2,50', {
+      nonNullable: true,
+      validators: [erforderlichGetrimmt, dezimalValidator],
+    }),
+  });
+
   /** Einheit, die gerade bearbeitet wird (null = Dialog zu). */
   protected readonly einheitBearbeiten = signal<Unit | null>(null);
   protected readonly einheitEditForm = this.fb.group({
@@ -304,6 +442,12 @@ export class LiegenschaftDetail {
       this.vorgaengeState.set({ kind: 'idle' });
       this.auftraegeState.set({ kind: 'idle' });
       this.einsaetzeState.set({ kind: 'idle' });
+      this.raeume.set([]);
+      this.raeumeGeladenFuer = null;
+      // Auch den Fehlerzustand zurücksetzen: Sonst stünde „Die Räume konnten
+      // nicht geladen werden" über dem Baum des NÄCHSTEN Objekts, bei dem noch
+      // gar nichts versucht wurde.
+      this.raeumeFehler.set(false);
       if (!id) {
         this.state.set({ kind: 'error' });
         return;
@@ -320,6 +464,14 @@ export class LiegenschaftDetail {
       if (this.vorgaengeState().kind === 'idle') this.ladeVorgaenge(d.id);
       if (this.auftraegeState().kind === 'idle') this.ladeAuftraege(d.id);
       if (this.einsaetzeState().kind === 'idle') this.ladeEinsaetze(d.id);
+    });
+
+    // Räume erst beim Öffnen der Struktur (Befund I13). Wer die Dokumente
+    // aufschlägt, braucht keine Raumliste.
+    effect(() => {
+      const d = this.daten();
+      if (!d || this.tab() !== 'struktur') return;
+      this.raeumeLaden();
     });
   }
 
@@ -694,6 +846,143 @@ export class LiegenschaftDetail {
 
   einheitEditSchliessen(): void {
     if (!this.dialogLaedt()) this.einheitBearbeiten.set(null);
+  }
+
+  // --- Räume im Baum (Befund I13) ------------------------------------------
+
+  /** Fläche deutsch: „24.000" aus der API ist 24,0 m² — nicht 24 Tausend. */
+  protected flaeche(wert: string | null): string {
+    return apiZuDeAnzeige(wert, 1);
+  }
+
+  /**
+   * Lädt die Räume der Liegenschaft — einmal, beim ersten Blick in die Struktur.
+   *
+   * Nicht mit der Mappe zusammen: Wer die Dokumente öffnet, braucht keine
+   * Raumliste. Und nicht bei jedem Reiterwechsel: `raeumeGeladenFuer` merkt
+   * sich das Objekt.
+   */
+  protected raeumeLaden(): void {
+    const d = this.daten();
+    if (!d || this.raeumeGeladenFuer === d.id) return;
+    this.raeumeGeladenFuer = d.id;
+    // `reqId` wie bei den Nachbarlisten: Springt der Nutzer auf ein anderes
+    // Objekt, während die Anfrage läuft, trüge die verspätete Antwort sonst
+    // die Räume des VORIGEN Objekts in diesen Baum — sichtbar würden vor allem
+    // die ohne Einheit, denn die hängen an keiner Zeile, die fehlen könnte.
+    const rid = this.nebenReqId;
+    this.raumSvc.list(d.id).subscribe({
+      next: (r) => {
+        if (rid !== this.nebenReqId) return;
+        this.raeume.set(r);
+        this.raeumeFehler.set(false);
+      },
+      error: () => {
+        if (rid !== this.nebenReqId) return;
+        this.raeume.set([]);
+        this.raeumeFehler.set(true);
+        // Erneut versuchen erlauben: Ohne dieses Zurücksetzen bliebe die dritte
+        // Ebene für die ganze Sitzung leer, und der Nutzer hielte das für den
+        // Datenstand — und legte Dubletten an.
+        this.raeumeGeladenFuer = null;
+      },
+    });
+  }
+
+  private raeumeNeuLaden(): void {
+    this.raeumeGeladenFuer = null;
+    this.raeumeLaden();
+  }
+
+  /** „Raum anlegen — Einheit WE 12" bzw. „… — Vorderhaus" (ohne Einheit). */
+  protected readonly raumDialogTitel = computed(() => {
+    const z = this.raumZuEinheit();
+    if (!z) return 'Raum anlegen';
+    return z.unit
+      ? `Raum anlegen — Einheit ${z.unit.unit_number}`
+      : `Raum anlegen — ${z.label}, ohne Einheit`;
+  });
+
+  raumOeffnen(unit: Unit | null, buildingId: string, label: string): void {
+    this.raumForm.reset({ name: '', floor_area_m2: '', room_height_m: '2,50' });
+    this.formularMeldung.set(null);
+    this.raumZuEinheit.set({ unit, buildingId, label });
+  }
+
+  raumSchliessen(): void {
+    if (!this.dialogLaedt()) this.raumZuEinheit.set(null);
+  }
+
+  raumAbsenden(): void {
+    const ziel = this.raumZuEinheit();
+    const d = this.daten();
+    if (!ziel || !d || this.dialogLaedt()) return;
+    serverFehlerZuruecksetzen(this.raumForm);
+    this.formularMeldung.set(null);
+    felderAlsBeruehrtMarkieren(this.raumForm);
+    if (this.raumForm.invalid) return;
+
+    this.dialogLaedt.set(true);
+    const v = this.raumForm.getRawValue();
+    this.raumSvc
+      .create(d.id, {
+        name: v.name.trim(),
+        floor_area_m2: deZuApiDezimal(v.floor_area_m2),
+        room_height_m: deZuApiDezimal(v.room_height_m),
+        building_id: ziel.buildingId,
+        unit_id: ziel.unit?.id ?? null,
+        // Die Etage der Einheit erbt der Raum — sie ist dieselbe, und sie
+        // zweimal einzutippen ist genau die Sorte Arbeit, die dieser Befund
+        // abschaffen soll. Ohne Einheit gibt es keine zu erben.
+        storey: ziel.unit?.storey ?? null,
+      })
+      .subscribe({
+        next: (r) => {
+          this.dialogLaedt.set(false);
+          this.raumZuEinheit.set(null);
+          this.meldung.set({ art: 'erfolg', text: `Raum „${r.name}" wurde angelegt.` });
+          this.raeumeNeuLaden();
+        },
+        error: (err) => {
+          this.dialogLaedt.set(false);
+          this.formularMeldung.set(apiFehlerZuweisen(err, this.raumForm).formular);
+        },
+      });
+  }
+
+  raumEditOeffnen(r: Room): void {
+    this.raumNameForm.reset({ name: r.name });
+    this.formularMeldung.set(null);
+    this.raumBearbeiten.set(r);
+  }
+
+  raumEditSchliessen(): void {
+    if (!this.dialogLaedt()) this.raumBearbeiten.set(null);
+  }
+
+  raumEditAbsenden(): void {
+    const r = this.raumBearbeiten();
+    if (!r || this.dialogLaedt()) return;
+    serverFehlerZuruecksetzen(this.raumNameForm);
+    this.formularMeldung.set(null);
+    felderAlsBeruehrtMarkieren(this.raumNameForm);
+    if (this.raumNameForm.invalid) return;
+
+    this.dialogLaedt.set(true);
+    this.raumSvc
+      .update(r.id, { name: this.raumNameForm.getRawValue().name.trim() })
+      .subscribe({
+        next: (neu) => {
+          this.dialogLaedt.set(false);
+          this.raumBearbeiten.set(null);
+          this.meldung.set({ art: 'erfolg', text: `Raum heißt jetzt „${neu.name}".` });
+          this.raeumeNeuLaden();
+        },
+        error: (err) => {
+          this.dialogLaedt.set(false);
+          this.formularMeldung.set(apiFehlerZuweisen(err, this.raumNameForm).formular);
+        },
+      });
   }
 
   einheitEditAbsenden(): void {
