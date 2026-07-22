@@ -10,6 +10,17 @@
       Meine Zeiten
     </a>
   }
+  @if (darfLesen()) {
+    <a
+      class="reiter__link"
+      routerLink="verlauf"
+      routerLinkActive="reiter__link--aktiv"
+      #verlauf="routerLinkActive"
+      [attr.aria-current]="verlauf.isActive ? 'page' : null"
+    >
+      Mein Verlauf
+    </a>
+  }
   <a
     class="reiter__link"
     routerLink="personalakte"

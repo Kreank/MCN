@@ -294,7 +294,24 @@ export interface QuoteDetail extends Quote {
    *  Beleginhalt: ab VERSENDET eingefroren (B-30). */
   cover_letter: string | null;
   rubriken: Rubrik[];
+  /** Briefkopf für die Dokumentansicht (G1). */
+  dokumentkopf: Dokumentkopf | null;
   lines: QuoteLine[];
+}
+
+/**
+ * Briefkopf eines Belegs für die Bildschirmdarstellung (Befund G1).
+ *
+ * Die Zeilen kommen **fertig zusammengesetzt** vom Server — dieselbe Funktion,
+ * aus der das PDF sein Anschriftfeld baut. Wie eine deutsche Anschrift
+ * aufgebaut ist (Zusatz vor der Straße, PLZ und Ort in einer Zeile, Land nur
+ * bei Auslandsbelegen), gehört an eine Stelle und nicht zusätzlich hierher.
+ */
+export interface Dokumentkopf {
+  aussteller: string[];
+  empfaenger: string[];
+  /** Stammt der Kopf aus dem eingefrorenen Beleg (veröffentlichte Rechnung)? */
+  aus_snapshot: boolean;
 }
 
 /** Antwort des Angebotsversands per E-Mail. */

@@ -141,6 +141,22 @@ class WorkOrderRefOut(Schema):
     title: str
 
 
+class DokumentkopfOut(Schema):
+    """Briefkopf für die Bildschirmdarstellung (Befund G1).
+
+    `aussteller` und `empfaenger` sind fertige Zeilenlisten — die Zusammensetzung
+    einer Anschrift (Zusatz vor Straße, PLZ und Ort in einer Zeile, Land nur bei
+    Auslandsbelegen) gehört an EINE Stelle und nicht ins Frontend. Es ist
+    dieselbe Funktion, aus der das PDF sein Anschriftfeld baut.
+    """
+
+    aussteller: list[str] = []
+    empfaenger: list[str] = []
+    # Stammt der Kopf aus dem eingefrorenen Beleg (veröffentlichte Rechnung) oder
+    # aus den Live-Daten (Angebot, Entwurf)? Die Ansicht kann das kennzeichnen.
+    aus_snapshot: bool = False
+
+
 class QuoteDetailOut(QuoteOut):
     valid_until_date: date | None = None
     tax_total: Decimal | None = None
@@ -161,6 +177,9 @@ class QuoteDetailOut(QuoteOut):
     # eingefroren (B-30). null/leer = kein Anschreiben.
     cover_letter: str | None = None
     rubriken: list[RubrikOut] = []
+    # Briefkopf für die Dokumentansicht (G1). null, wenn er sich nicht bilden
+    # lässt — die Ansicht fällt dann auf ihre schlichte Darstellung zurück.
+    dokumentkopf: DokumentkopfOut | None = None
     lines: list[QuoteLineOut]
 
 
@@ -494,6 +513,7 @@ def _quote_detail(quote_id):
         recipient_email=recipient_email,
         cover_letter=quote.cover_letter,
         rubriken=_rubriken_out(quote),
+        dokumentkopf=beleg_service.dokumentkopf(quote),
         lines=lines,
     )
 
@@ -1075,6 +1095,11 @@ class InvoiceDetailOut(InvoiceOut):
     recipient_email: str | None = None
     parties: list[InvoicePartyOut] = []
     rubriken: list[RubrikOut] = []
+    # Ein `dokumentkopf` steht hier bewusst NOCH NICHT: Die Rechnungsansicht
+    # nutzt das Dokumentblatt noch nicht, `dokumentkopf()` liefe aber bei jedem
+    # der dreizehn Endpunkte mit, die diese Antwort bauen — und bei einem
+    # Entwurf (kein Snapshot) kostet es zwei Queries JE Beteiligtem. Das Feld
+    # kommt, wenn die Ansicht es liest, nicht vorher.
     lines: list[QuoteLineOut]
     # Schlussrechnung → angerechnete Abschläge (Verkettung, GoBD).
     advances: list[InvoiceAdvanceOut] = []

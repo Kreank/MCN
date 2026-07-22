@@ -20,6 +20,7 @@ import {
   QuoteDetail,
   QuoteStatus,
 } from '../../core/beleg.model';
+import { DokumentBlatt } from '../../shared/dokument-blatt/dokument-blatt';
 import { AngebotMengen } from '../angebot-mengen/angebot-mengen';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { Bestaetigung } from '../../shared/bestaetigung/bestaetigung';
@@ -110,6 +111,7 @@ const RECHNUNG_AUS_ANGEBOT_STATUS: readonly QuoteStatus[] = [
     Feld,
     ReferenzWahl,
     AngebotMengen,
+    DokumentBlatt,
   ],
   templateUrl: './beleg-detail.html',
   styleUrl: './beleg-detail.scss',
@@ -622,6 +624,55 @@ export class BelegDetail {
   private fehlerText(err: unknown): string {
     if (istVerboten(err)) return fehlerDetail(err) ?? 'Keine Berechtigung für diese Aktion.';
     return fehlerDetail(err) ?? 'Die Aktion ist fehlgeschlagen. Bitte erneut versuchen.';
+  }
+
+  // ---- Dokumentansicht (Befund G1) ----------------------------------------
+
+  /**
+   * Der Informationsblock rechts neben dem Anschriftfeld (DIN 5008).
+   *
+   * Nur, was gepflegt ist: Ein Entwurf hat noch keine Belegnummer, und eine
+   * leere Zeile „Angebots-Nr.: —" auf einem Schriftstück sieht nach Fehler aus,
+   * nicht nach Entwurf.
+   */
+  protected readonly dokumentMeta = computed(() => {
+    const d = this.daten();
+    if (!d) return [];
+    const zeilen: { label: string; wert: string }[] = [];
+    if (d.quote_number) zeilen.push({ label: 'Angebots-Nr.', wert: d.quote_number });
+    if (d.quote_date) zeilen.push({ label: 'Datum', wert: this.datum(d.quote_date) });
+    if (d.valid_until_date) {
+      zeilen.push({ label: 'Gültig bis', wert: this.datum(d.valid_until_date) });
+    }
+    const objekt = [d.property.name, d.property.city].filter(Boolean).join(' · ');
+    if (objekt) zeilen.push({ label: 'Objekt', wert: objekt });
+    return zeilen;
+  });
+
+  /** Die Betreffzeile: „Angebot 2026-0042", vor der Nummernvergabe nur
+   *  „Angebot" — dass es ein Entwurf ist, sagt der Aufdruck auf dem Blatt. */
+  protected readonly dokumentBetreff = computed(() => {
+    const d = this.daten();
+    if (!d) return '';
+    return d.quote_number ? `Angebot ${d.quote_number}` : 'Angebot';
+  });
+
+  /**
+   * Trägt das Blatt den Entwurfsaufdruck? Alles vor dem Versand ist Entwurf —
+   * dieselbe Grenze, die auch das Vorschau-PDF zieht.
+   */
+  protected readonly istEntwurf = computed(() => this.daten()?.status === 'ENTWURF');
+
+  /** ISO-Datum deutsch. Auf dem Blatt steht kein „2026-07-22". */
+  protected datum(iso: string | null): string {
+    if (!iso) return '—';
+    const [y, m, d] = iso.split('-').map(Number);
+    if (!y || !m || !d) return iso;
+    return new Intl.DateTimeFormat('de-DE', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+    }).format(new Date(y, m - 1, d));
   }
 
   // ---- Darstellungshelfer -------------------------------------------------

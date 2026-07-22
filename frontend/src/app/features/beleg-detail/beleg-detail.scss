@@ -15,9 +15,8 @@
 }
 
 // ============================ Positionstabelle ==============================
-.pos-wrap {
-  overflow-x: auto;
-}
+/* `.pos-wrap` ist entfallen: Die Positionstabelle liegt jetzt im Dokumentblatt,
+   und dessen `.blatt__inhalt` übernimmt das seitliche Scrollen (G1). */
 .pos {
   width: 100%;
   border-collapse: collapse;

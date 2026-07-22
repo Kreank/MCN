@@ -79,6 +79,18 @@ export const routes: Routes = [
               import('./features/meine-zeiten/meine-zeiten').then((m) => m.MeineZeiten),
           },
           {
+            // Stundenkonto und Historie (Befund E2, „Dichte"). Getrennt von der
+            // Stempeluhr, weil es zwei Fragen zu zwei Zeitpunkten sind: „was
+            // mache ich gerade?" beim Stempeln, „wie stehe ich da?" beim
+            // Nachsehen. Dieselbe Trennung wie bei allen etablierten
+            // Zeiterfassungswerkzeugen.
+            path: 'verlauf',
+            title: 'Mein Verlauf — Mitra Sanitär',
+            canActivate: [darfGuard('hr', 'LESEN')],
+            loadComponent: () =>
+              import('./features/mein-bereich/verlauf').then((m) => m.MeinVerlauf),
+          },
+          {
             // Selbstauskunft und Selbstbedienung (eigene HR-Daten, eigene
             // Anträge). Recht hr/LESEN; der Server liefert nur die eigene Zeile
             // (row_scope EIGENE ist hier zulässig). Das Anlegen eines Antrags

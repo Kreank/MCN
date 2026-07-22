@@ -5,7 +5,6 @@ import { EinsatzService } from '../../core/einsatz.service';
 import { ServiceJob } from '../../core/einsatz.model';
 import { ZeiterfassungService } from '../../core/zeiterfassung.service';
 import {
-  Arbeitstag,
   ArbeitstagDetail,
   StempelZustand,
   TAG_STATUS_LABEL,
@@ -16,11 +15,14 @@ import {
   ZUSTAND_LABEL,
   dauerText,
   fromLocalInput,
-  kalenderwoche,
+  kontoZeitraum,
+  saldoArt,
+  saldoText,
   tagStatusClass,
   tagText,
   uhrzeit,
 } from '../../core/zeiterfassung.model';
+import { RouterLink } from '@angular/router';
 import { Bestaetigung } from '../../shared/bestaetigung/bestaetigung';
 import { Dialog } from '../../shared/dialog/dialog';
 import { Feld } from '../../shared/formular/feld';
@@ -50,7 +52,7 @@ type ViewState = { kind: 'loading' } | { kind: 'ready' } | VerbotenState | { kin
  */
 @Component({
   selector: 'app-meine-zeiten',
-  imports: [ReactiveFormsModule, Dialog, Bestaetigung, Feld, KeinZugriff],
+  imports: [ReactiveFormsModule, RouterLink, Dialog, Bestaetigung, Feld, KeinZugriff],
   templateUrl: './meine-zeiten.html',
   styleUrl: './meine-zeiten.scss',
 })
@@ -63,7 +65,6 @@ export class MeineZeiten {
   protected readonly state = signal<ViewState>({ kind: 'loading' });
   protected readonly stempel = signal<StempelZustand | null>(null);
   protected readonly heute = signal<ArbeitstagDetail | null>(null);
-  protected readonly tage = signal<Arbeitstag[]>([]);
   protected readonly kategorien = signal<Zeitkategorie[]>([]);
   protected readonly fehler = signal<string | null>(null);
   protected readonly laeuftAktion = signal(false);
@@ -82,39 +83,19 @@ export class MeineZeiten {
   protected readonly ZUSTAND_LABEL = ZUSTAND_LABEL;
 
   /**
-   * Das eigene Stundenkonto des laufenden Monats (Soll/Ist/Saldo).
+   * Das eigene Stundenkonto — hier nur als **eine Zeile** (Saldo + Verweis).
    *
    * Sascha (Befund E4): „Zeitenübersicht gefällt mir nicht, zu unübersichtlich."
-   * Was fehlte, war nicht Gestaltung, sondern die **Aussage**: 30 flache Zeilen
-   * mit Tagessummen beantworten nicht die Frage, die man an eine Zeitübersicht
-   * hat — „liege ich vor oder zurück?". Der Endpunkt dafür stand längst, er war
-   * nur nirgends angebunden.
+   * Was fehlte, war nicht Gestaltung, sondern die **Aussage**: Tagessummen
+   * beantworten nicht die Frage, die man an eine Zeitübersicht hat — „liege ich
+   * vor oder zurück?". Der Endpunkt dafür stand längst und war nirgends
+   * angebunden.
    *
-   * Das ist zugleich die fehlende Hälfte des Freizeitausgleichs (Migration
-   * 0131): Man beantragt schlecht Überstundenabbau, ohne den Saldo zu kennen.
+   * Der ausführliche Block samt Historie steht unter „Mein Verlauf" (Befund E2,
+   * „Dichte"). Hier bleibt die eine Zahl, die man auch beim Stempeln wissen
+   * will — Stempeluhr und Auswertung sind zwei Fragen zu zwei Zeitpunkten.
    */
   protected readonly konto = signal<Stundenkonto | null>(null);
-
-  /** Die Arbeitstage nach Kalenderwoche gebündelt, jüngste zuerst. */
-  protected readonly wochen = computed(() => {
-    const gruppen = new Map<string, { id: string; label: string; tage: Arbeitstag[] }>();
-    for (const t of this.tage()) {
-      const schluessel = kalenderwoche(t.day);
-      const vorhanden = gruppen.get(schluessel.id);
-      if (vorhanden) vorhanden.tage.push(t);
-      // `id` trägt das ISO-Jahr und wandert mit ins Objekt: Er ist der
-      // `track`-Schlüssel. Das Label allein („KW 1") wiederholt sich über
-      // Jahresgrenzen — im 30-Tage-Fenster nie, aber wer das Fenster später
-      // aufzieht, bekäme sonst ein NG0955 zur Laufzeit statt eines Fehlers beim
-      // Bauen.
-      else gruppen.set(schluessel.id, { ...schluessel, tage: [t] });
-    }
-    return [...gruppen.values()].map((g) => ({
-      ...g,
-      arbeit: g.tage.reduce((s, t) => s + t.arbeit_sekunden, 0),
-      pause: g.tage.reduce((s, t) => s + t.pause_sekunden, 0),
-    }));
-  });
 
   protected readonly startKategorie = signal<string>('');
   protected readonly einreichenOffen = signal(false);
@@ -268,17 +249,20 @@ export class MeineZeiten {
     });
   }
 
+  /**
+   * Lädt den Saldo für die kompakte Zeile.
+   *
+   * Die Arbeitstage der letzten 30 Tage werden hier NICHT mehr geholt: Diese
+   * Liste steht unter „Mein Verlauf" und lud die Stempeluhr nur noch zu, ohne
+   * dass sie jemand las.
+   */
   private tageLaden(): void {
-    this.svc.meineTage().subscribe({
-      next: (t) => this.tage.set(t),
-      error: () => this.tage.set([]),
-    });
     // Der Zeitraum MUSS mitgegeben werden. Ohne ihn nimmt der Server den
     // laufenden Monat bis zum **Monatsletzten** — er summiert also das Soll
     // aller noch nicht gearbeiteten Zukunftstage gegen ein Ist, das nur bis
     // heute reichen kann. Ein Vollzeit-Monteur sähe am Monatsersten „−184 h
     // Minusstunden", obwohl er nichts falsch gemacht hat.
-    const [von, bis] = this.kontoZeitraum();
+    const [von, bis] = kontoZeitraum();
     // Ein Fehler hier blendet die Karte aus, statt die Seite zu kippen — wer
     // keinen Personalsatz hat (404), stempelt trotzdem.
     this.svc.stundenkonto(undefined, von, bis).subscribe({
@@ -287,78 +271,36 @@ export class MeineZeiten {
     });
   }
 
-  /**
-   * Der Zeitraum des Stundenkontos: **abgeschlossene** Tage des laufenden
-   * Monats, also bis einschließlich gestern.
-   *
-   * Warum nicht bis heute: Das Sollstunden-Raster zählt den laufenden Tag von
-   * 00:00 an voll. Wer morgens um neun nachsieht, hat eine von acht Stunden
-   * gebucht und läge damit scheinbar sieben Stunden zurück — jeden Vormittag
-   * aufs Neue. Eine Zahl, die regelmäßig falsch aussieht, wird ignoriert, und
-   * damit wäre der ganze Umbau umsonst.
-   *
-   * Der laufende Tag fehlt hier nicht, er steht oben: Die Stempeluhr zeigt die
-   * Tagessumme live. Das Konto beantwortet die andere Frage — den Trend.
-   *
-   * Sonderfall Monatserster: „bis gestern" läge vor dem Monatsanfang. Dann ist
-   * der **Vormonat** der richtige Zeitraum; am 1. interessiert ohnehin, wie der
-   * abgeschlossene Monat ausgegangen ist.
-   */
-  private kontoZeitraum(): [string, string] {
-    const pad = (n: number) => String(n).padStart(2, '0');
-    const iso = (d: Date) =>
-      `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-    const jetzt = new Date();
-    const gestern = new Date(jetzt.getFullYear(), jetzt.getMonth(), jetzt.getDate() - 1);
-    const monatsAnfang = new Date(jetzt.getFullYear(), jetzt.getMonth(), 1);
-    if (gestern < monatsAnfang) {
-      // Heute ist der Erste — der Vormonat in Gänze.
-      const vormonatAnfang = new Date(jetzt.getFullYear(), jetzt.getMonth() - 1, 1);
-      return [iso(vormonatAnfang), iso(gestern)];
-    }
-    return [iso(monatsAnfang), iso(gestern)];
-  }
-
-  /** Dezimalstunden aus dem Konto („7.50") deutsch als „7,5 h". */
-  protected stundenText(wert: string): string {
-    const n = Number(wert);
-    if (!Number.isFinite(n)) return wert;
-    return `${new Intl.NumberFormat('de-DE', { maximumFractionDigits: 1 }).format(n)} h`;
-  }
+  // `kontoZeitraum`, `saldoText` und `saldoArt` stehen im Modell, nicht in der
+  // Nachbarkomponente: Ein Import aus einer lazy geladenen Route zöge deren
+  // ganzen Chunk mit — und zwei Kopien der Zeitraumlogik wären die Sorte
+  // Doppelpflege, bei der eine Seite später still auf die alte Regel zurückfällt.
+  protected readonly saldoText = saldoText;
+  protected readonly saldoArt = saldoArt;
 
   /**
-   * Der Saldo mit ausdrücklichem Vorzeichen. „+7,5 h" und „−7,5 h" sind zwei
-   * gegenteilige Aussagen; ohne das Pluszeichen liest sich Mehrarbeit wie eine
-   * bloße Zahl. Das Minus ist ein echtes Minuszeichen (U+2212), kein Bindestrich.
+   * Balkenbreite einer Buchung in Prozent der längsten Buchung des Tages
+   * (Befund E2: „Tagesliste ist reiner Text").
+   *
+   * Bezug ist bewusst die **längste Buchung**, nicht die Tagessumme oder ein
+   * fester 24-Stunden-Maßstab: Der Blick soll die Buchungen untereinander
+   * vergleichen („der Vormittag war doppelt so lang wie der Nachmittag"). Ein
+   * Tagesmaßstab drückte jede einzelne Buchung auf ein paar Prozent zusammen
+   * und zeigte gar nichts mehr.
+   *
+   * Ein Mindestwert verhindert, dass eine Fünf-Minuten-Pause zu einem
+   * unsichtbaren Strich wird — sie soll klein aussehen, aber vorhanden sein.
+   * Eine noch laufende Buchung hat keine Dauer und bekommt keinen Balken.
    */
-  protected saldoText(wert: string): string {
-    const n = Number(wert);
-    if (!Number.isFinite(n)) return wert;
-    const betrag = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 1 }).format(
-      Math.abs(n),
+  protected balkenBreite(e: Zeiteintrag): number {
+    const dauer = e.dauer_sekunden;
+    if (!dauer || dauer <= 0) return 0;
+    const laengste = (this.heute()?.eintraege ?? []).reduce(
+      (max, x) => Math.max(max, x.dauer_sekunden ?? 0),
+      0,
     );
-    if (n === 0) return '±0 h';
-    return `${n > 0 ? '+' : '−'}${betrag} h`;
-  }
-
-  /**
-   * Steht überhaupt eine Ausgleichsbuchung im Zeitraum?
-   *
-   * Als Zahl geprüft, nicht als String gegen `'0.00'`: Der Vergleich hinge
-   * sonst an der Serialisierungsform des Decimal-Feldes. Zwei Zeilen weiter
-   * macht `stundenText` bereits `Number(...)` — im selben Template zweierlei
-   * Auffassungen davon zu haben, was dieses Feld ist, lädt zum Fehler ein.
-   */
-  protected hatAusgleich(wert: string): boolean {
-    const n = Number(wert);
-    return Number.isFinite(n) && n !== 0;
-  }
-
-  /** Trägt der Saldo Mehrarbeit, Minusstunden oder nichts? */
-  protected saldoArt(wert: string): 'plus' | 'minus' | 'null' {
-    const n = Number(wert);
-    if (!Number.isFinite(n) || n === 0) return 'null';
-    return n > 0 ? 'plus' : 'minus';
+    if (laengste <= 0) return 0;
+    return Math.max(4, Math.round((dauer / laengste) * 100));
   }
 
   private uebernehmen(z: StempelZustand): void {

@@ -136,7 +136,19 @@
         @if (daten()!.lines.length === 0) {
           <div class="tab-platzhalter"><p>Dieses Angebot enthält noch keine Positionen.</p></div>
         } @else {
-          <div class="pos-wrap">
+          <!-- Befund G1: Die Positionen stehen jetzt auf einem BLATT, nicht
+               randlos in der Seite. Der Kunde bekommt ein Schriftstück; die
+               Leseansicht soll aussehen wie das, was rausgeht. Der
+               Kalkulationsblock weiter unten bleibt bewusst AUSSERHALB des
+               Blatts — er zeigt die Marge, die auf keinem Kundenbeleg steht. -->
+          <app-dokument-blatt
+            [kopf]="daten()!.dokumentkopf"
+            [betreff]="dokumentBetreff()"
+            [unterzeile]="daten()!.title"
+            [meta]="dokumentMeta()"
+            [anschreiben]="daten()!.cover_letter"
+            [entwurf]="istEntwurf()"
+          >
             <table class="pos">
               <thead>
                 <tr>
@@ -176,7 +188,7 @@
                 </tr>
               </tfoot>
             </table>
-          </div>
+          </app-dokument-blatt>
         }
       }
 

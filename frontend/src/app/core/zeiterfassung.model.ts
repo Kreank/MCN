@@ -373,3 +373,56 @@ export function fromLocalInput(wert: string): string {
   if (!iso) throw new Error(`Unvollstaendige Zeitangabe: "${wert}"`);
   return iso;
 }
+
+/**
+ * Der Zeitraum des Stundenkontos: **abgeschlossene** Tage des laufenden Monats,
+ * also bis einschließlich gestern.
+ *
+ * Warum nicht bis heute: Das Sollstunden-Raster zählt den laufenden Tag von
+ * 00:00 an voll. Wer morgens um neun nachsieht, hat eine von acht Stunden
+ * gebucht und läge damit scheinbar sieben Stunden zurück — jeden Vormittag
+ * aufs Neue. Eine Zahl, die regelmäßig falsch aussieht, wird ignoriert.
+ *
+ * Und erst recht nicht ohne Zeitraum: Der Server nähme dann den Monat bis zum
+ * **Monatsletzten** und summierte das Soll aller Zukunftstage gegen ein Ist,
+ * das nur bis heute reichen kann — am Monatsersten stünden dort die vollen
+ * Minusstunden eines ganzen Monats.
+ *
+ * Sonderfall Monatserster: „bis gestern" läge vor dem Monatsanfang. Dann ist
+ * der Vormonat der richtige Zeitraum; am 1. interessiert ohnehin, wie der
+ * abgeschlossene Monat ausgegangen ist.
+ */
+export function kontoZeitraum(): [string, string] {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const iso = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const jetzt = new Date();
+  const gestern = new Date(jetzt.getFullYear(), jetzt.getMonth(), jetzt.getDate() - 1);
+  const monatsAnfang = new Date(jetzt.getFullYear(), jetzt.getMonth(), 1);
+  if (gestern < monatsAnfang) {
+    const vormonatAnfang = new Date(jetzt.getFullYear(), jetzt.getMonth() - 1, 1);
+    return [iso(vormonatAnfang), iso(gestern)];
+  }
+  return [iso(monatsAnfang), iso(gestern)];
+}
+
+/**
+ * Der Saldo mit ausdrücklichem Vorzeichen. „+7,5 h" und „−7,5 h" sind zwei
+ * gegenteilige Aussagen; ohne das Pluszeichen liest sich Mehrarbeit wie eine
+ * bloße Zahl. Das Minus ist ein echtes Minuszeichen (U+2212).
+ */
+export function saldoText(wert: string): string {
+  const n = Number(wert);
+  if (!Number.isFinite(n)) return wert;
+  const betrag = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 1 }).format(
+    Math.abs(n),
+  );
+  if (n === 0) return '±0 h';
+  return `${n > 0 ? '+' : '−'}${betrag} h`;
+}
+
+/** Trägt der Saldo Mehrarbeit, Minusstunden oder nichts? */
+export function saldoArt(wert: string): 'plus' | 'minus' | 'null' {
+  const n = Number(wert);
+  if (!Number.isFinite(n) || n === 0) return 'null';
+  return n > 0 ? 'plus' : 'minus';
+}

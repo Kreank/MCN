@@ -43,4 +43,11 @@ export class MeinBereich {
    * bucht immer auf den Akteur — row_scope EIGENE ist hier genau richtig.
    */
   protected readonly darfStempeln = computed(() => this.auth.darf('hr', 'AENDERN'));
+
+  /**
+   * Verlauf und Personalakte verlangen `hr/LESEN`. Ein Reiter, der beim Klick
+   * am Wächter abprallt, wäre eine Aussage über die Sichtbarkeit statt über die
+   * Wirkung — dieselbe Regel wie beim Stempel-Reiter nebenan.
+   */
+  protected readonly darfLesen = computed(() => this.auth.darf('hr', 'LESEN'));
 }

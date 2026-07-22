@@ -1,0 +1,180 @@
+/* Das Blatt (Befund G1).
+ *
+ * Die Anmutung entsteht aus drei Dingen, nicht aus Verzierung: einer
+ * abgesetzten Bühne, auf der das Blatt LIEGT; großzügigen Rändern, wie sie
+ * Papier hat; und einer Breite, die dem Textmaß eines Briefes entspricht.
+ */
+.blatt-buehne {
+  /* Der gedämpfte Grund ist der Trick: Ohne ihn schwebt das Blatt nicht, es
+     klebt — genau der Eindruck von „eingebacken", um den es hier geht. */
+  padding: var(--space-5) var(--space-4);
+  background: var(--surface-sunken);
+  border-radius: var(--radius);
+}
+
+.blatt {
+  /* Das Blatt setzt die Farbpalette AUF PAPIER zurück — für sich und für alles,
+     was hineinprojiziert wird.
+
+     Ohne das entstünde im Dunkelmodus ein stiller, aber vollständiger Ausfall:
+     Das Blatt bleibt hell (Papier ist hell), die projizierte Positionstabelle
+     erbt aber die dunklen Theme-Tokens und schriebe `--ink: #e8eef2` — fast
+     weiß auf fast weiß. Der Build zeigt so etwas nicht, ein Kontrast-Prüfer
+     ohne Dunkelmodus auch nicht.
+
+     Deshalb sind hier die HELLEN Werte aus `_tokens.scss` fest gesetzt: Auf
+     Papier gilt die Papier-Palette, unabhängig vom Thema der Anwendung. */
+  --ink: #1c3244;
+  --ink-muted: #4a5b68;
+  --ink-hint: #5c6b78;
+  --ink-faint: #5c6b78;
+  --line: #ddd8ce;
+  --line-strong: #8a8375;
+  --surface: #fff;
+  --surface-sunken: #efede8;
+
+  position: relative;
+  /* Papierbreite als Obergrenze, darunter flüssig. Feste Millimeter (210mm)
+     wären auf dem Handy eine Zumutung — das Blatt soll die Anmutung tragen,
+     nicht die Geometrie erzwingen. */
+  max-width: 52rem;
+  margin: 0 auto;
+  padding: clamp(var(--space-4), 5vw, var(--space-6));
+  /* Fest #fff statt var(--paper): Ohne gesetztes data-theme (OS hell, Umschalter
+     nie berührt) wäre das Blatt derselbe Ton wie die Seite darunter — die
+     Papiermetapher trüge dann nur noch über Rand und Schatten. */
+  background: #fff;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  /* Ein einziger weicher Schatten. Papier wirft keinen bunten Schein. */
+  box-shadow: 0 1px 2px rgb(0 0 0 / 8%), 0 8px 24px rgb(0 0 0 / 6%);
+}
+
+/* Im Dunkelmodus bleibt das Blatt hell, aber nicht grell: reines Weiß auf
+   dunklem Grund blendet. Der Text bleibt dunkel — ein Dokument, das man liest
+   wie auf Papier. Der Kontrast dunkler Text auf `#f4f1ec` liegt weit über AA. */
+@media (prefers-color-scheme: dark) {
+  .blatt {
+    /* Kein reines Weiß im Dunkeln — das blendet. Ein leicht warmer Papierton
+       ist ruhiger und trägt den Textkontrast unverändert (15,45:1). */
+    background: #f4f1ec;
+    border-color: rgb(0 0 0 / 25%);
+  }
+}
+:root[data-theme='dark'] .blatt {
+  background: #f4f1ec;
+  border-color: rgb(0 0 0 / 25%);
+}
+:root[data-theme='light'] .blatt {
+  background: #fff;
+  /* Auch den Rand zurücksetzen: Sonst trüge ein weißes Blatt bei OS-dunkel und
+     ausdrücklich hellem Thema den dunklen Rand der Dunkelregel. */
+  border-color: var(--line);
+}
+
+.blatt__entwurf-aufdruck {
+  position: absolute;
+  top: var(--space-4);
+  right: var(--space-4);
+  margin: 0;
+  padding: 0.15em 0.7em;
+  border: 2px solid currentcolor;
+  border-radius: var(--radius-sm);
+  color: #b03a2e;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  transform: rotate(-4deg);
+}
+/* Ein gedrehter Aufdruck ist Bewegungsanmutung; wer reduzierte Bewegung
+   wünscht, bekommt ihn gerade. */
+@media (prefers-reduced-motion: reduce) {
+  .blatt__entwurf-aufdruck {
+    transform: none;
+  }
+}
+
+.blatt__ruecksende {
+  margin: 0 0 var(--space-2);
+  padding-bottom: 0.15em;
+  border-bottom: 0.5px solid currentcolor;
+  /* 7,46:1 auf Weiß, 6,62:1 auf dem Papierton — beide über AA. */
+  color: #555;
+  font-size: 0.68rem;
+  /* Die Rücksendeangabe steht über dem Anschriftfeld und ist bewusst klein —
+     wie im Fensterkuvert. */
+  max-width: 26rem;
+}
+
+.blatt__kopf-raster {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-4);
+  align-items: start;
+  margin-bottom: var(--space-6);
+}
+@media (max-width: 40rem) {
+  .blatt__kopf-raster {
+    grid-template-columns: 1fr;
+  }
+}
+
+.blatt__anschrift {
+  display: flex;
+  flex-direction: column;
+  font-style: normal; /* <address> kursiviert per Voreinstellung */
+  line-height: 1.5;
+}
+.blatt__anschrift-zeile:first-child {
+  font-weight: 600;
+}
+.blatt__anschrift-leer {
+  /* #6b6b6b, nicht #777: Letzteres erreicht auf dem Papierton nur 3,97:1 und
+     auf Weiß 4,48:1 — beides unter AA. Nachgerechnet, nicht geschätzt. */
+  color: #6b6b6b;
+  font-size: 0.85rem;
+}
+
+.blatt__meta {
+  margin: 0;
+  font-size: 0.85rem;
+  min-width: 14rem;
+}
+.blatt__meta-zeile {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 0.15em 0;
+
+  dt {
+    color: #555;
+  }
+  dd {
+    margin: 0;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+  }
+}
+
+.blatt__betreff {
+  margin: 0 0 0.2em;
+  font-size: 1.35rem;
+  line-height: 1.2;
+}
+.blatt__unterzeile {
+  margin: 0 0 var(--space-5);
+  color: #555;
+}
+.blatt__anschreiben {
+  margin: 0 0 var(--space-5);
+  line-height: 1.6;
+  /* Zeilenumbrüche des Freitextes erhalten — der Verfasser hat sie gesetzt. */
+  white-space: pre-wrap;
+}
+
+.blatt__inhalt {
+  /* Breite Inhalte (Positionstabellen) scrollen in sich, nie die Seite. */
+  overflow-x: auto;
+}

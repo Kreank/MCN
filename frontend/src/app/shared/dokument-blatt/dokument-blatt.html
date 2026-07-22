@@ -1,0 +1,62 @@
+<div class="blatt-buehne">
+  <article class="blatt" [class.blatt--entwurf]="entwurf()">
+    @if (entwurf()) {
+      <!-- Der Aufdruck ist Information, keine Dekoration: Er unterscheidet ein
+           Bildschirmfoto des Entwurfs von einem gestellten Beleg. Deshalb echter
+           Text und nicht nur eine Hintergrundgrafik. -->
+      <p class="blatt__entwurf-aufdruck">Entwurf</p>
+    }
+
+    @if (kopf(); as k) {
+      <header class="blatt__kopf">
+        <!-- Rücksendeangabe über dem Anschriftfeld (DIN 5008 Form B) -->
+        @if (k.aussteller.length > 0) {
+          <p class="blatt__ruecksende">{{ k.aussteller.join(' · ') }}</p>
+        }
+
+        <div class="blatt__kopf-raster">
+          <address class="blatt__anschrift">
+            @if (k.empfaenger.length > 0) {
+              @for (zeile of k.empfaenger; track $index) {
+                <span class="blatt__anschrift-zeile">{{ zeile }}</span>
+              }
+            } @else {
+              <span class="blatt__anschrift-leer">
+                Kein Empfänger hinterlegt — er ergibt sich aus dem Auftraggeber
+                des Auftrags.
+              </span>
+            }
+          </address>
+
+          @if (meta().length > 0) {
+            <dl class="blatt__meta">
+              @for (m of meta(); track m.label) {
+                <div class="blatt__meta-zeile">
+                  <dt>{{ m.label }}</dt>
+                  <dd>{{ m.wert }}</dd>
+                </div>
+              }
+            </dl>
+          }
+        </div>
+      </header>
+    }
+
+    @if (betreff()) {
+      <h2 class="blatt__betreff">{{ betreff() }}</h2>
+    }
+    @if (unterzeile()) {
+      <p class="blatt__unterzeile">{{ unterzeile() }}</p>
+    }
+
+    @if (anschreiben()) {
+      <p class="blatt__anschreiben">{{ anschreiben() }}</p>
+    }
+
+    <div class="blatt__inhalt">
+      <ng-content />
+    </div>
+
+    <ng-content select="[blatt-fuss]" />
+  </article>
+</div>

@@ -70,6 +70,7 @@ from db_core.services.beleg import (
     beteiligter,
     issuer_stammdaten,
     leistungssummen,
+    party_stammdaten,
     zahlungsbedingungen,
 )
 
@@ -953,7 +954,6 @@ def render_quote_document(quote, *, entwurf=False):
     der Rechnung) — der Aussteller kommt bewusst live aus dem Firmenprofil.
     """
     recipient_party = quote_recipient_party(quote)
-    recipient = recipient_party.display_name if recipient_party else None
     profile = issuer_stammdaten()
     logo = _logo_bytes(CompanyProfile.objects.first())
     pdf = new_beleg_pdf(issuer=profile, entwurf=entwurf, logo_bytes=logo)
@@ -961,9 +961,22 @@ def render_quote_document(quote, *, entwurf=False):
     prop = quote.property
     ort = " · ".join(b for b in (prop.name, prop.address.city) if b)
 
-    # Empfänger, falls ableitbar; sonst die Liegenschaft als Bezug (ein Angebot
-    # darf ohne formalen Adressaten rendern).
-    zeilen = [recipient] if recipient else ([f"Liegenschaft: {ort}"] if ort else ["-"])
+    # Empfänger mit **vollständiger Anschrift**, falls ableitbar; sonst die
+    # Liegenschaft als Bezug (ein Angebot darf ohne formalen Adressaten rendern).
+    #
+    # Bis Juli 2026 stand hier nur `recipient_party.display_name` — eine nackte
+    # Namenszeile. Das Anschriftfeld ist aber nach DIN 5008 Form B für ein
+    # Fensterkuvert gebaut: Ohne Straße und Ort ließ sich das ausgedruckte
+    # Angebot schlicht nicht eintüten. Jetzt dieselbe Funktion wie beim
+    # Rechnungs-PDF und bei der Bildschirmansicht (`beleg.dokumentkopf`), damit
+    # alle drei denselben Block zeigen.
+    #
+    # Sichtbild-Divergenz bei Altbelegen: Ein vor dieser Änderung archiviertes
+    # Angebots-PDF behält seine Ausfertigung mit der Namenszeile. Beträge und
+    # Positionen sind identisch — es gibt keinen Datenwiderspruch (vgl. den
+    # gleichgelagerten Hinweis zur Font-Umstellung im Modul-Docstring).
+    empfaenger = empfaenger_zeilen(party_stammdaten(recipient_party)) if recipient_party else []
+    zeilen = empfaenger or ([f"Liegenschaft: {ort}"] if ort else ["-"])
     meta = [
         ("Angebots-Nr.", quote.quote_number or ("Entwurf" if entwurf else None)),
         ("Angebotsdatum", _de_date(quote.quote_date)),

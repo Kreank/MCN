@@ -39,9 +39,15 @@
     background: var(--positive-tint);
   }
 
+  /* Pause ist ein normaler Betriebszustand, keine Warnung — dieselbe Trennung
+     wie beim Pause-Knopf. Amber bleibt dem vorbehalten, was wirklich
+     Aufmerksamkeit braucht (Buchung läuft seit gestern, fehlende Pflichtpause).
+     `--neutral-tint` und nicht ein festes Hell-Grau: Die Karte setzt keine
+     eigene Textfarbe, ihr Inhalt erbt `--ink` — im Dunkelmodus wäre das fast
+     weiße Schrift auf einer hellen Fläche gewesen (1,01:1). */
   &--pause {
-    border-color: var(--warn-ink);
-    background: var(--warn-tint);
+    border-color: var(--line-strong);
+    background: var(--neutral-tint);
   }
 }
 
@@ -124,20 +130,46 @@
   }
 }
 
+/* Start ist die HANDLUNG, nicht die Fläche (Befund E2).
+ *
+ * Vorher trug der Knopf Marineblau — das ist im System die Farbe der Flächen
+ * und der Navigation. Damit sah die wichtigste Handlung der Seite aus wie
+ * Möbel. Orange ist die Interaktionsfarbe der Marke, und in der Branche ist es
+ * durchgängig die Start-Farbe (Toggl, Clockify, Harvest).
+ *
+ * Der Text ist ein sehr dunkles Braun statt Marineblau: 6,51:1 gegen 4,95:1.
+ * Beide bestehen AA, aber dieser Knopf wird bei Sonnenlicht mit Handschuhen
+ * gedrückt — dort zählt jeder Punkt Kontrast mehr als Markentreue an einer
+ * Stelle, die ohnehin schon vollflächig die Markenfarbe trägt. */
 .knopf--start {
-  background: var(--navy);
-  color: var(--on-command);
-  border-color: var(--navy);
+  background: var(--accent);
+  color: #2a1505; // 6,51:1 auf #ef804e
+  /* Der Rand trägt die Kante: Orange selbst erreicht gegen Weiß nur 2,67:1 und
+     verfehlt damit WCAG 1.4.11 (3:1 für Bedienelemente). --accent-ink schafft
+     5,74:1 — der Knopf ist als Fläche eindeutig begrenzt. */
+  border-color: var(--accent-ink);
 
   &:hover:not(:disabled) {
-    background: var(--command-2);
+    background: var(--accent-ink);
+    color: #fff;
   }
 }
 
+/* Pause ist KEIN Fehler.
+ *
+ * Vorher stand hier Amber — dieselbe Farbe, mit der die Seite vor einer seit
+ * gestern laufenden Buchung warnt. Zwei gegensätzliche Bedeutungen in einer
+ * Farbe: „alles in Ordnung, ich mache Mittag" und „hier stimmt etwas nicht".
+ * Neutrales Grau trennt beides, und Amber steht wieder für das zur Verfügung,
+ * was wirklich Aufmerksamkeit braucht (fehlende Pflichtpause, ArbZG). */
 .knopf--pause {
-  background: var(--warn);
-  color: #2a1c05; // 8,3:1 auf #db9c4d
-  border-color: var(--warn-ink);
+  /* Tokens, keine festen Hex-Werte: `--ink` wechselt mit dem Thema, eine feste
+     helle Fläche darunter nicht — im Dunkelmodus stand hier sonst fast weiße
+     Schrift auf Hellgrau (1,12:1), also ein unbeschrifteter Knopf.
+     Jetzt 11,32:1 hell und 11,12:1 dunkel. */
+  background: var(--neutral-tint);
+  color: var(--ink);
+  border-color: var(--line-strong); // 3,22:1+ gegen die Fläche (WCAG 1.4.11)
 }
 
 .knopf--stopp {
@@ -213,8 +245,7 @@
 // ---------------------------------------------------------------------------
 // Timeline
 // ---------------------------------------------------------------------------
-.timeline,
-.letzte {
+.timeline {
   margin-top: var(--space-6);
 }
 
@@ -249,7 +280,10 @@
 
 .eintrag {
   display: grid;
-  grid-template-columns: 9.5rem 1fr auto auto;
+  /* Fünfte Spalte für den Dauer-Balken. Sie hat eine feste Breite: Nur so
+     lassen sich die Balken untereinander überhaupt vergleichen — eine
+     mitwachsende Spalte verzerrte je Zeile den Maßstab. */
+  grid-template-columns: 9.5rem 1fr 6rem auto auto;
   gap: var(--space-2) var(--space-3);
   align-items: center;
   padding: var(--space-3);
@@ -259,9 +293,10 @@
   background: var(--surface);
 
   // Pause traegt IMMER ihren Namen im Text — der gestrichelte Rand ist Zugabe.
+  // Neutral statt Amber: Pause ist kein Warnzustand (siehe .uhr--pause).
   &--pause {
     border-left-style: dashed;
-    border-left-color: var(--warn-ink);
+    border-left-color: var(--line-strong);
     background: var(--surface-sunken);
   }
 }
@@ -282,6 +317,50 @@
 .eintrag__einsatz {
   font-size: var(--step--1);
   color: var(--ink-muted);
+}
+
+/* Der Dauer-Balken (Befund E2). Die Schiene macht den Maßstab sichtbar: Ohne
+   sie schwebte der Balken und man sähe nicht, wovon er ein Teil ist. */
+.eintrag__balken {
+  display: block;
+  height: 0.6rem;
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  overflow: hidden;
+}
+.eintrag__balken-fuellung {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  /* Kräftiger als --positive (#9fcd99 erreicht gegen die Schiene nur 1,6:1).
+     Der Balken ist zwar redundant zur Dauerzahl, aber eine Fläche, die man kaum
+     sieht, ist keine Darstellung — sie ist Rauschen. 3,58:1 gegen die Schiene
+     --surface-sunken (NICHT gegen Weiß: die Schiene ist der Untergrund). */
+  background: #4a8a48;
+  transition: width 160ms ease-out;
+}
+.eintrag__balken-fuellung--pause {
+  /* Pause bleibt neutral — dieselbe Trennung wie beim Pause-Knopf. 4,73:1
+     gegen die Schiene. */
+  background: #6f6858;
+}
+@media (prefers-reduced-motion: reduce) {
+  .eintrag__balken-fuellung {
+    transition: none;
+  }
+}
+
+@media (max-width: 42rem) {
+  /* Auf dem Handy fliegt der Balken heraus, statt die Zeilen zu quetschen: Die
+     Zeiten und die Dauer sind die Information, der Balken ist die Zugabe. */
+  .eintrag {
+    /* Vier sichtbare Kinder, nachdem der Balken ausgeblendet ist — mit drei
+       Spalten rutschte die Aktionsspalte in die zweite Zeile. */
+    grid-template-columns: 9.5rem 1fr auto auto;
+  }
+  .eintrag__balken {
+    display: none;
+  }
 }
 
 .eintrag__dauer {
@@ -306,33 +385,6 @@
   }
 }
 
-// ---------------------------------------------------------------------------
-// Tabelle
-// ---------------------------------------------------------------------------
-.tabelle {
-  width: 100%;
-  border-collapse: collapse;
-
-  th,
-  td {
-    padding: var(--space-2) var(--space-3);
-    text-align: left;
-    border-bottom: 1px solid var(--line);
-  }
-
-  th {
-    font-size: var(--step--1);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--ink-muted);
-  }
-
-  .num {
-    font-family: var(--font-mono);
-    font-variant-numeric: tabular-nums;
-  }
-}
-
 .dialog-aktionen {
   display: flex;
   justify-content: flex-end;
@@ -341,112 +393,65 @@
 }
 
 /* ---------------------------------------------------------------------------
-   Stundenkonto (Befund E4)
+   Kompakte Saldo-Zeile (Befunde E4 + E2 „Dichte“)
+
+   Der ausführliche Stundenkonto-Block steht unter „Mein Verlauf“. Hier bleibt
+   eine einzige Zeile: die Zahl, die man auch beim Stempeln wissen will, und
+   der Weg zum Rest.
    --------------------------------------------------------------------------- */
-.konto {
-  margin-bottom: var(--space-5);
-  padding: var(--space-4);
-  border: 1.5px solid var(--line);
+.saldo-zeile {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-3);
+  margin-top: var(--space-5);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface);
+  color: inherit;
+  text-decoration: none;
+
+  &:hover {
+    border-color: var(--line-strong);
+  }
+
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
 }
-.konto__titel {
-  margin: 0;
+
+.saldo-zeile__label {
+  color: var(--ink-muted);
+  font-size: var(--step--1);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.saldo-zeile__zahl {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
   font-size: var(--step-1);
-}
-.konto__zeitraum {
-  margin: var(--space-1) 0 var(--space-3);
-  color: var(--ink-muted);
-  font-size: 0.85rem;
-}
-.konto__zeitraum-hinweis {
-  opacity: 0.85;
-}
-.konto__saldo {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: var(--space-2) var(--space-3);
-  margin-bottom: var(--space-4);
-}
-.konto__saldo-zahl {
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-  font-size: var(--step-3);
   font-weight: 700;
-  line-height: 1;
-}
-/* Das Wort neben der Zahl ist kein Schmuck: Es trägt die Aussage auch dann,
-   wenn Farbe nicht ankommt (WCAG 1.4.1 — Status nie nur über Farbe). */
-.konto__saldo-wort {
-  color: var(--ink-muted);
-  font-size: 0.9rem;
-}
-.konto__saldo--plus .konto__saldo-zahl {
-  color: var(--positive-ink);
-}
-.konto__saldo--minus .konto__saldo-zahl {
-  color: var(--warn-ink);
-}
-.konto__fakten {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
-  gap: var(--space-3);
-  margin: 0;
 
-  dt {
-    color: var(--ink-muted);
-    font-size: 0.8rem;
+  &--plus {
+    color: var(--positive-ink);
   }
-  dd {
-    margin: 0;
-    font-family: var(--font-mono);
-    font-variant-numeric: tabular-nums;
-    font-weight: 600;
+  &--minus {
+    color: var(--warn-ink);
   }
 }
-.konto__hinweis {
-  margin: var(--space-3) 0 0;
+
+/* Das Wort trägt die Aussage auch ohne Farbe (WCAG 1.4.1). */
+.saldo-zeile__wort {
   color: var(--ink-muted);
-  font-size: 0.85rem;
+  font-size: var(--step--1);
 }
 
-/* Wochenblöcke statt einer 30-Zeilen-Halde. Die Beschriftung trägt die
-   Wochensumme — die Zahl, wegen der man überhaupt hinsieht. */
-.tabelle--woche {
-  margin-bottom: var(--space-4);
-
-  caption {
-    padding-bottom: var(--space-2);
-    text-align: left;
-  }
-}
-.woche__kopf {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-2);
-}
-.woche__label {
-  font-weight: 700;
-}
-.woche__summe {
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-  font-size: 0.85rem;
-}
-.woche__pause {
-  color: var(--ink-muted);
-}
-
-/* Begründung der Zeitkontrolle bzw. Name des Prüfers — unter dem Statuschip,
-   damit dieser seine Form behält. Der Text darf umbrechen; er ist der Inhalt,
-   nicht die Verzierung. */
-.tag-grund {
-  display: block;
-  margin-top: var(--space-1);
-  font-size: 0.82rem;
-  color: var(--ink-muted);
-  white-space: normal;
+.saldo-zeile__mehr {
+  margin-left: auto;
+  color: var(--accent-ink);
+  font-size: var(--step--1);
+  font-weight: 600;
 }

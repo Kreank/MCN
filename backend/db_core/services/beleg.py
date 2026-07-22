@@ -2389,6 +2389,65 @@ def beteiligter(stammdaten, role):
     return chosen
 
 
+def _ausstellerzeilen(issuer):
+    """Absenderblock aus dem Aussteller-Stammdatensatz.
+
+    Dieselbe Zusammensetzung wie die Rücksendezeile des PDF-Anschriftfelds
+    (Firma · Straße · PLZ Ort), nur zeilenweise statt mit Trennpunkten.
+    """
+    if not issuer:
+        return []
+    ort = " ".join(t for t in (issuer.get("postal_code"), issuer.get("city")) if t)
+    return [t for t in (issuer.get("company_name"), issuer.get("street"), ort) if t]
+
+
+def dokumentkopf(beleg):
+    """Briefkopf eines Belegs für die **Bildschirm**-Darstellung.
+
+    Befund G1. Sascha über die Angebots-Leseansicht: „Es sieht in der Übersicht
+    halt nicht aus wie ein Dokument, sondern wie statisch auf der Seite
+    eingebacken." Was fehlte, war der Briefkopf — ohne Absender, Empfänger und
+    Betreff ist eine Positionstabelle eben eine Tabelle und kein Schriftstück.
+
+    **Dieselbe Quelle wie das PDF, ausdrücklich.** Der Aufbau greift auf
+    `beleg_stammdaten` / `issuer_stammdaten` / `quote_recipient_party` zu — also
+    genau das, woraus auch die Ausfertigung entsteht. Ein zweiter, „schnellerer"
+    Weg über die Live-Modelldaten wäre der eigentliche Fehler gewesen: Bei einer
+    veröffentlichten Rechnung stünde nach einem Kundenumzug auf dem Schirm eine
+    andere Anschrift als auf dem Beleg, den der Kunde in Händen hält. Der
+    Snapshot ist die Wahrheit (B-30, GoBD), und diese Ansicht zeigt ihn.
+
+    Gibt `None` zurück, wenn der Belegtyp keinen Kopf kennt — die Ansicht fällt
+    dann auf ihre bisherige Darstellung zurück, statt zu brechen.
+    """
+    from db_core.models import Invoice, Quote
+    # Lokaler Import: `beleg_pdf` importiert seinerseits aus diesem Modul.
+    from db_core.services.beleg_pdf import empfaenger_zeilen, quote_recipient_party
+
+    if isinstance(beleg, Invoice):
+        stamm = beleg_stammdaten(beleg)
+        debtor = beteiligter(stamm, "INVOICE_DEBTOR")
+        recipient = beteiligter(stamm, "INVOICE_RECIPIENT") or debtor
+        return {
+            "aussteller": _ausstellerzeilen(stamm.get("issuer")),
+            "empfaenger": empfaenger_zeilen((recipient or {}).get("snapshot")),
+            "aus_snapshot": stamm.get("aus_snapshot", False),
+        }
+
+    if isinstance(beleg, Quote):
+        # Angebote tragen keinen Stammdaten-Snapshot; sie sind bis zur Annahme
+        # veränderlich, und ihr Kopf ist damit zulässigerweise live. Das
+        # Angebots-PDF baut denselben Block aus denselben zwei Funktionen.
+        party = quote_recipient_party(beleg)
+        return {
+            "aussteller": _ausstellerzeilen(issuer_stammdaten()),
+            "empfaenger": empfaenger_zeilen(party_stammdaten(party)) if party else [],
+            "aus_snapshot": False,
+        }
+
+    return None
+
+
 def anzeige_menge_preis(line):
     """(Menge, Einzelpreis) einer Position **für die Ausgabe** — PDF wie XML.
 
