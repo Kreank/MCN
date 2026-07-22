@@ -32,6 +32,24 @@
   --line-strong: #8a8375;
   --surface: #fff;
   --surface-sunken: #efede8;
+  /* Auch die FLÄCHEN- und Signaltöne. Der erste Anlauf setzte nur die
+     Schrift- und Linientöne zurück und trug, solange nur eine Positionstabelle
+     im Blatt lag. Sobald ganze Bausteine hineinwandern (Berichtspositionen mit
+     Trefferliste, Abnahmebanner, Fehlermeldungen an Mengenfeldern), bringen
+     die ihre eigenen Flächen mit — und die kamen im Dunkelmodus dunkel auf
+     hellem Papier heraus: der Abnahmebanner erreichte 1,07:1, die
+     Artikel-Trefferliste 1,31:1. Beides praktisch unsichtbar. */
+  --paper: #f7f6f3;
+  --positive-ink: #2f6b3f;
+  --positive-tint: #e6f1e3;
+  --warn-ink: #8a5a12;
+  --warn-tint: #f7ead2;
+  --neutral-tint: #f0ede8;
+  --accent-ink: #a84a17;
+  /* Der Fokusring muss AUF DEM PAPIER sichtbar sein (WCAG 2.4.11/1.4.11,
+     3:1). Das dunkle Thema setzt ihn auf Orange — 2,37:1 gegen den Papierton.
+     Auf Papier gilt der Navy-Ring des hellen Themas. */
+  --focus-ring: #1c3244;
 
   position: relative;
   /* Papierbreite als Obergrenze, darunter flüssig. Feste Millimeter (210mm)

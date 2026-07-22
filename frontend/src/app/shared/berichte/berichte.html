@@ -107,118 +107,83 @@
               </p>
             }
 
-            <!-- Briefkopf (Befund B3/B8): Auftraggeber, Adresse, Mieter, Lage
-                 der Wohnung, Auftragsnummer, Eigentümer — „halt das übliche
-                 Briefkopf-Gedöns", wie bei Angebot und Rechnung. Steht oben,
-                 weil das Dokument so gelesen wird.
-                 Leere Felder werden weggelassen statt mit „—" gefüllt: Ein
-                 Bericht am freien Termin hat legitim keinen Auftraggeber, und
-                 eine Spalte voller Gedankenstriche ist kein Briefkopf. -->
-            @if (r.kopf; as k) {
-              <dl class="briefkopf">
-                @if (k.order_number) {
-                  <div class="briefkopf__feld">
-                    <dt class="briefkopf__label">Auftragsnummer</dt>
-                    <dd class="briefkopf__wert briefkopf__wert--mono">{{ k.order_number }}</dd>
-                  </div>
-                }
-                @if (k.auftraggeber) {
-                  <div class="briefkopf__feld">
-                    <dt class="briefkopf__label">Auftraggeber</dt>
-                    <dd class="briefkopf__wert">
-                      {{ k.auftraggeber }}
-                      @if (k.auftraggeber_adresse) {
-                        <span class="briefkopf__sub">{{ k.auftraggeber_adresse }}</span>
-                      }
-                    </dd>
-                  </div>
-                }
-                @if (k.eigentuemer.length) {
-                  <div class="briefkopf__feld">
-                    <dt class="briefkopf__label">
-                      {{ k.eigentuemer.length === 1 ? 'Eigentümer' : 'Eigentümer' }}
-                    </dt>
-                    <dd class="briefkopf__wert">{{ k.eigentuemer.join(', ') }}</dd>
-                  </div>
-                }
-                @if (k.objekt_name || k.objekt_adresse) {
-                  <div class="briefkopf__feld">
-                    <dt class="briefkopf__label">Objekt</dt>
-                    <dd class="briefkopf__wert">
-                      {{ k.objekt_name }}
-                      @if (k.objekt_adresse) {
-                        <span class="briefkopf__sub">{{ k.objekt_adresse }}</span>
-                      }
-                    </dd>
-                  </div>
-                }
-                @if (lage(k); as l) {
-                  <div class="briefkopf__feld">
-                    <dt class="briefkopf__label">Lage</dt>
-                    <dd class="briefkopf__wert">{{ l }}</dd>
-                  </div>
-                }
-                @if (k.mieter.length) {
-                  <div class="briefkopf__feld">
-                    <dt class="briefkopf__label">
-                      {{ k.mieter.length === 1 ? 'Mieter' : 'Mieter' }}
-                    </dt>
-                    <dd class="briefkopf__wert">{{ k.mieter.join(', ') }}</dd>
-                  </div>
-                }
-              </dl>
-            }
+            <!-- Befunde B1/B2: Der Bericht liegt auf DEMSELBEN Blatt wie
+                 Angebot und Rechnung. Sascha: „Vollkatastrophe! Sollte genau
+                 wie Angebote und Rechnungen denselben Dokumentenkonfigurator
+                 verwenden." Briefkopf, Freitext, Positionen — in dieser
+                 Reihenfolge, wie das Dokument gelesen wird.
 
-            <dl class="feld-raster">
-              <div class="feld"><dt class="feld__label">Datum</dt><dd class="feld__wert">{{ datum(r.report_date) }}</dd></div>
-              <div class="feld"><dt class="feld__label">Erfasst von</dt><dd class="feld__wert" [class.feld__wert--leer]="!r.author_name">{{ r.author_name || '—' }}</dd></div>
-              <div class="feld"><dt class="feld__label">Wetter</dt><dd class="feld__wert" [class.feld__wert--leer]="!r.weather">{{ r.weather || '—' }}</dd></div>
-              <div class="feld"><dt class="feld__label">Arbeitsstunden</dt><dd class="feld__wert">{{ stunden(r.hours_worked) }}</dd></div>
-            </dl>
-
-            <!-- Ausgeführte Arbeiten: der Freitext, aus dem später die KI den
-                 Bericht formt („Monteur gibt Notizen ein, KI macht sinnvollen
-                 Bericht daraus"). Steht deshalb VOR den Positionen und trägt
-                 mehr Gewicht als die Nebenfelder. -->
-            <div class="bericht__block bericht__block--haupt">
-              <h3 class="bericht__h">Ausgeführte Arbeiten</h3>
-              <p class="bericht__text">{{ r.activity_text }}</p>
-            </div>
-            @if (r.materials_note) {
-              <div class="bericht__block">
-                <h3 class="bericht__h">Material</h3>
-                <p class="bericht__text">{{ r.materials_note }}</p>
+                 Leere Kopfangaben fallen weg statt „—" zu zeigen: Ein Bericht
+                 am freien Termin hat legitim keinen Auftraggeber, und eine
+                 Spalte voller Gedankenstriche ist kein Briefkopf. -->
+            <app-dokument-blatt
+              [kopf]="blattKopf(r.kopf)"
+              [betreff]="blattBetreff(r)"
+              [unterzeile]="r.kopf?.order_title ?? ''"
+              [meta]="blattMeta(r)"
+              [entwurf]="r.status === 'ENTWURF'"
+            >
+              <!-- Ausgeführte Arbeiten: der Freitext, aus dem später die KI den
+                   Bericht formt („Monteur gibt Notizen ein, KI macht sinnvollen
+                   Bericht daraus"). Steht VOR den Positionen und trägt mehr
+                   Gewicht als die Nebenfelder. -->
+              <div class="bericht__block bericht__block--haupt">
+                <h3 class="bericht__h">Ausgeführte Arbeiten</h3>
+                <p class="bericht__text">{{ r.activity_text }}</p>
               </div>
-            }
-            @if (r.remarks) {
-              <div class="bericht__block">
-                <h3 class="bericht__h">Bemerkungen</h3>
-                <p class="bericht__text">{{ r.remarks }}</p>
-              </div>
-            }
-
-            @if (r.status === 'UNTERZEICHNET') {
-              <div class="bericht__abnahme">
-                <span class="bericht__abnahme-mark" aria-hidden="true">✓</span>
-                <div>
-                  <strong>Abgenommen von {{ r.signed_by_name }}</strong>
-                  <span class="bericht__abnahme-zeit">am {{ zeitpunkt(r.signed_at) }} · unveränderlich</span>
+              @if (r.materials_note) {
+                <div class="bericht__block">
+                  <h3 class="bericht__h">Material</h3>
+                  <p class="bericht__text">{{ r.materials_note }}</p>
                 </div>
+              }
+              @if (r.remarks) {
+                <div class="bericht__block">
+                  <h3 class="bericht__h">Bemerkungen</h3>
+                  <p class="bericht__text">{{ r.remarks }}</p>
+                </div>
+              }
+
+              <!-- Positionen: was verbaut/geleistet wurde (Ist) — ohne Preise
+                   (Migration 0080). Bearbeitbar nur im ENTWURF; der Trigger
+                   erzwingt es ohnehin. -->
+              <div class="bericht__block">
+                <app-bericht-positionen
+                  [berichtId]="r.id"
+                  [status]="r.status"
+                  [hatAuftrag]="!!r.work_order_id"
+                  [darfAendern]="darfAendern()"
+                />
               </div>
-            }
 
-            <!-- Positionen: was verbaut/geleistet wurde (Ist) — ohne Preise.
-                 Bearbeitbar nur im ENTWURF; der Trigger erzwingt es ohnehin. -->
-            <div class="bericht__block">
-              <app-bericht-positionen
-                [berichtId]="r.id"
-                [status]="r.status"
-                [hatAuftrag]="!!r.work_order_id"
-                [darfAendern]="darfAendern()"
-              />
-            </div>
+              <dl class="bericht__nebenfelder">
+                <div>
+                  <dt>Erfasst von</dt>
+                  <dd>{{ r.author_name || '—' }}</dd>
+                </div>
+                <div>
+                  <dt>Wetter</dt>
+                  <dd>{{ r.weather || '—' }}</dd>
+                </div>
+                <div>
+                  <dt>Arbeitsstunden</dt>
+                  <dd>{{ stunden(r.hours_worked) }}</dd>
+                </div>
+              </dl>
 
-            <!-- Fotos: eigene Datei-Ablage am Bericht -->
+              @if (r.status === 'UNTERZEICHNET') {
+                <div class="bericht__abnahme">
+                  <span class="bericht__abnahme-mark" aria-hidden="true">✓</span>
+                  <div>
+                    <strong>Abgenommen von {{ r.signed_by_name }}</strong>
+                    <span class="bericht__abnahme-zeit">am {{ zeitpunkt(r.signed_at) }} · unveränderlich</span>
+                  </div>
+                </div>
+              }
+            </app-dokument-blatt>
+
+            <!-- Fotos stehen AUSSERHALB des Blattes: Anhänge sind kein Teil des
+                 Schriftstücks, sie hängen daran. -->
             <div class="bericht__block">
               <h3 class="bericht__h">Fotos &amp; Anhänge</h3>
               <app-dateien [ziel]="fotoZiel()" />

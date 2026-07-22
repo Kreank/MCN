@@ -2389,7 +2389,7 @@ def beteiligter(stammdaten, role):
     return chosen
 
 
-def _ausstellerzeilen(issuer):
+def ausstellerzeilen(issuer):
     """Absenderblock aus dem Aussteller-Stammdatensatz.
 
     Dieselbe Zusammensetzung wie die Rücksendezeile des PDF-Anschriftfelds
@@ -2425,13 +2425,56 @@ def dokumentkopf(beleg):
     from db_core.services.beleg_pdf import empfaenger_zeilen, quote_recipient_party
 
     if isinstance(beleg, Invoice):
-        stamm = beleg_stammdaten(beleg)
-        debtor = beteiligter(stamm, "INVOICE_DEBTOR")
-        recipient = beteiligter(stamm, "INVOICE_RECIPIENT") or debtor
+        # Die Frage ist „ist der Beleg gestellt?", nicht „hat der Snapshot einen
+        # Aussteller?". Ein Beleg, der veröffentlicht wurde, BEVOR das
+        # Firmenprofil gepflegt war, trägt `header.issuer = null` — seine
+        # Beteiligten-Stammdaten sind aber sehr wohl eingefroren. Fragte man
+        # nach dem Aussteller, fiele genau dieser Beleg in den Live-Zweig und
+        # zeigte nach einem Kundenumzug eine andere Anschrift als das PDF, das
+        # der Kunde in Händen hält.
+        if beleg.status != "ENTWURF":
+            # Gestellter Beleg: Der Snapshot gewinnt, und `beleg_stammdaten`
+            # kostet dafür keine einzige zusätzliche Abfrage. Fehlt ein
+            # einzelnes Feld (Altbeleg), zieht es dort seinen Live-Fallback.
+            stamm = beleg_stammdaten(beleg)
+            debtor = beteiligter(stamm, "INVOICE_DEBTOR")
+            recipient = beteiligter(stamm, "INVOICE_RECIPIENT") or debtor
+            return {
+                "aussteller": ausstellerzeilen(stamm.get("issuer")),
+                "empfaenger": empfaenger_zeilen((recipient or {}).get("snapshot")),
+                "aus_snapshot": True,
+            }
+
+        # Entwurf: `beleg_stammdaten` löste hier JEDE Beteiligtenzeile live auf
+        # (zwei Abfragen je Partei) — für einen Kopf, der genau eine davon
+        # braucht. Diese Antwort wird von dreizehn Endpunkten gebaut, auch von
+        # jedem POST. Deshalb nur der Empfänger, und der auch nur einmal.
+        #
+        # Die Sortierung ist NICHT kosmetisch: `beteiligter` liest aus
+        # `beleg_stammdaten`, das nach `(role, party_id)` sortiert. Ohne
+        # dieselbe Ordnung entschieden bei zwei nicht-primären Empfängern
+        # (Erbengemeinschaft, WEG-Beirat) zwei Codepfade verschieden — und der
+        # Empfänger auf dem Schirm spränge im Moment der Veröffentlichung um.
+        # `InvoiceParty` trägt kein `Meta.ordering`; die Queryset-Reihenfolge
+        # wäre die von PostgreSQL, also undefiniert.
+        parteien = sorted(beleg.parties.all(), key=lambda p: (p.role, str(p.party_id)))
+        empfaenger_partei = None
+        for rolle in ("INVOICE_RECIPIENT", "INVOICE_DEBTOR"):
+            for p in parteien:
+                if p.role == rolle:
+                    empfaenger_partei = p.party
+                    if p.is_primary:
+                        break
+            if empfaenger_partei is not None:
+                break
         return {
-            "aussteller": _ausstellerzeilen(stamm.get("issuer")),
-            "empfaenger": empfaenger_zeilen((recipient or {}).get("snapshot")),
-            "aus_snapshot": stamm.get("aus_snapshot", False),
+            "aussteller": ausstellerzeilen(issuer_stammdaten()),
+            "empfaenger": (
+                empfaenger_zeilen(party_stammdaten(empfaenger_partei))
+                if empfaenger_partei is not None
+                else []
+            ),
+            "aus_snapshot": False,
         }
 
     if isinstance(beleg, Quote):
@@ -2440,7 +2483,7 @@ def dokumentkopf(beleg):
         # Angebots-PDF baut denselben Block aus denselben zwei Funktionen.
         party = quote_recipient_party(beleg)
         return {
-            "aussteller": _ausstellerzeilen(issuer_stammdaten()),
+            "aussteller": ausstellerzeilen(issuer_stammdaten()),
             "empfaenger": empfaenger_zeilen(party_stammdaten(party)) if party else [],
             "aus_snapshot": False,
         }

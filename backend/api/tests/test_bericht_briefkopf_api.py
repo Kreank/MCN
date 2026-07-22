@@ -92,6 +92,29 @@ def test_briefkopf_traegt_alles_was_drauf_gehoert(admin_client, baustelle):
 
 
 @pytest.mark.django_db
+def test_briefkopf_liefert_fertige_anschriftbloecke(admin_client, baustelle):
+    """Befunde B1/B2: derselbe Kopf wie auf Angebot und Rechnung.
+
+    Der Bericht soll „genau wie Angebote und Rechnungen denselben
+    Dokumentenkonfigurator verwenden". Dazu braucht das Blatt Absender und
+    Empfänger als fertige Zeilenlisten — aus denselben Funktionen, aus denen
+    auch das Beleg-PDF sein Anschriftfeld baut. Wie eine deutsche Anschrift
+    aufgebaut ist, gehört an EINE Stelle und nicht zusätzlich ins Frontend.
+    """
+    r = admin_client.get(f"/api/workflow/site_reports/{baustelle['bericht'].id}")
+    assert r.status_code == 200, r.content
+    kopf = r.json()["kopf"]
+
+    # Der Empfänger ist der Auftraggeber — mit Anschrift, nicht nur mit Namen.
+    assert kopf["empfaenger"][0] == "Hausverwaltung Nord GmbH"
+    assert "Verwalterweg 1" in kopf["empfaenger"]
+    assert "10115 Berlin" in kopf["empfaenger"]
+    # Der Absender steht auf jedem Dokument des Hauses. Ohne gepflegtes
+    # Firmenprofil bleibt er leer — das ist zulässig und darf nicht krachen.
+    assert isinstance(kopf["aussteller"], list)
+
+
+@pytest.mark.django_db
 def test_liste_traegt_den_briefkopf_nicht(admin_client, baustelle):
     """Bewusst: In einer Liste mit dreißig Berichten wäre er ein N+1 für
     Angaben, die dort niemand liest."""

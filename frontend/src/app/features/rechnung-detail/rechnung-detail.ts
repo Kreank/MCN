@@ -4,6 +4,7 @@ import { ActivatedRoute, RouterLink } from '@angular/router';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { map } from 'rxjs';
 import { Mappe, MappeTab } from '../../shared/mappe/mappe';
+import { DokumentBlatt } from '../../shared/dokument-blatt/dokument-blatt';
 import { BelegService } from '../../core/beleg.service';
 import { MailService } from '../../core/mail.service';
 import { PartyService } from '../../core/party.service';
@@ -44,7 +45,7 @@ type Meldung = { art: 'erfolg' | 'fehler'; text: string };
 
 @Component({
   selector: 'app-rechnung-detail',
-  imports: [Mappe, RouterLink, KeinZugriff, Bestaetigung, Dateien, ReactiveFormsModule, Dialog, Feld, ReferenzWahl],
+  imports: [Mappe, RouterLink, KeinZugriff, Bestaetigung, Dateien, ReactiveFormsModule, Dialog, Feld, ReferenzWahl, DokumentBlatt],
   templateUrl: './rechnung-detail.html',
   styleUrl: './rechnung-detail.scss',
 })
@@ -786,6 +787,42 @@ export class RechnungDetail {
     );
     return unit ? `${n} ${unit}` : n;
   }
+
+  // ---- Dokumentansicht (Befund G1) ----------------------------------------
+
+  /**
+   * Der Informationsblock rechts neben dem Anschriftfeld (DIN 5008).
+   *
+   * Nur, was gepflegt ist: Ein Entwurf hat noch keine Belegnummer, und eine
+   * Zeile „Rechnungs-Nr.: —" auf einem Schriftstück sieht nach Fehler aus,
+   * nicht nach Entwurf.
+   */
+  protected readonly dokumentMeta = computed(() => {
+    const d = this.daten();
+    if (!d) return [];
+    const zeilen: { label: string; wert: string }[] = [];
+    if (d.invoice_number) zeilen.push({ label: 'Beleg-Nr.', wert: d.invoice_number });
+    if (d.invoice_date) {
+      zeilen.push({ label: 'Belegdatum', wert: this.isoDatum(d.invoice_date) });
+    }
+    if (d.due_date) zeilen.push({ label: 'Fällig bis', wert: this.isoDatum(d.due_date) });
+    const objekt = [d.property.name, d.property.city].filter(Boolean).join(' · ');
+    if (objekt) zeilen.push({ label: 'Objekt', wert: objekt });
+    return zeilen;
+  });
+
+  /** Betreff: „Rechnung 2026-0042" bzw. die jeweilige Belegart. */
+  protected readonly dokumentBetreff = computed(() => {
+    const d = this.daten();
+    if (!d) return '';
+    return `${this.typeLabel(d.invoice_type)} ${d.invoice_number ?? ''}`.trim();
+  });
+
+  /**
+   * Trägt das Blatt den Entwurfsaufdruck? Alles vor der Veröffentlichung — das
+   * ist dieselbe Grenze, die auch das Vorschau-PDF zieht.
+   */
+  protected readonly istEntwurf = computed(() => this.daten()?.status === 'ENTWURF');
 
   typeLabel(t: InvoiceType): string {
     const map: Record<InvoiceType, string> = {

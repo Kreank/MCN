@@ -28,6 +28,8 @@ import { Feld } from '../formular/feld';
 import { ReferenzWahl, RefSuche } from '../formular/referenz-wahl';
 import { UnterschriftPad } from '../unterschrift-pad/unterschrift-pad';
 import { Dateien } from '../dateien/dateien';
+import { DokumentBlatt } from '../dokument-blatt/dokument-blatt';
+import { Dokumentkopf } from '../../core/beleg.model';
 import { BerichtPositionen } from '../bericht-positionen/bericht-positionen';
 import { EinsatzZeiten } from '../einsatz-zeiten/einsatz-zeiten';
 import { VerbotenState, fehlerDetail, fehlerState } from '../http-fehler';
@@ -77,6 +79,7 @@ type Anker = { art: 'auftrag' | 'einsatz'; id: string };
     UnterschriftPad,
     Dateien,
     BerichtPositionen,
+    DokumentBlatt,
     EinsatzZeiten,
     KeinZugriff,
   ],
@@ -126,9 +129,30 @@ export class Berichte {
     const z = this.zustand();
     return z.kind === 'ready' ? z.items : [];
   });
-  protected readonly ausgewaehlt = computed<SiteReport | null>(
-    () => this.berichte().find((r) => r.id === this.ausgewaehltId()) ?? null,
-  );
+  /**
+   * Der ausgewählte Bericht **mit Briefkopf**.
+   *
+   * Der Listen-Endpunkt liefert bewusst keinen Kopf (`mit_kopf=False`) — bei
+   * dreißig Berichten wäre er ein N+1 für Angaben, die in einer Liste niemand
+   * liest. Den Kopf trägt allein die Detailantwort, und die muss deshalb beim
+   * Auswählen nachgeladen werden.
+   *
+   * Ohne dieses Nachladen war der gesamte Briefkopf im Frontend tot: `r.kopf`
+   * blieb `null`, das Blatt zeigte weder Absender noch Anschriftfeld, und der
+   * Informationsblock trug nur das Berichtsdatum. Die API war korrekt, die
+   * Oberfläche rief sie nie.
+   */
+  private readonly detail = signal<SiteReport | null>(null);
+
+  protected readonly ausgewaehlt = computed<SiteReport | null>(() => {
+    const id = this.ausgewaehltId();
+    if (!id) return null;
+    // Das Detail gewinnt (es trägt den Kopf); bis es da ist, zeigt die
+    // Listenzeile den Bericht bereits an — kein leerer Bereich beim Umschalten.
+    const geladen = this.detail();
+    if (geladen && geladen.id === id) return geladen;
+    return this.berichte().find((r) => r.id === id) ?? null;
+  });
 
   /** Stabile Zielreferenz für den Fotos-Bereich des gewählten Berichts. */
   protected readonly fotoZiel = computed<ZielFilter>(() => ({
@@ -171,6 +195,7 @@ export class Berichte {
       if (this.geladenFuer !== key) {
         this.geladenFuer = key;
         this.ausgewaehltId.set(null);
+        this.detail.set(null);
         this.laden(a);
       }
     });
@@ -188,7 +213,13 @@ export class Berichte {
         // Auswahl beibehalten, falls noch vorhanden; sonst ersten wählen.
         const cur = this.ausgewaehltId();
         if (!cur || !l.items.some((r) => r.id === cur)) {
-          this.ausgewaehltId.set(l.items[0]?.id ?? null);
+          const naechste = l.items[0]?.id ?? null;
+          this.ausgewaehltId.set(naechste);
+          this.detail.set(null);
+          if (naechste) this.detailLaden(naechste);
+        } else {
+          // Auswahl blieb bestehen — der Kopf kann sich geändert haben.
+          this.detailLaden(cur);
         }
       },
       error: (err) => {
@@ -204,6 +235,33 @@ export class Berichte {
 
   waehlen(id: string): void {
     this.ausgewaehltId.set(id);
+    this.detailLaden(id);
+  }
+
+  /**
+   * Holt den vollen Bericht (mit Briefkopf) nach.
+   *
+   * `reqId` verwirft veraltete Antworten: Wer schnell durch die Liste klickt,
+   * bekäme sonst den Kopf eines anderen Berichts auf sein Blatt.
+   *
+   * Ein Fehler hier lässt die Listenfassung stehen, statt die Ansicht zu
+   * leeren — der Bericht bleibt lesbar, nur ohne Kopf.
+   */
+  private detailReqId = 0;
+
+  private detailLaden(id: string): void {
+    const rid = ++this.detailReqId;
+    this.svc
+      .get(id)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (r) => {
+          if (rid === this.detailReqId) this.detail.set(r);
+        },
+        error: () => {
+          if (rid === this.detailReqId) this.detail.set(null);
+        },
+      });
   }
 
   meldungSchliessen(): void {
@@ -222,6 +280,10 @@ export class Berichte {
       return { kind: 'ready', items };
     });
     this.ausgewaehltId.set(report.id);
+    // Anlegen, Ändern und Unterschreiben antworten mit einem SiteReport OHNE
+    // Kopf — den trägt nur die Detailantwort. Ohne dieses Nachziehen
+    // verschwände der Briefkopf nach jedem Speichern bis zum Neuladen.
+    this.detailLaden(report.id);
   }
 
   // --- Dialog öffnen/schließen ---------------------------------------------
@@ -410,6 +472,61 @@ export class Berichte {
     ]
       .filter((t): t is string => !!t)
       .join(' · ');
+  }
+
+  // ---- Dokumentblatt (Befunde B1/B2) --------------------------------------
+  //
+  // Sascha über die alte Berichtsmaske: „Vollkatastrophe! Nicht zu gebrauchen!
+  // Sollte genau wie Angebote und Rechnungen denselben Dokumentenkonfigurator
+  // verwenden." Der Bericht bekommt deshalb dieselbe Hülle — dasselbe Blatt,
+  // derselbe Kopfaufbau, dieselbe Anschrift aus denselben Funktionen.
+
+  /** Absender-/Empfängerblock in der Form, die das Blatt erwartet. */
+  blattKopf(kopf: SiteReportKopf | null): Dokumentkopf | null {
+    if (!kopf) return null;
+    return {
+      aussteller: kopf.aussteller ?? [],
+      empfaenger: kopf.empfaenger ?? [],
+      // Der Bericht friert seinen Kopf ab der Unterschrift ein (Migration
+      // 0132) — für die Anzeige ist das aber ohne Belang: Das Blatt zeigt
+      // schlicht, was im Kopf steht.
+      aus_snapshot: false,
+    };
+  }
+
+  /**
+   * Der Informationsblock rechts neben dem Anschriftfeld.
+   *
+   * Leere Angaben fallen weg statt „—" zu zeigen: Ein Bericht am freien Termin
+   * hat legitim keine Auftragsnummer, und eine Spalte voller Gedankenstriche
+   * ist kein Briefkopf.
+   */
+  blattMeta(r: SiteReport): { label: string; wert: string }[] {
+    const k = r.kopf;
+    const zeilen: { label: string; wert: string }[] = [
+      { label: 'Berichtsdatum', wert: this.datum(r.report_date) },
+    ];
+    if (!k) return zeilen;
+    if (k.order_number) zeilen.push({ label: 'Auftrags-Nr.', wert: k.order_number });
+    const objekt = [k.objekt_name, k.objekt_adresse].filter(Boolean).join(' · ');
+    if (objekt) zeilen.push({ label: 'Objekt', wert: objekt });
+    const lage = this.lage(k);
+    if (lage) zeilen.push({ label: 'Lage', wert: lage });
+    if (k.mieter.length) {
+      zeilen.push({
+        label: 'Mieter',
+        wert: k.mieter.join(', '),
+      });
+    }
+    if (k.eigentuemer.length) {
+      zeilen.push({ label: 'Eigentümer', wert: k.eigentuemer.join(', ') });
+    }
+    return zeilen;
+  }
+
+  /** „Baustellenbericht" bzw. „Begehungsprotokoll" am freien Termin. */
+  blattBetreff(r: SiteReport): string {
+    return r.work_order_id ? 'Baustellenbericht' : 'Begehungsprotokoll';
   }
 
   datum(iso: string): string {

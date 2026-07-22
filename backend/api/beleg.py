@@ -1095,11 +1095,12 @@ class InvoiceDetailOut(InvoiceOut):
     recipient_email: str | None = None
     parties: list[InvoicePartyOut] = []
     rubriken: list[RubrikOut] = []
-    # Ein `dokumentkopf` steht hier bewusst NOCH NICHT: Die Rechnungsansicht
-    # nutzt das Dokumentblatt noch nicht, `dokumentkopf()` liefe aber bei jedem
-    # der dreizehn Endpunkte mit, die diese Antwort bauen — und bei einem
-    # Entwurf (kein Snapshot) kostet es zwei Queries JE Beteiligtem. Das Feld
-    # kommt, wenn die Ansicht es liest, nicht vorher.
+    # Briefkopf für die Dokumentansicht (G1). Bei einer veröffentlichten
+    # Rechnung aus dem eingefrorenen Snapshot — dort kostet er keine einzige
+    # zusätzliche Abfrage. Beim Entwurf wird nur die EINE Empfängerpartei
+    # aufgelöst, nicht der ganze Beteiligtensatz: Diese Antwort bauen dreizehn
+    # Endpunkte, auch jedes POST.
+    dokumentkopf: DokumentkopfOut | None = None
     lines: list[QuoteLineOut]
     # Schlussrechnung → angerechnete Abschläge (Verkettung, GoBD).
     advances: list[InvoiceAdvanceOut] = []
@@ -1345,6 +1346,7 @@ def _invoice_detail(invoice_id):
         recipient_email=recipient_email,
         parties=parties,
         rubriken=_rubriken_out(invoice),
+        dokumentkopf=beleg_service.dokumentkopf(invoice),
         lines=lines,
         advances=[InvoiceAdvanceOut(**a) for a in advances],
         angerechnet_in=angerechnet_in,

@@ -172,7 +172,15 @@
         @if (daten()!.lines.length === 0) {
           <div class="tab-platzhalter"><p>Diese Rechnung enthält noch keine Positionen.</p></div>
         } @else {
-          <div class="pos-wrap">
+          <!-- Befund G1: Die Positionen stehen auf einem BLATT, nicht randlos in
+               der Seite. Der Kunde bekommt ein Schriftstück; die Leseansicht
+               soll aussehen wie das, was rausgeht. -->
+          <app-dokument-blatt
+            [kopf]="daten()!.dokumentkopf"
+            [betreff]="dokumentBetreff()"
+            [meta]="dokumentMeta()"
+            [entwurf]="istEntwurf()"
+          >
             <table class="pos">
               <thead>
                 <tr>
@@ -229,7 +237,7 @@
                 </tr>
               </tfoot>
             </table>
-          </div>
+          </app-dokument-blatt>
         }
       }
 

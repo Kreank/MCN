@@ -53,11 +53,11 @@ Dokumenttyp.
 
 | # | Befund (Sascha) | Art | Status |
 |---|---|---|---|
-| B1 | „Vollkatastrophe! Nicht zu gebrauchen!" — eigene Maske statt Dokumentenkonfigurator. | ARCHITEKTUR | offen |
-| B2 | Aufbau **1:1 wie das Angebot**, mit einem Unterschied: über der Materialliste ein Freitextfeld. | ARCHITEKTUR | offen |
-| B3 | Briefkopf muss tragen: **Auftraggeber, Adresse, Name des Mieters, Lage der Wohnung/Wohnungsnummer, Auftragsnummer, Eigentümer** (falls vorhanden). | UI | offen |
-| B4 | Freitext „Ausgeführte Arbeiten". **Zugleich KI-Andockpunkt:** „Monteur gibt Notizen ein, KI macht sinnvollen Bericht daraus." | UI + KI | offen |
-| B5 | Darunter Positionen wie gewohnt: Material, Arbeitszeit; Artikel/Leistungen **suchbar und hinzufügbar wie bei Angebot und Rechnung**. | ARCHITEKTUR | offen |
+| B1 | „Vollkatastrophe! Nicht zu gebrauchen!" — eigene Maske statt Dokumentenkonfigurator. | ARCHITEKTUR | **erledigt** — der Bericht liegt auf demselben `shared/dokument-blatt` wie Angebot und Rechnung |
+| B2 | Aufbau **1:1 wie das Angebot**, mit einem Unterschied: über der Materialliste ein Freitextfeld. | ARCHITEKTUR | **erledigt** — Briefkopf, Freitext „Ausgeführte Arbeiten", darunter die Positionen |
+| B3 | Briefkopf muss tragen: **Auftraggeber, Adresse, Name des Mieters, Lage der Wohnung/Wohnungsnummer, Auftragsnummer, Eigentümer** (falls vorhanden). | UI | **erledigt** (c71bcba) — **war aber bis zum Blatt-Slice unsichtbar**, siehe unten |
+| B4 | Freitext „Ausgeführte Arbeiten". **Zugleich KI-Andockpunkt:** „Monteur gibt Notizen ein, KI macht sinnvollen Bericht daraus." | UI + KI | **erledigt** — der Freitext steht als Kern über den Positionen; die KI-Anbindung bleibt ein eigener Slice |
+| B5 | Darunter Positionen wie gewohnt: Material, Arbeitszeit; Artikel/Leistungen **suchbar und hinzufügbar wie bei Angebot und Rechnung**. | ARCHITEKTUR | **erledigt** — `app-bericht-positionen` mit Artikel-/Leistungssuche (Migration 0080/0083) |
 | B6 | **Klarstellung Sascha 2026-07-21 — kein Konflikt mit Migration 0080:** „Nein, in Baustellenberichten **keine Kalkulationen** anzeigen! Das hast du falsch verstanden." Die vermisste Kalkulation betrifft die **Angebots-Übersicht** (siehe G2), nicht den Bericht. Die Invariante aus `0080_berichtspositionen.py` („Der Bericht führt KEINE PREISE", weil er unterschrieben und versiegelt wird) bleibt **unangetastet** — der Bericht bekommt Briefkopf, Freitext und Positionen **ohne Geld**. | — | geklärt |
 | B7 | **Bestandsaufnahme 2026-07-21:** Positionen für Material und Arbeitszeit **existieren bereits** (`workflow.site_report_line`, Migration 0080), inklusive `planned_quantity` für den Soll-Ist-Abgleich gegen das Angebot. Es fehlt also **nicht das Datenmodell**, sondern Briefkopf, ein ordentlicher Freitext und die Oberfläche. | — | geklärt |
 | B8 | **Der eigentliche Mangel:** Der Bericht kennt seinen Auftrag nur als UUID. **Keines** der sechs Briefkopf-Felder ist über die Bericht-API oder im PDF erreichbar; das PDF zeigt `Auftrag: <Titel>` und `Objekt: <Name · Stadt>`, sonst nichts. Die Daten sind vollständig da, für fünf der sechs Felder gibt es fertige Services (`auftrag.py` PRINCIPAL, `beleg.delivery_stammdaten`, `property_steckbrief` Eigentümer, `belegung.aktive_mieter`). **Reine Verdrahtung.** | UI | **in Arbeit** |
@@ -70,6 +70,16 @@ Test hätte auch ohne Snapshot bestanden. Mit vollzogenem Wechsel und
 abgeschaltetem Snapshot-Pfad liefert er jetzt genau die Aussage, um die es geht:
 `['Norbert Nachmieter'] == ['Erika Vormieterin']` — ohne die Migration steht der
 Nachmieter auf einem Dokument, das die Vormieterin unterschrieben hat.
+
+**Zu B3 — der Briefkopf war ein halbes Jahr lang unsichtbar.** Der Slice c71bcba
+baute ihn korrekt: Service, API-Schema und Template standen, und ein Test prüfte
+`GET /site_reports/{id}` erfolgreich. Nur rief die Oberfläche diesen Endpunkt
+nie. Sie lädt ausschließlich die **Liste**, und die liefert bewusst keinen Kopf
+(`mit_kopf=False`, sonst wäre er ein N+1 für Angaben, die in einer Liste niemand
+liest). `r.kopf` blieb damit immer `null` — grüner Test, totes Feature.
+Aufgefallen ist es erst beim Review des Blatt-Umbaus. Die Lehre: Ein Test auf
+einen Endpunkt beweist nichts über die Oberfläche, wenn niemand prüft, dass sie
+ihn auch aufruft.
 
 **Anmerkung zu B3:** Die Wohnungslage ist genau das, was I11f aus Runde 1
 blockiert — `auftrag.unit_id` existiert in der DB, ist aber nicht angebunden.

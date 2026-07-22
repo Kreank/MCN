@@ -441,6 +441,9 @@ export interface InvoiceDetail extends Invoice {
   recipient_email: string | null;
   parties: InvoiceParty[];
   rubriken: Rubrik[];
+  /** Briefkopf für die Dokumentansicht (G1) — bei veröffentlichten Rechnungen
+   *  aus dem eingefrorenen Snapshot, nicht aus den Live-Stammdaten. */
+  dokumentkopf: Dokumentkopf | null;
   lines: QuoteLine[];
   /** Schlussrechnung → die angerechneten Abschlags-/Teilrechnungen. */
   advances: InvoiceAdvance[];

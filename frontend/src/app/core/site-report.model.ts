@@ -32,6 +32,9 @@ export interface SiteReportKopf {
   /** Mehrere sind der Normalfall (Ehepaar = zwei Beteiligte). */
   mieter: string[];
   eigentuemer: string[];
+  /** Fertige Anschriftblöcke fürs Dokumentblatt — dieselbe Form wie beim Beleg. */
+  aussteller: string[];
+  empfaenger: string[];
 }
 
 export interface SiteReport {

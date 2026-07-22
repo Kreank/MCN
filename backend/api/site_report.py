@@ -86,6 +86,11 @@ class SiteReportKopfOut(Schema):
     # Mehrere sind der Normalfall (Ehepaar = zwei Beteiligte).
     mieter: list[str] = []
     eigentuemer: list[str] = []
+    # Fertige Anschriftblöcke für die Blatt-Darstellung (Befund B1/B2): dieselbe
+    # Form wie beim Beleg, aus denselben Funktionen. Der Bericht ist ein
+    # Dokument des Hauses und trägt denselben Kopf wie Angebot und Rechnung.
+    aussteller: list[str] = []
+    empfaenger: list[str] = []
 
 
 class SiteReportOut(Schema):

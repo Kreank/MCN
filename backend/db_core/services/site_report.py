@@ -80,6 +80,14 @@ from db_core.services._validation import ensure_exists
 # waren nur nie am Bericht verdrahtet.
 from db_core.services.belegung import aktive_mieter
 from db_core.services.property_steckbrief import adresszeile, steckbriefe
+# Anschriftblöcke aus derselben Quelle wie Angebot und Rechnung (Befund B1/B2):
+# Der Bericht ist ein Dokument des Hauses und trägt denselben Kopf.
+from db_core.services.beleg import (
+    ausstellerzeilen,
+    issuer_stammdaten,
+    party_stammdaten,
+)
+from db_core.services.beleg_pdf import empfaenger_zeilen
 
 _EDITIERBAR = ("ENTWURF",)
 
@@ -231,6 +239,10 @@ def kopfdaten(report):
         "objekt_name": None, "objekt_nummer": None, "objekt_adresse": None,
         "gebaeude": None, "einheit": None, "etage": None,
         "mieter": [], "eigentuemer": [],
+        # Fertige Anschriftblöcke für die Blatt-Darstellung (Befund B1/B2) —
+        # dieselbe Form wie beim Beleg (`beleg.dokumentkopf`), damit der Bericht
+        # dieselbe Hülle nutzen kann und nicht seine eigene Maske braucht.
+        "aussteller": [], "empfaenger": [],
     }
     if report is None:
         return leer
@@ -240,7 +252,25 @@ def kopfdaten(report):
     # Altsnapshots und das Template liefe in einen KeyError.
     snapshot = getattr(report, "header_snapshot", None)
     if snapshot:
-        return {**leer, **snapshot}
+        daten = {**leer, **snapshot}
+        # Snapshots aus dem kurzen Zeitfenster zwischen Migration 0132 und der
+        # Blatt-Umstellung kennen `aussteller`/`empfaenger` noch nicht. Beide
+        # lassen sich verlustfrei nachbilden, und sie MÜSSEN es auch:
+        #
+        # * Der **Aussteller** ist die eigene Firma, keine eingefrorene Aussage
+        #   über einen Dritten — genau die Begründung, mit der auch
+        #   `beleg_stammdaten` seinen Live-Fallback je Feld zieht.
+        # * Der **Empfänger** steckt bereits im Snapshot (`auftraggeber` +
+        #   `auftraggeber_adresse`); nach dem Umbau liest das Template diese
+        #   beiden Schlüssel nirgends mehr. Ohne diese Zeilen zeigte das Blatt
+        #   „Kein Empfänger hinterlegt", obwohl der Auftraggeber danebensteht.
+        if not daten["aussteller"]:
+            daten["aussteller"] = ausstellerzeilen(issuer_stammdaten())
+        if not daten["empfaenger"] and daten["auftraggeber"]:
+            daten["empfaenger"] = [
+                t for t in (daten["auftraggeber"], daten["auftraggeber_adresse"]) if t
+            ]
+        return daten
 
     wo = report.work_order
     job = report.service_job
@@ -250,6 +280,9 @@ def kopfdaten(report):
     unit = (wo.unit if wo else None) or (job.unit if job else None)
 
     daten = dict(leer)
+    # Der Absender steht auf jedem Dokument des Hauses, auch auf dem Bericht am
+    # freien Termin (der hat keinen Auftraggeber, aber sehr wohl einen Aussteller).
+    daten["aussteller"] = ausstellerzeilen(issuer_stammdaten())
     if wo is not None:
         daten["order_number"] = wo.order_number
         daten["order_title"] = wo.title
@@ -261,6 +294,12 @@ def kopfdaten(report):
         )
         if principal is not None:
             daten["auftraggeber"] = principal.party.display_name
+            # Derselbe Anschriftblock wie auf Angebot und Rechnung (B1/B2).
+            # Aus denselben zwei Funktionen — der Bericht ist ein Dokument des
+            # Hauses wie jedes andere und soll auch so aussehen.
+            daten["empfaenger"] = empfaenger_zeilen(
+                party_stammdaten(principal.party)
+            )
             zuordnung = (
                 PartyAddress.objects.filter(
                     party_id=principal.party_id, valid_until__isnull=True
