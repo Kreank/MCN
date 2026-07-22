@@ -64,7 +64,11 @@ const NAV_GRUPPEN: readonly { id: string; titel: string; pfade: readonly string[
     titel: 'Kaufmännisch',
     pfade: ['/dokumente', '/buchhaltung', '/belegerfassung', '/auswertungen'],
   },
-  { id: 'personal', titel: 'Personal', pfade: ['/mitarbeiter', '/zeiterfassung', '/meine-zeiten'] },
+  {
+    id: 'personal',
+    titel: 'Personal',
+    pfade: ['/mitarbeiter', '/zeiterfassung', '/mein-bereich'],
+  },
   { id: 'system', titel: 'System', pfade: ['/werkzeuge', '/einstellungen'] },
 ];
 
@@ -149,9 +153,18 @@ export class App {
       recht: ['hr', 'LESEN'],
       nurAlle: true,
     },
-    // „Meine Zeiten" ist die Stempeluhr — für JEDEN, der Zeit erfassen darf,
-    // also gerade auch für den Monteur mit Scope EIGENE.
-    { path: '/meine-zeiten', label: 'Meine Zeiten', mark: '67', recht: ['hr', 'AENDERN'] },
+    // „Mein Bereich" ist der persönliche Bereich — Stempeluhr, Personalakte und
+    // eigene Anträge. Für JEDEN, der Zeit erfassen darf, also gerade auch für
+    // den Monteur mit Scope EIGENE.
+    //
+    // Das Recht ist hr/LESEN, nicht hr/AENDERN: Es ist das Minimum des
+    // Bereichs (die Personalakte), nicht das seines ersten Reiters. Wer keine
+    // eigene Zeit erfasst — etwa eine Bürokraft —, sieht den Punkt trotzdem,
+    // landet über den Funktions-Redirect in seiner Akte, und der Reiter „Meine
+    // Zeiten" bleibt ihm über `darfStempeln()` verborgen. Stünde hier
+    // hr/AENDERN, sähe genau diese Person den Einstieg nicht und der
+    // rechtsabhängige Redirect liefe ins Leere.
+    { path: '/mein-bereich', label: 'Mein Bereich', mark: '67', recht: ['hr', 'LESEN'] },
     { path: '/artikel', label: 'Artikel', mark: '70', recht: ['pricing', 'LESEN'] },
     // Gerätewissen: read-only-Sicht auf Hersteller-Ersatzteile (Vaillant/Junkers)
     // — dieselbe pricing/LESEN-Berechtigung wie der Artikelstamm, direkt daneben.

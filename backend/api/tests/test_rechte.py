@@ -77,23 +77,33 @@ def test_hr_modul_fuer_nicht_admin_gesperrt(role):
 
 
 @pytest.mark.django_db
-def test_monteur_hr_nur_eigene(  # Migration 0068 (Zeiterfassung)
+def test_monteur_hr_nur_eigene(  # Migrationen 0068 (Zeiterfassung), 0130 (Anträge)
 ):
-    """Der MONTEUR braucht `hr` für die EIGENE Zeiterfassung — aber nur EIGENE.
+    """Der MONTEUR braucht `hr` für SICH SELBST — aber ausschließlich EIGENE.
 
-    Ohne dieses Recht könnte er seine eigene Arbeitszeit nicht erfassen (die
-    Aufzeichnungspflicht nach § 17 MiLoG liefe ins Leere). `EIGENE` ist
-    fail-closed: alle `require`-gesicherten hr-Endpunkte (Personalliste,
-    Abwesenheiten aller, Verträge) antworten für ihn weiter mit 403.
-    FREIGEBEN (Arbeitstag bestätigen) bleibt Führungsaufgabe.
+    Ohne diese Rechte könnte er weder seine eigene Arbeitszeit erfassen (die
+    Aufzeichnungspflicht nach § 17 MiLoG liefe ins Leere) noch seinen Urlaub
+    beantragen — das musste bis Migration 0130 das Büro für ihn tun.
+
+    `EIGENE` ist fail-closed: alle `require`-gesicherten hr-Endpunkte
+    (Personalliste, Abwesenheiten aller, Verträge) antworten für ihn weiter mit
+    403. Nur die Endpunkte, die den Scope ausdrücklich auswerten und die
+    Objektgrenze selbst ziehen, lassen ihn durch — für ANLEGEN ist das allein
+    der Abwesenheitsantrag am eigenen Personalsatz.
+
+    Zwei Rechte fehlen ihm bewusst und dauerhaft:
+
+    * **FREIGEBEN** — Arbeitstag bestätigen und Abwesenheit genehmigen sind
+      Führungsaufgaben. Wer beantragt, entscheidet nicht über sich selbst.
+    * **EXPORTIEREN** — Personalauswertungen über den ganzen Betrieb.
     """
     au = make_app_user()
     grant_role(au.id, "MONTEUR")
     perms = rechte_service.effective_permissions(au.id)
     assert perms[("hr", "LESEN")] == "EIGENE"
     assert perms[("hr", "AENDERN")] == "EIGENE"
+    assert perms[("hr", "ANLEGEN")] == "EIGENE"
     assert ("hr", "FREIGEBEN") not in perms
-    assert ("hr", "ANLEGEN") not in perms
     assert ("hr", "EXPORTIEREN") not in perms
 
 

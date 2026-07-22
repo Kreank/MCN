@@ -94,11 +94,51 @@
         </section>
       }
 
-      <!-- Eigene Abwesenheiten -->
+      <!-- Eigene Abwesenheiten: Anzeige UND Antrag (Befund E6) -->
       <section class="block" aria-labelledby="abw-titel">
-        <h2 id="abw-titel" class="block__titel">Meine Abwesenheiten</h2>
+        <div class="block__kopf">
+          <h2 id="abw-titel" class="block__titel">Meine Abwesenheiten</h2>
+          <button type="button" class="btn btn--primary" (click)="antragOeffnen()">
+            Abwesenheit beantragen
+          </button>
+        </div>
+
+        <!-- Rückmeldung: sichtbar UND angesagt.
+             Der Container steht DAUERHAFT im Baum und nur sein Inhalt wechselt.
+             Eine Live-Region, die erst mit ihrem Text entsteht, sagt in mehreren
+             Screenreader-/Browser-Kombinationen nichts an — und genau die
+             Erfolgsmeldung („Antrag eingereicht.") ist die, auf die der
+             Antragsteller wartet. -->
+        <!-- Zwei Regionen statt einer mit wechselndem `role`: Ein Fehler soll
+             sofort unterbrechen (assertive), eine Bestätigung darf warten
+             (polite). Ein umgeschaltetes `role` an EINEM Knoten werten
+             Screenreader nicht zuverlässig neu aus. -->
+        <div role="status" aria-live="polite">
+          @if (meldung(); as m) {
+            @if (m.art === 'erfolg') {
+              <div class="melde melde--erfolg">
+                <span class="melde__mark" aria-hidden="true">✓</span>
+                <span class="melde__text">{{ m.text }}</span>
+              </div>
+            }
+          }
+        </div>
+        <div role="alert">
+          @if (meldung(); as m) {
+            @if (m.art === 'fehler') {
+              <div class="melde melde--fehler">
+                <span class="melde__mark" aria-hidden="true">!</span>
+                <span class="melde__text">{{ m.text }}</span>
+              </div>
+            }
+          }
+        </div>
+
         @if (data.absences.length === 0) {
-          <p class="note" role="note">Es sind keine Abwesenheiten erfasst.</p>
+          <p class="note" role="note">
+            Es sind keine Abwesenheiten erfasst. Urlaub, Krankheit oder
+            Freizeitausgleich beantragen Sie mit dem Knopf oben.
+          </p>
         } @else {
           <div class="tabelle-wrap">
             <table class="tabelle">
@@ -109,6 +149,7 @@
                   <th scope="col">Zeitraum</th>
                   <th scope="col" class="num">Tage</th>
                   <th scope="col">Status</th>
+                  <th scope="col"><span class="sr-only">Aktionen</span></th>
                 </tr>
               </thead>
               <tbody>
@@ -121,6 +162,35 @@
                       <span class="status {{ absenceStatusClass(a.status) }}">
                         {{ absenceStatusLabel(a.status) }}
                       </span>
+                      @if (a.status === 'ABGELEHNT' && a.decision_note) {
+                        <span class="abw-grund">{{ a.decision_note }}</span>
+                      }
+                    </td>
+                    <td>
+                      <div class="abw-aktionen__inhalt">
+                        @if (kannEinreichen(a)) {
+                          <button
+                            type="button"
+                            class="btn btn--klein btn--primary"
+                            [disabled]="aktionAn() !== null"
+                            [attr.aria-busy]="aktionAn() === a.id"
+                            (click)="einreichen(a)"
+                          >
+                            Einreichen
+                          </button>
+                        }
+                        @if (kannZurueckziehen(a)) {
+                          <button
+                            type="button"
+                            class="btn btn--klein"
+                            [disabled]="aktionAn() !== null"
+                            [attr.aria-busy]="aktionAn() === a.id"
+                            (click)="zurueckziehen(a)"
+                          >
+                            Zurückziehen
+                          </button>
+                        }
+                      </div>
                     </td>
                   </tr>
                 }
@@ -157,4 +227,85 @@
       }
     }
   }
+
+  <!-- ==================== Abwesenheit beantragen ======================== -->
+  <app-dialog
+    [offen]="antragOffen()"
+    titel="Abwesenheit beantragen"
+    (schliessen)="antragSchliessen()"
+  >
+    <form
+      id="antrag-form"
+      class="dialog-form"
+      (submit)="$event.preventDefault(); antragAbsenden()"
+      novalidate
+    >
+      @if (antragFehler(); as fm) {
+        <div class="melde melde--fehler" role="alert">
+          <span class="melde__mark" aria-hidden="true">!</span>
+          <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+        </div>
+      }
+      <p class="dialog-hinweis">
+        @if (istKrankmeldung()) {
+          Die Krankmeldung wird erfasst und geht an die Personalverwaltung. Ihre
+          Arbeitsunfähigkeitsbescheinigung laden Sie danach in dieser Ansicht
+          unter „Meine Bescheinigungen" hoch.
+        } @else {
+          Der Antrag entsteht als Entwurf. Erst mit „Einreichen" geht er zur
+          Genehmigung. Die Anzahl der Tage rechnet der Server aus Ihrem Vertrag.
+        }
+      </p>
+      <app-feld
+        [control]="antragForm.controls.absence_type"
+        label="Art"
+        typ="select"
+        [optionen]="absenceTypes"
+      />
+      <div class="dialog-raster">
+        <app-feld
+          [control]="antragForm.controls.start_date"
+          label="Von"
+          typ="datum"
+          [pflicht]="true"
+        />
+        <app-feld
+          [control]="antragForm.controls.end_date"
+          label="Bis"
+          typ="datum"
+          [pflicht]="true"
+        />
+      </div>
+      <app-feld
+        [control]="antragForm.controls.half_day_start"
+        label="Erster Tag ist ein halber Tag"
+        typ="checkbox"
+      />
+      <app-feld
+        [control]="antragForm.controls.half_day_end"
+        label="Letzter Tag ist ein halber Tag"
+        typ="checkbox"
+      />
+      <app-feld
+        [control]="antragForm.controls.reason"
+        label="Anmerkung"
+        typ="textarea"
+        hinweis="Optional — z. B. der Anlass bei Sonderurlaub."
+      />
+    </form>
+    <div dialog-aktionen class="dialog__aktionen">
+      <button type="button" class="btn" [disabled]="antragLaedt()" (click)="antragSchliessen()">
+        Abbrechen
+      </button>
+      <button
+        type="submit"
+        form="antrag-form"
+        class="btn btn--primary"
+        [disabled]="antragLaedt()"
+        [attr.aria-busy]="antragLaedt()"
+      >
+        {{ antragLaedt() ? 'Wird angelegt …' : 'Antrag anlegen' }}
+      </button>
+    </div>
+  </app-dialog>
 </section>

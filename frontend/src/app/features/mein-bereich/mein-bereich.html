@@ -1,0 +1,24 @@
+<nav class="reiter" aria-label="Mein Bereich">
+  @if (darfStempeln()) {
+    <a
+      class="reiter__link"
+      routerLink="zeiten"
+      routerLinkActive="reiter__link--aktiv"
+      #zeiten="routerLinkActive"
+      [attr.aria-current]="zeiten.isActive ? 'page' : null"
+    >
+      Meine Zeiten
+    </a>
+  }
+  <a
+    class="reiter__link"
+    routerLink="personalakte"
+    routerLinkActive="reiter__link--aktiv"
+    #akte="routerLinkActive"
+    [attr.aria-current]="akte.isActive ? 'page' : null"
+  >
+    Personalakte &amp; Anträge
+  </a>
+</nav>
+
+<router-outlet />

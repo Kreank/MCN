@@ -339,3 +339,114 @@
   gap: var(--space-2);
   margin-top: var(--space-4);
 }
+
+/* ---------------------------------------------------------------------------
+   Stundenkonto (Befund E4)
+   --------------------------------------------------------------------------- */
+.konto {
+  margin-bottom: var(--space-5);
+  padding: var(--space-4);
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.konto__titel {
+  margin: 0;
+  font-size: var(--step-1);
+}
+.konto__zeitraum {
+  margin: var(--space-1) 0 var(--space-3);
+  color: var(--ink-muted);
+  font-size: 0.85rem;
+}
+.konto__zeitraum-hinweis {
+  opacity: 0.85;
+}
+.konto__saldo {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-4);
+}
+.konto__saldo-zahl {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--step-3);
+  font-weight: 700;
+  line-height: 1;
+}
+/* Das Wort neben der Zahl ist kein Schmuck: Es trägt die Aussage auch dann,
+   wenn Farbe nicht ankommt (WCAG 1.4.1 — Status nie nur über Farbe). */
+.konto__saldo-wort {
+  color: var(--ink-muted);
+  font-size: 0.9rem;
+}
+.konto__saldo--plus .konto__saldo-zahl {
+  color: var(--positive-ink);
+}
+.konto__saldo--minus .konto__saldo-zahl {
+  color: var(--warn-ink);
+}
+.konto__fakten {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+  gap: var(--space-3);
+  margin: 0;
+
+  dt {
+    color: var(--ink-muted);
+    font-size: 0.8rem;
+  }
+  dd {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+  }
+}
+.konto__hinweis {
+  margin: var(--space-3) 0 0;
+  color: var(--ink-muted);
+  font-size: 0.85rem;
+}
+
+/* Wochenblöcke statt einer 30-Zeilen-Halde. Die Beschriftung trägt die
+   Wochensumme — die Zahl, wegen der man überhaupt hinsieht. */
+.tabelle--woche {
+  margin-bottom: var(--space-4);
+
+  caption {
+    padding-bottom: var(--space-2);
+    text-align: left;
+  }
+}
+.woche__kopf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.woche__label {
+  font-weight: 700;
+}
+.woche__summe {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85rem;
+}
+.woche__pause {
+  color: var(--ink-muted);
+}
+
+/* Begründung der Zeitkontrolle bzw. Name des Prüfers — unter dem Statuschip,
+   damit dieser seine Form behält. Der Text darf umbrechen; er ist der Inhalt,
+   nicht die Verzierung. */
+.tag-grund {
+  display: block;
+  margin-top: var(--space-1);
+  font-size: 0.82rem;
+  color: var(--ink-muted);
+  white-space: normal;
+}

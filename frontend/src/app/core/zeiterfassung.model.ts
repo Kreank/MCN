@@ -271,6 +271,34 @@ export function tagText(iso: string): string {
 }
 
 /**
+ * Die ISO-8601-Kalenderwoche eines Tages (`YYYY-MM-DD`) samt Beschriftung.
+ *
+ * Nach ISO 8601 beginnt die Woche am Montag, und KW 1 ist die Woche, die den
+ * 4. Januar enthält. Der naive Weg (Tage seit Jahresanfang durch 7) liegt am
+ * Jahreswechsel regelmäßig daneben — genau dort, wo Arbeitszeiten
+ * zusammengerechnet werden.
+ *
+ * Der `id` trägt das ISO-Jahr, nicht das Kalenderjahr: Der 31.12.2025 gehört zu
+ * KW 1 von 2026. Ohne diese Unterscheidung fielen zwei verschiedene Wochen in
+ * einen Topf.
+ */
+export function kalenderwoche(iso: string): { id: string; label: string } {
+  const [y, m, d] = iso.split('-').map(Number);
+  // UTC, damit Sommerzeit-Sprünge die Tagesdifferenz nicht verfälschen.
+  const tag = new Date(Date.UTC(y, m - 1, d));
+  // Auf den Donnerstag derselben Woche schieben — er liegt immer im ISO-Jahr.
+  const wochentag = (tag.getUTCDay() + 6) % 7; // Mo=0 … So=6
+  tag.setUTCDate(tag.getUTCDate() - wochentag + 3);
+  const isoJahr = tag.getUTCFullYear();
+  const ersterDonnerstag = new Date(Date.UTC(isoJahr, 0, 4));
+  const versatz = (ersterDonnerstag.getUTCDay() + 6) % 7;
+  ersterDonnerstag.setUTCDate(ersterDonnerstag.getUTCDate() - versatz + 3);
+  const tage = (tag.getTime() - ersterDonnerstag.getTime()) / 86_400_000;
+  const kw = 1 + Math.round(tage / 7);
+  return { id: `${isoJahr}-${String(kw).padStart(2, '0')}`, label: `KW ${kw}` };
+}
+
+/**
  * Status nie NUR über Farbe (WCAG 2.2 AA) — jeder Status trägt Text und
  * Symbol; die Klasse ist reine Zugabe.
  */

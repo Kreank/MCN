@@ -17,7 +17,9 @@ export type AbsenceType =
   | 'ELTERNZEIT'
   | 'SONDERURLAUB'
   | 'UNBEZAHLT'
-  | 'FORTBILDUNG';
+  | 'FORTBILDUNG'
+  /** Überstunden abfeiern (Migration 0131) — zählt nicht aufs Urlaubskonto. */
+  | 'FREIZEITAUSGLEICH';
 
 export interface WageGroupRef {
   id: string;
@@ -188,6 +190,7 @@ export const ABSENCE_TYPES: { wert: AbsenceType; label: string }[] = [
   { wert: 'SONDERURLAUB', label: 'Sonderurlaub' },
   { wert: 'UNBEZAHLT', label: 'Unbezahlt' },
   { wert: 'FORTBILDUNG', label: 'Fortbildung' },
+  { wert: 'FREIZEITAUSGLEICH', label: 'Freizeitausgleich (Überstunden)' },
 ];
 
 // Ein Wochentag des Sollstunden-Rasters (Mo–So).
@@ -274,6 +277,7 @@ const ABSENCE_TYPE_LABELS: Record<AbsenceType, string> = {
   SONDERURLAUB: 'Sonderurlaub',
   UNBEZAHLT: 'Unbezahlt',
   FORTBILDUNG: 'Fortbildung',
+  FREIZEITAUSGLEICH: 'Freizeitausgleich',
 };
 
 export function absenceTypeLabel(t: AbsenceType): string {

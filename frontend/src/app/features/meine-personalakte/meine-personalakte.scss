@@ -106,6 +106,52 @@
   font-size: var(--step-1);
   margin: 0 0 var(--space-3);
 }
+/* Überschrift und Antragsknopf in einer Zeile; auf schmalen Schirmen
+   untereinander, damit der Knopf nicht in die Enge gerät. */
+.block__kopf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+
+  .block__titel {
+    margin-bottom: var(--space-3);
+  }
+}
+/* Die Aktionsspalte. Das Flex-Layout sitzt auf einem inneren <div>, NICHT auf
+   der Zelle: `display: flex` auf einem <td> nimmt ihm die `table-cell`-Rolle,
+   der Browser schiebt eine anonyme Zelle dazwischen und die Spaltenbreite
+   koppelt sich vom <th> ab. */
+.abw-aktionen__inhalt {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  justify-content: flex-end;
+}
+/* Formularraster im Dialog: „Von" und „Bis" nebeneinander. Angular kapselt
+   Komponentenstile — die gleichnamige Klasse im Mitarbeiter-Detail greift hier
+   nicht, sie muss eigenständig stehen. */
+.dialog-raster {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: var(--space-3);
+}
+.dialog-hinweis {
+  margin: 0 0 var(--space-3);
+  color: var(--ink-muted);
+  font-size: 0.88rem;
+}
+/* Der Ablehnungsgrund gehört zum Status — er steht darunter, nicht daneben,
+   damit der Statuschip seine Form behält. Der Grund ist die Information, die
+   der Beschäftigte wirklich braucht; ohne ihn ist „Abgelehnt" wertlos. */
+.abw-grund {
+  display: block;
+  margin-top: var(--space-1);
+  font-size: 0.82rem;
+  color: var(--ink-muted);
+  white-space: normal;
+}
 .fakten {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));

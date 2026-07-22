@@ -94,12 +94,29 @@ Ohne diese Anbindung kann der Briefkopf die Wohnungsnummer nicht führen.
 | # | Befund (Sascha) | Art | Status |
 |---|---|---|---|
 | E1 | „Zeiterfassung grundsätzlich funktional." | — | geklärt |
-| E2 | „Frontend gefällt mir nicht wirklich." | UI | offen |
-| E3 | „Merkt sich keine bereits eingetragenen Zeiten, um bei der nächsten Buchung da weiterzumachen." | UI | offen |
-| E4 | „Zeitenübersicht gefällt mir nicht, zu unübersichtlich." | UI | offen |
-| E5 | „Eingetragene Arbeitszeiten sollten von einem anderen bestätigt werden (**Zeitkontrolle**)." | MODELL | offen |
-| E6 | Unter diesem Reiter zusätzlich: **Urlaubsanträge, Krankmeldungen, Überstundenausgleich beantragen**. | UI/MODELL | offen |
-| E7 | **Umbenennen**: nicht „Meine Zeiten", sondern „Persönlicher Bereich"/„Mein Bereich" — „darin wird dann alles gebündelt, was diesen Angestellten betrifft." | UI | offen |
+| E2 | „Frontend gefällt mir nicht wirklich." | UI | **teilweise — Rückfrage offen** (siehe unten) |
+| E3 | „Merkt sich keine bereits eingetragenen Zeiten, um bei der nächsten Buchung da weiterzumachen." | UI | **erledigt** — „Von" setzt auf das Ende der letzten Buchung des Tages auf, „Bis" folgt als Vorschlag |
+| E4 | „Zeitenübersicht gefällt mir nicht, zu unübersichtlich." | UI | **erledigt** — Stundenkonto (Soll/Ist/**Saldo**) steht jetzt vorn, die 30 flachen Zeilen sind nach Kalenderwoche gebündelt mit Wochensummen |
+| E5 | „Eingetragene Arbeitszeiten sollten von einem anderen bestätigt werden (**Zeitkontrolle**)." | MODELL | **erledigt** — der Statusautomat mit Vier-Augen-Bestätigung stand schon (0067); sichtbar fehlte der Ablehnungsgrund und der Name des Prüfers, beides jetzt in „Letzte 30 Tage" |
+| E6 | Unter diesem Reiter zusätzlich: **Urlaubsanträge, Krankmeldungen, Überstundenausgleich beantragen**. | UI/MODELL | **erledigt** — Migration 0130 (MONTEUR darf eigene Anträge anlegen/einreichen/zurückziehen, Genehmigen bleibt bei `hr/FREIGEBEN`), Migration 0131 (neue Art `FREIZEITAUSGLEICH`), Antragsdialog in der Personalakte |
+| E7 | **Umbenennen**: nicht „Meine Zeiten", sondern „Persönlicher Bereich"/„Mein Bereich" — „darin wird dann alles gebündelt, was diesen Angestellten betrifft." | UI | **erledigt** — `/mein-bereich` mit den Reitern „Meine Zeiten" und „Personalakte & Anträge"; die alten Pfade leiten weiter |
+
+**Zu E2 — was ich angenommen habe und was offenbleibt.** „Frontend gefällt mir
+nicht wirklich" stand direkt neben E4 („zu unübersichtlich"); ich habe beide als
+zwei Anläufe auf dieselbe Sache gelesen und die substanzielle Lesart bedient:
+Der Übersicht fehlte nicht Gestaltung, sondern die **Aussage** — 30 Zeilen mit
+Tagessummen beantworten nicht die Frage, die man an eine Zeitübersicht hat
+(„liege ich vor oder zurück?"). Der Saldo-Endpunkt stand längst und war nur
+nirgends angebunden.
+
+**Falls E2 etwas anderes meinte** (Farbigkeit, Dichte, die Stempeluhr selbst,
+das Handy-Layout), bitte einmal konkret sagen — dafür würde ich sonst raten.
+
+**Zusätzlich in diesem Slice** (nicht auf der Liste, aber dieselbe Lücke): Beim
+Nachtragen von Hand ließ sich die Zeit keinem Einsatz zuordnen — beim Stempeln
+setzt der Server die Zuordnung selbst, von Hand fehlte sie, und die
+Nachkalkulation griff ins Leere. Der Nachtrag-Dialog bietet jetzt die Einsätze
+des gewählten Tages an.
 
 ---
 
@@ -136,3 +153,20 @@ klären: Geht es um die *Optik* (Dokumentansicht statt Tabelle), um
    der Schutzstandard des Repos kennt kein physisches Löschen.
 4. **E5 (Zeitkontrolle)** berührt das Vier-Augen-Prinzip, das es im Repo schon
    gibt (`services/vier_augen.py`) — prüfen, ob es wiederverwendbar ist.
+
+### Offener Wartungspunkt aus dem Slice E (2026-07-22)
+
+„Was ist **mein** Einsatz" steht jetzt an **drei** Stellen in derselben Form:
+
+| Ort | Form |
+|---|---|
+| `db_core/services/planung.py:445` | Queryset-Filter `assignments__assignee_id=actor` |
+| `api/planung.py` (`_guard_own_job`) | Existenzprüfung |
+| `api/zeiterfassung.py` (`_guard_eigener_einsatz`) | Existenzprüfung |
+
+Heute stimmen alle drei überein (geprüft). Aber das ist eine **Objektgrenze**,
+und die sollte einen Ort haben: Ändert sich die Regel je — etwa „ein LEAD sieht
+auch die Einsätze seines Trupps" —, müssen drei Stellen gefunden werden, und die
+vergessene fällt still auf die alte Regel zurück. Ein gemeinsamer Helfer in
+`db_core/services/planung.py` wäre die saubere Ablage. Kein aktueller Fehler,
+deshalb nicht im Slice mitgemacht.

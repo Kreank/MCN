@@ -25,6 +25,7 @@ const ABSENCE_LABEL: Record<string, string> = {
   SONDERURLAUB: 'Sonderurlaub',
   UNBEZAHLT: 'Unbezahlt',
   FORTBILDUNG: 'Fortbildung',
+  FREIZEITAUSGLEICH: 'Freizeitausgleich',
 };
 
 @Component({

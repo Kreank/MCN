@@ -1,0 +1,56 @@
+/* Reiter für „Mein Bereich".
+ *
+ * Bewusst als Linkleiste, nicht als ARIA-Tablist: Die Reiter wechseln die
+ * Route, nicht nur die Sichtbarkeit. Ein `role="tab"` würde einen Widget-
+ * Kontext ankündigen (Pfeiltasten-Navigation innerhalb der Gruppe), den echte
+ * Links weder haben noch brauchen. Die Navigation ist eine `<nav>` mit
+ * Beschriftung; der aktive Reiter trägt `aria-current="page"`.
+ */
+.reiter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-5);
+  border-bottom: 2px solid var(--line);
+}
+
+.reiter__link {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  /* 44 px Zielgröße — deutlich über den 24 px aus WCAG 2.2 (2.5.8) und auf dem
+     Handy mit dem Daumen bedienbar, was hier der Regelfall ist. */
+  min-height: 44px;
+  padding: 0 var(--space-4);
+  border-radius: var(--radius) var(--radius) 0 0;
+  color: var(--ink-muted);
+  font-weight: 600;
+  text-decoration: none;
+
+  &:hover {
+    color: var(--ink);
+    background: var(--surface-sunken);
+  }
+
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+
+/* Der aktive Reiter unterscheidet sich NICHT nur durch Farbe (WCAG 1.4.1):
+   Er trägt zusätzlich mehr Schriftgewicht und einen tragenden Balken. */
+.reiter__link--aktiv {
+  color: var(--accent-ink);
+  font-weight: 700;
+
+  &::after {
+    content: '';
+    position: absolute;
+    inset-inline: 0;
+    bottom: -2px;
+    height: 3px;
+    background: var(--accent-ink);
+    border-radius: 2px 2px 0 0;
+  }
+}

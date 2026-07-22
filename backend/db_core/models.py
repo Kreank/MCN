@@ -2844,6 +2844,7 @@ class Absence(models.Model):
         related_name="absences",
     )
     # URLAUB | KRANKHEIT | ELTERNZEIT | SONDERURLAUB | UNBEZAHLT | FORTBILDUNG
+    # | FREIZEITAUSGLEICH (Migration 0131)
     absence_type = models.TextField()
     start_date = models.DateField()
     end_date = models.DateField()

@@ -17,7 +17,7 @@
             class="uhr"
             [class.uhr--laeuft]="s.zustand === 'LAEUFT'"
             [class.uhr--pause]="s.zustand === 'PAUSE'"
-            routerLink="/meine-zeiten"
+            routerLink="/mein-bereich/zeiten"
           >
             <span class="uhr__kicker">
               <span class="uhr__zeichen" aria-hidden="true">
@@ -44,7 +44,7 @@
         }
       }
       @case ('error') {
-        <p class="uhr uhr--tot">Stempeluhr nicht erreichbar. <a routerLink="/meine-zeiten">Meine Zeiten öffnen →</a></p>
+        <p class="uhr uhr--tot">Stempeluhr nicht erreichbar. <a routerLink="/mein-bereich/zeiten">Meine Zeiten öffnen →</a></p>
       }
       @default {
         <p class="uhr uhr--tot">Stempeluhr wird geladen …</p>

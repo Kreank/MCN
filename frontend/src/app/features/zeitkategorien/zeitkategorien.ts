@@ -50,8 +50,13 @@ export class Zeitkategorien {
   protected readonly archivierenOffen = signal<Zeitkategorie | null>(null);
 
   protected readonly PAUSEN_MODUS_LABEL = PAUSEN_MODUS_LABEL;
-  protected readonly darfAendern = computed(() => this.auth.darf('hr', 'AENDERN'));
-  protected readonly darfAnlegen = computed(() => this.auth.darf('hr', 'ANLEGEN'));
+  // `darfAlle`, nicht `darf`: Die Endpunkte hinter diesen Knöpfen nutzen
+  // `require(...)` und weisen row_scope EIGENE mit 403 ab. Seit Migration 0130
+  // trägt der MONTEUR hr/ANLEGEN mit Scope EIGENE (für seine eigenen
+  // Abwesenheitsanträge) — `darf()` wertet den Scope nicht aus und hätte ihm
+  // hier einen Knopf gezeigt, der zwangsläufig in ein 403 läuft.
+  protected readonly darfAendern = computed(() => this.auth.darfAlle('hr', 'AENDERN'));
+  protected readonly darfAnlegen = computed(() => this.auth.darfAlle('hr', 'ANLEGEN'));
 
   protected readonly modi: PausenModus[] = ['KEINE', 'GESETZLICH', 'FESTE_ZEITEN'];
 

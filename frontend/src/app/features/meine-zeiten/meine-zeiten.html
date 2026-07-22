@@ -220,38 +220,117 @@
       }
     </section>
 
+    <!-- ================= STUNDENKONTO ================= -->
+    <!-- Befund E4: Eine Liste von Tagessummen beantwortet nicht die Frage, die
+         man an eine Zeitübersicht hat — „liege ich vor oder zurück?". Der
+         Saldo steht deshalb ganz vorn und nicht nur als Farbe da. -->
+    @if (konto(); as k) {
+      <section class="konto" aria-labelledby="konto-titel">
+        <h2 id="konto-titel" class="konto__titel">Mein Stundenkonto</h2>
+        <!-- Der Zeitraum steht ausdrücklich da, samt Hinweis auf den laufenden
+             Tag: Sonst wundert sich, wer heute schon acht Stunden gebucht hat
+             und sie im Saldo nicht wiederfindet. -->
+        <p class="konto__zeitraum">
+          {{ tagText(k.von) }} – {{ tagText(k.bis) }}
+          <span class="konto__zeitraum-hinweis">· ohne den laufenden Tag</span>
+        </p>
+        <div class="konto__saldo konto__saldo--{{ saldoArt(k.saldo) }}">
+          <span class="konto__saldo-zahl">{{ saldoText(k.saldo) }}</span>
+          <span class="konto__saldo-wort">
+            @switch (saldoArt(k.saldo)) {
+              @case ('plus') { Mehrarbeit }
+              @case ('minus') { Minusstunden }
+              @default { ausgeglichen }
+            }
+          </span>
+        </div>
+        <dl class="konto__fakten">
+          <div>
+            <dt>Soll</dt>
+            <dd>{{ stundenText(k.soll) }}</dd>
+          </div>
+          <div>
+            <dt>Ist</dt>
+            <dd>{{ stundenText(k.ist) }}</dd>
+          </div>
+          <div>
+            <dt>Abwesend</dt>
+            <dd>{{ stundenText(k.abwesend) }}</dd>
+          </div>
+          @if (hatAusgleich(k.ausgleich)) {
+            <div>
+              <dt>Ausgleich</dt>
+              <dd>{{ stundenText(k.ausgleich) }}</dd>
+            </div>
+          }
+        </dl>
+        @if (k.tage_offen > 0) {
+          <p class="konto__hinweis">
+            {{ k.tage_offen }} {{ k.tage_offen === 1 ? 'Tag ist' : 'Tage sind' }} noch
+            nicht eingereicht — bis dahin ist der Saldo vorläufig.
+          </p>
+        }
+      </section>
+    }
+
     <!-- ================= LETZTE TAGE ================= -->
     <section class="letzte" aria-labelledby="letzte-titel">
       <h2 id="letzte-titel">Letzte 30 Tage</h2>
       @if (tage().length === 0) {
         <p class="tab-platzhalter">Keine Arbeitstage im Zeitraum.</p>
       } @else {
-        <table class="tabelle">
-          <caption class="sr-only">Meine Arbeitstage der letzten 30 Tage</caption>
-          <thead>
-            <tr>
-              <th scope="col">Tag</th>
-              <th scope="col">Arbeitszeit</th>
-              <th scope="col">Pause</th>
-              <th scope="col">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            @for (t of tage(); track t.id) {
+        <!-- Nach Kalenderwoche gebündelt: 30 flache Zeilen sind eine Halde, die
+             Woche ist die Einheit, in der man über Arbeitszeit spricht. -->
+        @for (w of wochen(); track w.id) {
+          <table class="tabelle tabelle--woche">
+            <!-- Flex sitzt auf dem inneren <div>, nicht auf der <caption>:
+                 `display: flex` nähme ihr die `table-caption`-Rolle, und damit
+                 wäre ihre Platzierung implementierungsabhängig statt
+                 spezifiziert. Gleiches Muster wie in der Aktionsspalte. -->
+            <caption>
+              <div class="woche__kopf">
+                <span class="woche__label">{{ w.label }}</span>
+                <span class="woche__summe">
+                  {{ dauerText(w.arbeit) }} Arbeit
+                  <span class="woche__pause">· {{ dauerText(w.pause) }} Pause</span>
+                </span>
+              </div>
+            </caption>
+            <thead>
               <tr>
-                <td>{{ tagText(t.day) }}</td>
-                <td class="num">{{ dauerText(t.arbeit_sekunden) }}</td>
-                <td class="num">{{ dauerText(t.pause_sekunden) }}</td>
-                <td>
-                  <span [class]="tagStatusClass(t.status)">
-                    <span aria-hidden="true">{{ TAG_STATUS_ZEICHEN[t.status] }}</span>
-                    {{ TAG_STATUS_LABEL[t.status] }}
-                  </span>
-                </td>
+                <th scope="col">Tag</th>
+                <th scope="col">Arbeitszeit</th>
+                <th scope="col">Pause</th>
+                <th scope="col">Status</th>
               </tr>
-            }
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              @for (t of w.tage; track t.id) {
+                <tr>
+                  <td>{{ tagText(t.day) }}</td>
+                  <td class="num">{{ dauerText(t.arbeit_sekunden) }}</td>
+                  <td class="num">{{ dauerText(t.pause_sekunden) }}</td>
+                  <td>
+                    <span [class]="tagStatusClass(t.status)">
+                      <span aria-hidden="true">{{ TAG_STATUS_ZEICHEN[t.status] }}</span>
+                      {{ TAG_STATUS_LABEL[t.status] }}
+                    </span>
+                    <!-- Zeitkontrolle (Befund E5): Ein Tag wird von einem anderen
+                         bestätigt oder abgelehnt. Ein bloßes „Abgelehnt" ohne
+                         Grund lässt den Monteur ratlos zurück — der Grund IST die
+                         Information, die er zum Nachbessern braucht. -->
+                    @if (t.decision_note) {
+                      <span class="tag-grund">{{ t.decision_note }}</span>
+                    }
+                    @if (t.status === 'BESTAETIGT' && t.decided_by) {
+                      <span class="tag-grund">geprüft von {{ t.decided_by }}</span>
+                    }
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        }
       }
     </section>
 
@@ -286,6 +365,20 @@
           label="Bis"
           typ="zeit"
           [pflicht]="true"
+        />
+        <!-- Zuordnung zum Einsatz: ohne sie lässt sich die Zeit später keinem
+             Auftrag zurechnen. Beim Stempeln setzt der Server sie selbst; beim
+             Nachtragen von Hand muss sie hier stehen. -->
+        <app-feld
+          [control]="$any(eintragForm.controls.service_job_id)"
+          label="Einsatz"
+          typ="select"
+          [optionen]="einsatzOptionen()"
+          [hinweis]="
+            tagesEinsaetze().length === 0
+              ? 'Für diesen Tag sind Ihnen keine Einsätze zugeteilt.'
+              : 'Optional — ordnet die Zeit einem Einsatz zu.'
+          "
         />
         <app-feld [control]="$any(eintragForm.controls.note)" label="Notiz" typ="textarea" />
         <div class="dialog-aktionen">

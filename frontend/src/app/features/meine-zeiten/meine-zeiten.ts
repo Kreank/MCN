@@ -1,6 +1,8 @@
 import { DestroyRef, Component, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
+import { EinsatzService } from '../../core/einsatz.service';
+import { ServiceJob } from '../../core/einsatz.model';
 import { ZeiterfassungService } from '../../core/zeiterfassung.service';
 import {
   Arbeitstag,
@@ -8,11 +10,13 @@ import {
   StempelZustand,
   TAG_STATUS_LABEL,
   TAG_STATUS_ZEICHEN,
+  Stundenkonto,
   Zeiteintrag,
   Zeitkategorie,
   ZUSTAND_LABEL,
   dauerText,
   fromLocalInput,
+  kalenderwoche,
   tagStatusClass,
   tagText,
   uhrzeit,
@@ -52,6 +56,7 @@ type ViewState = { kind: 'loading' } | { kind: 'ready' } | VerbotenState | { kin
 })
 export class MeineZeiten {
   private readonly svc = inject(ZeiterfassungService);
+  private readonly einsatzSvc = inject(EinsatzService);
   private readonly fb = inject(FormBuilder);
   private readonly destroyRef = inject(DestroyRef);
 
@@ -76,6 +81,41 @@ export class MeineZeiten {
   protected readonly TAG_STATUS_ZEICHEN = TAG_STATUS_ZEICHEN;
   protected readonly ZUSTAND_LABEL = ZUSTAND_LABEL;
 
+  /**
+   * Das eigene Stundenkonto des laufenden Monats (Soll/Ist/Saldo).
+   *
+   * Sascha (Befund E4): „Zeitenübersicht gefällt mir nicht, zu unübersichtlich."
+   * Was fehlte, war nicht Gestaltung, sondern die **Aussage**: 30 flache Zeilen
+   * mit Tagessummen beantworten nicht die Frage, die man an eine Zeitübersicht
+   * hat — „liege ich vor oder zurück?". Der Endpunkt dafür stand längst, er war
+   * nur nirgends angebunden.
+   *
+   * Das ist zugleich die fehlende Hälfte des Freizeitausgleichs (Migration
+   * 0131): Man beantragt schlecht Überstundenabbau, ohne den Saldo zu kennen.
+   */
+  protected readonly konto = signal<Stundenkonto | null>(null);
+
+  /** Die Arbeitstage nach Kalenderwoche gebündelt, jüngste zuerst. */
+  protected readonly wochen = computed(() => {
+    const gruppen = new Map<string, { id: string; label: string; tage: Arbeitstag[] }>();
+    for (const t of this.tage()) {
+      const schluessel = kalenderwoche(t.day);
+      const vorhanden = gruppen.get(schluessel.id);
+      if (vorhanden) vorhanden.tage.push(t);
+      // `id` trägt das ISO-Jahr und wandert mit ins Objekt: Er ist der
+      // `track`-Schlüssel. Das Label allein („KW 1") wiederholt sich über
+      // Jahresgrenzen — im 30-Tage-Fenster nie, aber wer das Fenster später
+      // aufzieht, bekäme sonst ein NG0955 zur Laufzeit statt eines Fehlers beim
+      // Bauen.
+      else gruppen.set(schluessel.id, { ...schluessel, tage: [t] });
+    }
+    return [...gruppen.values()].map((g) => ({
+      ...g,
+      arbeit: g.tage.reduce((s, t) => s + t.arbeit_sekunden, 0),
+      pause: g.tage.reduce((s, t) => s + t.pause_sekunden, 0),
+    }));
+  });
+
   protected readonly startKategorie = signal<string>('');
   protected readonly einreichenOffen = signal(false);
   protected readonly eintragDialogOffen = signal(false);
@@ -90,8 +130,31 @@ export class MeineZeiten {
     datum: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
     von: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
     bis: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
+    /** Optionale Zuordnung zum Einsatz — leer = allgemeine Zeit (Werkstatt, Büro). */
+    service_job_id: this.fb.control('', { nonNullable: true }),
     note: this.fb.control(''),
   });
+
+  /**
+   * Die Einsätze des im Dialog gewählten Tages — zur Auswahl beim Nachtragen.
+   *
+   * Sascha (Befund E): Beim Stempeln über die Knöpfe steht die Zuordnung schon
+   * (der Server hängt die laufende Buchung an den Einsatz), beim Nachtragen von
+   * Hand fehlte sie. Ohne sie landet die Zeit im Tagesbrei und lässt sich später
+   * keinem Auftrag zuordnen — die Nachkalkulation greift ins Leere.
+   *
+   * Der Server liefert dem Monteur (row_scope EIGENE) ohnehin nur die eigenen
+   * Einsätze; die Liste ist deshalb keine Fremddatenpreisgabe.
+   */
+  protected readonly tagesEinsaetze = signal<ServiceJob[]>([]);
+
+  protected readonly einsatzOptionen = computed(() => [
+    { wert: '', label: 'Keinem Einsatz zuordnen' },
+    ...this.tagesEinsaetze().map((j) => ({
+      wert: j.id,
+      label: `${j.job_number} · ${j.title}`,
+    })),
+  ]);
 
   /** Laufzeit der aktuellen Buchung in Sekunden (live). */
   protected readonly laufendeSekunden = computed(() => {
@@ -168,6 +231,13 @@ export class MeineZeiten {
   constructor() {
     const timer = setInterval(() => this.tick.set(Date.now()), 15_000);
     this.destroyRef.onDestroy(() => clearInterval(timer));
+    // Datiert man im Dialog um, gehören dazu die Einsätze des NEUEN Tages.
+    // Über `valueChanges` statt eines DOM-`change`-Listeners auf `app-feld`:
+    // Die Komponente hat kein solches Output, ein Listener finge nur zufällig
+    // das durchgereichte native Event des Hosts.
+    this.eintragForm.controls.datum.valueChanges
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((tag) => this.einsaetzeLaden(tag));
     this.laden();
   }
 
@@ -203,6 +273,92 @@ export class MeineZeiten {
       next: (t) => this.tage.set(t),
       error: () => this.tage.set([]),
     });
+    // Der Zeitraum MUSS mitgegeben werden. Ohne ihn nimmt der Server den
+    // laufenden Monat bis zum **Monatsletzten** — er summiert also das Soll
+    // aller noch nicht gearbeiteten Zukunftstage gegen ein Ist, das nur bis
+    // heute reichen kann. Ein Vollzeit-Monteur sähe am Monatsersten „−184 h
+    // Minusstunden", obwohl er nichts falsch gemacht hat.
+    const [von, bis] = this.kontoZeitraum();
+    // Ein Fehler hier blendet die Karte aus, statt die Seite zu kippen — wer
+    // keinen Personalsatz hat (404), stempelt trotzdem.
+    this.svc.stundenkonto(undefined, von, bis).subscribe({
+      next: (k) => this.konto.set(k),
+      error: () => this.konto.set(null),
+    });
+  }
+
+  /**
+   * Der Zeitraum des Stundenkontos: **abgeschlossene** Tage des laufenden
+   * Monats, also bis einschließlich gestern.
+   *
+   * Warum nicht bis heute: Das Sollstunden-Raster zählt den laufenden Tag von
+   * 00:00 an voll. Wer morgens um neun nachsieht, hat eine von acht Stunden
+   * gebucht und läge damit scheinbar sieben Stunden zurück — jeden Vormittag
+   * aufs Neue. Eine Zahl, die regelmäßig falsch aussieht, wird ignoriert, und
+   * damit wäre der ganze Umbau umsonst.
+   *
+   * Der laufende Tag fehlt hier nicht, er steht oben: Die Stempeluhr zeigt die
+   * Tagessumme live. Das Konto beantwortet die andere Frage — den Trend.
+   *
+   * Sonderfall Monatserster: „bis gestern" läge vor dem Monatsanfang. Dann ist
+   * der **Vormonat** der richtige Zeitraum; am 1. interessiert ohnehin, wie der
+   * abgeschlossene Monat ausgegangen ist.
+   */
+  private kontoZeitraum(): [string, string] {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const iso = (d: Date) =>
+      `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    const jetzt = new Date();
+    const gestern = new Date(jetzt.getFullYear(), jetzt.getMonth(), jetzt.getDate() - 1);
+    const monatsAnfang = new Date(jetzt.getFullYear(), jetzt.getMonth(), 1);
+    if (gestern < monatsAnfang) {
+      // Heute ist der Erste — der Vormonat in Gänze.
+      const vormonatAnfang = new Date(jetzt.getFullYear(), jetzt.getMonth() - 1, 1);
+      return [iso(vormonatAnfang), iso(gestern)];
+    }
+    return [iso(monatsAnfang), iso(gestern)];
+  }
+
+  /** Dezimalstunden aus dem Konto („7.50") deutsch als „7,5 h". */
+  protected stundenText(wert: string): string {
+    const n = Number(wert);
+    if (!Number.isFinite(n)) return wert;
+    return `${new Intl.NumberFormat('de-DE', { maximumFractionDigits: 1 }).format(n)} h`;
+  }
+
+  /**
+   * Der Saldo mit ausdrücklichem Vorzeichen. „+7,5 h" und „−7,5 h" sind zwei
+   * gegenteilige Aussagen; ohne das Pluszeichen liest sich Mehrarbeit wie eine
+   * bloße Zahl. Das Minus ist ein echtes Minuszeichen (U+2212), kein Bindestrich.
+   */
+  protected saldoText(wert: string): string {
+    const n = Number(wert);
+    if (!Number.isFinite(n)) return wert;
+    const betrag = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 1 }).format(
+      Math.abs(n),
+    );
+    if (n === 0) return '±0 h';
+    return `${n > 0 ? '+' : '−'}${betrag} h`;
+  }
+
+  /**
+   * Steht überhaupt eine Ausgleichsbuchung im Zeitraum?
+   *
+   * Als Zahl geprüft, nicht als String gegen `'0.00'`: Der Vergleich hinge
+   * sonst an der Serialisierungsform des Decimal-Feldes. Zwei Zeilen weiter
+   * macht `stundenText` bereits `Number(...)` — im selben Template zweierlei
+   * Auffassungen davon zu haben, was dieses Feld ist, lädt zum Fehler ein.
+   */
+  protected hatAusgleich(wert: string): boolean {
+    const n = Number(wert);
+    return Number.isFinite(n) && n !== 0;
+  }
+
+  /** Trägt der Saldo Mehrarbeit, Minusstunden oder nichts? */
+  protected saldoArt(wert: string): 'plus' | 'minus' | 'null' {
+    const n = Number(wert);
+    if (!Number.isFinite(n) || n === 0) return 'null';
+    return n > 0 ? 'plus' : 'minus';
   }
 
   private uebernehmen(z: StempelZustand): void {
@@ -300,17 +456,109 @@ export class MeineZeiten {
 
   // --- Zeit von Hand nachtragen ------------------------------------------
 
+  /**
+   * Öffnet den Nachtrag-Dialog und setzt sinnvolle Vorgaben.
+   *
+   * Sascha (Befund E): „Merkt sich keine bereits eingetragenen Zeiten." Der
+   * Dialog stand fest auf 08:00–16:00 — auch dann, wenn für den Tag schon von
+   * 08:00 bis 12:00 gebucht war. Wer nachmittags nachtrug, musste beide Felder
+   * von Hand korrigieren und lief andernfalls in eine Überlappung.
+   *
+   * Jetzt setzt „Von" auf das **Ende der letzten Buchung des Tages**; „Bis"
+   * folgt vier Stunden später als Vorschlag, den man nur noch anpasst. Gibt es
+   * für den Tag noch nichts, bleibt es beim Arbeitsbeginn.
+   */
   protected eintragDialogOeffnen(): void {
     const heute = new Date();
     const pad = (n: number) => String(n).padStart(2, '0');
+    const datum = `${heute.getFullYear()}-${pad(heute.getMonth() + 1)}-${pad(heute.getDate())}`;
+    const von = this.letztesEnde(datum) ?? '08:00';
     this.eintragForm.reset({
       category_id: this.startKategorie(),
-      datum: `${heute.getFullYear()}-${pad(heute.getMonth() + 1)}-${pad(heute.getDate())}`,
-      von: '08:00',
-      bis: '16:00',
+      datum,
+      von,
+      bis: this.plusStunden(von, 4),
+      service_job_id: '',
       note: '',
     });
+    // Die Einsätze des Tages lädt der `valueChanges`-Abonnent, den `reset()`
+    // gerade ausgelöst hat — kein zweiter Aufruf hier.
     this.eintragDialogOffen.set(true);
+  }
+
+  /**
+   * Einsätze des gewählten Tages nachladen (auch beim Umdatieren im Dialog).
+   *
+   * `reqId` verwirft veraltete Antworten. Ein `input[type=date]` emittiert beim
+   * Durchtippen mehrfach, und ohne diese Schranke könnte die langsamere ältere
+   * Anfrage als letzte eintreffen: Der Monteur sähe die Einsätze eines anderen
+   * Tages und hängte seine Zeit an den falschen Auftrag — ein Fehler, der still
+   * bleibt und erst in der Nachkalkulation auffällt.
+   */
+  private einsatzReqId = 0;
+
+  protected einsaetzeLaden(tag: string): void {
+    const meine = ++this.einsatzReqId;
+    if (!tag) {
+      this.tagesEinsaetze.set([]);
+      return;
+    }
+    this.einsatzSvc
+      .list({
+        page: 1,
+        page_size: 50,
+        scheduled_from: `${tag}T00:00:00`,
+        scheduled_to: `${tag}T23:59:59`,
+      })
+      .subscribe({
+        next: (seite) => {
+          if (meine !== this.einsatzReqId) return;
+          this.tagesEinsaetze.set(seite.items);
+        },
+        // Ein Fehler hier darf das Nachtragen nicht blockieren: Die Zuordnung
+        // ist optional, die Zeiterfassung ist es nicht.
+        error: () => {
+          if (meine === this.einsatzReqId) this.tagesEinsaetze.set([]);
+        },
+      });
+  }
+
+  /**
+   * Ende der spätesten abgeschlossenen Buchung des gegebenen Tages als „HH:MM"
+   * — oder null, wenn für ihn noch nichts gebucht ist. Eine noch laufende
+   * Buchung zählt nicht: Sie hat kein Ende, an das sich etwas anschließen ließe.
+   *
+   * Der Tagesvergleich ist nicht überflüssig: `heute()` ist der **Bezugstag**
+   * der Stempeluhr, bei vergessenem Stoppen also der Vortag. Ohne den Abgleich
+   * schlüge der Dialog für heute eine Zeit vor, die aus gestrigen Buchungen
+   * stammt.
+   */
+  private letztesEnde(tag: string): string | null {
+    if (this.bezugstag() !== tag) return null;
+    const enden = (this.heute()?.eintraege ?? [])
+      .map((e) => e.ended_at)
+      .filter((e): e is string => !!e);
+    if (enden.length === 0) return null;
+    const spaetestes = enden.reduce((a, b) => (a > b ? a : b));
+    return uhrzeit(spaetestes);
+  }
+
+  /**
+   * „12:00" + 4 → „16:00". Deckelt am Tagesende, statt in den Folgetag zu
+   * laufen — der Server nähme eine Buchung über Mitternacht nicht an.
+   *
+   * Gedeckelt wird nur beim **echten** Überlauf. „19:00" + 4 ergibt exakt
+   * 23:00 und bleibt genau das; eine pauschale Klemmung auf 23:59 hätte den
+   * Vorschlag hier stillschweigend um eine Stunde verlängert.
+   */
+  private plusStunden(zeit: string, stunden: number): string {
+    const [h, m] = zeit.split(':').map(Number);
+    if (!Number.isFinite(h) || !Number.isFinite(m)) return '16:00';
+    const minuten = h * 60 + m + stunden * 60;
+    const gedeckelt = Math.min(minuten, 23 * 60 + 59);
+    const zh = Math.floor(gedeckelt / 60);
+    const zm = gedeckelt % 60;
+    return `${String(zh).padStart(2, '0')}:${String(zm).padStart(2, '0')}`;
   }
 
   protected eintragSpeichern(): void {
@@ -325,6 +573,7 @@ export class MeineZeiten {
         category_id: v.category_id,
         started_at: fromLocalInput(`${v.datum}T${v.von}`),
         ended_at: fromLocalInput(`${v.datum}T${v.bis}`),
+        service_job_id: v.service_job_id || null,
         note: v.note || null,
       })
       .subscribe({

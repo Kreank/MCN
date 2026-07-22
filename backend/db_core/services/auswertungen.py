@@ -946,6 +946,7 @@ _ABSENCE_LABEL = {
     "SONDERURLAUB": "Sonderurlaub",
     "UNBEZAHLT": "Unbezahlt",
     "FORTBILDUNG": "Fortbildung",
+    "FREIZEITAUSGLEICH": "Freizeitausgleich",
 }
 _LINE_TYPE_LABEL = {
     "MATERIAL": "Material",

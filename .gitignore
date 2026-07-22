@@ -13,6 +13,11 @@ staticfiles/
 .vscode/
 Thumbs.db
 
+# Claude Code: lokale Einstellungen und Arbeits-Worktrees. Letztere enthalten
+# vollständige Kopien des Repos samt .venv — die haben im Verlauf nichts zu
+# suchen.
+.claude/
+
 # Händlerdaten (DATANORM): Einkaufspreise, gehören nicht ins Repo
 /DATANORM/
 /Hero Wissen/

@@ -1,6 +1,8 @@
+import { inject } from '@angular/core';
 import { Routes } from '@angular/router';
 
 import { authGuard, darfAlleGuard, darfGuard } from './core/auth.guard';
+import { AuthService } from './core/auth.service';
 
 export const routes: Routes = [
   {
@@ -42,25 +44,63 @@ export const routes: Routes = [
         loadComponent: () => import('./features/profil/profil').then((m) => m.Profil),
       },
       {
-        // Selbstauskunft (eigene HR-Daten). Recht hr/LESEN; der Server liefert
-        // nur die eigene Zeile (row_scope EIGENE ist hier zulässig).
-        path: 'meine-personalakte',
-        title: 'Meine Personalakte — Mitra Sanitär',
-        canActivate: [darfGuard('hr', 'LESEN')],
+        // „Mein Bereich" (Befund E6) — alles, was den Angemeldeten selbst
+        // betrifft, unter einem Dach: Stempeluhr und Personalakte samt eigenen
+        // Anträgen. Vorher zwei zusammenhanglose Punkte („Meine Zeiten",
+        // „Meine Personalakte"), von denen keiner nach dem Ort klang, an dem man
+        // Urlaub beantragt.
+        //
+        // Der Rahmen trägt KEINEN Wächter: Die beiden Kinder verlangen
+        // verschiedene Rechte (Stempeln hr/AENDERN, Akte hr/LESEN). Ein Recht am
+        // Elternknoten würde jemandem, der nur eines von beiden trägt, auch das
+        // andere verschließen.
+        path: 'mein-bereich',
         loadComponent: () =>
-          import('./features/meine-personalakte/meine-personalakte').then(
-            (m) => m.MeinePersonalakte,
-          ),
+          import('./features/mein-bereich/mein-bereich').then((m) => m.MeinBereich),
+        children: [
+          {
+            // Rechtsabhängiger Einstieg: Die Stempeluhr verlangt hr/AENDERN.
+            // Ein fester Redirect dorthin schickte jeden, der nur hr/LESEN
+            // trägt, auf „Kein Zugriff" — und nähme ihm dabei den Rahmen samt
+            // Personalakte. Er landet stattdessen direkt in seiner Akte.
+            path: '',
+            pathMatch: 'full',
+            redirectTo: () =>
+              inject(AuthService).darf('hr', 'AENDERN') ? 'zeiten' : 'personalakte',
+          },
+          {
+            // Die Stempeluhr. Recht hr/AENDERN — row_scope EIGENE ist hier genau
+            // richtig: der Server bucht immer auf den Akteur und nimmt gar keine
+            // fremde user_id entgegen.
+            path: 'zeiten',
+            title: 'Meine Zeiten — Mitra Sanitär',
+            canActivate: [darfGuard('hr', 'AENDERN')],
+            loadComponent: () =>
+              import('./features/meine-zeiten/meine-zeiten').then((m) => m.MeineZeiten),
+          },
+          {
+            // Selbstauskunft und Selbstbedienung (eigene HR-Daten, eigene
+            // Anträge). Recht hr/LESEN; der Server liefert nur die eigene Zeile
+            // (row_scope EIGENE ist hier zulässig). Das Anlegen eines Antrags
+            // prüft der Server zusätzlich gegen hr/ANLEGEN (Migration 0130).
+            path: 'personalakte',
+            title: 'Meine Personalakte — Mitra Sanitär',
+            canActivate: [darfGuard('hr', 'LESEN')],
+            loadComponent: () =>
+              import('./features/meine-personalakte/meine-personalakte').then(
+                (m) => m.MeinePersonalakte,
+              ),
+          },
+        ],
       },
+      // Die alten Pfade bleiben als Weiterleitung: Sie stehen in Lesezeichen und
+      // in der Adresszeile derer, die täglich stempeln. Ein toter Link wäre für
+      // sie ein Ausfall der Zeiterfassung, nicht bloß ein Schönheitsfehler.
+      { path: 'meine-zeiten', pathMatch: 'full', redirectTo: 'mein-bereich/zeiten' },
       {
-        // Die Stempeluhr. Recht hr/AENDERN — row_scope EIGENE ist hier genau
-        // richtig: der Server bucht immer auf den Akteur und nimmt gar keine
-        // fremde user_id entgegen.
-        path: 'meine-zeiten',
-        title: 'Meine Zeiten — Mitra Sanitär',
-        canActivate: [darfGuard('hr', 'AENDERN')],
-        loadComponent: () =>
-          import('./features/meine-zeiten/meine-zeiten').then((m) => m.MeineZeiten),
+        path: 'meine-personalakte',
+        pathMatch: 'full',
+        redirectTo: 'mein-bereich/personalakte',
       },
       {
         // Verwaltungssicht der Zeiterfassung. `darfAlleGuard`: Der Server verweigert

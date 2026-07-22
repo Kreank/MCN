@@ -39,7 +39,13 @@ from ninja.responses import Status
 
 from api.permissions import require, require_scoped
 from db_core.betriebszeit import Betriebszeitpunkt
-from db_core.models import Employee, TimeAdjustment, TimeEntry, WorkDay
+from db_core.models import (
+    Employee,
+    JobAssignment,
+    TimeAdjustment,
+    TimeEntry,
+    WorkDay,
+)
 from db_core.services import zeiterfassung as zeit_service
 from db_core.services.identity import personenname
 
@@ -354,7 +360,12 @@ def aktuell(request):
 
 
 def _stempel(request, fn, **kwargs):
-    actor, _ = require_scoped(request, "hr", "AENDERN")
+    actor, scope = require_scoped(request, "hr", "AENDERN")
+    # Dieselbe Grenze wie beim Nachtragen von Hand: Wer nur EIGENE trägt, kann
+    # nur an einen ihm zugeteilten Einsatz stempeln. Die Einsatzliste zeigt ihm
+    # ohnehin nur diese (`planung.py`, Filter auf `assignments__assignee_id`).
+    if scope == "EIGENE":
+        _guard_eigener_einsatz(kwargs.get("service_job_id"), actor)
     try:
         fn(actor, **kwargs)
     except ValueError as exc:
@@ -563,12 +574,35 @@ def _load_eintrag(entry_id, actor, scope):
     return e
 
 
+def _guard_eigener_einsatz(service_job_id, actor):
+    """Bei row_scope EIGENE: Der Einsatz muss dem Akteur zugeteilt sein.
+
+    Die `user_id` war schon gegen Fremdbuchung gesichert — der **Einsatzbezug**
+    war es nicht. Wer die Id eines fremden Einsatzes kannte, konnte seine eigene
+    Zeit daran hängen. Kein Datenabfluss, aber die Nachkalkulation dieses
+    Auftrags wird still falsch: Da stehen dann Stunden von jemandem, der nie
+    dort war. Und weil der Einsatzbezug unveränderlich ist (B-28/P3-03), lässt
+    sich das hinterher nicht korrigieren, nur löschen und neu erfassen.
+
+    404 statt 403: Ob es einen Einsatz mit dieser Id gibt, geht den nichts an,
+    dem er nicht zugeteilt ist.
+    """
+    if service_job_id is None:
+        return
+    zugeteilt = JobAssignment.objects.filter(
+        service_job_id=service_job_id, assignee_id=actor
+    ).exists()
+    if not zugeteilt:
+        raise HttpError(404, "Einsatz nicht gefunden.")
+
+
 @router.post("/eintraege", response={201: EintragOut})
 def eintrag_anlegen(request, payload: EintragCreateIn):
     """Zeiteintrag von Hand erfassen.
 
     Bei row_scope EIGENE wird `user_id` auf den Akteur gezwungen; eine
-    ausdrücklich fremde user_id ist 403 (nicht still umgebogen)."""
+    ausdrücklich fremde user_id ist 403 (nicht still umgebogen). Der Einsatz muss
+    dem Akteur zugeteilt sein — siehe `_guard_eigener_einsatz`."""
     actor, scope = require_scoped(request, "hr", "AENDERN")
     user_id = payload.user_id
     if scope == "EIGENE":
@@ -579,6 +613,7 @@ def eintrag_anlegen(request, payload: EintragCreateIn):
                 "eine andere Person erfasst werden.",
             )
         user_id = actor
+        _guard_eigener_einsatz(payload.service_job_id, actor)
     elif user_id is None:
         user_id = actor
     try:

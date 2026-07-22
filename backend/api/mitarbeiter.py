@@ -525,8 +525,24 @@ def terminate_contract(request, contract_id: UUID, payload: TerminateIn):
     "/employees/{employee_id}/absences", response={201: AbsenceOut}, auth=django_auth
 )
 def create_absence(request, employee_id: UUID, payload: AbsenceIn):
-    """Abwesenheitsantrag anlegen (Status ENTWURF). days_count rechnet der Service."""
-    actor, _ = require(request, "hr", "ANLEGEN")
+    """Abwesenheitsantrag anlegen (Status ENTWURF) — auch für sich selbst.
+
+    Befund E6: Bisher `require(...)`, also für row_scope EIGENE ein hartes 403.
+    Der Mitarbeiter konnte seinen Urlaub nicht beantragen; das musste das Büro
+    für ihn tun.
+
+    Jetzt `require_scoped` mit Eigentumsprüfung: Wer nur EIGENE trägt, darf
+    ausschließlich am **eigenen** Personalsatz anlegen. Die Grenze zieht dieser
+    Endpunkt, nicht das Recht — `hr/ANLEGEN` mit Scope EIGENE (Migration 0130)
+    ist die Voraussetzung, nicht die Erlaubnis für alles im Modul.
+
+    Genehmigen bleibt unverändert bei `hr/FREIGEBEN`: Der Antragsteller stellt
+    den Antrag, der Betrieb entscheidet.
+
+    `days_count` rechnet der Service aus dem Sollstunden-Raster.
+    """
+    actor, scope = require_scoped(request, "hr", "ANLEGEN")
+    _guard_eigener_personalsatz(scope, actor, employee_id)
     try:
         absence = mitarbeiter_service.create_absence(
             actor,
@@ -543,8 +559,51 @@ def create_absence(request, employee_id: UUID, payload: AbsenceIn):
     return Status(201, _absence_out(absence))
 
 
-def _absence_action(request, absence_id, func, action, **kwargs):
-    actor, _ = require(request, "hr", action)
+def _guard_eigener_personalsatz(scope, actor, employee_id):
+    """Bei Scope EIGENE: Der Personalsatz muss dem Anmelder gehören.
+
+    404 statt 403 — eine 403 verriete, dass es den fremden Personalsatz gibt.
+    Bei Scope ALLE passiert nichts; die Personalverwaltung darf für jeden
+    anlegen und entscheiden.
+    """
+    if scope != "EIGENE":
+        return
+    eigener = Employee.objects.filter(app_user_id=actor).values_list("id", flat=True).first()
+    if eigener is None:
+        raise HttpError(
+            404,
+            "Zu Ihrem Konto ist kein Mitarbeiterdatensatz hinterlegt. "
+            "Wenden Sie sich an die Personalverwaltung.",
+        )
+    if eigener != employee_id:
+        raise HttpError(404, "Mitarbeiter nicht gefunden.")
+
+
+def _absence_action(request, absence_id, func, action, *, eigene_erlaubt=False, **kwargs):
+    """Statuswechsel an einem Abwesenheitsantrag.
+
+    `eigene_erlaubt` trennt die beiden Seiten des Vorgangs (Befund E6):
+
+    * **Einreichen und Zurückziehen** gehören dem Antragsteller. Scope EIGENE
+      ist zulässig, sofern der Antrag zum eigenen Personalsatz gehört.
+    * **Genehmigen und Ablehnen** sind ein Freigabetor. Dort bleibt es bei
+      `require(...)`, das Scope EIGENE ausnahmslos abweist — wer beantragt,
+      entscheidet nicht über sich selbst.
+    """
+    if eigene_erlaubt:
+        actor, scope = require_scoped(request, "hr", action)
+        if scope == "EIGENE":
+            besitzer = (
+                Absence.objects.filter(id=absence_id)
+                .values_list("employee__app_user_id", flat=True)
+                .first()
+            )
+            if besitzer is None:
+                raise HttpError(404, "Abwesenheit nicht gefunden.")
+            if besitzer != actor:
+                raise HttpError(404, "Abwesenheit nicht gefunden.")
+    else:
+        actor, _ = require(request, "hr", action)
     try:
         absence = func(actor, absence_id=absence_id, **kwargs)
     except ValueError as exc:
@@ -557,7 +616,8 @@ def submit_absence(request, absence_id: UUID):
     """Antrag einreichen (ENTWURF → EINGEREICHT)."""
     # Einreichen ist ein Statuswechsel des eigenen Antrags → AENDERN.
     return _absence_action(
-        request, absence_id, mitarbeiter_service.submit_absence, "AENDERN"
+        request, absence_id, mitarbeiter_service.submit_absence, "AENDERN",
+        eigene_erlaubt=True,
     )
 
 
@@ -587,7 +647,8 @@ def withdraw_absence(request, absence_id: UUID):
     """Antrag zurückziehen (aus ENTWURF oder EINGEREICHT)."""
     # Zurückziehen ist ein Statuswechsel des Antrags → AENDERN.
     return _absence_action(
-        request, absence_id, mitarbeiter_service.withdraw_absence, "AENDERN"
+        request, absence_id, mitarbeiter_service.withdraw_absence, "AENDERN",
+        eigene_erlaubt=True,
     )
 
 

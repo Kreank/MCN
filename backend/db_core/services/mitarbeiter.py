@@ -58,6 +58,10 @@ ABSENCE_TYPES = (
     "SONDERURLAUB",
     "UNBEZAHLT",
     "FORTBILDUNG",
+    # Überstunden abfeiern (Migration 0131). Zählt bewusst NICHT auf das
+    # Urlaubskonto — `used_days` dort filtert auf URLAUB. Die Gegenbuchung auf
+    # dem Arbeitszeitkonto bleibt eine Führungsentscheidung (0072).
+    "FREIZEITAUSGLEICH",
 )
 
 # Erlaubte Statusübergänge → {Zielstatus}. AUSGETRETEN ist final; ein

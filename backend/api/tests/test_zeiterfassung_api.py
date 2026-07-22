@@ -164,6 +164,98 @@ def test_monteur_kann_keine_fremde_zeit_erfassen(client_with_role):
 
 
 @pytest.mark.django_db
+def test_monteur_bucht_nicht_auf_fremden_einsatz(client_with_role):
+    """Die `user_id` war gesichert — der **Einsatzbezug** war es nicht.
+
+    Wer die Id eines fremden Einsatzes kannte, konnte seine eigene Zeit daran
+    hängen. Kein Datenabfluss, aber die Nachkalkulation dieses Auftrags wird
+    still falsch, und weil der Einsatzbezug unveränderlich ist (B-28/P3-03),
+    lässt sich das hinterher nur durch Löschen und Neuerfassen heilen.
+
+    404, nicht 403: Ob es einen Einsatz mit dieser Id gibt, geht den nichts an,
+    dem er nicht zugeteilt ist.
+    """
+    from db_core.services import einsatz as einsatz_service
+
+    c = client_with_role("MONTEUR")
+    buero = make_app_user("Disposition")
+    fremder_einsatz = einsatz_service.create_service_job(
+        buero.id, title="Begehung ohne mich"
+    )
+
+    r = c.post(
+        "/api/zeiterfassung/eintraege",
+        data={
+            "category_id": str(_kat("ARBEITSZEIT").id),
+            "service_job_id": str(fremder_einsatz.id),
+            "started_at": "2026-07-13T08:00:00+02:00",
+            "ended_at": "2026-07-13T12:00:00+02:00",
+        },
+        content_type="application/json",
+    )
+    assert r.status_code == 404, r.content
+
+    # Zugeteilt geht dieselbe Buchung durch — der Riegel sperrt nicht pauschal.
+    einsatz_service.assign_user(
+        buero.id,
+        service_job_id=fremder_einsatz.id,
+        assignee_user_id=_app_user_of(c),
+    )
+    r = c.post(
+        "/api/zeiterfassung/eintraege",
+        data={
+            "category_id": str(_kat("ARBEITSZEIT").id),
+            "service_job_id": str(fremder_einsatz.id),
+            "started_at": "2026-07-13T08:00:00+02:00",
+            "ended_at": "2026-07-13T12:00:00+02:00",
+        },
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+
+
+@pytest.mark.django_db
+def test_monteur_stempelt_nicht_auf_fremden_einsatz(client_with_role):
+    """Dieselbe Grenze am Stempel-Pfad — `_stempel` verwarf den Scope."""
+    from db_core.services import einsatz as einsatz_service
+
+    c = client_with_role("MONTEUR")
+    buero = make_app_user("Disposition")
+    fremder_einsatz = einsatz_service.create_service_job(
+        buero.id, title="Begehung ohne mich"
+    )
+
+    r = c.post(
+        "/api/zeiterfassung/stempel/start",
+        data={"service_job_id": str(fremder_einsatz.id)},
+        content_type="application/json",
+    )
+    assert r.status_code == 404, r.content
+
+
+@pytest.mark.django_db
+def test_verwaltung_bucht_weiterhin_auf_jeden_einsatz(admin_client):
+    """Scope ALLE ist von dem Riegel nicht betroffen: Das Büro trägt Zeiten für
+    andere nach, ohne selbst zugeteilt zu sein."""
+    from db_core.services import einsatz as einsatz_service
+
+    buero = _app_user_of(admin_client)
+    job = einsatz_service.create_service_job(buero, title="Begehung")
+
+    r = admin_client.post(
+        "/api/zeiterfassung/eintraege",
+        data={
+            "category_id": str(_kat("ARBEITSZEIT").id),
+            "service_job_id": str(job.id),
+            "started_at": "2026-07-13T08:00:00+02:00",
+            "ended_at": "2026-07-13T12:00:00+02:00",
+        },
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+
+
+@pytest.mark.django_db
 def test_monteur_fremder_eintrag_404(client_with_role):
     a = client_with_role("MONTEUR")
     b = client_with_role("MONTEUR")
