@@ -82,6 +82,15 @@ _CONSTRAINT_MESSAGES = {
         "Diese Zuständigkeit ist für diese Person in diesem Zeitraum bereits "
         "erfasst."
     ),
+    # Der Service prüft die Überlappung vorher — aber AUSSERHALB der
+    # Transaktion. Zwei Sachbearbeiter an derselben Wohnung zur selben Zeit
+    # kommen beide durch die Vorprüfung; erst der EXCLUDE-Constraint hält.
+    # Ohne diesen Eintrag wäre das ein 500 statt einer Fachmeldung.
+    "excl_ownership_period": (
+        "Für diesen Zeitraum besteht an der Einheit bereits ein "
+        "Eigentumsstand. Den bisherigen zuerst beenden — Eigentum ist eine "
+        "Kette, keine Parallelwelt."
+    ),
 }
 
 

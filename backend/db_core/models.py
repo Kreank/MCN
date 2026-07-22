@@ -4427,6 +4427,124 @@ class RoomVertex(models.Model):
 
 
 # ---------------------------------------------------------------------------
+# tenure — Eigentum (wem gehört das?), Migration 0005, Schutz 0009
+# ---------------------------------------------------------------------------
+
+
+class OwnershipPeriod(models.Model):
+    """tenure.ownership_period — ein **Eigentumsstand einer Einheit** über Zeit.
+
+    Wem gehört diese Wohnung, seit wann, und woher wissen wir das? Die Tabelle
+    steht seit Migration 0005; angebunden (Model/Service/API/UI) ist sie erst
+    seit Arbeitspaket AP5.
+
+    Drei Eigenheiten, die man kennen muss:
+
+    * **Der Stand gilt je Einheit, nicht je Liegenschaft** (`unit_id` NOT NULL).
+      Für „Gebäude 52 gehört Herrn X" gibt es die anteilslose Rolle
+      `property.property_party_role` = PROPERTY_OWNER (Entscheidung
+      2026-07-21: bewusst keine Schemaänderung).
+    * **Die Quelle ist Pflicht** (Beschluss A-14): `source_type` und ein nicht
+      leerer `source_reference`. Wer behauptet, wem etwas gehört, muss sagen,
+      woher er das hat.
+    * **`distribution_status` entscheidet über die Strenge.** Nur bei COMPLETE
+      prüft die Datenbank die Anteilssumme exakt auf 100 % (LCM-Verfahren, ohne
+      Dezimaltoleranz); PARTIAL und UNRESOLVED dürfen lückenhaft bleiben. Das
+      ist der Alltag: Man kennt oft erst einen von vier Eigentümern.
+
+    Gemeinschaftsflächen (COMMON_AREA/TECHNICAL_ROOM) tragen keinen
+    Eigentumsstand — dort folgt das Eigentum der Gemeinschaft (A-08, Trigger
+    `forbid_common_area_ownership`). Überlappende Stände derselben Einheit
+    verbietet ein EXCLUDE-Constraint; Löschen verbietet 0009 (ein Eigentümer
+    zieht nicht aus, er bekommt ein `valid_until`).
+    """
+
+    id = models.UUIDField(primary_key=True)
+    unit = models.ForeignKey(
+        Unit, models.DO_NOTHING, db_column="unit_id", related_name="ownership_periods"
+    )
+    # COMPLETE | PARTIAL | UNRESOLVED — nur COMPLETE wird auf 100 % geprüft.
+    distribution_status = models.TextField(db_default="UNRESOLVED")
+    valid_from = models.DateField()
+    valid_until = models.DateField(null=True, blank=True)
+    # MANAGEMENT_NOTICE | OWNER_LIST | ORDER_STATEMENT | IMPORT | MANUAL
+    source_type = models.TextField()
+    source_reference = models.TextField()
+    # Beide zusammen gesetzt oder beide leer (CHECK).
+    confirmed_at = models.DateTimeField(null=True, blank=True)
+    confirmed_by_user = models.ForeignKey(
+        AppUser,
+        models.DO_NOTHING,
+        db_column="confirmed_by_user_id",
+        related_name="confirmed_ownership_periods",
+        null=True,
+        blank=True,
+    )
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'tenure"."ownership_period'
+        ordering = ["-valid_from"]
+
+    def __str__(self):
+        return f"Eigentum ab {self.valid_from} ({self.distribution_status})"
+
+
+class OwnershipInterest(models.Model):
+    """tenure.ownership_interest — **eine Beteiligung** am Eigentumsstand.
+
+    Der Anteil ist ein **echter Bruch** (Zähler/Nenner), keine Dezimalzahl. Das
+    ist keine Spitzfindigkeit: Drei Erben zu je 1/3 lassen sich dezimal nicht
+    verlustfrei darstellen, und „33,33 % + 33,33 % + 33,33 %" ergäbe 99,99 % —
+    ein vollständiger Eigentumsstand wäre damit nie erreichbar. Die Datenbank
+    rechnet deshalb über das kleinste gemeinsame Vielfache der Nenner und
+    vergleicht exakt (OPUS-01).
+
+    Der Anteil darf **fehlen** (beide Felder NULL): Man weiß, dass jemand
+    beteiligt ist, aber nicht mit wie viel. In einem COMPLETE-Stand ist das
+    verboten, in PARTIAL/UNRESOLVED erlaubt.
+
+    `SOLE` bedeutet Alleineigentum und verträgt sich in einem vollständigen
+    Stand mit keiner zweiten Beteiligung (F-05). `confirmation_status`
+    unterscheidet die belegte von der bloß vermuteten Beteiligung; ein
+    COMPLETE-Stand duldet nur bestätigte.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    ownership_period = models.ForeignKey(
+        OwnershipPeriod,
+        models.DO_NOTHING,
+        db_column="ownership_period_id",
+        related_name="interests",
+    )
+    owner_party = models.ForeignKey(
+        Party,
+        models.DO_NOTHING,
+        db_column="owner_party_id",
+        related_name="ownership_interests",
+    )
+    # Zähler und Nenner gemeinsam gesetzt oder gemeinsam NULL (CHECK).
+    # Nenner höchstens 1.000.000 — Überlaufschutz der LCM-Rechnung.
+    share_numerator = models.IntegerField(null=True, blank=True)
+    share_denominator = models.IntegerField(null=True, blank=True)
+    ownership_type = models.TextField(db_default="CO_OWNER")  # SOLE | CO_OWNER
+    confirmation_status = models.TextField(db_default="UNCONFIRMED")
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'tenure"."ownership_interest'
+
+    def __str__(self):
+        if self.share_numerator is None:
+            return f"{self.owner_party_id} (Anteil unbekannt)"
+        return f"{self.owner_party_id} {self.share_numerator}/{self.share_denominator}"
+
+
+# ---------------------------------------------------------------------------
 # tenure — Belegung (wer wohnt/nutzt hier?), Migration 0005, Schutz 0009/0103
 # ---------------------------------------------------------------------------
 

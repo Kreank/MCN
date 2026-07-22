@@ -208,10 +208,7 @@
       }
 
       @if (tab() === 'eigentum') {
-        <div class="tab-platzhalter">
-          <h2 class="tab-platzhalter__titel">Eigentum</h2>
-          <p>Eigentumsperioden und -anteile je Einheit (Schema <code>tenure</code>) werden hier angezeigt, sobald die Lesepfade angebunden sind (Roadmap 03).</p>
-        </div>
+        <app-eigentum [propertyId]="daten()!.id" />
       }
       @if (tab() === 'verwaltung') {
         <app-verwaltung [propertyId]="daten()!.id" [gebaeude]="daten()!.buildings" />

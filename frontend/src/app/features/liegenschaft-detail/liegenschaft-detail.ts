@@ -38,6 +38,7 @@ import { Belege, BelegKontext } from '../../shared/belege/belege';
 import { Anlagen } from '../anlagen/anlagen';
 import { Raumaufmass } from '../raumaufmass/raumaufmass';
 import { Belegung } from '../belegung/belegung';
+import { Eigentum } from '../eigentum/eigentum';
 import { Verwaltung } from '../verwaltung/verwaltung';
 import { ZielFilter } from '../../core/datei.model';
 import { VerbotenState, fehlerState } from '../../shared/http-fehler';
@@ -77,6 +78,7 @@ type LazyState<T> =
     Anlagen,
     Raumaufmass,
     Belegung,
+    Eigentum,
     Verwaltung,
   ],
   templateUrl: './liegenschaft-detail.html',

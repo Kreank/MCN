@@ -1,0 +1,218 @@
+<p class="sr-only" role="status">{{ ansage() }}</p>
+
+@if (zustand() === 'loading') {
+  <p class="lade-hinweis" role="status">Eigentum wird geladen …</p>
+}
+
+@if (zustand() === 'error') {
+  <div class="note note--error" role="alert">
+    <h3 class="note__titel">Eigentum konnte nicht geladen werden</h3>
+    <p class="note__text">{{ fehler() }}</p>
+    <div class="note__aktionen">
+      <button type="button" class="btn btn--primary" (click)="neuLaden()">
+        Erneut versuchen
+      </button>
+    </div>
+  </div>
+}
+
+@if (zustand() === 'ready') {
+  <div class="kopf">
+    <p class="kopf__text">
+      Wem gehört das — und <strong>woher wissen wir das</strong>? Jeder Stand trägt
+      seine Quelle; der Anteil ist ein Bruch, keine gerundete Prozentzahl. Ein
+      Eigentümerwechsel wird nicht überschrieben: Der alte Stand wird beendet, der
+      neue beginnt.
+    </p>
+    <div class="kopf__aktionen">
+      <button
+        type="button"
+        class="btn btn--klein"
+        [attr.aria-pressed]="historie()"
+        (click)="historieUmschalten()"
+      >
+        {{ historie() ? 'Nur aktuelle' : 'Historie anzeigen' }}
+      </button>
+    </div>
+  </div>
+
+  <!-- Saschas „20 Rechnungsadressen": Wer als Eigentümer geführt wird, kommt
+       als Rechnungsempfänger in Frage. Die Liste steht oben, weil sie die
+       Frage beantwortet, wegen der man diesen Reiter öffnet. -->
+  @if (alleEigentuemer().length > 0) {
+    <section class="empfaenger" aria-labelledby="empf-titel">
+      <h3 id="empf-titel" class="empfaenger__titel">
+        Eigentümer dieser Liegenschaft
+        <span class="empfaenger__anzahl">{{ alleEigentuemer().length }}</span>
+      </h3>
+      <p class="empfaenger__hinweis">
+        Diese Kontakte kommen als Rechnungsempfänger in Frage.
+      </p>
+      <ul class="empfaenger__liste" role="list">
+        @for (p of alleEigentuemer(); track p.party_id) {
+          <li>
+            <a class="empfaenger__link" [routerLink]="['/kontakte', p.party_id]">
+              {{ p.display_name }}
+            </a>
+          </li>
+        }
+      </ul>
+    </section>
+  }
+
+  @if (ohneErfassung() > 0) {
+    <div class="melde">
+      <span class="melde__mark" aria-hidden="true">i</span>
+      <span class="melde__text">
+        <strong>{{ ohneErfassung() }}</strong> von {{ eigentumsfaehige() }} Einheiten haben
+        <strong>keinen erfassten Eigentumsstand</strong>. Das heißt <em>nicht</em>, dass
+        sie niemandem gehören — es heißt, dass es niemand eingetragen hat.
+      </span>
+    </div>
+  }
+
+  @if (aktionsFehler(); as af) {
+    <div class="melde melde--fehler" role="alert">
+      <span class="melde__mark" aria-hidden="true">!</span>
+      <span class="melde__text"><strong>Fehler:</strong> {{ af }}</span>
+    </div>
+  }
+
+  @if (einheiten().length === 0) {
+    <div class="tab-platzhalter">
+      <p>Diese Liegenschaft hat noch keine Einheiten. Eigentum hängt an der Einheit.</p>
+    </div>
+  } @else {
+    <ul class="einheiten" role="list">
+      @for (e of einheiten(); track e.unit_id + (e.eigentum?.id ?? '')) {
+        <li class="einheit" [class.einheit--historisch]="e.eigentum && !e.eigentum.is_current">
+          <div class="einheit__kopf">
+            <h3 class="einheit__nummer">{{ e.unit_number }}</h3>
+
+            @if (!e.eigentumsfaehig) {
+              <!-- A-08: Das Eigentum am Treppenhaus folgt der Gemeinschaft.
+                   Hier gibt es gar keinen Knopf, statt den Nutzer in einen 422
+                   laufen zu lassen. -->
+              <span class="stamp">Gemeinschaftsfläche</span>
+            } @else if (e.eigentum; as stand) {
+              <span [class]="vollstaendigkeitClass(stand.distribution_status)">
+                {{ VOLLSTAENDIGKEIT_LABEL[stand.distribution_status] }}
+              </span>
+              <span class="einheit__zeitraum">{{ zeitraum(stand) }}</span>
+              @if (!stand.is_current) {
+                <span class="stamp">beendet</span>
+              }
+              @if (stand.confirmed_at) {
+                <span class="stamp stamp--positive">bestätigt</span>
+              }
+            } @else {
+              <span class="stamp">nicht erfasst</span>
+            }
+          </div>
+
+          @if (e.eigentumsfaehig) {
+            @if (e.eigentum; as stand) {
+              <p class="einheit__quelle">
+                <span class="einheit__quelle-art">{{ QUELLENART_LABEL[stand.source_type] }}</span>
+                {{ stand.source_reference }}
+              </p>
+
+              @if (stand.eigentuemer.length === 0) {
+                <p class="einheit__leer">
+                  Zum Eigentum liegt noch nichts vor — der Stand hält bislang nur fest,
+                  dass niemand etwas weiß.
+                </p>
+              } @else {
+                <ul class="anteile" role="list">
+                  @for (p of stand.eigentuemer; track p.id) {
+                    <li class="anteil">
+                      <a class="anteil__name" [routerLink]="['/kontakte', p.party_id]">
+                        {{ p.display_name }}
+                      </a>
+                      <span class="anteil__wert">{{ p.anteil_text }}</span>
+                      <span class="anteil__art">{{ EIGENTUMSART_LABEL[p.ownership_type] }}</span>
+                      @if (istUnbestaetigt(p)) {
+                        <!-- Status nie nur über Farbe: „unbestätigt" steht als Wort da. -->
+                        <span class="stamp stamp--warn">unbestätigt</span>
+                      }
+                      @if (stand.is_current && darfAendern()) {
+                        <!-- Der Weg aus der Sackgasse: Ohne diesen Knopf ließe
+                             sich eine unbestätigte Beteiligung nie bestätigen —
+                             und der Stand nie auf „vollständig geklärt“ heben. -->
+                        <button
+                          type="button"
+                          class="btn btn--klein anteil__korrigieren"
+                          (click)="beteiligungOeffnen(e, stand, p)"
+                        >
+                          Korrigieren
+                        </button>
+                      }
+                    </li>
+                  }
+                </ul>
+              }
+
+              @if (stand.distribution_status !== 'COMPLETE' && ohneAnteil(stand) > 0) {
+                <p class="einheit__hinweis">
+                  {{ ohneAnteil(stand) }} Beteiligung(en) ohne bezifferten Anteil. Das ist
+                  hier zulässig — erst ein vollständig geklärter Stand verlangt, dass die
+                  Anteile genau aufgehen.
+                </p>
+              }
+
+              @if (stand.is_current) {
+                <div class="einheit__aktionen">
+                  @if (darfAendern()) {
+                    <button type="button" class="btn btn--klein" (click)="bearbeitenOeffnen(e, stand)">
+                      Bearbeiten
+                    </button>
+                    <button type="button" class="btn btn--klein" (click)="eigentuemerOeffnen(e, stand)">
+                      Eigentümer ergänzen
+                    </button>
+                    <button type="button" class="btn btn--klein" (click)="beendenFragen(e, stand)">
+                      Beenden
+                    </button>
+                  }
+                  @if (darfBestaetigen() && !stand.confirmed_at) {
+                    <button
+                      type="button"
+                      class="btn btn--klein"
+                      [disabled]="aktionLaeuft()"
+                      (click)="bestaetigen(stand)"
+                    >
+                      Bestätigen
+                    </button>
+                  }
+                </div>
+              }
+            } @else if (darfAnlegen()) {
+              <div class="einheit__aktionen">
+                <button type="button" class="btn btn--klein btn--primary" (click)="anlegenOeffnen(e)">
+                  <span aria-hidden="true">＋</span> Eigentum erfassen
+                </button>
+              </div>
+            }
+          }
+        </li>
+      }
+    </ul>
+  }
+
+  @if (dialog(); as d) {
+    <app-eigentum-dialog [modus]="d" (fertig)="dialogFertig($event)" />
+  }
+
+  <app-bestaetigung
+    [offen]="zuBeenden() !== null"
+    titel="Eigentumsstand beenden?"
+    [text]="
+      'Der Stand für ' +
+      (zuBeenden()?.wohnung ?? '') +
+      ' wird zum heutigen Tag beendet. Er bleibt in der Historie sichtbar; für den neuen Eigentümer legen Sie danach einen neuen Stand an. Gelöscht wird nichts.'
+    "
+    bestaetigenLabel="Beenden"
+    [laedt]="aktionLaeuft()"
+    (bestaetigen)="beenden()"
+    (abbrechen)="zuBeenden.set(null)"
+  />
+}

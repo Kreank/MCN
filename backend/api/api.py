@@ -27,6 +27,7 @@ from api.belegerfassung import router as belegerfassung_router
 from api.belegung import router as belegung_router
 from api.dateien import router as dateien_router
 from api.dossier import router as dossier_router
+from api.eigentum import router as eigentum_router
 from api.buchhaltung import router as buchhaltung_router
 from api.firma import router as firma_router
 from api.geraetewissen import router as geraetewissen_router
@@ -79,6 +80,7 @@ api.add_router("/property", anlage_router, tags=["property"])
 # Verwaltungsverträge schließen. Die Matrix trennt das seit 0026 — bis zu diesem
 # Slice benutzte nur niemand die Trennung.
 api.add_router("/tenure", belegung_router, tags=["tenure"])
+api.add_router("/tenure", eigentum_router, tags=["tenure"])
 api.add_router("/management", verwaltung_router, tags=["management"])
 api.add_router("/workflow", projekt_router, tags=["workflow"])
 api.add_router("/workflow", aufgabe_router, tags=["workflow"])

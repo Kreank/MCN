@@ -1,0 +1,193 @@
+/* Reiter „Eigentum" der Liegenschaftsmappe (Arbeitspaket AP5). */
+
+.kopf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+.kopf__text {
+  margin: 0;
+  max-width: 62ch;
+  color: var(--ink-muted);
+}
+.kopf__aktionen {
+  display: flex;
+  gap: var(--space-2);
+}
+
+/* Die Eigentümerliste steht oben: Sie beantwortet die Frage, wegen der man
+   diesen Reiter öffnet („welche Rechnungsadressen kommen hier in Frage?"). */
+.empfaenger {
+  margin-bottom: var(--space-4);
+  padding: var(--space-4);
+  border: 1.5px solid var(--line);
+  border-left: 3px solid var(--accent-ink);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.empfaenger__titel {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--step-0);
+}
+.empfaenger__anzahl {
+  padding: 0.05em 0.5em;
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+.empfaenger__hinweis {
+  margin: var(--space-1) 0 var(--space-3);
+  color: var(--ink-muted);
+  font-size: var(--step--1);
+}
+.empfaenger__liste {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.empfaenger__link {
+  display: inline-block;
+  padding: 0.25em 0.7em;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--ink);
+  text-decoration: none;
+
+  &:hover {
+    background: var(--surface-sunken);
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+
+.einheiten {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.einheit {
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+/* Ein beendeter Stand bleibt lesbar, tritt aber zurück — er ist Historie,
+   nicht der aktuelle Zustand. Zusätzlich trägt er den Text „beendet“; die
+   Zurücknahme allein wäre eine Aussage über Farbe (WCAG 1.4.1). */
+.einheit--historisch {
+  background: var(--surface-sunken);
+  border-style: dashed;
+}
+
+.einheit__kopf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+.einheit__nummer {
+  margin: 0;
+  font-size: var(--step-0);
+}
+.einheit__zeitraum {
+  color: var(--ink-muted);
+  font-size: var(--step--1);
+  font-variant-numeric: tabular-nums;
+}
+
+.einheit__quelle {
+  margin: var(--space-2) 0 0;
+  color: var(--ink-muted);
+  font-size: var(--step--1);
+}
+.einheit__quelle-art {
+  font-weight: 600;
+
+  &::after {
+    content: ' · ';
+  }
+}
+
+.einheit__leer,
+.einheit__hinweis {
+  margin: var(--space-3) 0 0;
+  color: var(--ink-muted);
+  font-size: var(--step--1);
+}
+
+.anteile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+.anteil {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-3);
+}
+/* Der Name ist ein Link in die Kontaktmappe. Fettung allein reicht nicht: Der
+   Anteil daneben ist ebenfalls fett, und global gilt `a { color: inherit }` —
+   ohne Unterstreichung im Hover wäre er von normalem Text nicht zu
+   unterscheiden. Dieselbe Lösung wie in `belegung.scss` und `verwaltung.scss`. */
+.anteil__name {
+  color: var(--ink);
+  font-weight: 600;
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+
+.anteil__korrigieren {
+  margin-left: auto;
+}
+/* Der Anteil ist die Zahl, wegen der man hinsieht — Monospace, damit „1/3“
+   und „50 %“ untereinander vergleichbar stehen. */
+.anteil__wert {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+.anteil__art {
+  color: var(--ink-muted);
+  font-size: var(--step--1);
+}
+
+.einheit__aktionen {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.tab-platzhalter {
+  padding: var(--space-5);
+  color: var(--ink-muted);
+  text-align: center;
+}
