@@ -23,3 +23,9 @@ Thumbs.db
 /Hero Wissen/
 # IDS-Connect-Referenzdateien (Händler-Schemas/Beispiele): externe Unterlagen
 /IDS/
+
+# Datenbank-Sicherungen — enthalten ECHTE Kundendaten, gehoeren nie ins Repo
+backups-manuell/
+deploy/backups/
+*.sql.gz
+*.dump

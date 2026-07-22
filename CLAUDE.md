@@ -38,21 +38,68 @@ Eiserne Regeln daraus:
 - Dev-DB: Container `mitra-crm-test`, Port 55432; Zugang über `MCN_DB_*`-Env-Vars.
   Zugangsdaten niemals aus Container-Umgebungen auslesen.
 
+## Dokumentation — wo was steht und wo es hingehört
+
+**Grundregel: keine wichtige Information in einer Datei über ~400 Zeilen.** Was
+länger wird, findet niemand mehr — es wird gesucht statt gelesen, und widersprüchliche
+Stände wachsen unbemerkt nebeneinander. Wird eine Datei zu lang: aufteilen oder
+Erledigtes ins Archiv geben, **nicht** weiter anhängen.
+
+| Datei | Inhalt | Was dort hineingeschrieben wird |
+|---|---|---|
+| **`CLAUDE.md`** (diese Datei) | Regeln: Vision, Architektur, Betrieb/Deploy, Review-Pflicht, Sicherheit, Autonomie | Dauerhafte **Arbeitsregeln**. Ändert sich selten. |
+| **`docs/HANDOFF.md`** | Stand heute, offene Punkte, Wegweiser | **Nur der geltende Stand.** Beim Aktualisieren wird ersetzt, nicht angehängt. Ziel: unter 150 Zeilen. |
+| **`docs/INVARIANTEN.md`** | Fachliche Regeln, die man nicht „vereinfachen" darf | Jede Regel, deren Bruch Geld, Daten oder Rechtssicherheit kostet — mit dem **Schaden**, der ohne sie entstand. |
+| **`docs/ENTWICKLUNG.md`** | Umgebung, Dev-DB, Konventionen, Frontend-Muster, Slice-Rezept | Wie man hier arbeitet. Kein Projektstand. |
+| **`docs/ENTSCHEIDUNGEN.md`** | Fixierte Festlegungen samt Begründung (inkl. Deployment/Backup, RAG) | Entscheidungen, die **nicht neu aufgemacht** werden sollen — immer mit dem Warum. |
+| **`docs/BACKLOG.md`** | Priorisierte nächste Bereiche + Gotchas | Was noch ansteht. Erledigtes wird gestrichen, nicht abgehakt stehengelassen. |
+| **`docs/deployment.md`** | Server-Installation, Backup/Restore-Runbook | Betriebsanleitung. |
+| **`docs/roadmap/`** | Informationsarchitektur, Fachkonzept | Fachlicher Rahmen. |
+| **`docs/archiv/`** | Session- und Wellenberichte | **Fertige Chronik.** Hierhin wandert alles Erzählende — nie als aktueller Stand lesen. |
+
+**Beim Abschluss eines Slice:** dauerhafte Regeln → `INVARIANTEN.md`, Entscheidungen →
+`ENTSCHEIDUNGEN.md`, der neue Stand **ersetzt** den alten in `HANDOFF.md`, der
+Erzähltext wandert ins Archiv. Session-Berichte gehören **nicht** in `HANDOFF.md` —
+genau daran ist die Datei einmal auf 2.300 Zeilen gewachsen.
+
+**Bei Widersprüchen gilt:** `CLAUDE.md` > `INVARIANTEN.md` > `HANDOFF.md` > Archiv.
+Und über allem der echte Zustand — `git log`, `ls backend/db_core/migrations/`,
+`docker ps`.
+
 ## Betrieb, Branches & Deployment
 
 - **Git-Remote:** `origin` = `github.com/Kreank/MCN`, **privat**. War kurz öffentlich
   für den ersten Server-Pull, danach auf privat gesetzt.
-- **`main` = eingefrorener Demo-Stand, läuft auf dem Server des Users.** NICHT
-  direkt darauf entwickeln. Ein neuer Server-Stand entsteht bewusst: `develop` →
-  `main` mergen, dann auf dem Server `git pull` + `docker compose`.
+- **`main` = was live läuft** auf `mitra.tech-artist.de`. NICHT direkt darauf
+  entwickeln. Ein neuer Server-Stand entsteht bewusst: `develop` → `main` mergen,
+  dann bauen und ausrollen (Ablauf unten).
+  ⚠️ **Seit 2026-07-17 ist das ECHTBETRIEB, keine Demo mehr**: ~2 Mio Artikel und
+  echte Kundendaten. Jeder Deploy trifft Produktivdaten.
 - **`develop` = Arbeitsbranch.** Hier wird entwickelt. Beim Session-Start prüfen,
   dass man dort steht.
 - **Deployment liegt in `deploy/`**, Anleitung `docs/deployment.md`. Vier Container
-  (nginx, backend/gunicorn, postgres, minio) + Scheduler; das Angular-Frontend wird
-  statisch ins nginx-Image gebaut (kein Laufzeit-Container). Härtung: `/admin/`
-  gesperrt, Postgres/MinIO ohne Port nach außen, `MCN_SECRET_KEY` fail-closed
-  (Start bricht ohne echten Schlüssel ab), auf der **Demo-Instanz Mailversand
-  totgelegt** (kein `MCN_MAIL_KEY`, `EMAIL_BACKEND=console`).
+  (nginx, backend/gunicorn, postgres, minio) + Scheduler + Backup; das Angular-Frontend
+  wird statisch ins nginx-Image gebaut (kein Laufzeit-Container). Härtung: `/admin/`
+  gesperrt, Postgres/MinIO ohne Port nach außen, `MCN_SECRET_KEY` fail-closed.
+- **Deploy-Ablauf (bewährt 2026-07-22) — in dieser Reihenfolge:**
+  1. **DB sichern:** `docker compose exec -T postgres pg_dump -U mcn mcn | gzip > backups-manuell/vor-deploy-$(date +%F-%H%M).sql.gz`
+     (`backups/` gehört root — dorthin schreibt der Backup-Dienst.)
+  2. `git checkout main && git merge develop --no-edit`
+  3. **Aus losgelöstem Worktree bauen**, nie aus dem Arbeitsbaum:
+     `git worktree add --detach /tmp/wt main` → `docker build -f /tmp/wt/deploy/{backend,nginx}.Dockerfile -t mcn-{backend,nginx}:latest /tmp/wt`
+  4. `cd deploy && docker compose up -d --no-build` (Migrationen laufen im Entrypoint)
+  5. Verifizieren, dann `git worktree remove /tmp/wt --force`
+
+  **Nie `docker compose up --build`** — das baut aus dem Arbeitsbaum und zieht
+  halbfertige Arbeit mit live.
+- ⚠️ **Zwei scharfe Schalter in `deploy/.env`, vor jedem Deploy prüfen:**
+  - **`MCN_SEED=0` muss stehen bleiben.** `MCN_SEED_COMMAND=seed_demo` ist gesetzt —
+    bei `MCN_SEED=1` liefe das Demo-Seeding gegen die Echtdaten.
+  - **`MCN_EMAIL_BACKEND=…console.EmailBackend` ist die EINZIGE verbleibende
+    Sicherung gegen echten Mailversand.** Die früher dokumentierte zweite Sperre
+    („kein `MCN_MAIL_KEY`") gilt **nicht mehr** — der Schlüssel ist seit dem
+    Fresh-Reset gesetzt. Wer das Backend umstellt, macht Mahnungs- und
+    Rechnungsversand an echte Kundenadressen sofort scharf.
 - **Push-Gotcha:** Der Auto-Mode-Sicherheitsfilter blockiert `git push` zu einem
   **öffentlichen** Remote (Datenabfluss-Schutz). Bei einem privaten Remote sollte
   es durchlaufen; sonst pusht der User selbst via `!`-Terminal.
