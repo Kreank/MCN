@@ -1,0 +1,131 @@
+@if (daten(); as d) {
+  @if (!leer(d) || d.nicht_sichtbar.length > 0) {
+    <section class="kopfzeile" [attr.aria-labelledby]="titelId">
+      <div class="kopfzeile__kopf">
+        <h2 [id]="titelId" class="kopfzeile__titel">Wer gehört hierzu?</h2>
+        <button
+          type="button"
+          class="btn btn--klein"
+          [attr.aria-expanded]="offen()"
+          [attr.aria-controls]="inhaltId"
+          (click)="umschalten()"
+        >
+          {{ offen() ? 'Einklappen' : 'Ausklappen' }}
+        </button>
+      </div>
+
+      <div [id]="inhaltId" [hidden]="!offen()">
+        <div class="kopfzeile__spalten">
+          <!-- Verwaltung zuerst: Sie ruft an, und ihre Befugnis entscheidet,
+               ob der Auftrag überhaupt angenommen werden darf. -->
+          @if (d.verwaltung.length > 0) {
+            <div class="gruppe">
+              <h3 class="gruppe__titel">Verwaltung</h3>
+              <ul class="gruppe__liste" role="list">
+                @for (p of d.verwaltung; track p.party_id) {
+                  <li class="person">
+                    <a class="person__name" [routerLink]="['/kontakte', p.party_id]">
+                      {{ p.display_name }}
+                    </a>
+                    @if (p.telefon) {
+                      <a
+                        class="person__tel"
+                        [href]="telHref(p.telefon)"
+                        [attr.aria-label]="p.display_name + ' anrufen: ' + p.telefon"
+                        >{{ p.telefon }}</a>
+                    }
+                    @if (p.befugnis) {
+                      <!-- Die Angabe, wegen der es diese Zeile gibt. Steht als
+                           Text da, nicht als Farbe oder Symbol. -->
+                      <span
+                        class="person__befugnis"
+                        [class.person__befugnis--fehlt]="
+                          p.befugnis === 'keine Beauftragungsvollmacht hinterlegt'
+                        "
+                      >
+                        {{ p.befugnis }}
+                      </span>
+                    }
+                  </li>
+                }
+              </ul>
+            </div>
+          }
+
+          @if (d.eigentuemer.length > 0) {
+            <div class="gruppe">
+              <h3 class="gruppe__titel">
+                Eigentümer
+                <span class="gruppe__anzahl">{{ d.eigentuemer.length }}</span>
+              </h3>
+              <ul class="gruppe__liste" role="list">
+                @for (p of d.eigentuemer; track p.party_id) {
+                  <li class="person">
+                    <a class="person__name" [routerLink]="['/kontakte', p.party_id]">
+                      {{ p.display_name }}
+                    </a>
+                    @if (p.telefon) {
+                      <a
+                        class="person__tel"
+                        [href]="telHref(p.telefon)"
+                        [attr.aria-label]="p.display_name + ' anrufen: ' + p.telefon"
+                        >{{ p.telefon }}</a>
+                    }
+                  </li>
+                }
+              </ul>
+            </div>
+          }
+
+          @if (d.mieter.length > 0) {
+            <div class="gruppe">
+              <h3 class="gruppe__titel">
+                Mieter
+                <span class="gruppe__anzahl">{{ d.mieter_gesamt }}</span>
+              </h3>
+              <ul class="gruppe__liste" role="list">
+                @for (p of d.mieter; track p.party_id) {
+                  <li class="person">
+                    <a class="person__name" [routerLink]="['/kontakte', p.party_id]">
+                      {{ p.display_name }}
+                    </a>
+                    @if (p.telefon) {
+                      <a
+                        class="person__tel"
+                        [href]="telHref(p.telefon)"
+                        [attr.aria-label]="p.display_name + ' anrufen: ' + p.telefon"
+                        >{{ p.telefon }}</a>
+                    }
+                  </li>
+                }
+              </ul>
+              @if (d.mieter_gesamt > d.mieter.length) {
+                <!-- Eine „Kopfzeile“ mit sechzig Namen ist keine. -->
+                <p class="gruppe__mehr">
+                  … und {{ d.mieter_gesamt - d.mieter.length }} weitere im Reiter
+                  Belegung
+                </p>
+              }
+            </div>
+          }
+        </div>
+
+        @if (leer(d)) {
+          <p class="kopfzeile__leer">
+            Zu dieser Liegenschaft ist noch niemand erfasst — weder Verwaltung
+            noch Eigentümer oder Mieter.
+          </p>
+        }
+
+        <!-- Fehlende Rechte werden ausgesprochen, nicht verschwiegen: Sonst
+             sähe eine Bürokraft eine Kopfzeile ohne Verwaltung und hielte das
+             für den Datenstand. -->
+        @if (d.nicht_sichtbar.length > 0) {
+          <p class="kopfzeile__gesperrt">
+            Nicht sichtbar mit Ihren Rechten: {{ d.nicht_sichtbar.join(', ') }}.
+          </p>
+        }
+      </div>
+    </section>
+  }
+}

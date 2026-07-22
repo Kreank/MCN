@@ -49,6 +49,11 @@
         </div>
       }
 
+      <!-- Kopfzeile (AP2): Verwaltung, Eigentümer, Mieter — und was die
+           Verwaltung beauftragen darf. Steht ÜBER den Reitern, weil sie in
+           jedem Reiter gilt: Wer telefoniert, wechselt dafür nicht die Ansicht. -->
+      <app-liegenschaft-kopfzeile [propertyId]="daten()!.id" />
+
       <!-- ------------------------------ Übersicht ------------------------- -->
       @if (tab() === 'uebersicht') {
         <dl class="feld-raster">

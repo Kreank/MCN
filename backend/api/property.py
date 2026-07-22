@@ -28,7 +28,7 @@ from ninja.responses import Status
 from ninja.security import django_auth
 
 from api.objektgrenze import guard_objekt
-from api.permissions import require, require_scoped
+from api.permissions import check, require, require_scoped
 from db_core.models import Building, Property, PropertyPartyRole, Unit
 from db_core.services import objektsicht
 from db_core.services import property as property_service
@@ -848,4 +848,205 @@ def add_party_role(request, property_id: UUID, payload: PartyRoleIn):
             valid_until=role.valid_until,
             is_current=is_current,
         ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Kopfzeile der Liegenschaftsmappe (Arbeitspaket AP2)
+# ---------------------------------------------------------------------------
+#
+# Sascha: „Das sind Daten, die der Dispo schnell wissen will." Verwaltung,
+# Eigentümer und Mieter standen verteilt in drei Reitern; wer am Telefon einen
+# Auftrag entgegennimmt, klickt sie nicht nacheinander zusammen.
+#
+# **Ein Endpunkt statt vier Aufrufen.** Die Kopfzeile fragt vier Bereiche ab
+# (Verwaltung, Eigentum, Belegung, Vollmachten); als vier Aufrufe wäre sie vier
+# Rundreisen und vier mögliche Fehlerzustände in einer Zeile.
+#
+# **Und sie wirft nie 403.** Wem ein Teilrecht fehlt, sieht diesen Teil nicht —
+# statt dass die ganze Zeile verschwindet. Eine Übersicht, die alles oder nichts
+# zeigt, ist im Alltag keine Übersicht.
+
+#: Wie viele Mieter die Kopfzeile höchstens nennt. Eine „Kopfzeile" mit sechzig
+#: Namen ist keine; der Rest steht im Reiter Belegung.
+KOPFZEILE_MAX_MIETER = 8
+
+
+def _befugnis_text(auskunft):
+    """Was die Verwaltung beauftragen darf — als ein Satz.
+
+    „Keine Vollmacht hinterlegt" wird ausgesprochen: Ein leeres Feld ließe
+    offen, ob es keine gibt oder nur niemand eine eingetragen hat.
+
+    Alltag und Notfall stehen getrennt nebeneinander. Wer ORDER bis 5.000 € und
+    EMERGENCY_ORDER bis 50.000 € trägt, darf am Dienstagvormittag 5.000 € — die
+    beiden zusammenzufassen hieße, dem Disponenten grünes Licht für einen
+    ungedeckten Auftrag zu geben.
+    """
+    from api.vollmacht import grenze_text
+
+    if auskunft is None:
+        return "keine Beauftragungsvollmacht hinterlegt"
+    if auskunft["nur_freigabe"]:
+        return "darf freigeben, aber nicht beauftragen"
+
+    teile = []
+    if auskunft["darf"]:
+        teile.append(grenze_text(auskunft["grenze"], auskunft["waehrung"]))
+    if auskunft["notfall_grenze"] is not None or auskunft["nur_notfall"]:
+        n = grenze_text(auskunft["notfall_grenze"], auskunft["notfall_waehrung"])
+        teile.append(f"im Notfall {n}" if auskunft["darf"] else f"nur im Notfall · {n}")
+    if auskunft["gemischte_waehrungen"]:
+        gemischt = ", ".join(
+            grenze_text(b, w).removeprefix("bis ")
+            for w, b in auskunft["gemischte_waehrungen"]
+        )
+        teile.append(f"Grenzen in mehreren Währungen: {gemischt}")
+    return " · ".join(teile) if teile else "keine Beauftragungsvollmacht hinterlegt"
+
+
+class KopfPersonOut(Schema):
+    party_id: UUID
+    display_name: str
+    #: Wozu diese Person hier steht („Verwaltung", „Eigentümer", „Mieter").
+    rolle: str
+    telefon: str | None = None
+    #: Nur bei der Verwaltung: was sie darf und bis zu welchem Betrag.
+    befugnis: str | None = None
+
+
+class KopfzeileOut(Schema):
+    """Die vier Angaben, die der Disponent am Telefon braucht."""
+
+    verwaltung: list[KopfPersonOut] = []
+    eigentuemer: list[KopfPersonOut] = []
+    mieter: list[KopfPersonOut] = []
+    #: Wie viele Mieter es INSGESAMT gibt — die Liste ist gedeckelt.
+    mieter_gesamt: int = 0
+    #: Für welche Bereiche das Recht fehlt — das UI sagt es, statt zu schweigen.
+    nicht_sichtbar: list[str] = []
+
+
+
+
+def _sichtbar(request, modul, actor, property_id):
+    """Darf der Akteur dieses Modul an DIESEM Objekt lesen?
+
+    Zwei Prüfungen, keine davon verzichtbar:
+
+    * `check` liefert den row_scope des Moduls oder None (fail-closed bei
+      fehlendem Recht — und bei Scope EIGENE gibt `require` dahinter ohnehin
+      nicht auf).
+    * `ist_eigenes_objekt` zieht die Objektgrenze **mit dem Scope DIESES
+      Moduls**. Den Scope von `property` dafür zu verwenden wäre der Fehler:
+      Die Rechtematrix ist eine Datentabelle, und eine einzige Zeile (etwa
+      `tenure/LESEN` mit EIGENE, während `property/LESEN` auf ALLE steht) machte
+      die Kopfzeile zum Umgehungspfad für das jeweilige Modul.
+
+    Fehlendes Recht und fremdes Objekt liefern bewusst **dasselbe** Ergebnis —
+    sonst würde `nicht_sichtbar` zum Existenz-Orakel für fremde Liegenschaften.
+    """
+    scope = check(request, modul, "LESEN")
+    if scope is None:
+        return False
+    if scope == "EIGENE" and not objektsicht.ist_eigenes_objekt(actor, property_id):
+        return False
+    return True
+
+
+@router.get("/properties/{property_id}/kopfzeile", response=KopfzeileOut)
+def kopfzeile(request, property_id: UUID):
+    """Verwaltung, Eigentümer und Mieter einer Liegenschaft auf einen Blick.
+
+    Mit der entscheidenden Zusatzangabe an der Verwaltung: **wer bis zu welchem
+    Betrag beauftragen darf** (A-26). Ohne sie nimmt der Disponent einen Auftrag
+    entgegen, den am Ende niemand bezahlen will.
+
+    Die Mieter kommen bewusst **ohne Wohnungszuordnung** — hier geht es um „wer
+    wohnt hier", nicht um „wer wohnt in welcher Wohnung". Letzteres steht im
+    Reiter Belegung, und in einer Kopfzeile mit dreißig Einheiten wäre es
+    unlesbar. Aus demselben Grund ist die Liste gedeckelt: Eine „Kopfzeile" mit
+    sechzig Namen ist keine.
+    """
+    from db_core.services import belegung as belegung_service
+    from db_core.services import eigentum as eigentum_service
+    from db_core.services import identity as identity_service
+    from db_core.services import verwaltung as verwaltung_service
+    from db_core.services import vollmacht as vollmacht_service
+
+    actor, scope = require_scoped(request, "property", "LESEN")
+    if not Property.objects.filter(id=property_id).exists():
+        raise HttpError(404, "Liegenschaft nicht gefunden.")
+    guard_objekt(scope, actor, property_id)
+
+    nicht_sichtbar = []
+    verwaltung: list[KopfPersonOut] = []
+    eigentuemer: list[KopfPersonOut] = []
+    mieter: list[KopfPersonOut] = []
+    mieter_gesamt = 0
+
+    # --- Verwaltung + Beauftragungsvollmacht --------------------------------
+    if _sichtbar(request, "management", actor, property_id):
+        # EINE Auswertung für alle Verwaltungen — dieselbe, die auch
+        # `darf_beauftragen` benutzt. Sie hier nachzubauen war der erste
+        # Anlauf, und die beiden Fassungen widersprachen sich prompt beim
+        # Zusammentreffen von Alltags- und Notfallvollmacht.
+        lage = vollmacht_service.beauftragungslage(property_id)
+        for m in verwaltung_service.mandate_der_liegenschaft(
+            property_id, nur_aktive=True
+        ):
+            verwaltung.append(
+                KopfPersonOut(
+                    party_id=m.management_party_id,
+                    display_name=m.management_party.display_name,
+                    rolle="Verwaltung",
+                    befugnis=_befugnis_text(lage.get(m.management_party_id)),
+                )
+            )
+    else:
+        nicht_sichtbar.append("Verwaltung")
+
+    # --- Eigentümer und Mieter (beide aus dem Modul `tenure`) ----------------
+    if _sichtbar(request, "tenure", actor, property_id):
+        eigentuemer = [
+            KopfPersonOut(
+                party_id=p.id, display_name=p.display_name, rolle="Eigentümer"
+            )
+            for p in eigentum_service.eigentuemer_der_liegenschaft(property_id)
+        ]
+        gesehen = set()
+        for occ in belegung_service.belegungen_der_liegenschaft(property_id):
+            for zeile in occ.parties.all():
+                if zeile.party_id in gesehen:
+                    continue
+                gesehen.add(zeile.party_id)
+                mieter_gesamt += 1
+                if len(mieter) < KOPFZEILE_MAX_MIETER:
+                    mieter.append(
+                        KopfPersonOut(
+                            party_id=zeile.party_id,
+                            display_name=zeile.party.display_name,
+                            rolle="Mieter",
+                        )
+                    )
+    else:
+        nicht_sichtbar.append("Eigentümer und Mieter")
+
+    # Rufnummern in EINER Abfrage für alle Beteiligten — der Disponent will
+    # anrufen, nicht erst die Kontaktmappe öffnen.
+    ids = {p.party_id for p in (*verwaltung, *eigentuemer, *mieter)}
+    if ids:
+        wege = identity_service.contact_points_bulk(ids)
+        for person in (*verwaltung, *eigentuemer, *mieter):
+            kontakte = wege.get(person.party_id, [])
+            person.telefon = next(
+                (c.value for c in kontakte if c.contact_type == "MOBILE"), None
+            ) or next((c.value for c in kontakte if c.contact_type == "PHONE"), None)
+
+    return KopfzeileOut(
+        verwaltung=verwaltung,
+        eigentuemer=eigentuemer,
+        mieter=mieter,
+        mieter_gesamt=mieter_gesamt,
+        nicht_sichtbar=nicht_sichtbar,
     )

@@ -1,0 +1,118 @@
+/* Kopfzeile der Liegenschaftsmappe (AP2).
+ *
+ * Sie steht über den Reitern und ist einklappbar: Wer die Mappe zum Arbeiten
+ * öffnet, braucht sie nicht jedes Mal — wer telefoniert, sofort.
+ */
+.kopfzeile {
+  margin-bottom: var(--space-4);
+  padding: var(--space-4);
+  border: 1.5px solid var(--line);
+  border-left: 3px solid var(--command);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.kopfzeile__kopf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.kopfzeile__titel {
+  margin: 0;
+  font-size: var(--step-0);
+}
+
+.kopfzeile__spalten {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: var(--space-4);
+  margin-top: var(--space-3);
+}
+
+.gruppe__titel {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.gruppe__anzahl {
+  padding: 0.05em 0.45em;
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  letter-spacing: 0;
+}
+.gruppe__liste {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.person {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+.person__name {
+  color: var(--ink);
+  font-weight: 600;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+
+  &:hover {
+    text-decoration: underline;
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+/* Die Rufnummer ist ein Wähl-Link — der Disponent tippt sie nicht ab.
+   Monospace, weil Ziffernblöcke so schneller erfassbar sind. */
+.person__tel {
+  color: var(--accent-ink);
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+
+/* Die Befugnis ist die Angabe, wegen der es diese Zeile gibt. Sie steht als
+   Text da; die Farbe ist Zugabe (WCAG 1.4.1). */
+.person__befugnis {
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+.person__befugnis--fehlt {
+  color: var(--warn-ink);
+}
+
+.gruppe__mehr {
+  margin: var(--space-2) 0 0;
+  color: var(--ink-muted);
+  font-size: var(--step--1);
+}
+
+.kopfzeile__leer,
+.kopfzeile__gesperrt {
+  margin: var(--space-3) 0 0;
+  color: var(--ink-muted);
+  font-size: var(--step--1);
+}

@@ -4786,6 +4786,86 @@ class ManagementResponsibility(models.Model):
         return f"{self.responsibility_type} ({self.priority})"
 
 
+class PartyAuthority(models.Model):
+    """management.party_authority — **wer darf beauftragen, und bis wie viel?**
+
+    Beschluss A-26. Die Angabe, die der Disponent am Telefon braucht: Ruft die
+    Hausverwaltung an und sagt „machen Sie mal", ist die Frage nicht, ob sie
+    nett ist, sondern ob sie **darf** — und bis zu welchem Betrag.
+
+    Die Tabelle steht seit Migration 0006 und war bis Arbeitspaket AP2 nirgends
+    angebunden.
+
+    **Drei Befugnisarten, die man nicht verwechseln darf:**
+
+    * `ORDER` — darf beauftragen (der Regelfall).
+    * `APPROVAL` — darf freigeben, aber nicht selbst beauftragen.
+    * `EMERGENCY_ORDER` — darf im Notfall beauftragen. Der Rohrbruch um drei Uhr
+      nachts wartet nicht auf die Eigentümerversammlung. A-26 sieht dafür einen
+      Nachweis in Textform vor (`evidence_document_id`); **erzwungen wird er
+      nicht**, solange das Dokumentmodul nicht angebunden ist — die Spalte
+      trägt bis heute keinen Fremdschlüssel.
+
+    **Die Wertgrenze hängt an der Befugnis, nicht an der Person** (`amount_limit`
+    mit `currency`, beide zusammen oder beide leer). Dieselbe Verwaltung kann für
+    eine WEG bis 5.000 € beauftragen und für eine andere gar nicht.
+
+    `scope_type` unterscheidet die allgemeine Vollmacht (GENERAL) von der, die
+    nur für ein bestimmtes Mandat gilt (MANDATE, dann ist `mandate_id` Pflicht —
+    ein CHECK erzwingt das Paar).
+
+    `status` REVOKED heißt widerrufen, EXPIRED abgelaufen; Letzteres verlangt ein
+    `valid_until` (F-10). Ein Widerruf wird **nicht gelöscht** — wer wann wie
+    weit bevollmächtigt war, ist der Nachweis.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    #: Wer die Vollmacht erteilt (z. B. die Eigentümergemeinschaft).
+    principal_party = models.ForeignKey(
+        Party,
+        models.DO_NOTHING,
+        db_column="principal_party_id",
+        related_name="erteilte_vollmachten",
+    )
+    #: Wer sie bekommt (z. B. die Hausverwaltung).
+    authorized_party = models.ForeignKey(
+        Party,
+        models.DO_NOTHING,
+        db_column="authorized_party_id",
+        related_name="vollmachten",
+    )
+    mandate = models.ForeignKey(
+        ManagementMandate,
+        models.DO_NOTHING,
+        db_column="mandate_id",
+        related_name="vollmachten",
+        null=True,
+        blank=True,
+    )
+    authority_type = models.TextField()  # ORDER | APPROVAL | EMERGENCY_ORDER
+    scope_type = models.TextField(db_default="GENERAL")  # GENERAL | MANDATE
+    #: Wertgrenze und Währung — beide zusammen oder beide leer (CHECK).
+    amount_limit = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True
+    )
+    currency = models.CharField(max_length=3, null=True, blank=True)
+    valid_from = models.DateField()
+    valid_until = models.DateField(null=True, blank=True)
+    evidence_document_id = models.UUIDField(null=True, blank=True)
+    status = models.TextField(db_default="ACTIVE")  # ACTIVE | REVOKED | EXPIRED
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'management"."party_authority'
+        ordering = ["-valid_from"]
+
+    def __str__(self):
+        grenze = f" bis {self.amount_limit} {self.currency}" if self.amount_limit else ""
+        return f"{self.authority_type}{grenze}"
+
+
 # ---------------------------------------------------------------------------
 # Schema ai — KI-Grundlagen (Migration 0027): abgeleitete Inhalte, Embeddings,
 # Läufe, Vorschläge. Die KI schreibt NIE direkt: sie erzeugt einen ai_proposal

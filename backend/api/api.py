@@ -48,6 +48,7 @@ from api.site_report import router as site_report_router
 from api.suche import router as suche_router
 from api.telefonauftrag import router as telefonauftrag_router
 from api.verwaltung import router as verwaltung_router
+from api.vollmacht import router as vollmacht_router
 from api.zeiterfassung import hr_router as zeit_stammdaten_router
 from api.zeiterfassung import router as zeiterfassung_router
 
@@ -82,6 +83,7 @@ api.add_router("/property", anlage_router, tags=["property"])
 api.add_router("/tenure", belegung_router, tags=["tenure"])
 api.add_router("/tenure", eigentum_router, tags=["tenure"])
 api.add_router("/management", verwaltung_router, tags=["management"])
+api.add_router("/management", vollmacht_router, tags=["management"])
 api.add_router("/workflow", projekt_router, tags=["workflow"])
 api.add_router("/workflow", aufgabe_router, tags=["workflow"])
 api.add_router("/workflow", auftrag_router, tags=["workflow"])
