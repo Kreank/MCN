@@ -485,6 +485,34 @@ button {
   color: var(--ink-muted);
 }
 
+/* Breite Dialoge nutzen den Platz auch WIRKLICH.
+   Saschas Vorgabe: „Muss nicht so ein duenner Schlauch sein." Ein breiterer
+   Kasten allein macht aber nur breitere Eingabefelder — ein 60rem langes
+   Textfeld fuer eine Hausnummer ist keine Verbesserung. Deshalb ordnen sich in
+   `weite="breit"` die Felder einer Gruppe NEBENEINANDER an, sobald Platz da ist.
+   Die Regel steht global (nicht in dialog.scss), weil der Formularinhalt
+   projiziert wird und im Scope des AUFRUFERS liegt — eine Komponentenregel
+   erreichte ihn nicht. Zwei Klassen Spezifitaet schlagen die Ein-Klassen-Regeln
+   der Dialog-Stylesheets, die dieselben Gruppen einspaltig setzen. */
+@media (min-width: 52rem) {
+  .dialog__panel--breit .dialog-form__gruppe,
+  .dialog__panel--breit .satz {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+    align-items: start;
+    gap: var(--space-3) var(--space-4);
+  }
+  /* Was ueber die ganze Gruppe spricht, bleibt auch ueber die ganze Breite:
+     erklaerender Text, Meldungen und verschachtelte Untergruppen. */
+  .dialog__panel--breit .dialog-form__gruppe > .dialog-form__hinweis,
+  .dialog__panel--breit .satz > .satz__hinweis,
+  .dialog__panel--breit .dialog-form__gruppe > .melde,
+  .dialog__panel--breit .satz > .melde,
+  .dialog__panel--breit .satz > .satz {
+    grid-column: 1 / -1;
+  }
+}
+
 // ============================================================================
 // Melde-Banner (Erfolg/Fehler nach einer Aktion). Status nie nur ueber Farbe:
 // stets Icon + Wortmarke („Erledigt"/„Fehler") + Text.

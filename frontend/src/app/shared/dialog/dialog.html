@@ -7,14 +7,18 @@
   (cancel)="onCancel($event)"
   (click)="onKlick($event)"
 >
-  <div class="dialog__panel" [class.dialog__panel--breit]="breit()">
+  <div
+    class="dialog__panel"
+    [class.dialog__panel--schmal]="weite() === 'schmal'"
+    [class.dialog__panel--breit]="weite() === 'breit'"
+  >
     @if (titel()) {
       <header class="dialog__kopf">
         <h2 class="dialog__titel" [id]="titelId" tabindex="-1">{{ titel() }}</h2>
         <button
           type="button"
           class="dialog__x"
-          (click)="schliessen.emit()"
+          (click)="schliessenAnfordern()"
           aria-label="Dialog schließen"
         >
           <span aria-hidden="true">✕</span>
@@ -22,12 +26,49 @@
       </header>
     }
 
-    <div class="dialog__inhalt">
+    <!--
+      `input`/`change` steigen aus jedem Feld hierher auf. Genau daran erkennt
+      der Dialog, dass er etwas zu verlieren hat — ohne dass ein Aufrufer ein
+      „dirty"-Flag pflegen (und vergessen) muesste.
+    -->
+    <div class="dialog__inhalt" (input)="onEingabe()" (change)="onEingabe()">
       <ng-content></ng-content>
     </div>
+
+    <!-- Die Rueckfrage steht IM Dialog, nicht als zweiter modaler Kasten
+         darueber: verschachtelte Modale sind fuer Screenreader und Fokus-Trap
+         eine bekannte Fehlerquelle. -->
+    @if (frageOffen()) {
+      <div class="dialog__frage" role="alertdialog" [attr.aria-labelledby]="frageId">
+        <p class="dialog__frage-text" [id]="frageId">
+          Hier stehen ungespeicherte Eingaben. Sollen sie verworfen werden?
+        </p>
+        <div class="dialog__frage-knoepfe">
+          <button
+            #weiterBtn
+            type="button"
+            class="btn btn--primary"
+            (click)="frageOffen.set(false)"
+          >
+            Weiter bearbeiten
+          </button>
+          <button type="button" class="btn btn--gefahr" (click)="verwerfen()">
+            Verwerfen
+          </button>
+        </div>
+      </div>
+    }
 
     <footer class="dialog__fuss">
       <ng-content select="[dialog-aktionen]"></ng-content>
     </footer>
+
+    <!-- Nach einem Klick daneben: Der Dialog bleibt offen und sagt, warum. -->
+    <p class="dialog__schutz" role="status">
+      @if (hinweisSichtbar()) {
+        Ihre Eingaben bleiben stehen — ein Klick daneben schließt nicht mehr. Zum
+        Schließen „Abbrechen“ oder Escape.
+      }
+    </p>
   </div>
 </dialog>

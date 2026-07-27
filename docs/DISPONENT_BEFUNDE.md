@@ -344,6 +344,35 @@ Sascha hat den fertigen Reiter am Server getestet. Vier Befunde, alle behoben:
   **derselben** Transaktion wie die Belegung. Ein bereits `COMPLETE` geklärter
   Stand wird nicht nebenbei aufgeweicht (422 mit Verweis auf den Reiter).
 
+#### Dialoge: Fehlklick und Schlauchbreite (2026-07-27) ✅ **behoben**
+
+Zwei Befunde aus demselben Test, beide an der Dialoghülle (`shared/dialog`) —
+sie wirken deshalb auf **jede** Maske im Leitstand, nicht auf eine.
+
+- **„Wenn ich mich verklicke, wird das Formular geschlossen."** Ein Klick auf
+  die abgedunkelte Fläche schloss den Dialog und nahm die halbe Erfassung mit.
+  Der Dialog merkt sich jetzt **selbst**, ob im Inhalt getippt wurde
+  (`input`/`change` steigen aus jedem Feld in `.dialog__inhalt` auf) — ohne
+  `dirty`-Flag, das ein Aufrufer vergessen könnte. Danach gilt: Der Klick
+  daneben **schließt nicht** (Versehen, kurzer Hinweis), Escape und der X-Knopf
+  **fragen nach** (Absicht, Rückfrage im Panel — kein verschachteltes Modal).
+  Escape bei offener Rückfrage nimmt die *Frage* zurück, nicht den Dialog; sonst
+  wäre sie mit derselben Taste beantwortbar, die sie ausgelöst hat. Dialoge ohne
+  Eingabefelder verhalten sich unverändert. Festgehalten in `dialog.spec.ts`.
+  Die Kommandopalette hat einen eigenen `<dialog>`-Kern und ist nicht betroffen
+  (dort ist Wegklicken nach dem Tippen richtig).
+- **„Muss nicht so ein dünner Schlauch sein, wir haben ja Platz."** Aus dem
+  Ja/Nein-Schalter `breit` ist die Stufe `weite` geworden: `schmal` (32 rem, nur
+  Bestätigungen), `normal` (**46 rem statt bisher 34** — gilt für alle Dialoge)
+  und `breit` (64 rem) für die großen Erfassungsmasken: Anruf annehmen, Anlage,
+  Verwaltung, Belegung, Neue Person, Eigentum erfassen. Breiter allein genügte
+  nicht — ein 60 rem langes Feld für eine Hausnummer ist keine Verbesserung.
+  Deshalb ordnen sich in `weite="breit"` die Felder einer Gruppe
+  (`.satz` / `.dialog-form__gruppe`) ab 52 rem Fensterbreite **nebeneinander**
+  an; erklärender Text, Meldungen und Untergruppen behalten die volle Breite.
+  Die Regel steht in `styles.scss`, nicht in `dialog.scss`: Der Formularinhalt
+  ist projiziert und liegt im Scope des Aufrufers.
+
 ### AP6 — Sichtbares mit wenig Aufwand ✅ **umgesetzt 2026-07-21**
 
 - **C1–C3:** Kategoriefarbe auf die ganze Plantafel-Kachel. Fläche getönt (16 %) = Kategorie, linker Rand bleibt Status; die früheren Status-Hintergründe sind entfallen, weil sie die Tönung überdeckt hätten. Siehe **C4** (Kontrastfalle, behoben) und **C5** (Grenze im Dunkeln, akzeptiert).

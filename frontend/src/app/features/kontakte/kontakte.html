@@ -232,7 +232,12 @@
   }
 
   <!-- ------------------------------ Person anlegen -------------------------- -->
-  <app-dialog [offen]="personOffen()" titel="Neue Person" (schliessen)="personSchliessen()">
+  <app-dialog
+    [offen]="personOffen()"
+    titel="Neue Person"
+    weite="breit"
+    (schliessen)="personSchliessen()"
+  >
     <form id="neu-person-form" class="dialog-form" (submit)="$event.preventDefault(); personAbsenden()" novalidate>
       @if (formularMeldung(); as fm) {
         <div class="melde melde--fehler" role="alert">

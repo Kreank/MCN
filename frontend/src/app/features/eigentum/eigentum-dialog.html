@@ -2,7 +2,7 @@
   <app-dialog
     [offen]="offen()"
     [titel]="titel()"
-    [breit]="m.art === 'neu'"
+    [weite]="m.art === 'neu' ? 'breit' : 'normal'"
     (schliessen)="schliessen()"
   >
     <form

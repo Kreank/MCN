@@ -1,10 +1,14 @@
 import {
   Component,
   ElementRef,
+  Injector,
   OnDestroy,
+  afterNextRender,
   effect,
+  inject,
   input,
   output,
+  signal,
   viewChild,
 } from '@angular/core';
 import { panelOeffnen } from '../schwebendes-panel';
@@ -53,6 +57,32 @@ export function scrollFreigeben(): void {
  * ueber `(schliessen)` nur den Wunsch zu schliessen und setzt den Zustand nie
  * selbst — so bleibt eine einzige Quelle der Wahrheit.
  *
+ * ## Eingaben gehen nicht durch einen Fehlklick verloren
+ *
+ * Saschas Befund beim Testen: *„Wenn ich mich verklicke, wird das Formular
+ * geschlossen. Total uncool, wenn man dabei ist etwas anzulegen."* Er hat recht:
+ * Ein Klick auf die abgedunkelte Flaeche ist der haeufigste Fehlklick
+ * ueberhaupt, und er loeschte die halbe Erfassung.
+ *
+ * Der Dialog merkt sich deshalb selbst, ob **im Inhalt getippt wurde** (ein
+ * `input`- oder `change`-Ereignis aus dem Inhaltsbereich). Danach gilt:
+ *
+ * | Geste | unberuehrt | mit Eingaben |
+ * |---|---|---|
+ * | Klick auf den Hintergrund | schliesst | **schliesst nicht**, kurzer Hinweis |
+ * | Escape / X-Knopf | schliesst | fragt nach: *verwerfen oder weiter?* |
+ *
+ * Der Unterschied ist Absicht: Ein Klick daneben ist ein Versehen und wird
+ * schlicht ignoriert; Escape und der X-Knopf sind gezielte Gesten und bekommen
+ * eine Antwortmoeglichkeit statt einer Blockade. Escape bleibt damit ein Weg
+ * hinaus (WCAG 2.1.2), nur eben ein bestaetigter — und das ist genau die
+ * Absicherung gegen Datenverlust, die WCAG 2.2 (3.3.4/3.3.6) verlangt.
+ *
+ * Das braucht **keine Mitarbeit der Aufrufer**: kein zusaetzlicher Input, kein
+ * „dirty"-Flag, das jemand vergessen kann. Dialoge ohne Eingabefelder
+ * (Bestaetigungen, Infotexte) verhalten sich unveraendert — dort gibt es nichts
+ * zu verlieren.
+ *
  * Verwendung:
  * ```html
  * <app-dialog [offen]="offen()" titel="Titel" (schliessen)="offen.set(false)">
@@ -76,13 +106,20 @@ export class Dialog implements OnDestroy {
   /** Ueberschrift; leer -> kein Kopf, kein aria-labelledby. */
   readonly titel = input('');
   /**
-   * Breiter Zuschnitt fuer Formulare mit Zeilen (Positionen, Beteiligte).
+   * Zuschnitt des Dialogs. Saschas Vorgabe: *„Muss nicht so ein dünner Schlauch
+   * sein — wir haben ja Platz."*
    *
-   * Die schmale Grundform (34rem) ist fuer kurze Dialoge richtig. Sobald ein
-   * Formular mehrere Felder NEBENEINANDER braucht, quetscht sie sie zu einer
-   * Spalte und erzeugt Scrollen — dann ist der breite Zuschnitt der bessere.
+   * * `schmal` (32rem) — eine Frage, zwei Knoepfe. Bestaetigungen.
+   * * `normal` (46rem, Standard) — das uebliche Erfassungsformular. Frueher
+   *   34rem; das quetschte jede zweispaltige Zeile in eine Spalte und erzeugte
+   *   Scrollen, wo Platz war.
+   * * `breit` (64rem) — Formulare mit Zeilen (Beteiligte, Positionen), bei
+   *   denen mehrere Felder nebeneinander gehoeren.
+   *
+   * Auf schmalen Schirmen greift ohnehin `width: 100%` — die Stufen wirken nur
+   * dort, wo Platz da ist.
    */
-  readonly breit = input(false);
+  readonly weite = input<'schmal' | 'normal' | 'breit'>('normal');
   /** Escape schliesst (fuer irreversible Dialoge abschaltbar). */
   readonly escapeSchliesst = input(true);
   /** Klick auf den Hintergrund schliesst (abschaltbar). */
@@ -91,8 +128,18 @@ export class Dialog implements OnDestroy {
   readonly schliessen = output<void>();
 
   protected readonly titelId = `dialog-titel-${++dialogSeq}`;
+  protected readonly frageId = `dialog-frage-${dialogSeq}`;
 
   private readonly dlg = viewChild<ElementRef<HTMLDialogElement>>('dlg');
+  private readonly weiterBtn = viewChild<ElementRef<HTMLButtonElement>>('weiterBtn');
+
+  /** Wurde im Inhalt getippt? Ab dann sind Eingaben zu schuetzen. */
+  protected readonly beruehrt = signal(false);
+  /** „Eingaben verwerfen?" — die Rueckfrage auf Escape/X. */
+  protected readonly frageOffen = signal(false);
+  /** Kurzer Hinweis nach einem Klick daneben. */
+  protected readonly hinweisSichtbar = signal(false);
+  private hinweisTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
     // Zustand -> natives showModal()/close() spiegeln.
@@ -105,10 +152,13 @@ export class Dialog implements OnDestroy {
     });
   }
 
+  private readonly injector = inject(Injector);
+
   ngOnDestroy(): void {
     // Wird die Komponente zerstört, während der Dialog offen ist (Navigation,
     // @if am Eltern-Element), bliebe der Zähler stehen und der Body für immer
     // gesperrt. Der Zustand wird deshalb hier aufgeräumt.
+    if (this.hinweisTimer !== null) clearTimeout(this.hinweisTimer);
     const el = this.dlg()?.nativeElement;
     if (el?.open) this.schliessenIntern(el);
   }
@@ -129,6 +179,10 @@ export class Dialog implements OnDestroy {
   private oeffnen(el: HTMLDialogElement): void {
     const aktiv = document.activeElement;
     this.ausloeser = aktiv instanceof HTMLElement ? aktiv : null;
+    // Ein frisch geöffneter Dialog hat noch nichts zu verlieren.
+    this.beruehrt.set(false);
+    this.frageOffen.set(false);
+    this.hinweisAbraeumen();
     if (typeof el.showModal === 'function') el.showModal();
     else el.setAttribute('open', ''); // Fallback (z. B. Test-DOM)
     scrollSperren();
@@ -159,14 +213,71 @@ export class Dialog implements OnDestroy {
 
   /** Escape: nativ abfangen; der Eltern-Teil entscheidet ueber den Zustand. */
   protected onCancel(event: Event): void {
+    // IMMER abfangen: Ohne `preventDefault` schloesse das native <dialog> sich
+    // selbst — der Zustand des Eltern-Teils bliebe auf „offen" stehen.
     event.preventDefault();
-    if (this.escapeSchliesst()) this.schliessen.emit();
+    // Steht die Rueckfrage, nimmt Escape zuerst SIE zurueck. Sonst waere die
+    // Frage „verwerfen?" mit derselben Taste beantwortbar, die sie ausgeloest
+    // hat — und ein zweiter Tastendruck loeschte die Eingaben doch.
+    if (this.frageOffen()) {
+      this.frageOffen.set(false);
+      return;
+    }
+    if (this.escapeSchliesst()) this.schliessenAnfordern();
   }
 
-  /** Klick auf die abgedunkelte Flaeche (Ziel == Dialogelement selbst). */
+  /**
+   * Klick auf die abgedunkelte Flaeche (Ziel == Dialogelement selbst).
+   *
+   * Mit Eingaben im Formular schliesst er **nicht**. Ein Klick daneben ist der
+   * haeufigste Fehlklick, und er kostete bis hierher die ganze Erfassung.
+   */
   protected onKlick(event: MouseEvent): void {
-    if (this.backdropSchliesst() && event.target === this.dlg()?.nativeElement) {
-      this.schliessen.emit();
+    if (event.target !== this.dlg()?.nativeElement) return;
+    if (!this.backdropSchliesst()) return;
+    if (this.beruehrt()) {
+      this.hinweisZeigen();
+      return;
     }
+    this.schliessen.emit();
+  }
+
+  /** X-Knopf und Escape: gezielte Gesten — sie duerfen fragen, statt zu blocken. */
+  protected schliessenAnfordern(): void {
+    if (!this.beruehrt()) {
+      this.schliessen.emit();
+      return;
+    }
+    this.frageOffen.set(true);
+    // Der Fokus geht auf „Weiter bearbeiten" — die harmlose Antwort. Der Knopf
+    // entsteht erst mit dem naechsten Rendern, deshalb `afterNextRender`.
+    afterNextRender(() => this.weiterBtn()?.nativeElement.focus(), {
+      injector: this.injector,
+    });
+  }
+
+  protected verwerfen(): void {
+    this.frageOffen.set(false);
+    this.schliessen.emit();
+  }
+
+  /** Merkt sich, dass im Inhalt getippt wurde (Ereignis steigt vom Feld auf). */
+  protected onEingabe(): void {
+    this.beruehrt.set(true);
+  }
+
+  private hinweisZeigen(): void {
+    this.hinweisSichtbar.set(true);
+    if (this.hinweisTimer !== null) clearTimeout(this.hinweisTimer);
+    this.hinweisTimer = setTimeout(() => {
+      this.hinweisSichtbar.set(false);
+      this.hinweisTimer = null;
+    }, 4000);
+  }
+
+  private hinweisAbraeumen(): void {
+    if (this.hinweisTimer !== null) clearTimeout(this.hinweisTimer);
+    this.hinweisTimer = null;
+    this.hinweisSichtbar.set(false);
   }
 }
