@@ -40,6 +40,12 @@
   box-shadow: var(--shadow-2);
 }
 
+// Fuer Formulare mit Zeilen. `width: 100%` bleibt — auf schmalen Schirmen ist
+// der breite Zuschnitt automatisch wieder der schmale.
+.dialog__panel--breit {
+  max-width: 52rem;
+}
+
 .dialog__kopf {
   display: flex;
   align-items: flex-start;

@@ -51,6 +51,12 @@ export type RefSuche = (q: string) => Observable<RefOption[]>;
 let refSeq = 0;
 
 /**
+ * Platzbedarf der Trefferliste in Pixeln (`max-height: 15rem` + Rahmen/Polster).
+ * Grober Richtwert — es geht nur um „passt nach unten oder nicht".
+ */
+const LISTE_HOEHE = 250;
+
+/**
  * Barrierefreie Referenz-Auswahl (Combobox mit Serversuche) für Felder, die
  * eine Fremd-ID halten (party_id, work_order_id, property_id …). Statt einer
  * rohen UUID-Eingabe: Suchfeld → Trefferliste (Listbox) → Auswahl als Chip.
@@ -96,6 +102,8 @@ export class ReferenzWahl {
   protected readonly aktivIndex = signal(-1);
   protected readonly gewaehlt = signal<RefOption | null>(null);
   protected readonly suchtext = signal('');
+  /** Trefferliste nach OBEN klappen, wenn unten kein Platz ist (siehe `platzPruefen`). */
+  protected readonly nachOben = signal(false);
 
   private readonly such$ = new Subject<string>();
   private readonly destroyRef = inject(DestroyRef);
@@ -121,7 +129,7 @@ export class ReferenzWahl {
         this.optionen.set(opts);
         this.ladend.set(false);
         this.aktivIndex.set(opts.length ? 0 : -1);
-        this.offen.set(true);
+        this.aufklappen();
       });
 
     // Externer Reset (Aufrufer setzt das Control auf '') räumt die Anzeige ab.
@@ -178,8 +186,60 @@ export class ReferenzWahl {
     if (this.optionen().length === 0 && !this.ladend()) {
       this.such$.next(this.suchtext());
     } else {
-      this.offen.set(true);
+      this.aufklappen();
     }
+  }
+
+  /**
+   * Liste aufklappen — und zwar dorthin, wo sie auch zu sehen ist.
+   *
+   * Die Liste liegt `position: absolute` im Feld. In einem **scrollenden**
+   * Behälter (jeder Dialog: `.dialog__panel` hat `overflow-y: auto`) wird sie
+   * an dessen Kante abgeschnitten. Steht das Feld unten im Dialog, sah man
+   * deshalb nur einen Streifen — ein Dropdown, das sich nicht bedienen ließ.
+   * Genau dieser Befund kam aus dem Test des Eigentums-Dialogs.
+   *
+   * Zwei Maßnahmen: erst das Feld in den sichtbaren Bereich holen, dann — wenn
+   * unten immer noch zu wenig Platz ist — die Liste nach oben klappen.
+   */
+  private aufklappen(): void {
+    const el = this.sucheInput()?.nativeElement;
+    // `block: 'nearest'` scrollt nur, wenn es nötig ist — sonst spränge das
+    // Formular bei jedem Tastendruck. Optional aufgerufen: Im Test-DOM gibt es
+    // `scrollIntoView` nicht, und daran soll keine Suche scheitern.
+    el?.scrollIntoView?.({ block: 'nearest' });
+    this.platzPruefen();
+    this.offen.set(true);
+  }
+
+  private platzPruefen(): void {
+    const el = this.sucheInput()?.nativeElement;
+    if (!el || typeof el.getBoundingClientRect !== 'function') return;
+    const feld = el.getBoundingClientRect();
+    const { oben, unten } = this.sichtRahmen(el);
+    const platzUnten = unten - feld.bottom;
+    const platzOben = feld.top - oben;
+    this.nachOben.set(platzUnten < LISTE_HOEHE && platzOben > platzUnten);
+  }
+
+  /**
+   * Der sichtbare Ausschnitt: das Fenster, verengt um jeden scrollenden oder
+   * klippenden Vorfahren. Genau diese Kanten schneiden die Liste ab.
+   */
+  private sichtRahmen(el: HTMLElement): { oben: number; unten: number } {
+    let oben = 0;
+    let unten = typeof window !== 'undefined' ? window.innerHeight : 0;
+    let p = el.parentElement;
+    while (p) {
+      const stil = getComputedStyle(p);
+      if (stil.overflowY !== 'visible' && stil.overflowY !== '') {
+        const r = p.getBoundingClientRect();
+        oben = Math.max(oben, r.top);
+        unten = Math.min(unten, r.bottom);
+      }
+      p = p.parentElement;
+    }
+    return { oben, unten };
   }
 
   protected onEingabe(wert: string): void {

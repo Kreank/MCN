@@ -68,7 +68,40 @@
           label="Rolle"
           typ="select"
           [optionen]="rollenOptionen"
+          hinweis="„Eigentümer (bewohnt)“ hakt die Übernahme ins Eigentum unten von selbst an."
         />
+      </fieldset>
+
+      <!-- Saschas Befund: „wollen ja keine doppelte Arbeit“. Wer hier steht,
+           landet im Reiter „Eigentum“ — er ist aber KEIN Beteiligter der
+           Belegung: Wer vermietet, wohnt dort gerade nicht. -->
+      <fieldset class="satz">
+        <legend class="satz__titel">Wem gehört die Einheit?</legend>
+        <p class="satz__hinweis">
+          Optional. Was Sie hier eintragen, erscheint im Reiter
+          <strong>Eigentum</strong> — als „teilweise geklärt“, ohne Anteil und
+          unbestätigt. Eine Angabe nebenbei ist kein Grundbuchauszug; den Anteil
+          tragen Sie dort nach, sobald Sie ihn kennen.
+        </p>
+
+        @if (personGewaehlt()) {
+          <app-feld
+            [control]="form.controls.eigentuemer_ist_person"
+            typ="checkbox"
+            label="Die oben gewählte Person ist zugleich Eigentümer:in"
+          />
+        }
+
+        @if (!uebernahmeUeberPerson()) {
+          <app-referenz-wahl
+            [control]="form.controls.eigentuemer_party_id"
+            label="Eigentümer:in"
+            [suche]="parteiSuche"
+            platzhalter="Kontakt suchen …"
+            leerText="Kein Kontakt gefunden. Eigentümer werden unter „Kontakte“ angelegt — mit Anschrift, damit sie als Rechnungsempfänger taugen."
+            hinweis="Auch der vermietende Eigentümer gehört hierher — er wohnt dort nicht und steht deshalb nicht in der Mieterliste."
+          />
+        }
       </fieldset>
     }
   </form>

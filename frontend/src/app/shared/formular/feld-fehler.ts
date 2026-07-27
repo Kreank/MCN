@@ -33,6 +33,11 @@ export function feldFehlerText(control: AbstractControl | null | undefined): str
   if (e['dezimalMehrdeutig'])
     return 'Mehrdeutige Zahl: Punkt als Tausendertrenner oder Dezimalpunkt? Bitte ohne Punkt schreiben (1500) oder mit Komma (1,5).';
   if (e['ganzzahl']) return 'Bitte eine ganze Zahl ohne Einheit eingeben (z. B. 30).';
+  if (e['anteil'])
+    return 'Bitte als Bruch (1/3), Prozent (50 %) oder Dezimalzahl (0,25) angeben.';
+  if (e['anteilZuGross']) return 'Ein Anteil kann nicht größer als das Ganze sein.';
+  if (e['anteilNenner'])
+    return 'Dieser Anteil ist zu fein — als Bruch mit einem Nenner bis 1.000.000 angeben (z. B. 1/3 statt 0,333333333).';
   if (e['gtin'])
     return 'Ungültige GTIN/EAN: 8, 12, 13 oder 14 Ziffern mit korrekter Prüfziffer.';
   if (e['nurLeerraum']) return 'Bitte einen Text eingeben — Leerzeichen allein genügen nicht.';

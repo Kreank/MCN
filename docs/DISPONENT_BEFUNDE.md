@@ -307,6 +307,43 @@ Deckt ab: **J5, J6**.
 - `tenure.ownership_period` / `ownership_interest` sind seit Migration 0005 vollständig gebaut — Bruchanteile, exakte LCM-Anteilsprüfung, Quellennachweis, Bestätigung. **Kein einziger Endpunkt, keine UI** greift darauf zu. Frontend sagt es selbst: `liegenschaft-detail.html:183` „sobald die Lesepfade angebunden sind (Roadmap 03)".
 - ~~**Modelllücke J6**~~ — **entschieden 2026-07-21: keine Schemaänderung.** `ownership_period.unit_id` bleibt NOT NULL, Eigentum mit Anteilen/Quelle/Bestätigung bleibt auf Einheitsebene. Für „Gebäude 52 gehört Herrn X" wird die anteilslose Rolle `property_party_role` = PROPERTY_OWNER genutzt. Das Paket ist damit reine Anbindung (J5) und braucht keine Migration.
 
+#### AP5-Nachlese aus dem Praxistest (2026-07-27) ✅ **behoben**
+
+Sascha hat den fertigen Reiter am Server getestet. Vier Befunde, alle behoben:
+
+- **„Eigentümer lassen sich nicht speichern."** Zwei Ursachen. (a) Ein
+  Server-Fehler blieb als `{server: …}` am Feld kleben; `speichern()` räumte ihn
+  nie ab, das Formular blieb dauerhaft `invalid` und jeder weitere Klick kehrte
+  **wortlos** zurück — der Knopf wirkte tot. (b) Auch ein bloß unvollständiges
+  Formular kehrte wortlos zurück, obwohl das rote Feld womöglich außerhalb des
+  gescrollten Ausschnitts lag. Jetzt: Server-Fehler werden vor jedem Versuch
+  abgeräumt (**auch in den Zeilen des `FormArray`** — `serverFehlerZuruecksetzen`
+  aus `formular.util` kann nur eine flache `FormGroup`), und ein abgewiesenes
+  Formular bekommt eine Meldung samt Sprung ins erste beanstandete Feld.
+- **„Kontakt/Zähler überlappen, ein Dropdown, das man nicht sieht."** Die
+  Kontaktsuche stand in einer fünfspaltigen Zeile neben dem Anteilsfeld; ihre
+  aufklappende Trefferliste (`position: absolute`) legte sich über den Nachbarn.
+  Verschärfend: `.dialog__panel` hat `overflow-y: auto` und **schneidet** die
+  Liste an seiner Unterkante ab — unten im Dialog sah man nur einen Streifen.
+  Behoben an beiden Enden: Die Beteiligung ist jetzt eine Karte mit dem Kontakt
+  auf eigener Zeile, und `app-referenz-wahl` scrollt das Feld beim Aufklappen in
+  den sichtbaren Bereich und klappt die Liste **nach oben**, wenn unten kein
+  Platz ist. Das galt für *jeden* Picker in *jedem* Dialog, nicht nur hier.
+- **„Nenner? Was das? Art? Belegt?"** Der Anteil ist jetzt **ein** Feld
+  (`1/3`, `50 %`, `0,25` — `features/eigentum/anteil.ts`); gespeichert wird
+  weiterhin der exakte Bruch, weil drei Erben zu je 1/3 dezimal nicht
+  darstellbar sind. Eine nackte Zahl über 1 wird als Prozentwert gelesen und die
+  Lesart **ausgesprochen** („Gelesen als 50 % (1/2)"), statt sie zu verschweigen.
+  „Art" heißt „Eigentumsart", „belegt" erklärt sich im Hinweis.
+- **„Wollen ja keine doppelte Arbeit."** Der Belegungs-Dialog hat einen dritten
+  Abschnitt „Wem gehört die Einheit?". Rolle *Eigentümer (bewohnt)* hakt die
+  Übernahme selbst an; der **vermietende** Eigentümer steht als eigener Kontakt
+  daneben — er wohnt dort nicht und gehört deshalb **nicht** in
+  `occupancy_party` (die Rollenliste aus 0005 wird nicht erweitert). Der Server
+  legt daraus einen Eigentumsstand `PARTIAL`, ohne Anteil, unbestätigt an — in
+  **derselben** Transaktion wie die Belegung. Ein bereits `COMPLETE` geklärter
+  Stand wird nicht nebenbei aufgeweicht (422 mit Verweis auf den Reiter).
+
 ### AP6 — Sichtbares mit wenig Aufwand ✅ **umgesetzt 2026-07-21**
 
 - **C1–C3:** Kategoriefarbe auf die ganze Plantafel-Kachel. Fläche getönt (16 %) = Kategorie, linker Rand bleibt Status; die früheren Status-Hintergründe sind entfallen, weil sie die Tönung überdeckt hätten. Siehe **C4** (Kontrastfalle, behoben) und **C5** (Grenze im Dunkeln, akzeptiert).

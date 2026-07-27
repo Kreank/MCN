@@ -43,6 +43,14 @@ export type BelegungDialogModus =
  * Mietverhältnisse auf dem Server **mit** (in derselben Transaktion) — ein
  * offener Mieter passt sonst nicht mehr in eine geschlossene Belegung. Der
  * Dialog sagt das, statt es passieren zu lassen.
+ *
+ * **Der Eigentümer wird hier gleich mit erfasst.** Saschas Befund beim Testen:
+ * *„Bei Belegung kann ich ja auch Eigentümer als bewohnt angeben — das sollte
+ * beim Reiter Eigentum übernommen werden, wollen ja keine doppelte Arbeit."*
+ * Deshalb der dritte Abschnitt: Wählt man „Eigentümer (bewohnt)" als Rolle,
+ * hakt sich die Übernahme von selbst an; vermietet der Eigentümer, steht er als
+ * eigener Kontakt daneben — er wohnt ja gerade **nicht** dort und gehört
+ * deshalb nicht in die Mieterliste.
  */
 @Component({
   selector: 'app-belegung-dialog',
@@ -95,7 +103,25 @@ export class BelegungDialog {
     // Der Mieter: optional (Leerstand!), aber wenn gesetzt, mit Rolle.
     party_id: this.fb.control('', { nonNullable: true }),
     role: this.fb.control<MieterRolle>('CONTRACTUAL_TENANT', { nonNullable: true }),
+    // Eigentum — landet NICHT in der Mieterliste, sondern im Reiter „Eigentum".
+    eigentuemer_ist_person: this.fb.control(false, { nonNullable: true }),
+    eigentuemer_party_id: this.fb.control('', { nonNullable: true }),
   });
+
+  /**
+   * Formularzustände als Signale.
+   *
+   * `computed()` über `form.controls.x.value` würde **nicht** neu rechnen — ein
+   * `FormControl` ist kein Signal, und die Falle ist in diesem Repo schon
+   * einmal zugeschnappt. Deshalb explizit aus `valueChanges` gespeist.
+   */
+  protected readonly personGewaehlt = signal(false);
+  protected readonly eigentuemerIstPerson = signal(false);
+
+  /** Wird die Übernahme gerade über die gewählte Person gefahren? */
+  protected readonly uebernahmeUeberPerson = computed(
+    () => this.personGewaehlt() && this.eigentuemerIstPerson(),
+  );
 
   /** Serversuche für die Kontaktauswahl — dieselbe wie überall sonst. */
   protected readonly parteiSuche: RefSuche = (q) =>
@@ -104,12 +130,36 @@ export class BelegungDialog {
       .pipe(map((p) => p.items.map((o) => ({ id: o.id, label: o.display_name }))));
 
   constructor() {
+    this.form.controls.party_id.valueChanges.subscribe((v) =>
+      this.personGewaehlt.set(!!v),
+    );
+    this.form.controls.eigentuemer_ist_person.valueChanges.subscribe((v) =>
+      this.eigentuemerIstPerson.set(v),
+    );
+    // „Eigentümer (bewohnt)" IST die Aussage „ihm gehört das". Der Haken setzt
+    // sich deshalb selbst — niemand soll dieselbe Person zweimal eintragen.
+    this.form.controls.role.valueChanges.subscribe((rolle) => {
+      if (rolle === 'OWNER_OCCUPANT') {
+        this.form.controls.eigentuemer_ist_person.setValue(true);
+      }
+    });
+    // Umgekehrt: „Eigennutzung" legt die Rolle nahe, die dazu gehört.
+    this.form.controls.occupancy_type.valueChanges.subscribe((typ) => {
+      if (typ === 'OWNER_OCCUPIED' && !this.form.controls.party_id.value) {
+        this.form.controls.role.setValue('OWNER_OCCUPANT');
+      }
+    });
+
     effect(() => {
       const m = this.modus();
       if (!m) return;
       this.formularMeldung.set(null);
       this.laedt.set(false);
       const heute = new Date().toISOString().slice(0, 10);
+      const eigentumLeer = {
+        eigentuemer_ist_person: false,
+        eigentuemer_party_id: '',
+      };
       if (m.art === 'neu') {
         this.form.reset({
           occupancy_type: 'RENTED',
@@ -118,6 +168,7 @@ export class BelegungDialog {
           contract_reference: '',
           party_id: '',
           role: 'CONTRACTUAL_TENANT',
+          ...eigentumLeer,
         });
       } else if (m.art === 'bearbeiten') {
         this.form.reset({
@@ -127,6 +178,7 @@ export class BelegungDialog {
           contract_reference: m.belegung.contract_reference ?? '',
           party_id: '',
           role: 'CONTRACTUAL_TENANT',
+          ...eigentumLeer,
         });
       } else {
         this.form.reset({
@@ -136,9 +188,26 @@ export class BelegungDialog {
           contract_reference: '',
           party_id: '',
           role: 'CONTRACTUAL_TENANT',
+          ...eigentumLeer,
         });
       }
+      // Signale aus den Controls nachziehen, nicht auf `false` zwingen: Das
+      // `reset()` löst oben die Kettenreaktion „Eigennutzung → Rolle
+      // Eigentümer (bewohnt) → Haken" aus. Ein hart gesetztes `false` würde
+      // Anzeige und Formularwert auseinanderlaufen lassen.
+      this.personGewaehlt.set(!!this.form.controls.party_id.value);
+      this.eigentuemerIstPerson.set(this.form.controls.eigentuemer_ist_person.value);
     });
+  }
+
+  /**
+   * Der Eigentümer für den Server: entweder die oben gewählte Person (Haken)
+   * oder der eigens gewählte Kontakt. Leer = keine Aussage über das Eigentum.
+   */
+  private eigentuemerId(): string | null {
+    const v = this.form.getRawValue();
+    if (v.party_id && v.eigentuemer_ist_person) return v.party_id;
+    return v.eigentuemer_party_id || null;
   }
 
   protected schliessen(): void {
@@ -165,6 +234,7 @@ export class BelegungDialog {
     }
 
     const v = this.form.getRawValue();
+    const eigentuemer = this.eigentuemerId();
     this.laedt.set(true);
 
     if (m.art === 'mieter') {
@@ -172,9 +242,15 @@ export class BelegungDialog {
         .addMieter(m.belegung.id, {
           party_id: v.party_id,
           role: v.role,
+          eigentuemer_party_id: eigentuemer,
         })
         .subscribe({
-          next: () => this.fertig('Mieter:in wurde gesetzt.'),
+          next: () =>
+            this.fertig(
+              eigentuemer
+                ? 'Mieter:in wurde gesetzt — Eigentümer:in steht jetzt auch im Reiter „Eigentum“.'
+                : 'Mieter:in wurde gesetzt.',
+            ),
           error: (err) => this.gescheitert(err),
         });
       return;
@@ -208,13 +284,21 @@ export class BelegungDialog {
         valid_until: v.valid_until || null,
         contract_reference: v.contract_reference.trim() || null,
         mieter: v.party_id ? [{ party_id: v.party_id, role: v.role }] : [],
+        eigentuemer_party_id: eigentuemer,
       })
       .subscribe({
         next: () =>
           this.fertig(
-            v.party_id
-              ? 'Belegung erfasst.'
-              : 'Belegung erfasst — ohne Mieter:in (Leerstand).',
+            [
+              v.party_id
+                ? 'Belegung erfasst.'
+                : 'Belegung erfasst — ohne Mieter:in (Leerstand).',
+              eigentuemer
+                ? 'Eigentümer:in steht jetzt auch im Reiter „Eigentum“.'
+                : '',
+            ]
+              .filter(Boolean)
+              .join(' '),
           ),
         error: (err) => this.gescheitert(err),
       });

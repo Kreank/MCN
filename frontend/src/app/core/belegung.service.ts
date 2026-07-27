@@ -6,7 +6,7 @@ import {
   BelegungIn,
   BelegungPatch,
   EinheitBelegung,
-  MieterIn,
+  MieterAddIn,
 } from './belegung.model';
 
 /**
@@ -62,7 +62,7 @@ export class BelegungService {
   }
 
   /** Einen weiteren Mieter/Nutzer setzen (Ehepaar, Mitbewohner — der Normalfall). */
-  addMieter(occupancyId: string, payload: MieterIn): Observable<Belegung> {
+  addMieter(occupancyId: string, payload: MieterAddIn): Observable<Belegung> {
     return this.http.post<Belegung>(
       `${this.base}/belegung/${occupancyId}/mieter`,
       payload,

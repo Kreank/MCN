@@ -1,5 +1,15 @@
-import { Component, computed, effect, inject, input, output, signal } from '@angular/core';
-import { FormArray, FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
+import {
+  Component,
+  Injector,
+  afterNextRender,
+  computed,
+  effect,
+  inject,
+  input,
+  output,
+  signal,
+} from '@angular/core';
+import { AbstractControl, FormBuilder, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
 import { map } from 'rxjs';
 import { EigentumService } from '../../core/eigentum.service';
 import { PartyService } from '../../core/party.service';
@@ -18,10 +28,8 @@ import { Dialog } from '../../shared/dialog/dialog';
 import { Feld } from '../../shared/formular/feld';
 import { ReferenzWahl, RefSuche } from '../../shared/formular/referenz-wahl';
 import { apiFehlerZuweisen } from '../../shared/formular/api-fehler';
-import {
-  felderAlsBeruehrtMarkieren,
-  serverFehlerZuruecksetzen,
-} from '../../shared/formular/formular.util';
+import { felderAlsBeruehrtMarkieren } from '../../shared/formular/formular.util';
+import { anteilFormatieren, anteilHinweis, anteilParsen, anteilValidator } from './anteil';
 
 /** Was der Dialog gerade tut. Drei Wege, ein Formularrahmen. */
 export type EigentumDialogModus =
@@ -66,14 +74,22 @@ export type EigentumDialogModus =
  * der Zweck: Er soll später als Rechnungsempfänger wählbar sein. Ihn hier
  * „schnell" anzulegen erzeugte Karteileichen ohne Anschrift.
  *
- * **Der Anteil ist ein Bruch, kein Prozentwert.** Zwei Felder, Zähler und
- * Nenner. Das ist unbequemer als ein Prozentfeld und trotzdem richtig: Drei
- * Erben zu je 1/3 lassen sich als Prozent nicht eingeben, ohne zu runden — und
- * gerundet wäre der Stand nie vollständig. Der Dialog rechnet die Summe live
- * mit und sagt, was noch fehlt.
+ * **Der Anteil ist ein Bruch, kein Prozentwert** — aber er wird als **ein**
+ * Feld eingegeben („1/3", „50 %", „0,25"), nicht als Zähler-und-Nenner-Paar.
+ * Saschas Befund beim Testen: *„Sinn des Zählers nicht ersichtlich. Nenner? was
+ * das?"* Die Übersetzung macht `anteil.ts`; gespeichert wird weiterhin der
+ * exakte Bruch, weil drei Erben zu je 1/3 dezimal nicht darstellbar sind.
  *
  * **Die Quelle ist Pflicht** (Beschluss A-14). Wer behauptet, wem etwas gehört,
  * muss sagen, woher er das hat.
+ *
+ * **Ein abgewiesenes Formular sagt, warum.** Der Dialog kam vorher in eine
+ * Sackgasse: Ein Server-Fehler blieb als `{server: …}` am Feld kleben, das
+ * Formular blieb damit für immer `invalid`, und jeder weitere Klick auf
+ * „Speichern" kehrte wortlos zurück — der Knopf wirkte tot. Deshalb werden
+ * Server-Fehler jetzt **vor** jedem Versuch abgeräumt (auch in den Zeilen der
+ * Beteiligtenliste), und ein ungültiges Formular bekommt eine Meldung samt
+ * Sprung ins erste beanstandete Feld.
  */
 @Component({
   selector: 'app-eigentum-dialog',
@@ -85,6 +101,7 @@ export class EigentumDialog {
   private readonly fb = inject(FormBuilder);
   private readonly svc = inject(EigentumService);
   private readonly partySvc = inject(PartyService);
+  private readonly injector = inject(Injector);
 
   readonly modus = input<EigentumDialogModus | null>(null);
   readonly fertig = output<boolean>();
@@ -96,6 +113,7 @@ export class EigentumDialog {
   protected readonly quellenartOptionen = QUELLENART_OPTIONEN;
   protected readonly eigentumsartOptionen = EIGENTUMSART_OPTIONEN;
   protected readonly VOLLSTAENDIGKEIT_HINWEIS = VOLLSTAENDIGKEIT_HINWEIS;
+  protected readonly anteilHinweis = anteilHinweis;
 
   /** Kontaktsuche über den Server — ein Betrieb mit 800 Kontakten braucht sie. */
   protected readonly kontaktSuche: RefSuche = (q) =>
@@ -108,7 +126,7 @@ export class EigentumDialog {
       );
 
   protected readonly kopfForm = this.fb.group({
-    distribution_status: this.fb.control<Vollstaendigkeit>('UNRESOLVED', {
+    distribution_status: this.fb.control<Vollstaendigkeit>('PARTIAL', {
       nonNullable: true,
     }),
     valid_from: this.fb.control('', {
@@ -134,8 +152,7 @@ export class EigentumDialog {
       nonNullable: true,
       validators: [Validators.required],
     }),
-    share_numerator: this.fb.control<number | null>(null),
-    share_denominator: this.fb.control<number | null>(null),
+    anteil: this.fb.control('', { nonNullable: true, validators: [anteilValidator] }),
     ownership_type: this.fb.control<Eigentumsart>('CO_OWNER', { nonNullable: true }),
     bestaetigt: this.fb.control(false, { nonNullable: true }),
   });
@@ -148,8 +165,7 @@ export class EigentumDialog {
    * korrigiertes Feld. Dafür gibt es den neuen Stand.
    */
   protected readonly beteiligungForm = this.fb.group({
-    share_numerator: this.fb.control<number | null>(null),
-    share_denominator: this.fb.control<number | null>(null),
+    anteil: this.fb.control('', { nonNullable: true, validators: [anteilValidator] }),
     ownership_type: this.fb.control<Eigentumsart>('CO_OWNER', { nonNullable: true }),
     bestaetigt: this.fb.control(false, { nonNullable: true }),
   });
@@ -183,15 +199,14 @@ export class EigentumDialog {
     let n = 1n;
     let unvollstaendig = false;
     for (const gruppe of this.beteiligte.controls) {
-      const zaehler = gruppe.controls.share_numerator.value;
-      const nenner = gruppe.controls.share_denominator.value;
-      if (!zaehler || !nenner) {
+      const wert = anteilParsen(gruppe.controls.anteil.value);
+      if (wert.art !== 'ok') {
         unvollstaendig = true;
         continue;
       }
       // z/n + zaehler/nenner, mit Kürzen vor dem Multiplizieren.
-      const bz = BigInt(zaehler);
-      const bn = BigInt(nenner);
+      const bz = BigInt(wert.anteil.zaehler);
+      const bn = BigInt(wert.anteil.nenner);
       const g = ggt(n, bn);
       z = z * (bn / g) + bz * (n / g);
       n = n * (bn / g);
@@ -217,17 +232,23 @@ export class EigentumDialog {
       const m = this.modus();
       if (!m) return;
       this.formularFehler.set(null);
-      serverFehlerZuruecksetzen(this.kopfForm);
+      this.serverFehlerAbraeumen();
 
       if (m.art === 'neu') {
         this.kopfForm.reset({
-          distribution_status: 'UNRESOLVED',
+          // „Teilweise geklärt" ist der Alltag: Man kennt jemanden, aber noch
+          // nicht die Aufteilung. „Ungeklärt" wäre ein Stand ohne jede Aussage —
+          // den legt niemand freiwillig an.
+          distribution_status: 'PARTIAL',
           valid_from: heuteIso(),
           valid_until: '',
           source_type: 'OWNER_LIST',
           source_reference: '',
         });
         this.beteiligte.clear();
+        // Eine leere Liste ist der häufigste Grund, den Dialog wieder zu
+        // schließen. Die erste Zeile steht deshalb schon da.
+        this.beteiligte.push(this.neueBeteiligung());
       } else if (m.art === 'bearbeiten') {
         this.kopfForm.reset({
           distribution_status: m.stand.distribution_status,
@@ -240,8 +261,7 @@ export class EigentumDialog {
       } else if (m.art === 'eigentuemer') {
         this.ergaenzenForm.reset({
           party_id: '',
-          share_numerator: null,
-          share_denominator: null,
+          anteil: '',
           ownership_type: 'CO_OWNER',
           bestaetigt: false,
         });
@@ -249,8 +269,10 @@ export class EigentumDialog {
         // Korrektur einer bestehenden Beteiligung: Der Kontakt steht fest (er
         // lässt sich nicht austauschen), also nur Anteil, Art und Bestätigung.
         this.beteiligungForm.reset({
-          share_numerator: m.person.share_numerator,
-          share_denominator: m.person.share_denominator,
+          anteil:
+            m.person.share_numerator != null && m.person.share_denominator != null
+              ? anteilFormatieren(m.person.share_numerator, m.person.share_denominator)
+              : '',
           ownership_type: m.person.ownership_type,
           bestaetigt: m.person.confirmation_status === 'CONFIRMED',
         });
@@ -264,8 +286,7 @@ export class EigentumDialog {
         nonNullable: true,
         validators: [Validators.required],
       }),
-      share_numerator: this.fb.control<number | null>(null),
-      share_denominator: this.fb.control<number | null>(null),
+      anteil: this.fb.control('', { nonNullable: true, validators: [anteilValidator] }),
       ownership_type: this.fb.control<Eigentumsart>('CO_OWNER', { nonNullable: true }),
       bestaetigt: this.fb.control(false, { nonNullable: true }),
     });
@@ -273,6 +294,14 @@ export class EigentumDialog {
 
   protected beteiligungHinzufuegen(): void {
     this.beteiligte.push(this.neueBeteiligung());
+  }
+
+  /**
+   * Eine Zeile, in der nichts steht. Sie wird beim Speichern übergangen —
+   * weder geprüft noch gesendet.
+   */
+  private zeileLeer(g: ReturnType<EigentumDialog['neueBeteiligung']>): boolean {
+    return !g.controls.party_id.value && !g.controls.anteil.value.trim();
   }
 
   /**
@@ -284,6 +313,7 @@ export class EigentumDialog {
    */
   protected beteiligungEntfernen(index: number): void {
     this.beteiligte.removeAt(index);
+    this.formularTick.update((v) => v + 1);
   }
 
   protected schliessen(): void {
@@ -294,6 +324,12 @@ export class EigentumDialog {
     const m = this.modus();
     if (!m || this.laedt()) return;
 
+    // Zuerst die Altlasten des letzten Versuchs. Ohne das bliebe ein
+    // Server-Fehler am Feld kleben, das Formular für immer `invalid` — und der
+    // Speichern-Knopf wirkte tot.
+    this.formularFehler.set(null);
+    this.serverFehlerAbraeumen();
+
     if (m.art === 'eigentuemer') {
       this.eigentuemerErgaenzen(m);
       return;
@@ -303,16 +339,20 @@ export class EigentumDialog {
       return;
     }
 
+    // Nur Zeilen prüfen, in denen wirklich etwas steht. Eine unberührte
+    // Leerzeile ist keine Aussage — ein „ungeklärter" Stand ganz ohne
+    // Eigentümer bleibt ausdrücklich zulässig und darf hier nicht an einem
+    // vorgeschlagenen, nie ausgefüllten Feld hängenbleiben.
+    const zeilen = this.beteiligte.controls.filter((g) => !this.zeileLeer(g));
     felderAlsBeruehrtMarkieren(this.kopfForm);
-    if (this.kopfForm.invalid) return;
-    for (const g of this.beteiligte.controls) {
-      felderAlsBeruehrtMarkieren(g);
-      if (g.invalid) return;
+    for (const g of zeilen) felderAlsBeruehrtMarkieren(g);
+    if (this.kopfForm.invalid || zeilen.some((g) => g.invalid)) {
+      this.eingabeUnvollstaendig();
+      return;
     }
 
     const v = this.kopfForm.getRawValue();
     this.laedt.set(true);
-    this.formularFehler.set(null);
 
     if (m.art === 'bearbeiten') {
       this.svc
@@ -338,18 +378,20 @@ export class EigentumDialog {
         source_type: v.source_type,
         source_reference: v.source_reference,
         distribution_status: v.distribution_status,
-        eigentuemer: this.beteiligte.controls.map((g) => {
-          const b = g.getRawValue();
-          return {
-            party_id: b.party_id,
-            share_numerator: b.share_numerator,
-            share_denominator: b.share_denominator,
-            ownership_type: b.ownership_type,
-            confirmation_status: b.bestaetigt
-              ? ('CONFIRMED' as const)
-              : ('UNCONFIRMED' as const),
-          };
-        }),
+        eigentuemer: zeilen
+          .map((g) => {
+            const b = g.getRawValue();
+            const a = anteilParsen(b.anteil);
+            return {
+              party_id: b.party_id,
+              share_numerator: a.art === 'ok' ? a.anteil.zaehler : null,
+              share_denominator: a.art === 'ok' ? a.anteil.nenner : null,
+              ownership_type: b.ownership_type,
+              confirmation_status: b.bestaetigt
+                ? ('CONFIRMED' as const)
+                : ('UNCONFIRMED' as const),
+            };
+          }),
       })
       .subscribe({
         next: () => this.erfolg(),
@@ -359,15 +401,18 @@ export class EigentumDialog {
 
   private eigentuemerErgaenzen(m: EigentumDialogModus & { art: 'eigentuemer' }): void {
     felderAlsBeruehrtMarkieren(this.ergaenzenForm);
-    if (this.ergaenzenForm.invalid) return;
+    if (this.ergaenzenForm.invalid) {
+      this.eingabeUnvollstaendig();
+      return;
+    }
     const v = this.ergaenzenForm.getRawValue();
+    const a = anteilParsen(v.anteil);
     this.laedt.set(true);
-    this.formularFehler.set(null);
     this.svc
       .addEigentuemer(m.stand.id, {
         party_id: v.party_id,
-        share_numerator: v.share_numerator,
-        share_denominator: v.share_denominator,
+        share_numerator: a.art === 'ok' ? a.anteil.zaehler : null,
+        share_denominator: a.art === 'ok' ? a.anteil.nenner : null,
         ownership_type: v.ownership_type,
         confirmation_status: v.bestaetigt ? 'CONFIRMED' : 'UNCONFIRMED',
       })
@@ -381,14 +426,17 @@ export class EigentumDialog {
     m: EigentumDialogModus & { art: 'beteiligung' },
   ): void {
     felderAlsBeruehrtMarkieren(this.beteiligungForm);
-    if (this.beteiligungForm.invalid) return;
+    if (this.beteiligungForm.invalid) {
+      this.eingabeUnvollstaendig();
+      return;
+    }
     const v = this.beteiligungForm.getRawValue();
+    const a = anteilParsen(v.anteil);
     this.laedt.set(true);
-    this.formularFehler.set(null);
     this.svc
       .updateEigentuemer(m.person.id, {
-        share_numerator: v.share_numerator,
-        share_denominator: v.share_denominator,
+        share_numerator: a.art === 'ok' ? a.anteil.zaehler : null,
+        share_denominator: a.art === 'ok' ? a.anteil.nenner : null,
         ownership_type: v.ownership_type,
         confirmation_status: v.bestaetigt ? 'CONFIRMED' : 'UNCONFIRMED',
       })
@@ -396,6 +444,56 @@ export class EigentumDialog {
         next: () => this.erfolg(),
         error: (err) => this.misserfolg(err),
       });
+  }
+
+  /**
+   * Ein abgewiesenes Formular darf nicht wortlos zurückkehren.
+   *
+   * Genau das war Saschas Befund („Eigentümer lassen sich nicht speichern"):
+   * Der Knopf tat nichts, weil irgendwo — womöglich außerhalb des sichtbaren
+   * Ausschnitts eines gescrollten Dialogs — ein Pflichtfeld rot war. Es gibt
+   * jetzt eine Meldung **und** einen Sprung dorthin.
+   */
+  private eingabeUnvollstaendig(): void {
+    this.formularFehler.set(
+      'Bitte die rot markierten Felder prüfen — so lässt sich das noch nicht speichern.',
+    );
+    // `afterNextRender`, nicht `queueMicrotask`: Das `aria-invalid` entsteht
+    // erst mit dem nächsten Rendern (die Meldung hängt an `touched`). Ein
+    // Microtask liefe davor und fände nichts — der Sprung verpuffte.
+    afterNextRender(
+      () => {
+        const ziel = document.querySelector<HTMLElement>(
+          '#eigentum-form [aria-invalid="true"]',
+        );
+        ziel?.focus();
+        ziel?.scrollIntoView?.({ block: 'center' });
+      },
+      { injector: this.injector },
+    );
+  }
+
+  /** Alle Formulare des Dialogs — inklusive der Zeilen der Beteiligtenliste. */
+  private alleFormulare(): FormGroup[] {
+    return [
+      this.kopfForm,
+      this.ergaenzenForm,
+      this.beteiligungForm,
+      ...(this.beteiligte.controls as unknown as FormGroup[]),
+    ];
+  }
+
+  /**
+   * Server-Fehler von allen Feldern nehmen.
+   *
+   * `serverFehlerZuruecksetzen` aus `formular.util` kann nur eine `FormGroup` —
+   * hier hängt aber zusätzlich ein `FormArray` von Gruppen daran, und genau
+   * dessen Zeilen blieben sonst vergiftet.
+   */
+  private serverFehlerAbraeumen(): void {
+    for (const form of this.alleFormulare()) {
+      for (const c of Object.values(form.controls)) serverFehlerLoeschen(c);
+    }
   }
 
   private erfolg(): void {
@@ -412,7 +510,18 @@ export class EigentumDialog {
         : m?.art === 'beteiligung'
           ? this.beteiligungForm
           : this.kopfForm;
-    this.formularFehler.set(apiFehlerZuweisen(err, form).formular);
+    this.formularFehler.set(
+      apiFehlerZuweisen(err, form).formular ??
+        'Die Angaben wurden abgelehnt — bitte die markierten Felder prüfen.',
+    );
+  }
+}
+
+function serverFehlerLoeschen(c: AbstractControl): void {
+  const e = c.errors;
+  if (e && e['server'] != null) {
+    const { server, ...rest } = e as Record<string, unknown>;
+    c.setErrors(Object.keys(rest).length ? rest : null);
   }
 }
 

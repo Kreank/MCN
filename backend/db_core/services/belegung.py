@@ -54,6 +54,7 @@ from django.db.models import Prefetch, Q
 from db_core.db_context import business_transaction
 from db_core.gate_errors import as_business_error
 from db_core.models import Occupancy, OccupancyParty, Unit
+from db_core.services import eigentum as eigentum_service
 from db_core.services._validation import ensure_party_usable
 
 #: Codeliste `tenure.occupancy.occupancy_type` (CHECK aus 0005).
@@ -245,6 +246,7 @@ def create_belegung(
     valid_until=None,
     contract_reference=None,
     mieter=None,
+    eigentuemer_party_id=None,
 ):
     """Belegung anlegen — optional gleich mit ihren Mietern.
 
@@ -260,6 +262,13 @@ def create_belegung(
 
     **Leerstand** ist der Aufruf ohne `mieter` (Typ `VACANT`) — er bleibt
     ausdrücklich zulässig.
+
+    `eigentuemer_party_id` trägt den Eigentümer **zugleich in den Reiter
+    „Eigentum"** ein (Saschas Befund: „wollen ja keine doppelte Arbeit"). Er ist
+    kein Beteiligter der Belegung — wer vermietet, wohnt dort gerade nicht — und
+    landet deshalb nicht in `occupancy_party`, sondern als Beteiligung an einem
+    Eigentumsstand der Einheit. In **derselben** Transaktion: beides gilt
+    zusammen oder gar nicht.
     """
     if occupancy_type not in OCCUPANCY_TYPES:
         raise ValueError(
@@ -271,6 +280,13 @@ def create_belegung(
     _pruefe_ueberlappung(unit_id, valid_from, valid_until)
 
     zeilen = _mieter_zeilen_vorbereiten(mieter or [], valid_from, valid_until)
+    # Geplant VOR der Transaktion (dort laufen die Prüfungen), geschrieben darin.
+    eigentum_plan = eigentum_service.plane_uebernahme_aus_belegung(
+        unit_id=unit_id,
+        party_id=eigentuemer_party_id,
+        ab=valid_from,
+        quelle_zusatz=_text(contract_reference),
+    )
 
     with as_business_error():
         with business_transaction(actor_app_user_id):
@@ -286,6 +302,7 @@ def create_belegung(
                 OccupancyParty.objects.create(
                     id=uuid.uuid4(), occupancy_id=occupancy.id, **z
                 )
+            eigentum_service.wende_uebernahme_an(eigentum_plan)
     return get_belegung(occupancy.id)
 
 
@@ -417,12 +434,16 @@ def add_mieter(
     role,
     valid_from=None,
     valid_until=None,
+    eigentuemer_party_id=None,
 ):
     """Einen Mieter/Nutzer an eine bestehende Belegung setzen.
 
     Ohne eigenen Zeitraum erbt er den der Belegung. Ein Zeitraum **außerhalb** der
     Belegung weist der deferred Containment-Trigger ab (422) — hier wird er
     vorgeprüft, damit die Meldung den Grund nennt.
+
+    `eigentuemer_party_id` trägt denselben (oder einen anderen) Kontakt zugleich
+    als **Eigentümer** der Einheit ein — siehe `create_belegung`.
     """
     occupancy = Occupancy.objects.filter(pk=occupancy_id).first()
     if occupancy is None:
@@ -440,12 +461,19 @@ def add_mieter(
         occupancy.valid_from,
         occupancy.valid_until,
     )[0]
+    eigentum_plan = eigentum_service.plane_uebernahme_aus_belegung(
+        unit_id=occupancy.unit_id,
+        party_id=eigentuemer_party_id,
+        ab=zeile["valid_from"],
+        quelle_zusatz=occupancy.contract_reference,
+    )
 
     with as_business_error():
         with business_transaction(actor_app_user_id):
             OccupancyParty.objects.create(
                 id=uuid.uuid4(), occupancy_id=occupancy.id, **zeile
             )
+            eigentum_service.wende_uebernahme_an(eigentum_plan)
     return get_belegung(occupancy.id)
 
 

@@ -51,6 +51,19 @@ class MieterIn(Schema):
     valid_until: date | None = None
 
 
+class MieterAddIn(MieterIn):
+    """Body für „weitere:n Mieter:in setzen" — mit Eigentümer-Übernahme.
+
+    Eigenes Schema statt eines Feldes an `MieterIn`: In `BelegungIn.mieter`
+    stünde es je Zeile und suggerierte, jeder Mieter könne einen eigenen
+    Eigentumsstand mitbringen. Der Eigentümer gehört zur **Einheit**, nicht zur
+    Mieterzeile.
+    """
+
+    #: Trägt diesen Kontakt zugleich als Eigentümer im Reiter „Eigentum" ein.
+    eigentuemer_party_id: UUID | None = None
+
+
 class BelegungIn(Schema):
     unit_id: UUID
     occupancy_type: str
@@ -59,6 +72,9 @@ class BelegungIn(Schema):
     contract_reference: str | None = None
     #: Leer = **Leerstand**. Ausdrücklich zulässig.
     mieter: list[MieterIn] = []
+    #: Wem die Einheit gehört — landet im Reiter „Eigentum", nicht in
+    #: `occupancy_party`. Wer vermietet, wohnt dort gerade nicht.
+    eigentuemer_party_id: UUID | None = None
 
 
 class BelegungPatch(Schema):
@@ -281,6 +297,7 @@ def create_belegung(request, property_id: UUID, payload: BelegungIn):
             valid_until=payload.valid_until,
             contract_reference=payload.contract_reference,
             mieter=[m.dict() for m in payload.mieter],
+            eigentuemer_party_id=payload.eigentuemer_party_id,
         )
     except ValueError as exc:
         raise HttpError(422, str(exc))
@@ -306,13 +323,17 @@ def update_belegung(request, occupancy_id: UUID, payload: BelegungPatch):
 
 
 @router.post("/belegung/{occupancy_id}/mieter", response={201: BelegungOut})
-def add_mieter(request, occupancy_id: UUID, payload: MieterIn):
+def add_mieter(request, occupancy_id: UUID, payload: MieterAddIn):
     """Einen Mieter/Nutzer an eine bestehende Belegung setzen.
 
     Mehrere Beteiligte sind der Normalfall (Ehepaar, Mitbewohner), kein
     Sonderfall — deshalb ein eigener Endpunkt und kein „der eine Mieter".
     """
     actor, scope = require_scoped(request, "tenure", "AENDERN")
+    if payload.eigentuemer_party_id is not None:
+        # Die Übernahme kann einen Eigentumsstand ANLEGEN. Wer nur ändern darf,
+        # bekommt hier kein Schlupfloch — fail-closed vor dem ersten Schreiben.
+        require_scoped(request, "tenure", "ANLEGEN")
     _belegung_or_404_scoped(occupancy_id, actor, scope)
     try:
         occ = belegung_service.add_mieter(
@@ -322,6 +343,7 @@ def add_mieter(request, occupancy_id: UUID, payload: MieterIn):
             role=payload.role,
             valid_from=payload.valid_from,
             valid_until=payload.valid_until,
+            eigentuemer_party_id=payload.eigentuemer_party_id,
         )
     except ValueError as exc:
         raise HttpError(422, str(exc))

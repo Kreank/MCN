@@ -1,5 +1,10 @@
 @if (modus(); as m) {
-  <app-dialog [offen]="offen()" [titel]="titel()" (schliessen)="schliessen()">
+  <app-dialog
+    [offen]="offen()"
+    [titel]="titel()"
+    [breit]="m.art === 'neu'"
+    (schliessen)="schliessen()"
+  >
     <form
       id="eigentum-form"
       class="dialog-form"
@@ -23,33 +28,23 @@
           Eigentümer ist eine andere Aussage. Dafür beenden Sie den Stand und
           legen ihn neu an.
         </p>
-        <div class="dialog-raster">
-          <app-feld
-            [control]="$any(beteiligungForm.controls.share_numerator)"
-            label="Anteil — Zähler"
-            typ="zahl"
-            inputmode="numeric"
-            hinweis="Leer lassen, wenn der Anteil unbekannt ist."
-          />
-          <app-feld
-            [control]="$any(beteiligungForm.controls.share_denominator)"
-            label="Anteil — Nenner"
-            typ="zahl"
-            inputmode="numeric"
-            hinweis="Bei 1/3 also: 1 und 3."
-          />
-        </div>
+        <app-feld
+          [control]="$any(beteiligungForm.controls.anteil)"
+          label="Anteil"
+          platzhalter="z. B. 1/3 oder 50 %"
+          [hinweis]="anteilHinweis(beteiligungForm.controls.anteil.value)"
+        />
         <app-feld
           [control]="$any(beteiligungForm.controls.ownership_type)"
-          label="Art"
+          label="Eigentumsart"
           typ="select"
           [optionen]="eigentumsartOptionen"
         />
         <app-feld
           [control]="$any(beteiligungForm.controls.bestaetigt)"
-          label="Beteiligung ist belegt (bestätigt)"
+          label="Die Angabe ist durch die Quelle belegt"
           typ="checkbox"
-          hinweis="Erst wenn alle Beteiligungen bestätigt sind, lässt sich der Stand auf „vollständig geklärt“ heben."
+          hinweis="Anhaken, wenn ein Nachweis vorliegt (z. B. die Eigentümerliste). Erst wenn alle Beteiligungen belegt sind, lässt sich der Stand auf „vollständig geklärt“ heben."
         />
       } @else if (m.art === 'eigentuemer') {
         <p class="dialog-hinweis">
@@ -64,33 +59,23 @@
           [suche]="kontaktSuche"
           platzhalter="Nach Name suchen …"
         />
-        <div class="dialog-raster">
-          <app-feld
-            [control]="$any(ergaenzenForm.controls.share_numerator)"
-            label="Anteil — Zähler"
-            typ="zahl"
-            inputmode="numeric"
-            hinweis="Leer lassen, wenn der Anteil unbekannt ist."
-          />
-          <app-feld
-            [control]="$any(ergaenzenForm.controls.share_denominator)"
-            label="Anteil — Nenner"
-            typ="zahl"
-            inputmode="numeric"
-            hinweis="Bei 1/3 also: 1 und 3."
-          />
-        </div>
+        <app-feld
+          [control]="$any(ergaenzenForm.controls.anteil)"
+          label="Anteil"
+          platzhalter="z. B. 1/3 oder 50 %"
+          [hinweis]="anteilHinweis(ergaenzenForm.controls.anteil.value)"
+        />
         <app-feld
           [control]="$any(ergaenzenForm.controls.ownership_type)"
-          label="Art"
+          label="Eigentumsart"
           typ="select"
           [optionen]="eigentumsartOptionen"
         />
         <app-feld
           [control]="$any(ergaenzenForm.controls.bestaetigt)"
-          label="Beteiligung ist belegt (bestätigt)"
+          label="Die Angabe ist durch die Quelle belegt"
           typ="checkbox"
-          hinweis="Ein vollständig geklärter Stand duldet nur bestätigte Beteiligungen."
+          hinweis="Ein vollständig geklärter Stand duldet nur belegte Beteiligungen."
         />
       } @else {
         <!-- Kopfdaten: Zeitraum, Quelle, Vollständigkeitsgrad -->
@@ -122,15 +107,16 @@
         <div class="dialog-raster">
           <app-feld
             [control]="$any(kopfForm.controls.source_type)"
-            label="Quelle"
+            label="Woher stammt die Angabe?"
             typ="select"
             [optionen]="quellenartOptionen"
           />
           <app-feld
             [control]="$any(kopfForm.controls.source_reference)"
-            label="Beleg der Quelle"
+            label="Beleg dazu"
             [pflicht]="true"
             platzhalter="z. B. Eigentümerliste vom 12.03.2026"
+            hinweis="Pflicht: Wer behauptet, wem etwas gehört, muss sagen, woher er das weiß. Notfalls „telefonische Auskunft der Verwaltung“."
           />
         </div>
 
@@ -139,7 +125,7 @@
             <div class="beteiligte__kopf">
               <h3 id="bet-titel" class="beteiligte__titel">Eigentümer</h3>
               <button type="button" class="btn btn--klein" (click)="beteiligungHinzufuegen()">
-                <span aria-hidden="true">＋</span> Eigentümer hinzufügen
+                <span aria-hidden="true">＋</span> Weitere:n Eigentümer:in
               </button>
             </div>
 
@@ -151,49 +137,53 @@
             }
 
             @for (g of beteiligte.controls; track $index) {
-              <div class="beteiligung" [formGroup]="g">
-                <app-referenz-wahl
-                  [control]="$any(g.controls.party_id)"
-                  label="Kontakt"
-                  [pflicht]="true"
-                  [suche]="kontaktSuche"
-                  platzhalter="Nach Name suchen …"
-                />
-                <div class="beteiligung__anteil">
-                  <app-feld
-                    [control]="$any(g.controls.share_numerator)"
-                    label="Zähler"
-                    typ="zahl"
-                    inputmode="numeric"
-                  />
-                  <span class="beteiligung__strich" aria-hidden="true">/</span>
-                  <app-feld
-                    [control]="$any(g.controls.share_denominator)"
-                    label="Nenner"
-                    typ="zahl"
-                    inputmode="numeric"
+              <!-- Der Kontakt steht auf einer EIGENEN Zeile: Sein Suchfeld
+                   klappt eine Trefferliste auf, und die legte sich in der alten
+                   fünfspaltigen Zeile über das Nachbarfeld — man sah dort ein
+                   Dropdown, das man weder zuordnen noch treffen konnte. -->
+              <fieldset class="beteiligung">
+                <legend class="beteiligung__nr">{{ $index + 1 }}.</legend>
+                <div class="beteiligung__kontakt">
+                  <app-referenz-wahl
+                    [control]="$any(g.controls.party_id)"
+                    label="Kontakt"
+                    [pflicht]="true"
+                    [suche]="kontaktSuche"
+                    platzhalter="Nach Name suchen …"
+                    hinweis="Aus den bestehenden Kontakten wählen — dort steht die Anschrift, die eine Rechnung braucht."
                   />
                 </div>
-                <app-feld
-                  [control]="$any(g.controls.ownership_type)"
-                  label="Art"
-                  typ="select"
-                  [optionen]="eigentumsartOptionen"
-                />
-                <app-feld
-                  [control]="$any(g.controls.bestaetigt)"
-                  label="belegt"
-                  typ="checkbox"
-                />
-                <button
-                  type="button"
-                  class="btn btn--klein beteiligung__weg"
-                  (click)="beteiligungEntfernen($index)"
-                  [attr.aria-label]="'Zeile ' + ($index + 1) + ' entfernen'"
-                >
-                  Entfernen
-                </button>
-              </div>
+                <div class="beteiligung__details">
+                  <app-feld
+                    [control]="$any(g.controls.anteil)"
+                    label="Anteil"
+                    platzhalter="z. B. 1/3 oder 50 %"
+                    [hinweis]="anteilHinweis(g.controls.anteil.value)"
+                  />
+                  <app-feld
+                    [control]="$any(g.controls.ownership_type)"
+                    label="Eigentumsart"
+                    typ="select"
+                    [optionen]="eigentumsartOptionen"
+                  />
+                  <app-feld
+                    [control]="$any(g.controls.bestaetigt)"
+                    label="belegt"
+                    typ="checkbox"
+                    hinweis="Nachweis liegt vor"
+                  />
+                  @if (beteiligte.controls.length > 1) {
+                    <button
+                      type="button"
+                      class="btn btn--klein beteiligung__weg"
+                      (click)="beteiligungEntfernen($index)"
+                      [attr.aria-label]="'Eigentümer ' + ($index + 1) + ' entfernen'"
+                    >
+                      Entfernen
+                    </button>
+                  }
+                </div>
+              </fieldset>
             }
 
             <!-- Die Anteilssumme live: Wer drei Erben einträgt, soll VOR dem

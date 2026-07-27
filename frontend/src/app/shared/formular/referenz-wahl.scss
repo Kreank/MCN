@@ -23,6 +23,13 @@
   box-shadow: var(--shadow-2);
 }
 
+// Nach oben geklappt, wenn unten kein Platz ist (scrollender Dialog). Ohne das
+// zeigte ein Feld am unteren Rand nur einen abgeschnittenen Streifen Liste.
+.ref-wahl__liste--oben {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
 .ref-wahl__hinweis {
   padding: var(--space-2) var(--space-3);
   font-size: var(--step--1);

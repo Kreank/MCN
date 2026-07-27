@@ -75,6 +75,14 @@ export class Dialog implements OnDestroy {
   readonly offen = input(false);
   /** Ueberschrift; leer -> kein Kopf, kein aria-labelledby. */
   readonly titel = input('');
+  /**
+   * Breiter Zuschnitt fuer Formulare mit Zeilen (Positionen, Beteiligte).
+   *
+   * Die schmale Grundform (34rem) ist fuer kurze Dialoge richtig. Sobald ein
+   * Formular mehrere Felder NEBENEINANDER braucht, quetscht sie sie zu einer
+   * Spalte und erzeugt Scrollen — dann ist der breite Zuschnitt der bessere.
+   */
+  readonly breit = input(false);
   /** Escape schliesst (fuer irreversible Dialoge abschaltbar). */
   readonly escapeSchliesst = input(true);
   /** Klick auf den Hintergrund schliesst (abschaltbar). */

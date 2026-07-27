@@ -62,7 +62,12 @@
       />
 
       @if (offen()) {
-        <ul class="ref-wahl__liste" role="listbox" [id]="listboxId">
+        <ul
+          class="ref-wahl__liste"
+          [class.ref-wahl__liste--oben]="nachOben()"
+          role="listbox"
+          [id]="listboxId"
+        >
           @if (ladend()) {
             <li class="ref-wahl__hinweis" role="presentation">Suche läuft …</li>
           } @else if (optionen().length === 0) {

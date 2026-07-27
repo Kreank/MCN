@@ -552,6 +552,111 @@ def add_eigentuemer(
     return get_stand(period_id)
 
 
+#: Quellenart der Eigentümer, die aus der Belegungserfassung stammen.
+#: „Manuell erfasst" ist hier die Wahrheit — jemand hat es beim Aufnehmen der
+#: Belegung gesagt, es liegt keine Eigentümerliste vor.
+UEBERNAHME_SOURCE_TYPE = "MANUAL"
+UEBERNAHME_REFERENZ = "Aus der Belegungserfassung übernommen"
+
+
+def plane_uebernahme_aus_belegung(
+    *, unit_id, party_id, ab, quelle_zusatz=None
+):
+    """Bereitet die Übernahme eines Eigentümers **aus der Belegung** vor.
+
+    Saschas Befund beim Testen: *„Bei Belegung kann ich ja auch Eigentümer als
+    bewohnt angeben — das sollte beim Reiter Eigentum übernommen werden, wollen
+    ja keine doppelte Arbeit."* Genau das macht diese Funktion: Wer beim
+    Erfassen der Belegung als Eigentümer benannt wird, steht danach im Reiter
+    „Eigentum", ohne dort ein zweites Mal eingetragen zu werden.
+
+    **Geplant, nicht geschrieben.** Alle Prüfungen laufen hier, das Schreiben
+    erledigt `wende_uebernahme_an()` **innerhalb der Transaktion der Belegung**.
+    Der Grund ist nicht Eleganz: Belegung und Eigentumsstand müssen zusammen
+    entstehen oder zusammen scheitern. Ein halb übernommener Eigentümer wäre
+    eine Aussage, die niemand getroffen hat.
+
+    Rückgabe: ein Plan-Dict für `wende_uebernahme_an()` — oder ``None``, wenn
+    nichts zu tun ist (kein Kontakt übergeben, oder er steht schon drin).
+
+    Die Aussage bleibt bewusst **schwach**: `PARTIAL` („einer ist bekannt, die
+    Aufteilung nicht"), ohne Anteil, **unbestätigt**. Eine Nebenbei-Angabe aus
+    der Belegungsaufnahme ist kein Grundbuchauszug, und das Modell soll niemanden
+    zwingen, etwas zu behaupten, was er nicht weiß.
+    """
+    if party_id is None:
+        return None
+
+    unit = _pruefe_einheit(unit_id)
+    ensure_party_usable(party_id, "Eigentümer")
+
+    staende = list(
+        OwnershipPeriod.objects.filter(unit_id=unit_id).prefetch_related("interests")
+    )
+    stand = next(
+        (
+            s
+            for s in staende
+            if s.valid_from <= ab and (s.valid_until is None or s.valid_until > ab)
+        ),
+        None,
+    )
+
+    zeile = _beteiligtenzeilen([{"party_id": party_id}])[0]
+
+    if stand is None:
+        # Noch kein Stand an diesem Tag: einen offenen anlegen. Ein später
+        # beginnender Stand würde mit dem offenen Ende kollidieren — dann meldet
+        # die Überlappungsprüfung, WELCHER Stand im Weg ist.
+        _pruefe_ueberlappung(unit_id, ab, None)
+        referenz = UEBERNAHME_REFERENZ
+        if quelle_zusatz:
+            referenz = f"{referenz} (Mietvertrag {quelle_zusatz})"
+        return {
+            "stand": {
+                "unit_id": unit_id,
+                "distribution_status": "PARTIAL",
+                "valid_from": ab,
+                "valid_until": None,
+                "source_type": UEBERNAHME_SOURCE_TYPE,
+                "source_reference": referenz,
+            },
+            "interest": zeile,
+        }
+
+    if any(i.owner_party_id == party_id for i in stand.interests.all()):
+        return None  # Steht schon drin — die Übernahme ist wiederholbar.
+
+    if stand.distribution_status == "COMPLETE":
+        raise EigentumError(
+            f"Für {unit.unit_number} ist das Eigentum bereits als „vollständig "
+            "geklärt“ erfasst — dort ist kein Platz für einen weiteren "
+            "Eigentümer nebenbei. Bitte im Reiter „Eigentum“ klären: den "
+            "bisherigen Stand beenden und den neuen anlegen."
+        )
+
+    return {"period_id": stand.id, "interest": zeile}
+
+
+def wende_uebernahme_an(plan):
+    """Schreibt den Plan aus `plane_uebernahme_aus_belegung()`.
+
+    **Nur innerhalb einer bereits offenen `business_transaction` aufrufen** —
+    der Aufrufer (die Belegung) hält sie, damit Belegung und Eigentum zusammen
+    gültig werden. Diese Funktion prüft nichts mehr; das ist im Plan passiert.
+    """
+    if not plan:
+        return None
+    period_id = plan.get("period_id")
+    if period_id is None:
+        stand = OwnershipPeriod.objects.create(id=uuid.uuid4(), **plan["stand"])
+        period_id = stand.id
+    OwnershipInterest.objects.create(
+        id=uuid.uuid4(), ownership_period_id=period_id, **plan["interest"]
+    )
+    return period_id
+
+
 def update_eigentuemer(actor_app_user_id, interest_id, felder):
     """Ändert Anteil, Art oder Bestätigung einer Beteiligung.
 

@@ -7,7 +7,7 @@
   (cancel)="onCancel($event)"
   (click)="onKlick($event)"
 >
-  <div class="dialog__panel">
+  <div class="dialog__panel" [class.dialog__panel--breit]="breit()">
     @if (titel()) {
       <header class="dialog__kopf">
         <h2 class="dialog__titel" [id]="titelId" tabindex="-1">{{ titel() }}</h2>

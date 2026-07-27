@@ -77,6 +77,17 @@ export interface MieterIn {
   valid_until?: string | null;
 }
 
+/**
+ * Beim Nachsetzen einer Person darf zugleich der Eigentümer mitkommen.
+ *
+ * Der Eigentümer ist **kein** Beteiligter der Belegung — wer vermietet, wohnt
+ * dort gerade nicht. Er landet im Reiter „Eigentum"; der Server erledigt beides
+ * in einer Transaktion.
+ */
+export interface MieterAddIn extends MieterIn {
+  eigentuemer_party_id?: string | null;
+}
+
 export interface BelegungIn {
   unit_id: string;
   occupancy_type: OccupancyType;
@@ -85,6 +96,12 @@ export interface BelegungIn {
   contract_reference?: string | null;
   /** Leer = Leerstand. Ausdrücklich zulässig. */
   mieter?: MieterIn[];
+  /**
+   * Wem die Einheit gehört. Wird als Eigentumsstand der Einheit angelegt
+   * (`PARTIAL`, ohne Anteil, unbestätigt) — damit niemand dieselbe Person
+   * zweimal erfassen muss. Saschas Befund: „wollen ja keine doppelte Arbeit."
+   */
+  eigentuemer_party_id?: string | null;
 }
 
 /** PATCH: nur gesendete Felder. `unit_id` fehlt bewusst — die Wohnung wechselt nicht. */
