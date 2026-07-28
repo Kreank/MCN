@@ -156,6 +156,47 @@
         [suche]="liegenschaftSuche"
       />
       <app-feld [control]="neuForm.controls.name" label="Bezeichnung" [pflicht]="true" platzhalter="z. B. Aufzugswartung" />
+
+      <!-- Welche Anlagen deckt der Vertrag ab (0135)? Nichts anzukreuzen ist
+           ausdrücklich erlaubt und heißt „gilt fürs ganze Objekt" — das steht
+           dort auch, damit niemand rät. -->
+      @if (gewaehlteLiegenschaft()) {
+        <fieldset class="anlagenwahl">
+          <legend class="anlagenwahl__titel">Abgedeckte Anlagen</legend>
+          @if (anlagenLaedt()) {
+            <p class="anlagenwahl__hinweis" role="status">Anlagen werden geladen …</p>
+          } @else if (anlagen().length === 0) {
+            <p class="anlagenwahl__hinweis">
+              An dieser Liegenschaft ist keine technische Anlage erfasst. Der Vertrag gilt
+              damit für das ganze Objekt.
+            </p>
+          } @else {
+            <p class="anlagenwahl__hinweis">
+              Nichts angekreuzt heißt: <strong>gilt für das ganze Objekt</strong>. Wer hier
+              auswählt, bekommt den Vertrag später an genau diesen Anlagen angezeigt.
+            </p>
+            <ul class="anlagenwahl__liste">
+              @for (a of anlagen(); track a.id) {
+                <li>
+                  <label class="anlagenwahl__zeile">
+                    <input
+                      type="checkbox"
+                      [checked]="anlageGewaehlt(a.id)"
+                      (change)="anlageUmschalten(a.id)"
+                    />
+                    <span class="anlagenwahl__name">{{ a.name }}</span>
+                    <span class="anlagenwahl__meta">{{ anlageArt(a.asset_type) }}</span>
+                    @if (anlageOrt(a); as ort) {
+                      <span class="anlagenwahl__meta">{{ ort }}</span>
+                    }
+                  </label>
+                </li>
+              }
+            </ul>
+          }
+        </fieldset>
+      }
+
       <app-feld [control]="neuForm.controls.start_date" label="Startdatum" typ="datum" [pflicht]="true" />
       <app-feld
         [control]="neuForm.controls.interval_kind"

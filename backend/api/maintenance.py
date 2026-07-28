@@ -83,6 +83,21 @@ class PropertyRefOut(Schema):
     city: str
 
 
+class AssetRefOut(Schema):
+    """Eine vom Vertrag abgedeckte Anlage — so viel, wie zum Erkennen reicht."""
+
+    id: UUID
+    name: str
+    asset_type: str
+    #: Gebäude · Einheit · Etage, soweit erfasst. `null` = kein Standort erfasst.
+    standort: str | None = None
+    #: AKTIV | INAKTIV. Eine stillgelegte Anlage bleibt zugeordnet (die
+    #: Vergangenheit wird nicht umgeschrieben) — das UI muss es aber
+    #: **sagen** können, sonst steht dort ein ausgebautes Gerät wie ein
+    #: laufendes.
+    status: str = "AKTIV"
+
+
 class ContractOut(Schema):
     id: UUID
     contract_number: str
@@ -99,6 +114,10 @@ class ContractOut(Schema):
     property: PropertyRefOut
     customer: str | None = None
     project_name: str | None = None
+    #: Die abgedeckten Anlagen (0135). **Leer heißt „gilt fürs ganze Objekt"**,
+    #: nicht „deckt nichts ab" — deshalb steht daneben `gilt_objektweit`.
+    assets: list[AssetRefOut] = []
+    gilt_objektweit: bool = True
 
 
 class ContractListOut(Schema):
@@ -143,6 +162,20 @@ class ContractCreateIn(Schema):
     project_id: UUID | None = None
     lead_time_days: int | None = None
     notes: str | None = None
+    #: Welche technischen Anlagen der Vertrag abdeckt (0135). Leer/weggelassen =
+    #: gilt fürs ganze Objekt (bisheriges Verhalten).
+    asset_ids: list[UUID] = []
+
+
+class ContractAssetsIn(Schema):
+    """Die abgedeckten Anlagen **vollständig** setzen (kein Teil-Update).
+
+    Wer eine Zuordnung wegnimmt, schickt die verbleibende Liste — nicht ein
+    „minus diese eine". So ist der gewünschte Zustand immer eindeutig, auch wenn
+    zwei Leute gleichzeitig am Vertrag arbeiten.
+    """
+
+    asset_ids: list[UUID] = []
 
 
 class ContractStatusIn(Schema):
@@ -162,12 +195,50 @@ def _property_ref(contract):
     )
 
 
-def _contract_out(contract, today):
+def _asset_refs(assets, labels=None):
+    """Anlagen → Kurzreferenz mit lesbarem Standort (Gebäude · Einheit · Etage).
+
+    Nutzt die **eine** Auflösung aus `api/anlage.py`; eine zweite Fassung des
+    Gebäudelabels hier wäre eine zweite Wahrheit über denselben Text.
+
+    `labels` (vorberechnet über die ganze Seite) verhindert das N+1: Ohne den
+    Parameter fragte die Vertragsliste je Vertrag zwei Mal nach Gebäude- und
+    Einheitsnamen — bei 100 Verträgen 200 Abfragen für eine Liste.
+    """
+    from api.anlage import standort_labels
+
+    if not assets:
+        return []
+    gebaeude, einheiten = labels if labels is not None else standort_labels(assets)
+    refs = []
+    for a in assets:
+        einheit = einheiten.get(a.unit_id) if a.unit_id else None
+        teile = [
+            gebaeude.get(a.building_id),
+            einheit[0] if einheit else None,
+            einheit[1] if einheit else None,
+            a.location_note,
+        ]
+        standort = " · ".join(t for t in teile if t)
+        refs.append(
+            AssetRefOut(
+                id=a.id,
+                name=a.name,
+                asset_type=a.asset_type,
+                standort=standort or None,
+                status=a.status,
+            )
+        )
+    return refs
+
+
+def _contract_out(contract, today, assets=None, labels=None):
     is_due = bool(
         contract.status == "AKTIV"
         and contract.next_due_date
         and contract.next_due_date <= today
     )
+    refs = _asset_refs(assets or [], labels)
     return ContractOut(
         id=contract.id,
         contract_number=contract.contract_number,
@@ -184,6 +255,8 @@ def _contract_out(contract, today):
         property=_property_ref(contract),
         customer=contract.party.display_name if contract.party_id else None,
         project_name=contract.project.name if contract.project_id else None,
+        assets=refs,
+        gilt_objektweit=not refs,
     )
 
 
@@ -225,7 +298,14 @@ def list_contracts(
 
     total = qs.count()
     start = (page - 1) * page_size
-    items = [_contract_out(c, today) for c in qs[start:start + page_size]]
+    seite = list(qs[start:start + page_size])
+    # Zwei Abfragen für die ganze Seite, nicht zwei je Vertrag: erst die
+    # abgedeckten Anlagen, dann EINMAL deren Gebäude-/Einheitsnamen.
+    from api.anlage import standort_labels
+
+    anlagen = wartung_service.contract_assets_bulk([c.id for c in seite])
+    labels = standort_labels([a for liste in anlagen.values() for a in liste])
+    items = [_contract_out(c, today, anlagen.get(c.id), labels) for c in seite]
     return ContractListOut(items=items, total=total, page=page, page_size=page_size)
 
 
@@ -265,7 +345,9 @@ def get_contract(request, contract_id: UUID):
         .order_by("-occurred_at")
     ]
 
-    base = _contract_out(contract, today)
+    base = _contract_out(
+        contract, today, wartung_service.contract_assets(contract.id)
+    )
     return ContractDetailOut(
         **base.model_dump(),
         notes=contract.notes,
@@ -284,7 +366,9 @@ def _reload_contract(contract_id):
     )
     if contract is None:
         raise HttpError(404, "Wartungsvertrag nicht gefunden.")
-    return _contract_out(contract, date.today())
+    return _contract_out(
+        contract, date.today(), wartung_service.contract_assets(contract_id)
+    )
 
 
 @router.post("/contracts", response={201: ContractOut}, auth=django_auth)
@@ -310,10 +394,36 @@ def create_contract(request, payload: ContractCreateIn):
             project_id=payload.project_id,
             lead_time_days=payload.lead_time_days,
             notes=payload.notes,
+            asset_ids=payload.asset_ids,
         )
     except ValueError as exc:
         raise HttpError(422, str(exc))
     return Status(201, _reload_contract(contract.id))
+
+
+@router.put("/contracts/{contract_id}/assets", response=ContractOut, auth=django_auth)
+def set_contract_assets(request, contract_id: UUID, payload: ContractAssetsIn):
+    """Setzt, **welche technischen Anlagen** der Vertrag abdeckt (0135).
+
+    Vollständige Menge, kein Teil-Update: Die gesendete Liste ist danach der
+    Zustand. Eine leere Liste ist gültig und heißt „gilt fürs ganze Objekt".
+
+    Zuordnen ist eine Änderung am Vertrag → **AENDERN** (`require`,
+    fail-closed — der Monteur liest den Vertrag, er hängt keine Anlagen um).
+    Anlage aus einer fremden Liegenschaft oder stillgelegte Anlage → 422; die
+    DB erzwingt die Objektgleichheit zusätzlich physisch.
+    """
+    actor, _ = require(request, "maintenance", "AENDERN")
+    contract = MaintenanceContract.objects.filter(id=contract_id).first()
+    if contract is None:
+        raise HttpError(404, "Wartungsvertrag nicht gefunden.")
+    try:
+        wartung_service.set_contract_assets(
+            actor, contract_id=contract_id, asset_ids=payload.asset_ids
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _reload_contract(contract_id)
 
 
 @router.post("/contracts/{contract_id}/status", response=ContractOut, auth=django_auth)

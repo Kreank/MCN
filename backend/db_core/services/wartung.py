@@ -19,6 +19,11 @@ entsteht ein echtes Folgeobjekt, auf das der Event verweist:
 Der (per Cron täglich aufgerufene) Fälligkeits-Scheduler ist das Management-
 Command wartung_faellige_ausloesen; es ruft für jeden fälligen Vertrag genau
 diese trigger_action auf.
+
+Seit Migration 0135 kann ein Vertrag ausdrücklich benennen, WELCHE technischen
+Anlagen er abdeckt (maintenance.contract_asset, n:m). Keine Zuordnung heißt
+weiterhin "gilt fürs ganze Objekt" — Bestandsverträge bleiben damit gültig,
+ohne dass ihnen jemand eine Anlage andichtet.
 """
 import calendar
 import uuid
@@ -29,7 +34,14 @@ from django.utils import timezone
 
 from db_core.db_context import business_transaction
 from db_core.gate_errors import as_business_error
-from db_core.models import MaintenanceContract, MaintenanceEvent, Project, Property
+from db_core.models import (
+    MaintenanceContract,
+    MaintenanceContractAsset,
+    MaintenanceEvent,
+    Project,
+    Property,
+    TechnicalAsset,
+)
 from db_core.services import aufgabe as aufgabe_service
 from db_core.services import auftrag as auftrag_service
 from db_core.services import projekt as projekt_service
@@ -84,6 +96,155 @@ def _advance_due(contract):
     return _advance_due_from(base, contract)
 
 
+# ---------------------------------------------------------------------------
+# Abgedeckte Anlagen (maintenance.contract_asset, Migration 0135)
+# ---------------------------------------------------------------------------
+
+def contract_assets(contract_id):
+    """Die Anlagen, die dieser Vertrag ausdrücklich abdeckt (aktive Zuordnungen).
+
+    **Leere Liste heißt „gilt fürs ganze Objekt"**, nicht „deckt nichts ab" —
+    Bestandsverträge ohne Zuordnung bleiben objektweit gültig (siehe 0135).
+    """
+    return list(
+        TechnicalAsset.objects.filter(
+            contract_links__contract_id=contract_id, contract_links__active=True
+        ).order_by("asset_type", "name", "id")
+    )
+
+
+def contract_assets_bulk(contract_ids):
+    """`{contract_id: [TechnicalAsset, …]}` — EINE Abfrage für eine ganze Liste.
+
+    Die Vertragsliste zeigt die abgedeckten Anlagen mit an; je Vertrag zu fragen
+    wäre ein N+1 über die ganze Seite.
+    """
+    ergebnis = {}
+    if not contract_ids:
+        return ergebnis
+    zeilen = (
+        MaintenanceContractAsset.objects.filter(
+            contract_id__in=list(contract_ids), active=True
+        )
+        .select_related("asset")
+        .order_by("asset__asset_type", "asset__name", "asset_id")
+    )
+    for z in zeilen:
+        ergebnis.setdefault(z.contract_id, []).append(z.asset)
+    return ergebnis
+
+
+def _pruefe_assets(property_id, asset_ids, *, contract_id=None):
+    """Prüft die gewünschten Anlagen vorab → 422 statt 500 (die DB bleibt Instanz).
+
+    Zwei Regeln:
+
+    * **Dieselbe Liegenschaft.** Der zusammengesetzte FK erzwingt es ohnehin
+      physisch; hier wird daraus ein lesbarer Fachfehler.
+    * **Neu zuordnen nur, was in Betrieb ist.** Eine stillgelegte Anlage neu
+      unter Vertrag zu nehmen ist ein Erfassungsfehler. Eine **bestehende**
+      Zuordnung bleibt dagegen unangetastet, wenn die Anlage später stillgelegt
+      wird — die Vergangenheit wird nicht umgeschrieben.
+    """
+    gewuenscht = list(dict.fromkeys(asset_ids or []))
+    if not gewuenscht:
+        return []
+    assets = {a.id: a for a in TechnicalAsset.objects.filter(id__in=gewuenscht)}
+    bereits = (
+        set(
+            MaintenanceContractAsset.objects.filter(
+                contract_id=contract_id, asset_id__in=gewuenscht, active=True
+            ).values_list("asset_id", flat=True)
+        )
+        if contract_id is not None
+        else set()
+    )
+    for asset_id in gewuenscht:
+        asset = assets.get(asset_id)
+        if asset is None:
+            raise ValueError(f"Anlage {asset_id} existiert nicht.")
+        if asset.property_id != property_id:
+            raise ValueError(
+                f"Die Anlage „{asset.name}“ gehört zu einer anderen Liegenschaft "
+                "als der Vertrag."
+            )
+        if asset.status != "AKTIV" and asset_id not in bereits:
+            raise ValueError(
+                f"Die Anlage „{asset.name}“ ist stillgelegt und kann nicht neu "
+                "unter Vertrag genommen werden."
+            )
+    return gewuenscht
+
+
+def _assets_schreiben(actor_app_user_id, contract, asset_ids):
+    """Setzt die Zuordnungen auf genau `asset_ids` — **innerhalb** einer
+    laufenden `business_transaction` aufzurufen.
+
+    Kein DELETE: Weggenommene Zuordnungen werden auf `active=False` gesetzt, eine
+    früher beendete wird beim erneuten Zuordnen reaktiviert (der UNIQUE-Schlüssel
+    lässt keine zweite Zeile zu).
+    """
+    ziel = set(asset_ids)
+    vorhanden = {
+        z.asset_id: z
+        for z in MaintenanceContractAsset.objects.filter(contract_id=contract.id)
+    }
+
+    abzuschalten = [
+        z.id for aid, z in vorhanden.items() if z.active and aid not in ziel
+    ]
+    if abzuschalten:
+        MaintenanceContractAsset.objects.filter(id__in=abzuschalten).update(active=False)
+
+    zu_reaktivieren = [
+        vorhanden[aid].id
+        for aid in ziel
+        if aid in vorhanden and not vorhanden[aid].active
+    ]
+    if zu_reaktivieren:
+        MaintenanceContractAsset.objects.filter(id__in=zu_reaktivieren).update(
+            active=True
+        )
+
+    neu = [
+        MaintenanceContractAsset(
+            id=uuid.uuid4(),
+            contract_id=contract.id,
+            asset_id=aid,
+            property_id=contract.property_id,
+            active=True,
+            created_by_id=actor_app_user_id,
+            version=1,
+        )
+        for aid in ziel
+        if aid not in vorhanden
+    ]
+    if neu:
+        MaintenanceContractAsset.objects.bulk_create(neu)
+
+
+def set_contract_assets(actor_app_user_id, *, contract_id, asset_ids):
+    """Setzt die abgedeckten Anlagen eines Vertrags auf genau diese Menge.
+
+    Eine leere Liste ist ein gültiger Zustand und heißt „gilt fürs ganze Objekt".
+    Am archivierten Vertrag wird nichts mehr umgehängt — er ist Geschichte.
+    """
+    contract = MaintenanceContract.objects.filter(id=contract_id).first()
+    if contract is None:
+        raise ValueError("Wartungsvertrag nicht gefunden.")
+    if contract.status == "ARCHIVIERT":
+        raise ValueError(
+            "Ein archivierter Vertrag kann keiner Anlage mehr zugeordnet werden."
+        )
+    gewuenscht = _pruefe_assets(
+        contract.property_id, asset_ids, contract_id=contract.id
+    )
+    with as_business_error():
+        with business_transaction(actor_app_user_id):
+            _assets_schreiben(actor_app_user_id, contract, gewuenscht)
+    return contract_assets(contract.id)
+
+
 def create_contract(
     actor_app_user_id,
     *,
@@ -98,9 +259,17 @@ def create_contract(
     project_id=None,
     lead_time_days=None,
     notes=None,
+    asset_ids=None,
 ):
     """Legt einen Wartungsvertrag im Status AKTIV an und berechnet die erste
-    Fälligkeit. property_id ist Pflicht (Liegenschaftsbezug)."""
+    Fälligkeit. property_id ist Pflicht (Liegenschaftsbezug).
+
+    `asset_ids` (optional, seit 0135) bindet den Vertrag an konkrete technische
+    Anlagen dieser Liegenschaft. Die Anlagen werden in **derselben** Transaktion
+    zugeordnet wie der Vertrag entsteht — ein halb zugeordneter Vertrag ist der
+    Zustand, in dem später niemand mehr weiß, ob die Lücke gewollt war.
+    Ohne Angabe gilt der Vertrag wie bisher fürs ganze Objekt.
+    """
     if not name or not name.strip():
         raise ValueError("name darf nicht leer sein.")
     if interval_kind not in INTERVAL_KINDS:
@@ -121,6 +290,7 @@ def create_contract(
     ensure_exists(Property, property_id, "Liegenschaft")
     ensure_party_usable(party_id, "Kunde")
     ensure_exists(Project, project_id, "Projekt")
+    gewuenschte_assets = _pruefe_assets(property_id, asset_ids)
 
     next_due = _initial_due(
         start_date=start_date, interval_kind=interval_kind, fixed_date=fixed_date
@@ -146,6 +316,8 @@ def create_contract(
                 version=1,
             )
             contract.refresh_from_db()
+            if gewuenschte_assets:
+                _assets_schreiben(actor_app_user_id, contract, gewuenschte_assets)
     return contract
 
 
@@ -187,6 +359,12 @@ def _create_follow_up(actor_app_user_id, contract):
                  nötig, der Auftrag wird als Entwurf zum Weiterbearbeiten angelegt.
     - BENACHRICHTIGUNG → (None, None): es gibt kein Notification-Schema im Backend;
                  der MaintenanceEvent selbst ist der In-System-Vermerk.
+
+    **Deckt der Vertrag genau EINE Anlage ab, erbt der Auftrag sie** (0135) —
+    samt Gebäude und Einheit. Der Monteur bekommt damit die Therme in den
+    Auftrag, statt sie am Objekt zu suchen. Bei mehreren Anlagen bleibt das Feld
+    leer: Welche von fünf gemeint ist, weiß der Vertrag nicht, und geraten wird
+    hier nichts.
     """
     action = contract.due_action
     if action == "AUFGABE":
@@ -206,6 +384,8 @@ def _create_follow_up(actor_app_user_id, contract):
         )
         return "workflow.project", project.id
     if action == "AUFTRAG":
+        abgedeckt = contract_assets(contract.id)
+        anlage = abgedeckt[0] if len(abgedeckt) == 1 else None
         order = auftrag_service.create_work_order(
             actor_app_user_id,
             property_id=contract.property_id,
@@ -215,6 +395,9 @@ def _create_follow_up(actor_app_user_id, contract):
                 f"Automatisch aus Wartungsvertrag {contract.contract_number} "
                 f"erzeugt (Fälligkeit {contract.next_due_date:%d.%m.%Y})."
             ),
+            asset_id=anlage.id if anlage else None,
+            building_id=anlage.building_id if anlage else None,
+            unit_id=anlage.unit_id if anlage else None,
         )
         return "workflow.work_order", order.id
     return None, None

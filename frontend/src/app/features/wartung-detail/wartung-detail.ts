@@ -5,8 +5,11 @@ import { Mappe, MappeTab } from '../../shared/mappe/mappe';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { VerbotenState, fehlerDetail, fehlerState, istVerboten } from '../../shared/http-fehler';
 import { Bestaetigung } from '../../shared/bestaetigung/bestaetigung';
+import { Dialog } from '../../shared/dialog/dialog';
 import { AuthService } from '../../core/auth.service';
 import { WartungService } from '../../core/wartung.service';
+import { AnlageService } from '../../core/anlage.service';
+import { Anlage, artLabel } from '../../core/anlage.model';
 import {
   ContractDetail,
   ContractStatus,
@@ -28,13 +31,14 @@ type Meldung = { art: 'erfolg' | 'fehler'; text: string };
 
 @Component({
   selector: 'app-wartung-detail',
-  imports: [Mappe, RouterLink, KeinZugriff, Bestaetigung],
+  imports: [Mappe, RouterLink, KeinZugriff, Bestaetigung, Dialog],
   templateUrl: './wartung-detail.html',
   styleUrl: './wartung-detail.scss',
 })
 export class WartungDetail {
   private readonly route = inject(ActivatedRoute);
   private readonly svc = inject(WartungService);
+  private readonly anlageSvc = inject(AnlageService);
   private readonly auth = inject(AuthService);
 
   protected readonly darfAendern = computed(() => this.auth.darf('maintenance', 'AENDERN'));
@@ -179,6 +183,94 @@ export class WartungDetail {
         this.aktionsFehler(err);
       },
     });
+  }
+
+  // ---- Abgedeckte Anlagen (Migration 0135) --------------------------------
+  //
+  // Der Dialog lädt die Anlagen der Liegenschaft und schickt die vollständige
+  // Menge zurück — kein „minus diese eine". Der gewünschte Zustand ist damit
+  // immer eindeutig, auch wenn zwei Leute gleichzeitig am Vertrag arbeiten.
+
+  protected readonly anlagenDialog = signal(false);
+  protected readonly anlagen = signal<Anlage[]>([]);
+  protected readonly anlagenLaedt = signal(false);
+  protected readonly anlagenSpeichert = signal(false);
+  protected readonly anlagenFehler = signal<string | null>(null);
+  protected readonly gewaehlt = signal<ReadonlySet<string>>(new Set());
+  private anlagenReq = 0;
+
+  protected readonly anlageArt = artLabel;
+
+  anlagenOeffnen(): void {
+    const d = this.daten();
+    if (!d || !this.darfAendern()) return;
+    this.gewaehlt.set(new Set(d.assets.map((a) => a.id)));
+    this.anlagenFehler.set(null);
+    this.anlagenDialog.set(true);
+
+    const rid = ++this.anlagenReq;
+    this.anlagenLaedt.set(true);
+    // **Mit** stillgelegten laden: Eine bereits zugeordnete, inzwischen
+    // stillgelegte Anlage fehlte sonst in der Liste — sie bliebe angehakt
+    // (`gewaehlt` kommt aus dem Vertrag), ließe sich aber nicht mehr abwählen.
+    this.anlageSvc.list(d.property.id, true).subscribe({
+      next: (liste) => {
+        if (rid !== this.anlagenReq) return;
+        this.anlagen.set(liste);
+        this.anlagenLaedt.set(false);
+      },
+      error: () => {
+        if (rid !== this.anlagenReq) return;
+        this.anlagen.set([]);
+        this.anlagenLaedt.set(false);
+        this.anlagenFehler.set('Die Anlagen dieser Liegenschaft konnten nicht geladen werden.');
+      },
+    });
+  }
+
+  anlagenSchliessen(): void {
+    if (!this.anlagenSpeichert()) this.anlagenDialog.set(false);
+  }
+
+  anlageUmschalten(id: string): void {
+    this.gewaehlt.update((alt) => {
+      const neu = new Set(alt);
+      if (neu.has(id)) neu.delete(id);
+      else neu.add(id);
+      return neu;
+    });
+  }
+
+  anlageGewaehlt(id: string): boolean {
+    return this.gewaehlt().has(id);
+  }
+
+  anlagenSpeichern(): void {
+    const d = this.daten();
+    if (!d || this.anlagenSpeichert()) return;
+    this.anlagenSpeichert.set(true);
+    this.anlagenFehler.set(null);
+    this.svc.setAssets(d.id, { asset_ids: [...this.gewaehlt()] }).subscribe({
+      next: () => {
+        this.anlagenSpeichert.set(false);
+        this.anlagenDialog.set(false);
+        this.meldung.set({ art: 'erfolg', text: 'Anlagen-Zuordnung gespeichert.' });
+        this.load(d.id);
+      },
+      error: (err) => {
+        this.anlagenSpeichert.set(false);
+        this.anlagenFehler.set(
+          fehlerDetail(err) ?? 'Die Zuordnung konnte nicht gespeichert werden.',
+        );
+      },
+    });
+  }
+
+  /** Standort einer Anlage in einer Zeile — für die Auswahlliste. */
+  anlageOrt(a: Anlage): string {
+    return [a.building_label, a.unit_label, a.unit_storey, a.location_note]
+      .filter(Boolean)
+      .join(' · ');
   }
 
   // ---- Darstellungshelfer -------------------------------------------------

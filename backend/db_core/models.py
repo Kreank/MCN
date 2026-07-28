@@ -1584,6 +1584,60 @@ class MaintenanceEvent(models.Model):
         return f"{self.action} @ {self.contract_id}"
 
 
+class MaintenanceContractAsset(models.Model):
+    """maintenance.contract_asset — welche Anlage deckt der Vertrag ab (0135).
+
+    n:m: Ein Vertrag über alle Thermen eines Hauses ist der Normalfall; dieselbe
+    Anlage kann in mehreren Verträgen stehen (Wartung und Abgasmessung).
+
+    **Keine Zuordnung heißt „gilt fürs ganze Objekt"** — nicht „gilt für nichts".
+    Bestandsverträge bleiben damit gültig, ohne dass ihnen jemand eine Anlage
+    andichtet.
+
+    `active=False` beendet eine Zuordnung; gelöscht wird nie (No-Delete-Trigger).
+    `property_id` ist der physische Riegel: Beide zusammengesetzten FKs zeigen
+    darauf, Vertrag und Anlage können deshalb nicht aus verschiedenen
+    Liegenschaften stammen.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    contract = models.ForeignKey(
+        MaintenanceContract,
+        models.DO_NOTHING,
+        db_column="contract_id",
+        related_name="asset_links",
+    )
+    asset = models.ForeignKey(
+        TechnicalAsset,
+        models.DO_NOTHING,
+        db_column="asset_id",
+        related_name="contract_links",
+    )
+    property = models.ForeignKey(
+        Property,
+        models.DO_NOTHING,
+        db_column="property_id",
+        related_name="contract_asset_links",
+    )
+    active = models.BooleanField(db_default=models.Value(True))
+    created_by = models.ForeignKey(
+        AppUser,
+        models.DO_NOTHING,
+        db_column="created_by",
+        related_name="contract_asset_links",
+    )
+    version = models.IntegerField(db_default=models.Value(1))
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'maintenance"."contract_asset'
+
+    def __str__(self):
+        return f"{self.contract_id} → {self.asset_id}"
+
+
 # ---------------------------------------------------------------------------
 # maintenance.* — Fälligkeiten-Engine (Migration 0071)
 #

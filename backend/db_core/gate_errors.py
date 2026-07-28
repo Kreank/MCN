@@ -58,6 +58,14 @@ _CONSTRAINT_MESSAGES = {
         "Die Position wurde gleichzeitig von jemand anderem geändert. Bitte den "
         "Beleg neu laden und den Vorgang wiederholen."
     ),
+    # Zwei Disponenten ordnen gleichzeitig dieselbe Anlage demselben
+    # Wartungsvertrag zu (0135): Beide lesen unter READ COMMITTED den Bestand
+    # ohne die Zeile des anderen und inserten. Die UNIQUE ist die letzte Instanz
+    # — und darf nie als 500 enden.
+    "contract_asset_unique": (
+        "Die Anlagen-Zuordnung wurde gleichzeitig von jemand anderem geändert. "
+        "Bitte den Vertrag neu laden und den Vorgang wiederholen."
+    ),
     # --- Belegung und Verwaltung (0005/0006, Schreibpfad seit 0103) -----------
     # Alle vier sind EXCLUDE-Constraints über einen `daterange`. Sie beschreiben
     # denselben Bedienfehler in vier Ausprägungen: „für diesen Zeitraum gibt es

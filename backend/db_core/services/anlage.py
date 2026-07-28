@@ -34,12 +34,14 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 
 from django.db import DataError, IntegrityError
+from django.db.models import Q
 
 from db_core.db_context import business_transaction
 from db_core.models import (
     DueItem,
     Inspection,
     MaintenanceContract,
+    MaintenanceContractAsset,
     Property,
     TechnicalAsset,
     WorkOrder,
@@ -240,6 +242,43 @@ def get_asset(asset_id):
     return TechnicalAsset.objects.filter(id=asset_id).first()
 
 
+def _vertraege_der_anlage(asset):
+    """Wartungsverträge zu einer Anlage — mit ihrem Bezug (siehe `bezuege`).
+
+    Zwei Abfragen, keine Schleife: erst die Verträge des Objekts, dann in EINEM
+    Zug alle Anlagen-Zuordnungen dieser Verträge. Daraus ergibt sich je Vertrag,
+    ob er diese Anlage nennt (`ANLAGE`), gar keine nennt (`LIEGENSCHAFT`) oder
+    nur andere nennt (fällt raus).
+    """
+    vertraege = list(
+        MaintenanceContract.objects.filter(property_id=asset.property_id)
+        .exclude(status="ARCHIVIERT")
+        .order_by("next_due_date", "contract_number")
+    )
+    if not vertraege:
+        return []
+
+    hat_zuordnung = set()
+    deckt_diese = set()
+    for contract_id, asset_id in MaintenanceContractAsset.objects.filter(
+        contract_id__in=[v.id for v in vertraege], active=True
+    ).values_list("contract_id", "asset_id"):
+        hat_zuordnung.add(contract_id)
+        if asset_id == asset.id:
+            deckt_diese.add(contract_id)
+
+    treffer = []
+    for v in vertraege:
+        if v.id in deckt_diese:
+            treffer.append({"contract": v, "bezug": "ANLAGE"})
+        elif v.id not in hat_zuordnung:
+            treffer.append({"contract": v, "bezug": "LIEGENSCHAFT"})
+    # Verträge MIT ausdrücklichem Bezug zuerst — sie sind die Antwort auf die
+    # Frage; die objektweiten sind der Kontext dahinter.
+    treffer.sort(key=lambda t: 0 if t["bezug"] == "ANLAGE" else 1)
+    return treffer
+
+
 def bezuege(asset, *, maintenance=False, workflow=False):
     """Was an dieser Anlage hängt — **je Baustein einzeln getort**.
 
@@ -256,17 +295,23 @@ def bezuege(asset, *, maintenance=False, workflow=False):
     wieder ein Leck. Ein Endpunkt, dessen Dichtheit von einer zufälligen
     Eigenschaft der Rechtematrix abhängt, ist nicht dicht.
 
-    Vier Bezüge, drei davon echt am Asset:
+    Vier Bezüge, alle vier am Asset:
 
     * `pruefungen`    — `maintenance.inspection.asset_id`
     * `auftraege`     — `workflow.work_order.asset_id`
     * `faelligkeiten` — offene `maintenance.due_item` über den Prüfungs-Anker
-    * `wartungsvertraege` — **nur am OBJEKT**: `maintenance.maintenance_contract`
-      hat **kein `asset_id`** (0016). Statt ein Feld zu erfinden, liefert der
-      Service die Verträge der **Liegenschaft** und deklariert das (`bezug`).
-      Erfundene Genauigkeit wäre schlimmer als benannte Ungenauigkeit. Aus
-      demselben Grund fehlen die **Wartungs**-Fälligkeiten: Sie hängen am Vertrag,
-      der Vertrag am Objekt. Nur Prüf-Fälligkeiten kennen die Anlage.
+      **und** über die Verträge, die genau diese Anlage abdecken (0135)
+    * `wartungsvertraege` — seit 0135 mit echtem Anlagenbezug
+      (`maintenance.contract_asset`, n:m). Geliefert werden zwei Sorten, und der
+      Unterschied wird **ausgesprochen** statt eingeebnet (`bezug`):
+
+      - `ANLAGE` — der Vertrag nennt diese Anlage ausdrücklich.
+      - `LIEGENSCHAFT` — der Vertrag nennt **gar keine** Anlage und gilt damit
+        wie eh und je fürs ganze Objekt (Bestandsverträge).
+
+      Ein Vertrag, der ausdrücklich **andere** Anlagen abdeckt, erscheint hier
+      **nicht** mehr. Genau der Fehlschluss („irgendein Vertrag gilt für dieses
+      Haus, also ist meine Therme versorgt") war der Befund aus dem Praxistest.
     """
     pruefungen = (
         list(
@@ -277,20 +322,19 @@ def bezuege(asset, *, maintenance=False, workflow=False):
         if maintenance
         else []
     )
+    vertraege = _vertraege_der_anlage(asset) if maintenance else []
+    # Wartungs-Fälligkeiten zählen nur, wenn der Vertrag DIESE Anlage nennt —
+    # ein objektweiter Vertrag hängt seine Fälligkeit nicht an eine bestimmte
+    # Therme, und sie hier zu zeigen hieße wieder, Genauigkeit vorzutäuschen.
+    vertrag_ids = [v["contract"].id for v in vertraege if v["bezug"] == "ANLAGE"]
     faelligkeiten = (
         list(
-            DueItem.objects.filter(
-                inspection_id__in=[p.id for p in pruefungen], status="OFFEN"
-            ).order_by("due_date")
-        )
-        if maintenance
-        else []
-    )
-    vertraege = (
-        list(
-            MaintenanceContract.objects.filter(property_id=asset.property_id)
-            .exclude(status="ARCHIVIERT")
-            .order_by("next_due_date", "contract_number")
+            DueItem.objects.filter(status="OFFEN")
+            .filter(
+                Q(inspection_id__in=[p.id for p in pruefungen])
+                | Q(contract_id__in=vertrag_ids)
+            )
+            .order_by("due_date")
         )
         if maintenance
         else []

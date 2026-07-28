@@ -299,3 +299,64 @@
     transform: translateX(100%);
   }
 }
+
+/* --- Abgedeckte Anlagen im Anlege-Dialog (Migration 0135) ----------------- */
+.anlagenwahl {
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+}
+
+.anlagenwahl__titel {
+  padding: 0 0.35rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-hint);
+}
+
+.anlagenwahl__hinweis {
+  margin: 0 0 var(--space-2);
+  font-size: 0.86rem;
+  color: var(--ink-muted);
+}
+
+.anlagenwahl__liste {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 14rem;
+  overflow-y: auto;
+}
+
+.anlagenwahl__zeile {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem var(--space-2);
+  padding: 0.4rem 0.35rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.anlagenwahl__zeile:hover {
+  background: var(--surface);
+}
+
+.anlagenwahl__zeile:focus-within {
+  outline: 2px solid var(--accent-ink);
+  outline-offset: 1px;
+}
+
+.anlagenwahl__name {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.anlagenwahl__meta {
+  font-size: 0.8rem;
+  color: var(--ink-hint);
+}

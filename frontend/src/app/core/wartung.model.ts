@@ -10,6 +10,20 @@ export type IntervalKind =
   | 'FESTES_DATUM';
 export type DueAction = 'PROJEKT' | 'AUFTRAG' | 'AUFGABE' | 'BENACHRICHTIGUNG';
 
+/** Eine vom Vertrag abgedeckte technische Anlage (Migration 0135). */
+export interface VertragAnlage {
+  id: string;
+  name: string;
+  asset_type: string;
+  standort: string | null;
+  /**
+   * Eine stillgelegte Anlage bleibt zugeordnet — die Vergangenheit wird nicht
+   * umgeschrieben. Sie muss aber als stillgelegt erkennbar sein, sonst steht
+   * dort ein ausgebautes Gerät wie ein laufendes.
+   */
+  status: 'AKTIV' | 'INAKTIV';
+}
+
 export interface MaintenanceContract {
   id: string;
   contract_number: string;
@@ -26,6 +40,13 @@ export interface MaintenanceContract {
   property: PropertyRef;
   customer: string | null;
   project_name: string | null;
+  /**
+   * Welche Anlagen der Vertrag abdeckt. **Leer heißt „gilt fürs ganze Objekt"**,
+   * nicht „deckt nichts ab" — deshalb steht `gilt_objektweit` daneben, statt das
+   * UI aus einer leeren Liste raten zu lassen.
+   */
+  assets: VertragAnlage[];
+  gilt_objektweit: boolean;
 }
 
 export interface ContractPage {
@@ -74,6 +95,13 @@ export interface ContractCreate {
   project_id?: string | null;
   lead_time_days?: number | null;
   notes?: string | null;
+  /** Optional: Anlagen, die der Vertrag abdeckt. Leer = gilt fürs ganze Objekt. */
+  asset_ids?: string[];
+}
+
+// PUT /api/maintenance/contracts/{id}/assets — setzt die Menge vollständig.
+export interface ContractAssetsInput {
+  asset_ids: string[];
 }
 
 // POST /api/maintenance/contracts/{id}/status

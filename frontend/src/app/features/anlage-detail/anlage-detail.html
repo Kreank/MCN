@@ -108,6 +108,12 @@
             </dd>
           </div>
           <div class="feld">
+            <dt class="feld__label">Etage</dt>
+            <dd class="feld__wert" [class.feld__wert--leer]="!daten()!.unit_storey">
+              {{ oder(daten()!.unit_storey) }}
+            </dd>
+          </div>
+          <div class="feld">
             <dt class="feld__label">Aufstellort</dt>
             <dd class="feld__wert" [class.feld__wert--leer]="!daten()!.location_note">
               {{ oder(daten()!.location_note) }}
@@ -212,17 +218,16 @@
 
         <section class="block">
           <h3 class="block__titel">Wartungsverträge</h3>
-          <!-- Ehrlichkeit statt vorgetäuschter Genauigkeit: Ein Wartungsvertrag
-               hängt im Schema an der LIEGENSCHAFT, nicht an der Anlage. Das wird
-               ausgesprochen, statt die Verträge als „Verträge dieser Anlage“ zu
-               verkaufen. -->
-          <p class="block__hinweis">
-            Wartungsverträge werden zur <strong>Liegenschaft</strong> geführt, nicht zur
-            einzelnen Anlage. Die folgenden Verträge gelten für dieses Objekt — welche Anlage
-            sie abdecken, sagt das System (noch) nicht.
-          </p>
+          <!-- Seit Migration 0135 gibt es einen echten Anlagenbezug. Der
+               Unterschied wird trotzdem ausgesprochen statt eingeebnet: ein
+               Vertrag, der diese Anlage NENNT, ist eine andere Auskunft als
+               einer, der nur fürs Objekt gilt. Verträge, die ausdrücklich
+               ANDERE Anlagen abdecken, kommen gar nicht erst mit. -->
           @if (daten()!.wartungsvertraege.length === 0) {
-            <p class="block__leer">Kein Wartungsvertrag an dieser Liegenschaft.</p>
+            <p class="block__leer">
+              Diese Anlage steht unter keinem Wartungsvertrag — und an dieser Liegenschaft
+              gibt es auch keinen, der objektweit gilt.
+            </p>
           } @else {
             <ul class="zeilen">
               @for (v of daten()!.wartungsvertraege; track v.id) {
@@ -230,6 +235,11 @@
                   <span class="stamp">{{ v.status }}</span>
                   <span class="zeile__text">
                     <span class="zeile__nr">{{ v.contract_number }}</span> {{ v.name }}
+                    @if (v.bezug === 'ANLAGE') {
+                      <span class="stamp stamp--positive">Deckt diese Anlage ab</span>
+                    } @else {
+                      <span class="stamp">Gilt für das ganze Objekt</span>
+                    }
                   </span>
                   <span class="zeile__meta">
                     {{ v.next_due_date ? 'nächste Fälligkeit ' + v.next_due_date : 'ohne Termin' }}
@@ -237,6 +247,13 @@
                 </li>
               }
             </ul>
+            @if (nurObjektweit()) {
+              <p class="block__hinweis">
+                Kein Vertrag nennt <strong>diese</strong> Anlage ausdrücklich. Die oben
+                gezeigten gelten fürs ganze Objekt — wer es genauer wissen will, ordnet die
+                Anlage am Vertrag zu.
+              </p>
+            }
           }
         </section>
       }

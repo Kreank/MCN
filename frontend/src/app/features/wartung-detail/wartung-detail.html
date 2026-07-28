@@ -90,6 +90,41 @@
             </div>
           }
         </div>
+
+        <!-- Abgedeckte Anlagen (0135). „Keine" ist hier eine AUSSAGE („gilt
+             fürs ganze Objekt"), kein leeres Feld — deshalb steht sie da. -->
+        <section class="anlagen">
+          <div class="anlagen__kopf">
+            <h3 class="anlagen__titel">Abgedeckte Anlagen</h3>
+            @if (darfAendern() && daten()!.status !== 'ARCHIVIERT') {
+              <button type="button" class="btn btn--klein" (click)="anlagenOeffnen()">
+                Anlagen zuordnen
+              </button>
+            }
+          </div>
+          @if (daten()!.gilt_objektweit) {
+            <p class="anlagen__leer">
+              Der Vertrag gilt für das <strong>ganze Objekt</strong>. Wer ihn einzelnen
+              Anlagen zuordnet, sieht ihn später an genau diesen Anlagen — und nicht mehr
+              an allen anderen.
+            </p>
+          } @else {
+            <ul class="anlagen__liste">
+              @for (a of daten()!.assets; track a.id) {
+                <li class="anlagen__zeile">
+                  <a class="anlagen__name" [routerLink]="['/anlagen', a.id]">{{ a.name }}</a>
+                  <span class="anlagen__meta">{{ anlageArt($any(a.asset_type)) }}</span>
+                  @if (a.standort) {
+                    <span class="anlagen__meta">{{ a.standort }}</span>
+                  }
+                  @if (a.status === 'INAKTIV') {
+                    <span class="stamp stamp--negativ">Stillgelegt</span>
+                  }
+                </li>
+              }
+            </ul>
+          }
+        </section>
       }
 
       @if (tab() === 'erinnerung') {
@@ -126,6 +161,77 @@
         }
       }
     </app-mappe>
+
+    <!-- ---------------------------- Anlagen zuordnen ---------------------- -->
+    <app-dialog
+      [offen]="anlagenDialog()"
+      titel="Abgedeckte Anlagen"
+      (schliessen)="anlagenSchliessen()"
+    >
+      <div class="dialog-form">
+        @if (anlagenFehler(); as af) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ af }}</span>
+          </div>
+        }
+        @if (anlagenLaedt()) {
+          <p class="lade-hinweis" role="status">Anlagen werden geladen …</p>
+        } @else if (anlagen().length === 0) {
+          <p class="anlagen__leer">
+            An dieser Liegenschaft ist keine technische Anlage erfasst. Erfassen Sie die
+            Anlage zuerst in der Liegenschaftsmappe unter „Anlagen“.
+          </p>
+        } @else {
+          <p class="anlagen__leer">
+            Nichts angekreuzt heißt: <strong>gilt für das ganze Objekt</strong>.
+          </p>
+          <ul class="anlagenwahl__liste">
+            @for (a of anlagen(); track a.id) {
+              <li>
+                <label class="anlagenwahl__zeile">
+                  <!-- Stillgelegt UND nicht zugeordnet: Der Server lehnt das
+                       Neuzuordnen ohnehin mit 422 ab — dann muss das Häkchen
+                       gar nicht erst anklickbar sein. Eine BESTEHENDE Zuordnung
+                       bleibt bedienbar, sonst ließe sie sich nie mehr lösen. -->
+                  <input
+                    type="checkbox"
+                    [checked]="anlageGewaehlt(a.id)"
+                    [disabled]="a.status === 'INAKTIV' && !anlageGewaehlt(a.id)"
+                    (change)="anlageUmschalten(a.id)"
+                  />
+                  <span class="anlagenwahl__name">{{ a.name }}</span>
+                  <span class="anlagen__meta">{{ anlageArt(a.asset_type) }}</span>
+                  @if (anlageOrt(a); as ort) {
+                    <span class="anlagen__meta">{{ ort }}</span>
+                  }
+                  @if (a.status === 'INAKTIV') {
+                    <!-- Sichtbar, damit die bestehende Zuordnung lösbar bleibt;
+                         neu zuordnen lässt der Server sie nicht. -->
+                    <span class="stamp stamp--negativ">Stillgelegt</span>
+                  }
+                </label>
+              </li>
+            }
+          </ul>
+        }
+      </div>
+
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="anlagenSpeichert()" (click)="anlagenSchliessen()">
+          Abbrechen
+        </button>
+        <button
+          type="button"
+          class="btn btn--primary"
+          [disabled]="anlagenSpeichert() || anlagenLaedt()"
+          [attr.aria-busy]="anlagenSpeichert()"
+          (click)="anlagenSpeichern()"
+        >
+          {{ anlagenSpeichert() ? 'Wird gespeichert …' : 'Zuordnung speichern' }}
+        </button>
+      </div>
+    </app-dialog>
 
     <!-- ---------------------------- Archivieren (Bestätigung) ------------- -->
     <app-bestaetigung

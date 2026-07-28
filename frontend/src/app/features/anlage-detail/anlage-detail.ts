@@ -82,6 +82,15 @@ export class AnlageDetail {
     return d ? istStillgelegt(d) : false;
   });
 
+  /**
+   * Es gibt Verträge, aber keiner nennt diese Anlage. Das ist die Lage, in der
+   * ein „steht unter Vertrag" falsch verstanden würde — also wird sie benannt.
+   */
+  protected readonly nurObjektweit = computed(() => {
+    const v = this.daten()?.wartungsvertraege ?? [];
+    return v.length > 0 && v.every((x) => x.bezug === 'LIEGENSCHAFT');
+  });
+
   constructor() {
     this.route.paramMap.pipe(takeUntilDestroyed()).subscribe((pm) => {
       const id = pm.get('id');

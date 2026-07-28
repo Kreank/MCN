@@ -4,6 +4,8 @@ import { RouterLink } from '@angular/router';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Subject, debounceTime, distinctUntilChanged, map } from 'rxjs';
 import { WartungService } from '../../core/wartung.service';
+import { AnlageService } from '../../core/anlage.service';
+import { Anlage, artLabel } from '../../core/anlage.model';
 import { PropertyService } from '../../core/property.service';
 import { PartyService } from '../../core/party.service';
 import { ProjektService } from '../../core/projekt.service';
@@ -57,6 +59,7 @@ type Meldung = { art: 'erfolg' | 'fehler'; text: string };
 export class Wartung {
   private readonly svc = inject(WartungService);
   private readonly propertySvc = inject(PropertyService);
+  private readonly anlageSvc = inject(AnlageService);
   private readonly partySvc = inject(PartyService);
   private readonly projektSvc = inject(ProjektService);
   private readonly auth = inject(AuthService);
@@ -79,6 +82,17 @@ export class Wartung {
   ];
 
   protected readonly meldung = signal<Meldung | null>(null);
+  /** Anlagen der gewählten Liegenschaft — Auswahl im Anlege-Dialog (0135). */
+  protected readonly anlagen = signal<Anlage[]>([]);
+  /**
+   * Spiegel des Liegenschaftsfelds als Signal. Das Template darf `control.value`
+   * nicht direkt lesen: Die App läuft **zonenlos**, ein FormControl ist kein
+   * Signal, und der Block würde nur zufällig aktualisiert.
+   */
+  protected readonly gewaehlteLiegenschaft = signal('');
+  protected readonly anlagenLaedt = signal(false);
+  protected readonly gewaehlteAnlagen = signal<ReadonlySet<string>>(new Set());
+  private anlagenReq = 0;
   protected readonly neuOffen = signal(false);
   protected readonly neuLaedt = signal(false);
   protected readonly formularMeldung = signal<string | null>(null);
@@ -169,6 +183,12 @@ export class Wartung {
     this.neuForm.controls.interval_kind.valueChanges
       .pipe(takeUntilDestroyed())
       .subscribe((k) => this.intervalKind.set(k));
+    // Anlagenauswahl folgt der gewählten Liegenschaft. Bewusst ein
+    // valueChanges-Abo und kein `computed`: Ein FormControl ist kein Signal —
+    // ein computed darauf feuert nie (Fund aus dem Anruf-Slice).
+    this.neuForm.controls.property_id.valueChanges
+      .pipe(takeUntilDestroyed())
+      .subscribe((id) => this.anlagenLaden(id));
     this.fetch();
   }
 
@@ -219,8 +239,62 @@ export class Wartung {
       });
   }
 
+  // ---- Abgedeckte Anlagen (Migration 0135) --------------------------------
+  /**
+   * Anlagen der gewählten Liegenschaft nachladen. Fehlt das Recht `property`
+   * oder scheitert der Aufruf, bleibt die Liste leer — der Vertrag lässt sich
+   * dann trotzdem anlegen und gilt eben objektweit. Ein Ladefehler hier darf
+   * das Anlegen nicht blockieren.
+   */
+  private anlagenLaden(propertyId: string | null | undefined): void {
+    this.gewaehlteAnlagen.set(new Set());
+    this.gewaehlteLiegenschaft.set(propertyId ?? '');
+    if (!propertyId) {
+      this.anlagen.set([]);
+      return;
+    }
+    const rid = ++this.anlagenReq;
+    this.anlagenLaedt.set(true);
+    this.anlageSvc.list(propertyId).subscribe({
+      next: (liste) => {
+        if (rid !== this.anlagenReq) return;
+        this.anlagen.set(liste);
+        this.anlagenLaedt.set(false);
+      },
+      error: () => {
+        if (rid !== this.anlagenReq) return;
+        this.anlagen.set([]);
+        this.anlagenLaedt.set(false);
+      },
+    });
+  }
+
+  protected anlageUmschalten(id: string): void {
+    this.gewaehlteAnlagen.update((alt) => {
+      const neu = new Set(alt);
+      if (neu.has(id)) neu.delete(id);
+      else neu.add(id);
+      return neu;
+    });
+  }
+
+  protected anlageGewaehlt(id: string): boolean {
+    return this.gewaehlteAnlagen().has(id);
+  }
+
+  /** Standort einer Anlage in einer Zeile — für die Auswahlliste. */
+  protected anlageOrt(a: Anlage): string {
+    const teile = [a.building_label, a.unit_label, a.unit_storey, a.location_note];
+    return teile.filter(Boolean).join(' · ');
+  }
+
+  protected readonly anlageArt = artLabel;
+
   // ---- Anlegen ------------------------------------------------------------
   neuOeffnen(): void {
+    this.anlagen.set([]);
+    this.gewaehlteAnlagen.set(new Set());
+    this.gewaehlteLiegenschaft.set('');
     this.neuForm.reset({
       property_id: '',
       name: '',
@@ -270,6 +344,8 @@ export class Wartung {
       project_id: v.project_id || null,
       lead_time_days: ganzzahl(v.lead_time_days),
       notes: v.notes.trim() || null,
+      // Leer = gilt fürs ganze Objekt (bisheriges Verhalten, 0135).
+      asset_ids: [...this.gewaehlteAnlagen()],
     };
 
     this.neuLaedt.set(true);
