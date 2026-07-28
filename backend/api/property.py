@@ -28,7 +28,7 @@ from ninja.responses import Status
 from ninja.security import django_auth
 
 from api.objektgrenze import guard_objekt
-from api.permissions import check, require, require_scoped
+from api.permissions import check, check_scoped, require, require_scoped
 from db_core.models import Building, Property, PropertyPartyRole, Unit
 from db_core.services import objektsicht
 from db_core.services import property as property_service
@@ -934,19 +934,26 @@ def _sichtbar(request, modul, actor, property_id):
 
     Zwei Prüfungen, keine davon verzichtbar:
 
-    * `check` liefert den row_scope des Moduls oder None (fail-closed bei
-      fehlendem Recht — und bei Scope EIGENE gibt `require` dahinter ohnehin
-      nicht auf).
+    * `check_scoped` liefert den row_scope des Moduls oder None (fehlendes
+      Recht → Baustein fehlt).
     * `ist_eigenes_objekt` zieht die Objektgrenze **mit dem Scope DIESES
       Moduls**. Den Scope von `property` dafür zu verwenden wäre der Fehler:
       Die Rechtematrix ist eine Datentabelle, und eine einzige Zeile (etwa
       `tenure/LESEN` mit EIGENE, während `property/LESEN` auf ALLE steht) machte
       die Kopfzeile zum Umgehungspfad für das jeweilige Modul.
 
+    **Warum `check_scoped` und nicht `check` (Review-Fund 2026-07-28):** `check`
+    sitzt auf dem fail-closed `require` und liefert bei Scope `'EIGENE'`
+    ebenfalls `None`. Damit war der `ist_eigenes_objekt`-Zweig darunter toter
+    Code, und der Monteur bekam an **seinem eigenen** Objekt „nicht sichtbar" zu
+    lesen — während ihm der Belegungs-Endpunkt dieselben Mieter samt Telefon
+    lieferte. Genau dafür hat MONTEUR seit Migration 0103 `tenure/LESEN` mit
+    Scope EIGENE.
+
     Fehlendes Recht und fremdes Objekt liefern bewusst **dasselbe** Ergebnis —
     sonst würde `nicht_sichtbar` zum Existenz-Orakel für fremde Liegenschaften.
     """
-    scope = check(request, modul, "LESEN")
+    scope = check_scoped(request, modul, "LESEN")
     if scope is None:
         return False
     if scope == "EIGENE" and not objektsicht.ist_eigenes_objekt(actor, property_id):
@@ -1049,4 +1056,187 @@ def kopfzeile(request, property_id: UUID):
         mieter=mieter,
         mieter_gesamt=mieter_gesamt,
         nicht_sichtbar=nicht_sichtbar,
+    )
+
+
+# ===========================================================================
+# Gebäudeansicht — die Liegenschaft als Haus
+# ===========================================================================
+#
+# Ein Endpunkt für ein Bild: Gebäude → Etagen → Einheiten, mit Bewohnern und
+# Technik. Als vier Aufrufe (Struktur, Belegung, Anlagen, Kontaktwege) wäre es
+# vier Rundreisen für eine Ansicht, die in einem Blick beantworten soll, was
+# heute vier Reiter beantworten.
+#
+# **Getort wird je Baustein, nicht pauschal** (dieselbe Linie wie Kopfzeile und
+# Anlagendetail): Der Bauplan (Gebäude/Einheiten/Technik) ist `property`, die
+# Bewohner sind `tenure`. Fehlt `tenure`, fehlen die Bewohner — nicht die
+# Ansicht. Und `belegung_sichtbar` sagt, welcher der beiden Fälle vorliegt.
+
+
+class HausAnlageOut(Schema):
+    id: UUID
+    name: str
+    asset_type: str
+    #: ZENTRAL | DEZENTRAL | UNBEKANNT — die Angabe, die den Einsatz verändert.
+    supply_type: str
+    energy_source: str | None = None
+    power_kw: Decimal | None = None
+    location_note: str | None = None
+
+
+class HausBewohnerOut(Schema):
+    party_id: UUID
+    display_name: str
+    rolle: str
+    telefon: str | None = None
+    email: str | None = None
+
+
+class HausEinheitOut(Schema):
+    id: UUID
+    unit_number: str
+    unit_type: str
+    #: Gemeinschaftsflächen und Technikräume tragen keine Belegung (DB-Trigger).
+    #: Ohne diese Angabe sähe der Technikraum aus wie eine leerstehende Wohnung.
+    belegbar: bool
+    belegt: bool
+    bewohner: list[HausBewohnerOut] = []
+    anlagen: list[HausAnlageOut] = []
+
+
+class HausEtageOut(Schema):
+    #: Wortwörtlich der erfasste Text („2. OG"), nichts Vereinheitlichtes.
+    label: str
+    #: Abgeleitete Höhe fürs Zeichnen; `null` = nicht deutbar (eigenes Band).
+    ordnung: float | None = None
+    gedeutet: bool
+    einheiten: list[HausEinheitOut] = []
+
+
+class HausOut(Schema):
+    id: UUID
+    building_number: str
+    name: str | None = None
+    etagen: list[HausEtageOut] = []
+    #: Technik am Gebäude ohne Einheit — die Zentralanlage im Keller.
+    technik: list[HausAnlageOut] = []
+    einheiten_gesamt: int = 0
+    einheiten_belegt: int = 0
+
+
+class GebaeudeansichtOut(Schema):
+    haeuser: list[HausOut] = []
+    #: Erfasste Anlagen ohne Gebäudezuordnung. Sie stehen sichtbar daneben,
+    #: statt aus dem Bild zu verschwinden — sonst findet sie nie jemand wieder.
+    anlagen_ohne_gebaeude: list[HausAnlageOut] = []
+    belegung_sichtbar: bool = False
+
+
+def _haus_anlage(a):
+    return HausAnlageOut(
+        id=a.id,
+        name=a.name,
+        asset_type=a.asset_type,
+        supply_type=a.supply_type,
+        energy_source=a.energy_source,
+        power_kw=a.power_kw,
+        location_note=a.location_note,
+    )
+
+
+@router.get("/properties/{property_id}/gebaeudeansicht", response=GebaeudeansichtOut)
+def gebaeudeansicht(request, property_id: UUID):
+    """Die Liegenschaft als Gebäudeschnitt: Häuser, Etagen, Einheiten, Technik.
+
+    Beantwortet in einem Bild, wofür man bisher zwischen Struktur, Belegung und
+    Anlagen wechseln musste: Welche Wohnung liegt wo, ist sie bewohnt, wer wohnt
+    darin — und hängt dort eine eigene Therme oder versorgt eine Zentralanlage
+    das ganze Haus.
+
+    Scope 'EIGENE': fremdes Objekt → 404 (wie überall in dieser API).
+    """
+    from db_core.services import gebaeudeansicht as ansicht_service
+    from db_core.services import identity as identity_service
+
+    actor, scope = require_scoped(request, "property", "LESEN")
+    if not Property.objects.filter(id=property_id).exists():
+        raise HttpError(404, "Liegenschaft nicht gefunden.")
+    guard_objekt(scope, actor, property_id)
+
+    mit_belegung = _sichtbar(request, "tenure", actor, property_id)
+    daten = ansicht_service.ansicht(property_id, mit_belegung=mit_belegung)
+
+    # Rufnummern und Mailadressen in EINER Abfrage für das ganze Haus.
+    party_ids = {
+        p.party_id
+        for haus in daten["haeuser"]
+        for etage in haus["etagen"]
+        for e in etage["einheiten"]
+        for p in e["bewohner"]
+    }
+    wege = identity_service.contact_points_bulk(party_ids) if party_ids else {}
+
+    def bewohner_out(p):
+        kontakte = wege.get(p.party_id, [])
+        return HausBewohnerOut(
+            party_id=p.party_id,
+            display_name=p.party.display_name,
+            rolle=p.role,
+            telefon=next(
+                (c.value for c in kontakte if c.contact_type == "MOBILE"), None
+            )
+            or next((c.value for c in kontakte if c.contact_type == "PHONE"), None),
+            email=next((c.value for c in kontakte if c.contact_type == "EMAIL"), None),
+        )
+
+    haeuser = []
+    for haus in daten["haeuser"]:
+        b = haus["gebaeude"]
+        etagen, gesamt, belegt_zahl = [], 0, 0
+        for etage in haus["etagen"]:
+            einheiten = []
+            for e in etage["einheiten"]:
+                u = e["einheit"]
+                belegt = bool(e["bewohner"])
+                gesamt += 1
+                if belegt:
+                    belegt_zahl += 1
+                einheiten.append(
+                    HausEinheitOut(
+                        id=u.id,
+                        unit_number=u.unit_number,
+                        unit_type=u.unit_type,
+                        belegbar=e["belegbar"],
+                        belegt=belegt,
+                        bewohner=[bewohner_out(p) for p in e["bewohner"]],
+                        anlagen=[_haus_anlage(a) for a in e["anlagen"]],
+                    )
+                )
+            etagen.append(
+                HausEtageOut(
+                    label=etage["label"],
+                    ordnung=etage["ordnung"],
+                    gedeutet=etage["gedeutet"],
+                    einheiten=einheiten,
+                )
+            )
+        haeuser.append(
+            HausOut(
+                id=b.id,
+                building_number=b.building_number,
+                name=b.name,
+                etagen=etagen,
+                technik=[_haus_anlage(a) for a in haus["technik"]],
+                einheiten_gesamt=gesamt,
+                einheiten_belegt=belegt_zahl,
+            )
+        )
+
+    return GebaeudeansichtOut(
+        haeuser=haeuser,
+        anlagen_ohne_gebaeude=[
+            _haus_anlage(a) for a in daten["anlagen_ohne_gebaeude"]
+        ],
+        belegung_sichtbar=mit_belegung,
     )

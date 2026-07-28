@@ -145,6 +145,62 @@
   font-size: 0.86rem;
 }
 
+/* Wer aufmacht: eigene Zeile unter den Gerätedaten, damit die Karte ihre
+   Leserichtung behält (was steht da → wo → wer). */
+.karte__nutzer {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  list-style: none;
+  border-left: 3px solid var(--accent);
+  background: var(--surface-sunken);
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+
+.karte__nutzer--leer {
+  color: var(--ink-hint);
+  font-size: 0.88rem;
+  font-style: italic;
+}
+
+.nutzer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem var(--space-3);
+}
+
+.nutzer + .nutzer {
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--line);
+}
+
+.nutzer__name {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.nutzer__rolle {
+  font-size: 0.78rem;
+  color: var(--ink-hint);
+}
+
+.nutzer__weg {
+  font-size: 0.88rem;
+  color: var(--accent-ink);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.nutzer__weg:hover {
+  text-decoration: underline;
+}
+
+.nutzer__weg--leer {
+  color: var(--ink-hint);
+  font-style: italic;
+}
+
 .karte__aktionen {
   display: flex;
   flex-wrap: wrap;

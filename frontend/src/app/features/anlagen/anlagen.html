@@ -80,6 +80,12 @@
                   <dt>Standort</dt>
                   <dd>{{ ort(a) }}</dd>
                 </div>
+                @if (a.unit_storey) {
+                  <div class="paar">
+                    <dt>Etage</dt>
+                    <dd>{{ a.unit_storey }}</dd>
+                  </div>
+                }
                 <div class="paar">
                   <dt>Gerät</dt>
                   <dd>{{ geraet(a) }}</dd>
@@ -95,6 +101,50 @@
                   </div>
                 }
               </dl>
+
+              <!-- Wer aufmacht. Die Nummer steht sonst im Reiter Belegung — drei
+                   Klicks und ein „welche Einheit war das noch?" entfernt. Quelle
+                   bleibt die Belegung; hier wird sie nur mitgeliefert. -->
+              @if (a.unit_id && !a.belegung_sichtbar) {
+                <!-- Schweigen wäre hier eine Aussage („niemand wohnt drin") — und
+                     eine falsche. Also wird gesagt, dass etwas fehlt. -->
+                <p class="karte__nutzer karte__nutzer--leer">
+                  Wer hier wohnt, ist für Sie an diesem Objekt nicht sichtbar.
+                </p>
+              }
+              @if (a.unit_id && a.belegung_sichtbar) {
+                @if (a.nutzer.length === 0) {
+                  <p class="karte__nutzer karte__nutzer--leer">
+                    Für diese Einheit ist keine Belegung erfasst.
+                  </p>
+                } @else {
+                  <ul class="karte__nutzer">
+                    @for (n of a.nutzer; track n.party_id) {
+                      <li class="nutzer">
+                        <span class="nutzer__name">{{ n.display_name }}</span>
+                        <span class="nutzer__rolle">{{ rolle(n.rolle) }}</span>
+                        @if (n.telefon) {
+                          <a class="nutzer__weg" [href]="'tel:' + n.telefon">
+                            <span aria-hidden="true">☎</span>
+                            <span class="sr-only">Telefon:</span> {{ n.telefon }}
+                          </a>
+                        }
+                        @if (n.email) {
+                          <a class="nutzer__weg" [href]="'mailto:' + n.email">
+                            <span aria-hidden="true">✉</span>
+                            <span class="sr-only">E-Mail:</span> {{ n.email }}
+                          </a>
+                        }
+                        @if (!n.telefon && !n.email) {
+                          <span class="nutzer__weg nutzer__weg--leer">
+                            kein Kontaktweg hinterlegt
+                          </span>
+                        }
+                      </li>
+                    }
+                  </ul>
+                }
+              }
 
               <div class="karte__aktionen">
                 <a class="btn btn--klein" [routerLink]="['/anlagen', a.id]">

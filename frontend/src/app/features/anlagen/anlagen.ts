@@ -11,6 +11,7 @@ import {
   supplyLabel,
 } from '../../core/anlage.model';
 import { Building } from '../../core/property.model';
+import { MieterRolle, rolleLabel } from '../../core/belegung.model';
 import { AuthService } from '../../core/auth.service';
 import { Bestaetigung } from '../../shared/bestaetigung/bestaetigung';
 import { fehlerDetail } from '../../shared/http-fehler';
@@ -205,6 +206,14 @@ export class Anlagen {
   versorgung = supplyLabel;
   energie = energieLabel;
   kw = kwAnzeige;
+
+  /**
+   * Rolle der Bewohner:in — **dieselben** Beschriftungen wie im Reiter Belegung.
+   * Eine zweite Liste hier liefe garantiert irgendwann auseinander.
+   */
+  rolle(r: string): string {
+    return rolleLabel(r as MieterRolle);
+  }
 
   /** Standort in einer Zeile — „—", wenn nichts erfasst ist (nie erfunden). */
   ort(a: Anlage): string {

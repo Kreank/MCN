@@ -123,6 +123,34 @@ def belegungen_der_liegenschaft(property_id, *, stichtag=None, historie=False):
     )
 
 
+def belegungen_der_einheiten(unit_ids, *, stichtag=None):
+    """Die am Stichtag geltenden Belegungen **genau dieser** Einheiten.
+
+    Für Ansichten, die nur einzelne Einheiten brauchen (Anlagenkarte,
+    Anlagendetail): `belegungen_der_liegenschaft` zöge dafür die komplette
+    Mieterliste des Objekts und würfe sie in Python wieder weg — bei dreißig
+    Einheiten hinge sie an jedem einzelnen Anlagenaufruf.
+    """
+    stichtag = stichtag or date.today()
+    unit_ids = list(unit_ids)
+    if not unit_ids:
+        return []
+    return list(
+        Occupancy.objects.filter(unit_id__in=unit_ids)
+        .filter(_aktiv_q(stichtag))
+        .select_related("unit")
+        .prefetch_related(
+            Prefetch(
+                "parties",
+                queryset=OccupancyParty.objects.select_related("party").order_by(
+                    "role", "valid_from"
+                ),
+            )
+        )
+        .order_by("unit__unit_number", "-valid_from")
+    )
+
+
 def get_belegung(occupancy_id):
     return (
         Occupancy.objects.filter(pk=occupancy_id)

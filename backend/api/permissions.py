@@ -123,9 +123,38 @@ def require_create(request, module, action):
 
 
 def check(request, module, action):
-    """Wie `require` (fail-closed), aber ohne Ausnahme: row_scope oder None."""
+    """Wie `require` (fail-closed), aber ohne Ausnahme: row_scope oder None.
+
+    **Achtung — 'EIGENE' liefert hier `None`**, weil `require` dahinter sitzt.
+    Für einen Baustein, der die Objektgrenze selbst zieht, ist das zu scharf: Er
+    verweigert dem Monteur Daten an **seinem eigenen** Objekt, obwohl der
+    zuständige Endpunkt sie ihm liefert. Solche Bausteine nehmen
+    `check_scoped` (unten) und werten den Scope aus.
+    """
     try:
         _, scope = require(request, module, action)
     except HttpError:
         return None
     return scope
+
+
+def check_scoped(request, module, action):
+    """Wie `require_scoped`, aber ohne Ausnahme: row_scope oder None.
+
+    Das weiche Gegenstück für **Bausteine** einer zusammengesetzten Antwort
+    (Kopfzeile, Anlagenliste, Gebäudeansicht): Fehlt das Recht ganz, fehlt der
+    Baustein (`None`). Steht es auf `'EIGENE'`, kommt der Scope zurück — und der
+    Aufrufer **muss** die Objektgrenze selbst ziehen
+    (`objektsicht.ist_eigenes_objekt`), sonst ist sie wirkungslos.
+
+    Warum es das braucht (Review-Fund): Mit `check` bekam der Monteur an
+    **seinem** Objekt „Belegung ist für Sie nicht sichtbar" zu lesen, während
+    ihm `GET /tenure/properties/{id}/belegung` dieselben Mieter samt Telefon
+    lieferte. Die Auskunft war nicht nur unvollständig, sondern mit falscher
+    Begründung unvollständig — und genau dafür hat MONTEUR seit Migration 0103
+    `tenure/LESEN` mit Scope EIGENE („er braucht Name und Telefonnummer").
+    """
+    try:
+        return _resolve(request, module, action)[1]
+    except HttpError:
+        return None

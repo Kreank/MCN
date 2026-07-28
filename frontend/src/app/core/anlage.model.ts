@@ -43,6 +43,20 @@ export type EnergySource =
 /** Gelöscht wird nie — stillgelegt (der No-Delete-Trigger erzwingt es). */
 export type AnlageStatus = 'AKTIV' | 'INAKTIV';
 
+/**
+ * Wer in der Einheit sitzt, an der die Anlage hängt — zum Anrufen.
+ *
+ * Kommt aus der **Belegung** (`tenure.occupancy`), nicht aus einem zweiten Feld
+ * an der Anlage: Es gibt genau eine Wahrheit darüber, wer wo wohnt.
+ */
+export interface AnlageNutzer {
+  readonly party_id: string;
+  readonly display_name: string;
+  readonly rolle: string;
+  readonly telefon: string | null;
+  readonly email: string | null;
+}
+
 export interface Anlage {
   readonly id: string;
   readonly property_id: string;
@@ -54,6 +68,14 @@ export interface Anlage {
   readonly unit_id: string | null;
   readonly building_label: string | null;
   readonly unit_label: string | null;
+  /** Etage der Einheit (Freitext, z. B. „2. OG"). */
+  readonly unit_storey: string | null;
+  readonly nutzer: readonly AnlageNutzer[];
+  /**
+   * `false` heißt „darf die Belegung nicht sehen", **nicht** „niemand wohnt
+   * hier". Ohne dieses Flag wäre eine leere Nutzerliste eine Lüge.
+   */
+  readonly belegung_sichtbar: boolean;
   readonly manufacturer: string | null;
   readonly model: string | null;
   readonly year_built: number | null;
@@ -66,17 +88,26 @@ export interface Anlage {
 }
 
 /**
- * Wartungsvertrag am Objekt. `bezug` ist immer 'LIEGENSCHAFT':
- * `maintenance.maintenance_contract` kennt **kein** `asset_id`. Das UI spricht
- * das aus, statt Anlagenbezug vorzutäuschen.
+ * Wartungsvertrag zu dieser Anlage. Seit Migration 0135 gibt es einen echten
+ * Anlagenbezug (`maintenance.contract_asset`, n:m) — `bezug` sagt, welcher Fall
+ * vorliegt:
+ *
+ * * `ANLAGE` — der Vertrag nennt **diese** Anlage ausdrücklich.
+ * * `LIEGENSCHAFT` — der Vertrag nennt gar keine Anlage und gilt fürs ganze
+ *   Objekt (so waren alle Verträge vor 0135).
+ *
+ * Verträge, die ausdrücklich **andere** Anlagen abdecken, kommen gar nicht mehr
+ * mit — genau dieser Fehlschluss war der Befund aus dem Praxistest.
  */
+export type VertragBezug = 'ANLAGE' | 'LIEGENSCHAFT';
+
 export interface AnlageVertrag {
   readonly id: string;
   readonly contract_number: string;
   readonly name: string;
   readonly status: string;
   readonly next_due_date: string | null;
-  readonly bezug: 'LIEGENSCHAFT';
+  readonly bezug: VertragBezug;
 }
 
 export interface AnlagePruefung {

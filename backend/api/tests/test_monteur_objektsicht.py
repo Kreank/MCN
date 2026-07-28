@@ -1375,3 +1375,84 @@ def test_administration_sieht_weiterhin_beide_objekte(welt):
     d = admin.get(f"/api/dossier/liegenschaft/{a['obj'].id}").json()
     assert d["offene_posten_sichtbar"] is True
     assert d["wartung_sichtbar"] is True
+
+
+# ===========================================================================
+# Anlagenkarte und Gebäudeansicht — Bewohner an SEINEM Objekt (Review 2026-07-28)
+# ===========================================================================
+#
+# Der Fund: Beide Bausteine hingen an `check()`, und `check` sitzt auf dem
+# fail-closed `require` — bei row_scope 'EIGENE' liefert es `None`. Der Monteur
+# bekam an seinem eigenen Objekt „Belegung ist für Sie nicht sichtbar" zu lesen,
+# während `GET /tenure/properties/{id}/belegung` ihm dieselben Mieter samt
+# Telefonnummer lieferte. Nicht nur unvollständig, sondern mit falscher
+# Begründung unvollständig. Seit Migration 0103 hat MONTEUR `tenure/LESEN` mit
+# Scope EIGENE — genau dafür („er braucht Name und Telefonnummer").
+
+def _belegen(chef, objekt, name):
+    """Mieter mit Telefonnummer in die Einheit des Objekts setzen."""
+    from db_core.services import belegung as belegung_service
+
+    person = identity_service.create_person(chef.id, first_name="Bea", last_name=name)
+    identity_service.add_contact_point(
+        chef.id, person.id, contact_type="MOBILE", value="0170 1234567", is_primary=True,
+    )
+    belegung_service.create_belegung(
+        chef.id, unit_id=objekt["einheit"].id, occupancy_type="RENTED",
+        valid_from=date(2026, 1, 1),
+        mieter=[{"party_id": person.id, "role": "CONTRACTUAL_TENANT"}],
+    )
+    return person
+
+
+@pytest.mark.django_db
+def test_monteur_sieht_bewohner_an_der_anlage_seines_objekts(welt):
+    """Wer die Etagentherme im Auftrag hat, braucht die Nummer, die aufmacht."""
+    from db_core.services import anlage as anlage_service
+
+    chef, c, a = welt["chef"], welt["client"], welt["A"]
+    bewohnerin = _belegen(chef, a, "Bewohnerin A")
+    anlage_service.create_asset(
+        chef.id, a["obj"].id,
+        {"name": "Etagentherme", "asset_type": "THERME_COMBI",
+         "unit_id": a["einheit"].id},
+    )
+
+    r = c.get(f"/api/property/properties/{a['obj'].id}/assets")
+    assert r.status_code == 200, r.content
+    karte = r.json()[0]
+    assert karte["belegung_sichtbar"] is True, (
+        "Er hat tenure/LESEN mit Scope EIGENE und es ist SEIN Objekt — "
+        "'nicht sichtbar' wäre eine falsche Begründung."
+    )
+    assert [n["display_name"] for n in karte["nutzer"]] == [bewohnerin.display_name]
+    assert karte["nutzer"][0]["telefon"] == "0170 1234567"
+
+
+@pytest.mark.django_db
+def test_monteur_sieht_die_gebaeudeansicht_seines_objekts_mit_bewohnern(welt):
+    chef, c, a = welt["chef"], welt["client"], welt["A"]
+    bewohnerin = _belegen(chef, a, "Bewohnerin A")
+
+    r = c.get(f"/api/property/properties/{a['obj'].id}/gebaeudeansicht")
+    assert r.status_code == 200, r.content
+    d = r.json()
+    assert d["belegung_sichtbar"] is True
+    namen = [
+        p["display_name"]
+        for haus in d["haeuser"]
+        for etage in haus["etagen"]
+        for e in etage["einheiten"]
+        for p in e["bewohner"]
+    ]
+    assert namen == [bewohnerin.display_name]
+
+
+@pytest.mark.django_db
+def test_monteur_sieht_die_gebaeudeansicht_des_fremden_objekts_nicht(welt):
+    """Fremd ist 404, nicht 403 — die Existenz wird nicht verraten."""
+    chef, c, b = welt["chef"], welt["client"], welt["B"]
+    _belegen(chef, b, "Bewohnerin B")
+
+    r = c.get(f"/api/property/properties/{b['obj'].id}/gebaeudeansicht")
+    assert r.status_code == 404, r.content
