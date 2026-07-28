@@ -94,6 +94,42 @@
 
       <!-- ------------------------------ Struktur -------------------------- -->
       @if (tab() === 'struktur') {
+        <!-- Zwei Sichten auf DIESELBEN Daten: das Haus (schnell erfassen, wo
+             was liegt und wer wohnt) und die Liste (erfassen und ändern). Kein
+             eigener Reiter dafür — es sind nicht zwei Themen, sondern zwei
+             Blickwinkel auf eines. -->
+        <div class="sichtwahl" role="group" aria-label="Darstellung der Struktur">
+          <button
+            type="button"
+            class="sichtwahl__knopf"
+            [class.sichtwahl__knopf--aktiv]="strukturSicht() === 'haus'"
+            [attr.aria-pressed]="strukturSicht() === 'haus'"
+            (click)="strukturSicht.set('haus')"
+          >
+            Gebäudeansicht
+          </button>
+          <button
+            type="button"
+            class="sichtwahl__knopf"
+            [class.sichtwahl__knopf--aktiv]="strukturSicht() === 'liste'"
+            [attr.aria-pressed]="strukturSicht() === 'liste'"
+            (click)="strukturSicht.set('liste')"
+          >
+            Liste &amp; Bearbeiten
+          </button>
+        </div>
+      }
+
+      @if (tab() === 'struktur' && strukturSicht() === 'haus') {
+        <app-gebaeudeansicht
+          [propertyId]="daten()!.id"
+          (einheitBearbeiten)="einheitAusAnsichtBearbeiten($event)"
+          (zurBelegung)="tab.set('belegung')"
+          (zuAnlagen)="tab.set('anlagen')"
+        />
+      }
+
+      @if (tab() === 'struktur' && strukturSicht() === 'liste') {
         @if (darfAnlegen()) {
           <div class="tab-aktionen">
             <button type="button" class="btn btn--primary" (click)="gebaeudeOeffnen()">

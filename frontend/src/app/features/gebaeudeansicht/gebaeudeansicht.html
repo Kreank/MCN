@@ -1,0 +1,289 @@
+<!-- Höflichkeitsmeldungen für Screenreader; sichtbar ist die Ansicht selbst. -->
+<p class="sr-only" role="status">{{ ansage() }}</p>
+
+@if (zustand() === 'loading') {
+  <p class="lade-hinweis" role="status">Gebäudeansicht wird geladen …</p>
+}
+
+@if (zustand() === 'error') {
+  <div class="note note--error" role="alert">
+    <h3 class="note__titel">Gebäudeansicht konnte nicht geladen werden</h3>
+    <p class="note__text">{{ fehler() }}</p>
+    <div class="note__aktionen">
+      <button type="button" class="btn btn--primary" (click)="neuLaden()">Erneut versuchen</button>
+    </div>
+  </div>
+}
+
+@if (zustand() === 'ready') {
+  @if (leer()) {
+    <div class="tab-platzhalter">
+      <h3 class="tab-platzhalter__titel">Noch kein Gebäude erfasst</h3>
+      <p>
+        Sobald das erste Gebäude mit seinen Einheiten angelegt ist, entsteht hier der
+        Gebäudeschnitt: Etagen von oben nach unten, Wohnungen nebeneinander, Technik im
+        Sockel.
+      </p>
+    </div>
+  } @else {
+    <div class="kopf">
+      <p class="kopf__text">
+        Das Objekt als Haus: <strong>{{ bilanz().haeuser }}</strong> Gebäude,
+        <strong>{{ bilanz().einheiten }}</strong> Einheiten,
+        <strong>{{ bilanz().anlagen }}</strong> technische Anlagen.
+        @if (daten()!.belegung_sichtbar) {
+          <strong>{{ bilanz().belegt }}</strong> Einheiten sind belegt.
+        }
+        @if (hatZentrale()) {
+          <span class="kopf__hinweis">
+            Hier steht eine <strong>zentrale</strong> Anlage — „Heizung kalt" ist damit ein
+            Objektproblem, kein Wohnungsproblem.
+          </span>
+        }
+      </p>
+
+      <!-- Legende: Farbe ist Beiwerk, der Text ist die Aussage. -->
+      <ul class="legende">
+        <li class="legende__punkt legende__punkt--belegt">bewohnt</li>
+        <li class="legende__punkt legende__punkt--frei">frei</li>
+        <li class="legende__punkt legende__punkt--technik">keine Belegung vorgesehen</li>
+        <li class="legende__punkt legende__punkt--anlage">technische Anlage</li>
+      </ul>
+    </div>
+
+    @if (!daten()!.belegung_sichtbar) {
+      <div class="sperre" role="note">
+        <strong>Belegung ist für Sie an diesem Objekt nicht sichtbar.</strong> Entweder fehlt
+        Ihrem Konto das Recht <code>tenure/LESEN</code>, oder Ihre Rolle sieht nur die
+        eigenen Objekte und dieses gehört nicht dazu. Die Wohnungen stehen hier deshalb ohne
+        Bewohner — das heißt <em>nicht</em>, dass sie leer stehen.
+      </div>
+    }
+
+    <!-- Die Häuser nebeneinander. Der Streifen scrollt in sich selbst; die
+         Seite bleibt schmal genug zum Lesen. -->
+    <div class="rail" role="group" aria-label="Gebäude dieser Liegenschaft" tabindex="0">
+      @for (h of haeuser(); track h.id) {
+        <section class="haus" [attr.aria-label]="hausName(h)">
+          <header class="haus__kopf">
+            <h3 class="haus__name">{{ hausName(h) }}</h3>
+            <p class="haus__zahl">
+              {{ h.einheiten_gesamt }} {{ h.einheiten_gesamt === 1 ? 'Einheit' : 'Einheiten' }}
+              @if (daten()!.belegung_sichtbar && h.einheiten_gesamt > 0) {
+                · {{ h.einheiten_belegt }} belegt
+              }
+            </p>
+          </header>
+
+          <!-- Dach und Sockel sind Bild, kein Inhalt. -->
+          <div class="haus__dach" aria-hidden="true"></div>
+
+          <div class="haus__koerper">
+            @for (e of h.etagen; track e.label) {
+              <div class="etage" [class.etage--ungedeutet]="!e.gedeutet">
+                <div class="etage__label">
+                  <span class="etage__text">{{ e.label }}</span>
+                  @if (!e.gedeutet) {
+                    <span class="etage__warn" title="Diese Etagenangabe ließ sich nicht einordnen">
+                      nicht eingeordnet
+                    </span>
+                  }
+                </div>
+                <ul class="etage__einheiten">
+                  @for (u of e.einheiten; track u.id) {
+                    <li>
+                      <button
+                        type="button"
+                        class="we {{ statusKlasse(u) }}"
+                        [class.we--gewaehlt]="istGewaehlt(u)"
+                        [attr.aria-pressed]="istGewaehlt(u)"
+                        [attr.aria-label]="kachelAnsage(h, e, u)"
+                        (click)="einheitWaehlen(h, e, u)"
+                      >
+                        <span class="we__nr">{{ u.unit_number }}</span>
+                        <span class="we__art">{{ einheitArt(u.unit_type) }}</span>
+                        <span class="we__status" aria-hidden="true">{{ statusText(u) }}</span>
+                        @if (erster(u); as name) {
+                          <span class="we__wer" aria-hidden="true">{{ name }}</span>
+                        }
+                        @if (u.anlagen.length) {
+                          <span class="we__technik" aria-hidden="true">
+                            <span class="we__flamme">▲</span> {{ technikKuerzel(u) }}
+                          </span>
+                        }
+                      </button>
+                    </li>
+                  }
+                </ul>
+              </div>
+            }
+
+            @if (h.technik.length) {
+              <!-- Sockel: Technik am Gebäude ohne Einheit — die Zentralanlage. -->
+              <div class="etage etage--technik">
+                <div class="etage__label">
+                  <span class="etage__text">Technik</span>
+                </div>
+                <ul class="etage__einheiten">
+                  @for (a of h.technik; track a.id) {
+                    <li>
+                      <button
+                        type="button"
+                        class="anlagekachel"
+                        [class.anlagekachel--zentral]="a.supply_type === 'ZENTRAL'"
+                        [class.we--gewaehlt]="istAnlageGewaehlt(a)"
+                        [attr.aria-pressed]="istAnlageGewaehlt(a)"
+                        [attr.aria-label]="
+                          a.name + ', ' + anlageArt(a.asset_type) + ', ' + versorgung(a.supply_type)
+                        "
+                        (click)="anlageWaehlen(h, a)"
+                      >
+                        <span class="anlagekachel__name">{{ a.name }}</span>
+                        <span class="anlagekachel__meta">{{ anlageArt(a.asset_type) }}</span>
+                        <span class="anlagekachel__meta">{{ versorgung(a.supply_type) }}</span>
+                      </button>
+                    </li>
+                  }
+                </ul>
+              </div>
+            }
+          </div>
+
+          <div class="haus__boden" aria-hidden="true"></div>
+        </section>
+      }
+    </div>
+
+    @if (daten()!.anlagen_ohne_gebaeude.length) {
+      <!-- Nicht verschweigen, nur weil sie ins Bild nicht passen: eine Anlage
+           ohne Gebäude findet sonst nie wieder jemand. -->
+      <section class="ungeklaert">
+        <h3 class="ungeklaert__titel">Anlagen ohne Gebäudezuordnung</h3>
+        <p class="ungeklaert__text">
+          Diese Anlagen sind erfasst, aber keinem Gebäude zugeordnet — im Haus oben tauchen
+          sie deshalb nicht auf. Wer sie am Gebäude verortet, sieht sie dort.
+        </p>
+        <ul class="ungeklaert__liste">
+          @for (a of daten()!.anlagen_ohne_gebaeude; track a.id) {
+            <li>
+              <a class="ungeklaert__link" [routerLink]="['/anlagen', a.id]">{{ a.name }}</a>
+              <span class="ungeklaert__meta">{{ anlageArt(a.asset_type) }}</span>
+            </li>
+          }
+        </ul>
+      </section>
+    }
+
+    <!-- ------------------------------ Auswahl-Panel ---------------------- -->
+    @if (auswahl(); as sel) {
+      <aside class="panel" aria-label="Auswahl">
+        @if (sel.art === 'einheit') {
+          <div class="panel__kopf">
+            <div>
+              <h3 class="panel__titel">
+                {{ einheitArt(sel.einheit.unit_type) }} {{ sel.einheit.unit_number }}
+              </h3>
+              <p class="panel__ort">{{ sel.etage.label }} · {{ hausName(sel.haus) }}</p>
+            </div>
+            <button type="button" class="panel__zu" (click)="auswahlSchliessen()" aria-label="Auswahl schließen">
+              <span aria-hidden="true">✕</span>
+            </button>
+          </div>
+
+          <p class="panel__status {{ statusKlasse(sel.einheit) }}">
+            {{ statusText(sel.einheit) }}
+          </p>
+
+          @if (sel.einheit.bewohner.length) {
+            <h4 class="panel__untertitel">Wer hier wohnt</h4>
+            <ul class="panel__liste">
+              @for (b of sel.einheit.bewohner; track b.party_id) {
+                <li class="person">
+                  <span class="person__name">{{ b.display_name }}</span>
+                  <span class="person__rolle">{{ rolle(b.rolle) }}</span>
+                  @if (b.telefon) {
+                    <a class="person__weg" [href]="'tel:' + b.telefon">
+                      <span aria-hidden="true">☎</span>
+                      <span class="sr-only">Telefon:</span> {{ b.telefon }}
+                    </a>
+                  }
+                  @if (b.email) {
+                    <a class="person__weg" [href]="'mailto:' + b.email">
+                      <span aria-hidden="true">✉</span>
+                      <span class="sr-only">E-Mail:</span> {{ b.email }}
+                    </a>
+                  }
+                  @if (!b.telefon && !b.email) {
+                    <span class="person__weg person__weg--leer">kein Kontaktweg hinterlegt</span>
+                  }
+                </li>
+              }
+            </ul>
+          } @else if (sel.einheit.belegbar && daten()!.belegung_sichtbar) {
+            <p class="panel__leer">Für diese Einheit ist keine Belegung erfasst.</p>
+          }
+
+          <h4 class="panel__untertitel">Technik in dieser Einheit</h4>
+          @if (sel.einheit.anlagen.length === 0) {
+            <p class="panel__leer">
+              Keine eigene Anlage erfasst.
+              @if (hatZentrale()) {
+                Im Haus steht eine zentrale Anlage — sehr wahrscheinlich versorgt sie diese
+                Einheit mit.
+              }
+            </p>
+          } @else {
+            <ul class="panel__liste">
+              @for (a of sel.einheit.anlagen; track a.id) {
+                <li class="anlage">
+                  <a class="anlage__name" [routerLink]="['/anlagen', a.id]">{{ a.name }}</a>
+                  <span class="anlage__meta">{{ anlageArt(a.asset_type) }}</span>
+                  <span class="anlage__meta">{{ versorgung(a.supply_type) }}</span>
+                  <span class="anlage__meta">{{ energie(a.energy_source) }} · {{ kw(a.power_kw) }}</span>
+                </li>
+              }
+            </ul>
+          }
+
+          <div class="panel__aktionen">
+            <button type="button" class="btn btn--klein" (click)="einheitBearbeiten.emit(sel.einheit.id)">
+              Einheit bearbeiten
+            </button>
+            <button type="button" class="btn btn--klein" (click)="zurBelegung.emit()">
+              Zur Belegung
+            </button>
+            <button type="button" class="btn btn--klein" (click)="zuAnlagen.emit()">
+              Anlage erfassen
+            </button>
+          </div>
+        } @else {
+          <div class="panel__kopf">
+            <div>
+              <h3 class="panel__titel">{{ sel.anlage.name }}</h3>
+              <p class="panel__ort">{{ hausName(sel.haus) }} · Technik</p>
+            </div>
+            <button type="button" class="panel__zu" (click)="auswahlSchliessen()" aria-label="Auswahl schließen">
+              <span aria-hidden="true">✕</span>
+            </button>
+          </div>
+          <dl class="panel__daten">
+            <div class="paar"><dt>Anlagenart</dt><dd>{{ anlageArt(sel.anlage.asset_type) }}</dd></div>
+            <div class="paar"><dt>Versorgung</dt><dd>{{ versorgung(sel.anlage.supply_type) }}</dd></div>
+            <div class="paar">
+              <dt>Energie / Leistung</dt>
+              <dd>{{ energie(sel.anlage.energy_source) }} · {{ kw(sel.anlage.power_kw) }}</dd>
+            </div>
+            @if (sel.anlage.location_note) {
+              <div class="paar"><dt>Aufstellort</dt><dd>{{ sel.anlage.location_note }}</dd></div>
+            }
+          </dl>
+          <div class="panel__aktionen">
+            <a class="btn btn--klein" [routerLink]="['/anlagen', sel.anlage.id]">
+              Details, Wartung &amp; Aufträge
+            </a>
+          </div>
+        }
+      </aside>
+    }
+  }
+}

@@ -375,3 +375,42 @@
   color: var(--ink-muted);
   font-size: var(--step--1);
 }
+
+/* --- Sichtwahl im Reiter Struktur (Haus vs. Liste) ----------------------- */
+/* Zwei Blickwinkel auf dieselben Daten — deshalb ein Segment-Umschalter und
+   kein zusaetzlicher Reiter. */
+.sichtwahl {
+  display: inline-flex;
+  margin-bottom: var(--space-4);
+  padding: 2px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+}
+
+.sichtwahl__knopf {
+  padding: 0.35rem 0.85rem;
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: var(--ink-muted);
+  background: none;
+  border: 0;
+  border-radius: calc(var(--radius) - 2px);
+  cursor: pointer;
+}
+
+.sichtwahl__knopf:hover {
+  color: var(--ink);
+}
+
+.sichtwahl__knopf--aktiv {
+  color: var(--ink);
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgb(28 50 68 / 0.12);
+}
+
+.sichtwahl__knopf:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}

@@ -36,6 +36,7 @@ import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { Dateien } from '../../shared/dateien/dateien';
 import { Belege, BelegKontext } from '../../shared/belege/belege';
 import { Anlagen } from '../anlagen/anlagen';
+import { Gebaeudeansicht } from '../gebaeudeansicht/gebaeudeansicht';
 import { Raumaufmass } from '../raumaufmass/raumaufmass';
 import { RaumService } from '../../core/raum.service';
 import { Room } from '../../core/raum.model';
@@ -84,6 +85,7 @@ type LazyState<T> =
     Dialog,
     Feld,
     Anlagen,
+    Gebaeudeansicht,
     Raumaufmass,
     Belegung,
     Eigentum,
@@ -105,6 +107,14 @@ export class LiegenschaftDetail {
   private readonly raumSvc = inject(RaumService);
 
   protected readonly tab = signal('uebersicht');
+  /**
+   * Zwei Blickwinkel auf dieselben Daten im Reiter Struktur: das **Haus**
+   * (Gebäudeschnitt mit Etagen, Belegung und Technik) und die **Liste** (Baum
+   * mit allen Anlege- und Ändern-Knöpfen). Bewusst kein eigener Reiter: Es ist
+   * nicht ein zweites Thema, sondern eine zweite Darstellung — und die
+   * Reiterleiste ist ohnehin lang genug.
+   */
+  protected readonly strukturSicht = signal<'haus' | 'liste'>('haus');
   protected readonly state = signal<ViewState>({ kind: 'loading' });
   private reqId = 0;
   private nebenReqId = 0;
@@ -846,6 +856,30 @@ export class LiegenschaftDetail {
 
   einheitEditSchliessen(): void {
     if (!this.dialogLaedt()) this.einheitBearbeiten.set(null);
+  }
+
+  /**
+   * „Einheit bearbeiten" aus der Gebäudeansicht heraus.
+   *
+   * Die Ansicht schickt nur die Id — der Dialog gehört hierher, weil er hier
+   * schon steht. Ein zweiter Einheiten-Dialog in der Grafik wäre ein zweites
+   * Formular für denselben Datensatz, und das läuft garantiert auseinander.
+   */
+  einheitAusAnsichtBearbeiten(unitId: string): void {
+    for (const b of this.daten()?.buildings ?? []) {
+      const u = b.units.find((x) => x.id === unitId);
+      if (u) {
+        this.einheitEditOeffnen(u);
+        return;
+      }
+    }
+    // Die Mappe ist älter als die Gebäudeansicht (Einheit in einem zweiten Tab
+    // angelegt). Ein Knopf, der folgenlos verpufft, ist schlimmer als eine
+    // Meldung — der Nutzer klickt sonst dreimal und hält das Formular für kaputt.
+    this.meldung.set({
+      art: 'fehler',
+      text: 'Diese Einheit ist in der geladenen Mappe nicht enthalten. Bitte die Seite neu laden.',
+    });
   }
 
   // --- Räume im Baum (Befund I13) ------------------------------------------

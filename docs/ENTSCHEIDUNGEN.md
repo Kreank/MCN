@@ -204,5 +204,42 @@ richtig. Für einen Handwerksbetrieb mit ein paar tausend Dokumenten ist pgvecto
 im vorhandenen Postgres nicht der Kompromiss, sondern die richtige Wahl.
 
 ---
+
+## Wartungsvertrag ↔ Anlage: n:m statt einer Spalte (2026-07-28)
+
+**Entschieden:** Zuordnungstabelle `maintenance.contract_asset` (n:m), **nicht**
+ein `asset_id` am Vertrag.
+
+**Warum:** Ein Vertrag über *alle* Thermen eines Hauses ist der Normalfall, nicht
+die Ausnahme; und dieselbe Anlage kann in mehreren Verträgen stehen (Wartung
+jährlich, Abgasmessung separat). Eine Spalte hätte den ersten Vertrag mit zwei
+Thermen sofort erpresst: entweder zwei Verträge anlegen (falsch — es ist einer)
+oder das Feld leer lassen (dann ist es Zierrat). Form nach dem Vorbild
+`hr.employee_trade` (0120): voller Schutzstandard, `active`-Flag statt DELETE.
+
+**Nicht neu aufmachen:** Die leere Zuordnung bleibt „gilt fürs ganze Objekt".
+Bestandsverträge nachträglich auf „deckt nichts ab" umzudeuten wäre eine
+stillschweigende Entwertung echter Daten.
+
+## Gebäudeansicht statt zwölftem Reiter (2026-07-28)
+
+**Entschieden:** Die Gebäudeansicht (Liegenschaft als Haus: Etagen, Einheiten,
+Belegung, Technik) sitzt als **Sicht im Reiter Struktur** — Umschalter
+„Gebäudeansicht / Liste & Bearbeiten" —, nicht als eigener Reiter.
+
+**Warum:** Der Auslöser war die Beschwerde über *zu viele* Reiter. Eine neue
+Ansicht als zwölften Reiter zu hängen hätte das Problem vergrößert, das sie löst.
+Haus und Baum sind nicht zwei Themen, sondern zwei Blickwinkel auf dieselben
+Daten; der Umschalter sagt das auch.
+
+**Ebenfalls entschieden:** Die Etagen-Reihenfolge wird **abgeleitet, nie
+gespeichert** — `unit.storey` bleibt Freitext. Eine Codeliste für Etagen wäre die
+naheliegende „Verbesserung" und verlöre das Haus mit dem Zwischengeschoss.
+Ungedeutetes wird sichtbar unten gesammelt, nicht einsortiert.
+
+Die zugehörige Verschlankungs-Recherche (11 → 6 Reiter, mit Aufwand und
+Reihenfolge) liegt in `docs/roadmap/liegenschaft-reiter-verschlankung.md`.
+
+---
 Viel Erfolg. Halte dich an das Slice-Rezept, verifiziere end-to-end (nicht nur
 Typecheck), und lass jeden substanziellen Slice von einem Opus-Reviewer prüfen.

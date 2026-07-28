@@ -1,0 +1,452 @@
+// =============================================================================
+// Gebäudeansicht — die Liegenschaft als Haus
+// -----------------------------------------------------------------------------
+// Gestaltungslinie „Leitstand & Bauzeichnung": Das Haus ist ein SCHNITT, keine
+// Illustration. Dünne Linien, ein Sockel, ein angedeutetes Dach — die Kachel
+// selbst bleibt sachlich lesbar. Farbe ist Beiwerk: Jeder Status steht als
+// Text auf der Kachel (WCAG 1.4.1), die Farbe wiederholt ihn nur.
+// ==========================================================================
+
+// --- Kopf und Legende ----------------------------------------------------
+.kopf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.kopf__text {
+  flex: 1 1 24rem;
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 0.94rem;
+  line-height: 1.5;
+}
+
+.kopf__hinweis {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--warn-ink);
+}
+
+.legende {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.8rem;
+  color: var(--ink-muted);
+}
+
+.legende__punkt {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.legende__punkt::before {
+  content: '';
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 2px;
+  border: 1px solid var(--line-strong);
+}
+
+.legende__punkt--belegt::before {
+  background: var(--positive-tint);
+  border-color: var(--positive-ink);
+}
+.legende__punkt--frei::before {
+  background: var(--surface);
+  border-style: dashed;
+}
+.legende__punkt--technik::before {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--surface-sunken),
+    var(--surface-sunken) 2px,
+    var(--line) 2px,
+    var(--line) 4px
+  );
+}
+.legende__punkt--anlage::before {
+  background: var(--command);
+  border-color: var(--command);
+}
+
+// Fehlendes Recht wird ausgesprochen — und muss dafür auch aussehen wie ein
+// Hinweis. (Die Klassen `.hinweis/.hinweis--sperre` aus anlage-detail.scss sind
+// komponenten-scoped und hier NICHT verfügbar; sie zu benutzen ergäbe einen
+// nackten Absatz.)
+// Neutral, NICHT amber: Fehlendes Recht ist kein Fehler und keine Warnung,
+// sondern eine Auskunft — dieselbe Begründung wie in anlage-detail.scss. Der
+// kräftige Rand sorgt dafür, dass sie trotzdem nicht überlesen wird.
+.sperre {
+  margin-bottom: var(--space-4);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  color: var(--ink);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.sperre code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+}
+
+// --- Der Streifen mit den Häusern ----------------------------------------
+// Mehrere Gebäude (Vorderhaus, Seitenflügel, Hinterhaus) stehen NEBENeinander
+// wie auf dem Grundstück. Der Streifen scrollt in sich; die Seite selbst
+// bekommt nie eine Querscrollleiste.
+.rail {
+  display: flex;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-1) var(--space-4);
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
+  align-items: flex-end; // Häuser stehen auf einer Linie, nicht in der Luft
+
+  // Scroll-Schatten: Ein am Rand angeschnittenes Haus sieht sonst aus wie ein
+  // Darstellungsfehler statt nach „hier geht es weiter". Reine CSS-Lösung —
+  // die weißen Deckflächen scrollen MIT (`local`), die Schatten bleiben stehen
+  // (`scroll`); sichtbar sind sie deshalb nur, solange es etwas zu scrollen gibt.
+  background:
+    linear-gradient(to right, var(--paper), transparent) left center / 1.5rem 100% no-repeat local,
+    linear-gradient(to left, var(--paper), transparent) right center / 1.5rem 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, rgb(28 50 68 / 0.16), transparent) left center /
+      0.75rem 100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, rgb(28 50 68 / 0.16), transparent) right center /
+      0.75rem 100% no-repeat scroll;
+}
+
+.rail:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.haus {
+  flex: 0 0 auto;
+  min-width: 19rem;
+  max-width: 30rem;
+  scroll-snap-align: start;
+}
+
+.haus__kopf {
+  margin-bottom: var(--space-2);
+}
+
+.haus__name {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.haus__zahl {
+  margin: 0.1rem 0 0;
+  font-size: 0.8rem;
+  color: var(--ink-hint);
+}
+
+// Dach: ein angedeuteter Giebel in Navy, kein Comic-Haus.
+.haus__dach {
+  height: 1.4rem;
+  background: var(--command);
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+  border-radius: 2px 2px 0 0;
+}
+
+.haus__koerper {
+  border: 1px solid var(--line-strong);
+  border-radius: 0 0 var(--radius) var(--radius);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+// Sockel: das Haus steht auf etwas.
+.haus__boden {
+  height: 6px;
+  margin-top: -1px;
+  background: linear-gradient(var(--command), var(--command-2));
+  border-radius: 0 0 3px 3px;
+}
+
+// --- Etagenbänder ---------------------------------------------------------
+// Die Etagenspalte wächst mit ihrer längsten Beschriftung (bis zu einer
+// Grenze): „Gartenebene" brach in einer festen 4,5-rem-Spalte mitten im Wort.
+// Gekappt wird sie trotzdem — ein Freitext darf das Haus nicht wegdrücken.
+.etage {
+  display: grid;
+  grid-template-columns: minmax(4.5rem, max-content) 1fr;
+  align-items: stretch;
+  border-bottom: 1px solid var(--line);
+}
+
+.etage:last-child {
+  border-bottom: 0;
+}
+
+.etage__label {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.15rem;
+  padding: var(--space-2);
+  background: var(--surface-sunken);
+  border-right: 1px solid var(--line);
+}
+
+.etage__text {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.etage__warn {
+  font-size: 0.68rem;
+  color: var(--warn-ink);
+}
+
+// Nicht deutbare Etagen sitzen unten und sagen das auch.
+.etage--ungedeutet .etage__label {
+  background: var(--warn-tint);
+}
+
+.etage__einheiten {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-2);
+  list-style: none;
+}
+
+// --- Die Wohnungskachel ---------------------------------------------------
+.we {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 7rem;
+  max-width: 11rem;
+  padding: var(--space-2);
+  text-align: left;
+  font: inherit;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .we,
+  .anlagekachel {
+    transition:
+      transform 120ms ease,
+      box-shadow 120ms ease;
+  }
+  .we:hover,
+  .anlagekachel:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgb(28 50 68 / 0.14);
+  }
+}
+
+.we:focus-visible,
+.anlagekachel:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.we__nr {
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.we__art {
+  font-size: 0.72rem;
+  color: var(--ink-hint);
+}
+
+.we__status {
+  font-size: 0.74rem;
+  font-weight: 600;
+}
+
+.we__wer {
+  font-size: 0.78rem;
+  color: var(--ink-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.we__technik {
+  margin-top: 0.15rem;
+  font-size: 0.72rem;
+  color: var(--accent-ink);
+}
+
+.we__flamme {
+  font-size: 0.6rem;
+}
+
+// Zustände. Die Farbe wiederholt, was .we__status ohnehin ausschreibt.
+.we--belegt {
+  border-left-color: var(--positive-ink);
+  background: var(--positive-tint);
+}
+.we--belegt .we__status {
+  color: var(--positive-ink);
+}
+
+.we--frei {
+  border-style: dashed;
+  border-left-style: solid;
+  border-left-color: var(--line-strong);
+}
+.we--frei .we__status {
+  color: var(--ink-hint);
+}
+
+.we--unbekannt {
+  border-left-color: var(--line-strong);
+}
+.we--unbekannt .we__status {
+  color: var(--ink-hint);
+}
+
+// Technikraum/Gemeinschaftsfläche: schraffiert wie im Bauplan — sie steht
+// nicht leer, sie ist gar nicht zum Wohnen da.
+.we--technik {
+  border-left-color: var(--ink-hint);
+  background: repeating-linear-gradient(
+    45deg,
+    var(--surface-sunken),
+    var(--surface-sunken) 4px,
+    var(--surface) 4px,
+    var(--surface) 8px
+  );
+}
+.we--technik .we__status {
+  color: var(--ink-hint);
+}
+
+.we--gewaehlt {
+  outline: 2px solid var(--accent-ink);
+  outline-offset: 1px;
+}
+
+// --- Technik-Sockel des Hauses -------------------------------------------
+.etage--technik .etage__label {
+  background: var(--command);
+}
+.etage--technik .etage__text {
+  color: var(--on-command);
+}
+
+.anlagekachel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 8rem;
+  padding: var(--space-2);
+  text-align: left;
+  font: inherit;
+  color: var(--on-command);
+  background: var(--command);
+  border: 1px solid var(--command-line);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.anlagekachel--zentral {
+  border-color: var(--accent);
+  border-left-width: 3px;
+}
+
+.anlagekachel__name {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.anlagekachel__meta {
+  font-size: 0.72rem;
+  color: var(--on-command-muted);
+}
+
+.anlagekachel:focus-visible {
+  outline-color: var(--focus-ring-on-command);
+}
+
+// --- Anlagen ohne Gebäude -------------------------------------------------
+.ungeklaert {
+  margin-top: var(--space-4);
+  padding: var(--space-3);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+}
+
+.ungeklaert__titel {
+  margin: 0 0 0.2rem;
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  color: var(--ink);
+}
+
+.ungeklaert__text {
+  margin: 0 0 var(--space-2);
+  font-size: 0.86rem;
+  color: var(--ink-muted);
+}
+
+.ungeklaert__liste {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ungeklaert__link {
+  font-weight: 600;
+  color: var(--accent-ink);
+  text-decoration: none;
+}
+.ungeklaert__link:hover {
+  text-decoration: underline;
+}
+
+.ungeklaert__meta {
+  margin-left: 0.4rem;
+  font-size: 0.78rem;
+  color: var(--ink-hint);
+}
+
+// Schmale Fenster: Etagenlabel schrumpft, Kacheln füllen die Breite.
+@media (max-width: 40rem) {
+  .haus {
+    min-width: 16rem;
+  }
+  .etage {
+    grid-template-columns: 3.5rem 1fr;
+  }
+  .we {
+    min-width: 6rem;
+  }
+}

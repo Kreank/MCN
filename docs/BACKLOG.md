@@ -144,3 +144,37 @@ roh). **Das Stil-Budget ist wieder eingehalten** — das Frontend baut seit `f1e
 erstmals **ohne Budget-Warnung** (8/10 kB). Wer ein Stylesheet über die Grenze
 treibt: **auslagern, nicht das Budget lockern.**
 
+
+---
+
+## Aus dem Praxistest 2026-07-28 (Sascha)
+
+**Erledigt in dieser Session:**
+- ✔ **Wartungsvertrag ↔ Anlage** (`maintenance.contract_asset`, Migration 0135/0136):
+  n:m-Zuordnung, Auswahl beim Anlegen und am Vertrag, Anzeige an der Anlage mit
+  `bezug` (ANLAGE / LIEGENSCHAFT). Der erzeugte Auftrag erbt die Anlage, wenn es
+  genau eine ist.
+- ✔ **Anlagenkarte zeigt Etage und Bewohner** (Name, Telefon, E-Mail) — aufgelöst
+  aus `unit.storey` und der Belegung, getort am Modul `tenure`.
+- ✔ **Gebäudeansicht** (`features/gebaeudeansicht`, Endpunkt
+  `/properties/{id}/gebaeudeansicht`): das Objekt als Haus, mehrere Gebäude
+  nebeneinander, Etagen von oben nach unten, Technik im Sockel. Sitzt als Sicht im
+  Reiter Struktur.
+
+**Offen:**
+1. **Reiter der Liegenschaftsmappe zusammenlegen: 11 → 6.** Recherche, Mapping,
+   Aufwand und Reihenfolge stehen in
+   `docs/roadmap/liegenschaft-reiter-verschlankung.md`. Der billigste Schritt
+   (Dokumente + Dateien) ist ein halber Tag, der teuerste (Beteiligte +
+   Verwaltung + Eigentum + Belegung) zwei bis drei Tage — und der einzige mit
+   echtem Regressionsrisiko. **Braucht eine Entscheidung des Users**, weil er die
+   gewohnte Navigation umbaut.
+2. **Eigentümer doppelt erfassbar.** `property_party_role` (Rolle
+   `PROPERTY_OWNER`) und der Eigentumsstand kennen einander nicht; es gibt keine
+   Synchronisation und keinen Hinweis. Datenproblem, kein Reiterproblem — bleibt
+   auch nach dem Zusammenlegen bestehen.
+3. **Zwei Formulare für denselben Raum**: Kurzform im Struktur-Baum, Vollform im
+   Raum-Editor. Beide schreiben `RoomIn`.
+4. **Gebäudeansicht: Räume fehlen bewusst.** Wenn sie dazukommen sollen, dann als
+   dritte Ebene *innerhalb* der Einheitskachel (aufklappbar) — nicht als weitere
+   Bänder, sonst kippt das Bild.

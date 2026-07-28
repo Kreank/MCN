@@ -319,11 +319,29 @@ Ausführliche Herleitungen: `docs/archiv/chronik-2026-07.md`.
   `duration_months`. Keine Fristen aus Normen hart verdrahten.
 - **STORNIEREN ist das Tor fürs Verwerfen** — DISPOSITION darf erledigen, aber eine Frist nicht
   bewusst verstreichen lassen.
+- **Wartungsvertrag ohne Anlagenzuordnung heißt „gilt fürs ganze Objekt", nicht „deckt nichts ab"**
+  (`maintenance.contract_asset`, 0135). Bestandsverträge bleiben damit gültig, ohne dass ihnen
+  jemand eine Anlage andichtet. Ein Vertrag, der Anlage A **nennt**, erscheint bei Anlage B
+  **nicht** mehr — genau dieser Fehlschluss („irgendein Vertrag gilt fürs Haus, also ist meine
+  Therme versorgt") war der Befund aus dem Praxistest.
+- **Vertrag und Anlage müssen zur selben Liegenschaft gehören** — physisch erzwungen über zwei
+  zusammengesetzte FKs auf dieselbe `property_id`-Spalte der Zuordnungstabelle. Ein Service-Check
+  allein wäre umgehbar.
+- **Wartungs-Fälligkeiten erscheinen an einer Anlage nur, wenn der Vertrag sie nennt.** Ein
+  objektweiter Vertrag hängt seine Fälligkeit an keine bestimmte Therme.
 
 ## 13. Stammdaten, Import & Anbindungen
 
 - **Keine zweite Wahrheit:** Mieter über `tenure.occupancy_party`, Verwaltung über ein **Mandat**
-  — bewusst **keine** `occupancy.party_id`-Spalte.
+  — bewusst **keine** `occupancy.party_id`-Spalte. Auch die Anlagenkarte und die Gebäudeansicht
+  zeigen Bewohner nur **aus der Belegung**; sie bekommen deshalb kein eigenes Kontaktfeld.
+- **Die Etage (`property.unit.storey`) ist Freitext und wird nie umgeschrieben.** Für das Bild
+  eines Hauses wird eine Reihenfolge **abgeleitet**, nicht gespeichert; was sich nicht deuten
+  lässt, landet sichtbar in einem eigenen Band ganz unten und wird **nicht geraten**. Wer wegen
+  einer falsch einsortierten Etage im falschen Stock klingelt, hat die Fahrt umsonst gemacht.
+- **Mieterdaten hängen am Modul `tenure`, egal wo sie auftauchen.** Anlagenliste und
+  Gebäudeansicht prüfen es einzeln (weiches `check()`) und sprechen ein fehlendes Recht aus
+  (`belegung_sichtbar = false`) — eine leere Bewohnerliste ohne dieses Flag hieße „steht leer".
 - **Zutrittshinweise gibt es nur am Einsatz, nicht an der Liegenschaft** — das Dossier zeigt sie
   mit benannter Herkunft, statt ein Objektfeld zu erfinden.
 - **Preis-Semantik ist Anbindungs-Konfiguration, nie geraten** (`net_price_semantics`). Hintergrund:

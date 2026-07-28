@@ -1,0 +1,163 @@
+// Auswahl-Panel der Gebäudeansicht — eigenes Blatt, weil das Hauptblatt
+// sonst über das Stil-Budget (8 kB) läuft. Die Hausregel lautet auslagern,
+// nicht das Budget lockern (docs/BACKLOG.md).
+
+// --- Auswahl-Panel --------------------------------------------------------
+.panel {
+  margin-top: var(--space-4);
+  padding: var(--space-4);
+  border: 1px solid var(--line-strong);
+  border-top: 3px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.panel__kopf {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.panel__titel {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  color: var(--ink);
+}
+
+.panel__ort {
+  margin: 0.1rem 0 0;
+  font-size: 0.82rem;
+  color: var(--ink-hint);
+}
+
+.panel__zu {
+  padding: 0.2rem 0.45rem;
+  font: inherit;
+  line-height: 1;
+  color: var(--ink-muted);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.panel__zu:hover {
+  background: var(--surface-sunken);
+}
+.panel__zu:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.panel__status {
+  display: inline-block;
+  margin: 0 0 var(--space-3);
+  padding: 0.15rem 0.5rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border: 1px solid var(--line-strong);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+}
+
+.panel__untertitel {
+  margin: var(--space-3) 0 var(--space-2);
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-hint);
+}
+
+.panel__liste {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.panel__leer {
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--ink-muted);
+}
+
+.person,
+.anlage {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.3rem var(--space-3);
+  padding: 0.4rem 0;
+}
+
+.person + .person,
+.anlage + .anlage {
+  border-top: 1px solid var(--line);
+}
+
+.person__name {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.person__rolle,
+.anlage__meta {
+  font-size: 0.78rem;
+  color: var(--ink-hint);
+}
+
+.person__weg,
+.anlage__name {
+  font-size: 0.88rem;
+  color: var(--accent-ink);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.anlage__name {
+  font-weight: 600;
+}
+
+.person__weg:hover,
+.anlage__name:hover {
+  text-decoration: underline;
+}
+
+.person__weg--leer {
+  color: var(--ink-hint);
+  font-style: italic;
+}
+
+.panel__daten {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+}
+
+.paar dt {
+  margin: 0 0 0.1rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-hint);
+}
+
+.paar dd {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.92rem;
+}
+
+.panel__aktionen {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+}
+
