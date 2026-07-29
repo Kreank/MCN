@@ -339,6 +339,15 @@ Ausführliche Herleitungen: `docs/archiv/chronik-2026-07.md`.
   eines Hauses wird eine Reihenfolge **abgeleitet**, nicht gespeichert; was sich nicht deuten
   lässt, landet sichtbar in einem eigenen Band ganz unten und wird **nicht geraten**. Wer wegen
   einer falsch einsortierten Etage im falschen Stock klingelt, hat die Fahrt umsonst gemacht.
+- **Ein Etagenband ist eine Höhe, kein Text.** In der Praxis steht die Lage mit im Etagenfeld
+  („EG links") — gruppiert man über den Text, entstehen acht Bänder mit je einer Wohnung, und
+  weil dann nichts mehr deutbar ist, steht das EG über dem 3. OG. Eine **bekannte** Lageangabe
+  (links/Mitte/rechts, li/mi/re) wird deshalb am Rand abgespalten — aber **nur, wenn der Rest
+  danach eine deutbare Etage ist**. Bleibt er es nicht („links hinten"), wird der Text nicht
+  zerlegt: Was nicht verstanden wurde, wird auch nicht auseinandergenommen.
+- **Eine nackte Zahl ist nur im Feld „Etage" ein Stockwerk.** In der Einheitennummer heißt „3"
+  die Wohnung 3. Die Nummer darf eine fehlende Etage nur mit einem **echten Etagenwort**
+  ergänzen („EG links"), und das Band weist die Ableitung aus (`abgeleitet`).
 - **Mieterdaten hängen am Modul `tenure`, egal wo sie auftauchen.** Anlagenliste und
   Gebäudeansicht prüfen es einzeln (weiches `check()`) und sprechen ein fehlendes Recht aus
   (`belegung_sichtbar = false`) — eine leere Bewohnerliste ohne dieses Flag hieße „steht leer".

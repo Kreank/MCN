@@ -208,13 +208,23 @@ export class Gebaeudeansicht {
   }
 
   /**
+   * Der Ort einer Einheit in Worten: der **erfasste** Etagentext, wenn es ihn
+   * gibt („EG links"), sonst das Band. Das Band trägt nur die Etage — wer vor
+   * der Tür steht, braucht auch die Lage.
+   */
+  protected ortText(etage: HausEtage, u: HausEinheit): string {
+    if (u.etage_text) return u.etage_text;
+    return u.lage ? `${etage.label} ${u.lage}` : etage.label;
+  }
+
+  /**
    * Die Vorlesefassung einer Kachel — sie muss allein tragen, was das Bild
    * zeigt: Wo, was, wer, welche Technik.
    */
   protected kachelAnsage(haus: Haus, etage: HausEtage, u: HausEinheit): string {
     const teile = [
       `${this.einheitArt(u.unit_type)} ${u.unit_number}`,
-      etage.label,
+      this.ortText(etage, u),
       hausName(haus),
       this.statusText(u),
     ];

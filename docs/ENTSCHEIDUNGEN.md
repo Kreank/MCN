@@ -240,6 +240,29 @@ Ungedeutetes wird sichtbar unten gesammelt, nicht einsortiert.
 Die zugehörige Verschlankungs-Recherche (11 → 6 Reiter, mit Aufwand und
 Reihenfolge) liegt in `docs/roadmap/liegenschaft-reiter-verschlankung.md`.
 
+## Etagenbänder gruppieren über die Höhe, nicht über den Text (2026-07-29)
+
+**Entschieden:** Einheiten werden zu Bändern über die **abgeleitete Höhe**
+gebündelt; eine bekannte Lageangabe (links/Mitte/rechts, li/mi/re) wird vorher
+vom Etagentext abgespalten und ordnet die Wohnungen *innerhalb* des Bandes von
+links nach rechts. Die Nummer sortiert danach **natürlich** („WE 2" vor „WE 10").
+
+**Warum:** Die ursprüngliche Regel „gruppiere über den Originaltext" (28.07.)
+hatte einen Nebennutzen — uneinheitliche Erfassung wurde sichtbar — und einen
+Hauptschaden, der im Praxistest sofort auftrat: Erfasst wird nicht „EG", sondern
+**„EG links"**, weil das Etagenfeld das einzige ist, in das die Lage passt. Damit
+war jede Wohnung ihr eigenes „Stockwerk", nichts mehr deutbar und die
+Reihenfolge alphabetisch — das EG stand über dem 3. OG. Ein Haus, das man nicht
+lesen kann, ist schlimmer als eine unsauber erfasste Schreibweise.
+
+**Der Nebennutzen bleibt, ohne das Haus zu zerreißen:** Das Band führt seine
+`schreibweisen` („2. OG" *und* „2.OG") und weist aus, wenn eine Etage nur aus der
+Einheitennummer abgeleitet ist (`abgeleitet`).
+
+**Nicht neu aufmachen:** Abgespalten wird **nur**, wenn der Rest danach eine
+deutbare Etage ist — „links hinten" bleibt unangetastet im Ungedeutet-Band. Und
+eine nackte Zahl in der *Nummer* wird nie zum Stockwerk („3" = Wohnung 3).
+
 ---
 Viel Erfolg. Halte dich an das Slice-Rezept, verifiziere end-to-end (nicht nur
 Typecheck), und lass jeden substanziellen Slice von einem Opus-Reviewer prüfen.

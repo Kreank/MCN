@@ -218,6 +218,14 @@
   color: var(--warn-ink);
 }
 
+// Woher die Etage kommt bzw. dass sie uneinheitlich erfasst ist — leise, aber
+// da. Wer es genau wissen will, hat den Titel-Text.
+.etage__hinweis {
+  font-size: 0.66rem;
+  color: var(--ink-hint);
+  cursor: help;
+}
+
 // Nicht deutbare Etagen sitzen unten und sagen das auch.
 .etage--ungedeutet .etage__label {
   background: var(--warn-tint);
@@ -271,9 +279,22 @@
 }
 
 .we__nr {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
   font-family: var(--font-mono);
   font-size: 0.95rem;
   font-weight: 700;
+}
+
+// Die Lage steht neben der Nummer, weil genau sie den Weg zur Tür weist. Für
+// Screenreader trägt sie die Kachel-Ansage, deshalb hier `aria-hidden`.
+.we__lage {
+  font-family: var(--font-body);
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--ink-muted);
+  text-transform: lowercase;
 }
 
 .we__art {

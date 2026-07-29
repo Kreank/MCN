@@ -1449,6 +1449,36 @@ def test_monteur_sieht_die_gebaeudeansicht_seines_objekts_mit_bewohnern(welt):
 
 
 @pytest.mark.django_db
+def test_gebaeudeansicht_liefert_etage_und_lage_bis_an_die_leitung(welt):
+    """Was der Service ordnet, muss auch über die API ankommen.
+
+    Praxisbefund 2026-07-29: Erfasst wird „EG links", nicht „EG". Das Band trägt
+    die Etage, die Kachel die Lage — sonst steht das EG über dem 3. OG.
+    """
+    chef, c, a = welt["chef"], welt["client"], welt["A"]
+    for nr, etage in (("WE 9", "1. OG rechts"), ("WE 8", "1. OG links")):
+        property_service.add_unit(
+            chef.id, building_id=a["gebaeude"].id, property_id=a["obj"].id,
+            unit_type="APARTMENT", unit_number=nr, storey=etage,
+        )
+
+    r = c.get(f"/api/property/properties/{a['obj'].id}/gebaeudeansicht")
+    assert r.status_code == 200, r.content
+    etagen = r.json()["haeuser"][0]["etagen"]
+
+    og = next(e for e in etagen if e["ordnung"] == 1.0)
+    assert og["label"] == "1. OG"
+    assert og["gedeutet"] is True and og["abgeleitet"] is False
+    assert [u["unit_number"] for u in og["einheiten"]] == ["WE 8", "WE 9"]
+    assert [u["lage"] for u in og["einheiten"]] == ["links", "rechts"]
+    assert og["einheiten"][0]["etage_text"] == "1. OG links"
+
+    # Die Einheit ohne Etagenangabe bleibt unten und behält ihren Zustand.
+    ohne = next(e for e in etagen if e["label"] == "Ohne Etagenangabe")
+    assert ohne["einheiten"][0]["etage_text"] is None
+
+
+@pytest.mark.django_db
 def test_monteur_sieht_die_gebaeudeansicht_des_fremden_objekts_nicht(welt):
     """Fremd ist 404, nicht 403 — die Existenz wird nicht verraten."""
     chef, c, b = welt["chef"], welt["client"], welt["B"]

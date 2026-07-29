@@ -12,7 +12,12 @@ Diese Tests halten zwei Zusagen fest:
 """
 import pytest
 
-from db_core.services.gebaeudeansicht import etagen_ordnung
+from db_core.services.gebaeudeansicht import (
+    _natuerlich,
+    etage_deuten,
+    etagen_ordnung,
+    lage_aus_text,
+)
 
 
 @pytest.mark.parametrize(
@@ -65,3 +70,74 @@ def test_reihenfolge_stimmt_von_oben_nach_unten():
     etagen = ["2. UG", "KG", "EG", "Hochparterre", "1. OG", "2. OG", "DG"]
     sortiert = sorted(etagen, key=lambda s: -etagen_ordnung(s))
     assert sortiert == ["DG", "2. OG", "1. OG", "Hochparterre", "EG", "KG", "2. UG"]
+
+
+# --------------------------------------------------------------------------
+# Die Lage steht mit im Etagenfeld — „EG links" ist der Normalfall, nicht der
+# Ausreißer. Ohne Abspalten wird daraus ein eigenes Band, und weil dann nichts
+# mehr deutbar ist, steht das EG über dem 3. OG.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text,ordnung,label,lage",
+    [
+        ("EG links", 0.0, "EG", "links"),
+        ("EG rechts", 0.0, "EG", "rechts"),
+        ("EG Mitte", 0.0, "EG", "Mitte"),
+        ("EG Li", 0.0, "EG", "links"),
+        ("EG re", 0.0, "EG", "rechts"),
+        ("3. OG Rechts", 3.0, "3. OG", "rechts"),
+        ("2.OG links", 2.0, "2.OG", "links"),
+        ("Dachgeschoss rechts", 800.0, "Dachgeschoss", "rechts"),
+        # Ohne Zusatz bleibt alles wie vorher.
+        ("1. OG", 1.0, "1. OG", None),
+        ("EG", 0.0, "EG", None),
+    ],
+)
+def test_lage_wird_abgespalten(text, ordnung, label, lage):
+    o, l, lg = etage_deuten(text)
+    assert (o, l, lg.anzeige if lg else None) == (ordnung, label, lage)
+
+
+@pytest.mark.parametrize("text", ["links hinten", "Gartenebene links", "links"])
+def test_ohne_deutbare_etage_wird_nichts_zerlegt(text):
+    """Was wir nicht verstanden haben, nehmen wir auch nicht auseinander.
+
+    Der Text bleibt ganz und landet unten im Ungedeutet-Band — statt dass aus
+    „links hinten" die Etage „hinten" wird.
+    """
+    ordnung, label, lage = etage_deuten(text)
+    assert (ordnung, label, lage) == (None, text, None)
+
+
+def test_nackte_zahl_gilt_nur_im_etagenfeld():
+    """„3" ist im Feld Etage das 3. OG — in der Nummer die **Wohnung 3**."""
+    assert etage_deuten("3")[0] == 3.0
+    assert etage_deuten("3", nur_mit_wort=True)[0] is None
+    assert etage_deuten("WE 3", nur_mit_wort=True)[0] is None
+    # Ein echtes Etagenwort in der Nummer darf aushelfen.
+    o, label, lage = etage_deuten("EG links", nur_mit_wort=True)
+    assert (o, label, lage.anzeige) == (0.0, "EG", "links")
+
+
+@pytest.mark.parametrize(
+    "nummer,erwartet",
+    [
+        ("Laden links", "links"),
+        ("WE 3 re", "rechts"),
+        ("WE 01", None),
+        # Wortweise gesucht: „Remise" ist kein „re".
+        ("Remise", None),
+        ("Mittelbau", None),
+    ],
+)
+def test_lage_aus_der_einheitennummer(nummer, erwartet):
+    gefunden = lage_aus_text(nummer)
+    assert (gefunden[1] if gefunden else None) == erwartet
+
+
+def test_nummern_sortieren_natuerlich():
+    """„WE 10" hinter „WE 2" — Textsortierung stellt es davor."""
+    nummern = ["WE 10", "WE 2", "WE 1", "WE 21", "S 3"]
+    assert sorted(nummern, key=_natuerlich) == ["S 3", "WE 1", "WE 2", "WE 10", "WE 21"]

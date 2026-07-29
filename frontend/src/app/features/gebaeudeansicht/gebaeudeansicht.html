@@ -88,6 +88,22 @@
                       nicht eingeordnet
                     </span>
                   }
+                  @if (e.abgeleitet) {
+                    <span
+                      class="etage__hinweis"
+                      title="Bei mindestens einer Einheit ist das Feld „Etage“ leer — die Etage stammt hier aus der Einheitennummer."
+                    >
+                      aus der Nummer
+                    </span>
+                  }
+                  @if (e.schreibweisen.length > 1) {
+                    <span
+                      class="etage__hinweis"
+                      [title]="'Uneinheitlich erfasst: ' + e.schreibweisen.join(' · ')"
+                    >
+                      {{ e.schreibweisen.length }} Schreibweisen
+                    </span>
+                  }
                 </div>
                 <ul class="etage__einheiten">
                   @for (u of e.einheiten; track u.id) {
@@ -100,7 +116,12 @@
                         [attr.aria-label]="kachelAnsage(h, e, u)"
                         (click)="einheitWaehlen(h, e, u)"
                       >
-                        <span class="we__nr">{{ u.unit_number }}</span>
+                        <span class="we__nr">
+                          {{ u.unit_number }}
+                          @if (u.lage) {
+                            <span class="we__lage" aria-hidden="true">{{ u.lage }}</span>
+                          }
+                        </span>
                         <span class="we__art">{{ einheitArt(u.unit_type) }}</span>
                         <span class="we__status" aria-hidden="true">{{ statusText(u) }}</span>
                         @if (erster(u); as name) {
@@ -183,7 +204,8 @@
               <h3 class="panel__titel">
                 {{ einheitArt(sel.einheit.unit_type) }} {{ sel.einheit.unit_number }}
               </h3>
-              <p class="panel__ort">{{ sel.etage.label }} · {{ hausName(sel.haus) }}</p>
+              <!-- Der erfasste Etagentext („EG links"), nicht nur das Band. -->
+              <p class="panel__ort">{{ ortText(sel.etage, sel.einheit) }} · {{ hausName(sel.haus) }}</p>
             </div>
             <button type="button" class="panel__zu" (click)="auswahlSchliessen()" aria-label="Auswahl schließen">
               <span aria-hidden="true">✕</span>

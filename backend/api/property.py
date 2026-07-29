@@ -1101,16 +1101,28 @@ class HausEinheitOut(Schema):
     #: Ohne diese Angabe sähe der Technikraum aus wie eine leerstehende Wohnung.
     belegbar: bool
     belegt: bool
+    #: Der Etagentext, wie er an der Einheit steht („EG links"). Das Band trägt
+    #: nur die Etage — wer vor der Tür steht, will den ganzen Eintrag sehen.
+    etage_text: str | None = None
+    #: Abgeleitete Lage in der Etage („links" | „Mitte" | „rechts"); ordnet die
+    #: Wohnungen im Band und steht auf der Kachel.
+    lage: str | None = None
     bewohner: list[HausBewohnerOut] = []
     anlagen: list[HausAnlageOut] = []
 
 
 class HausEtageOut(Schema):
-    #: Wortwörtlich der erfasste Text („2. OG"), nichts Vereinheitlichtes.
+    #: Die Etage, wie erfasst („2. OG") — ohne den abgespaltenen Lagezusatz.
     label: str
     #: Abgeleitete Höhe fürs Zeichnen; `null` = nicht deutbar (eigenes Band).
     ordnung: float | None = None
     gedeutet: bool
+    #: Mindestens eine Einheit verdankt ihre Etage der Nummer, nicht dem Feld
+    #: „Etage". Die Ansicht sagt das — geflunkert wird nicht.
+    abgeleitet: bool = False
+    #: Alle Schreibweisen in diesem Band („2. OG" **und** „2.OG"). Mehr als eine
+    #: heißt: hier wurde uneinheitlich erfasst.
+    schreibweisen: list[str] = []
     einheiten: list[HausEinheitOut] = []
 
 
@@ -1209,6 +1221,8 @@ def gebaeudeansicht(request, property_id: UUID):
                         unit_type=u.unit_type,
                         belegbar=e["belegbar"],
                         belegt=belegt,
+                        etage_text=e["etage_text"],
+                        lage=e["lage"],
                         bewohner=[bewohner_out(p) for p in e["bewohner"]],
                         anlagen=[_haus_anlage(a) for a in e["anlagen"]],
                     )
@@ -1218,6 +1232,8 @@ def gebaeudeansicht(request, property_id: UUID):
                     label=etage["label"],
                     ordnung=etage["ordnung"],
                     gedeutet=etage["gedeutet"],
+                    abgeleitet=etage["abgeleitet"],
+                    schreibweisen=etage["schreibweisen"],
                     einheiten=einheiten,
                 )
             )

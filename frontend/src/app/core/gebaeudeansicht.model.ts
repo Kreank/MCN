@@ -38,16 +38,30 @@ export interface HausEinheit {
    */
   readonly belegbar: boolean;
   readonly belegt: boolean;
+  /**
+   * Der Etagentext, wie er an der Einheit steht („EG links"). Das Band trägt
+   * nur die Etage — hier steht der vollständige erfasste Eintrag.
+   */
+  readonly etage_text: string | null;
+  /** Abgeleitete Lage in der Etage: „links" | „Mitte" | „rechts". */
+  readonly lage: string | null;
   readonly bewohner: readonly HausBewohner[];
   readonly anlagen: readonly HausAnlage[];
 }
 
 export interface HausEtage {
-  /** Wortwörtlich der erfasste Text („2. OG") — nichts Vereinheitlichtes. */
+  /** Die Etage wie erfasst („2. OG") — ohne den abgespaltenen Lagezusatz. */
   readonly label: string;
   /** Abgeleitete Höhe; `null` = nicht deutbar, eigenes Band ganz unten. */
   readonly ordnung: number | null;
   readonly gedeutet: boolean;
+  /**
+   * Mindestens eine Einheit verdankt ihre Etage der **Nummer**, nicht dem Feld
+   * „Etage". Die Ansicht sagt das, statt es als erfasst auszugeben.
+   */
+  readonly abgeleitet: boolean;
+  /** Alle Schreibweisen im Band. Mehr als eine heißt: uneinheitlich erfasst. */
+  readonly schreibweisen: readonly string[];
   readonly einheiten: readonly HausEinheit[];
 }
 
