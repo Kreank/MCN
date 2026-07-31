@@ -78,10 +78,35 @@
 }
 
 // --------------------------- Messkante-Signature ----------------------------
+// Die Sidebar ist auf Schirmhoehe genagelt (height: 100vh), die Punkteliste kann
+// laenger sein. `min-height: 0` erlaubt dem Flex-Kind ueberhaupt erst zu
+// schrumpfen — ohne das waechst .nav ueber die Sidebar hinaus und der Ueberhang
+// stand unten auf dem hellen Seitenhintergrund statt auf Navy.
 .nav {
-  position: relative;
   flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--command-line) transparent;
+}
+
+// Der mitscrollende Inhalt. Die Messkante gehoert hier hinein (nicht in .nav):
+// als absolut positioniertes Kind des Scrollkastens waere sie nur einen
+// Schirm hoch und liefe beim Scrollen von der Liste weg.
+.nav__scroll {
+  position: relative;
   padding-left: 1.6rem;
+}
+
+// Eingeklappt entfaellt die Messkante und mit ihr ihr Platz. Die Regel steht
+// HIER und nicht in styles.scss: Komponenten-Styles sind attributgebunden und
+// schlagen bei gleicher Spezifitaet jede globale Klassenregel — die Einrueckung
+// bliebe sonst stehen und schoebe die Kennungen aus dem Scrollkasten heraus.
+@media (min-width: 721px) {
+  .shell--schmal .nav__scroll {
+    padding-left: 0;
+  }
 }
 
 // Maszband-Leiste: feine Teilstriche wie am Gliedermaszstab.
@@ -133,7 +158,13 @@
   transform: translateY(
     calc(var(--active-index, 0) * var(--nav-item-h) + var(--active-heads, 0) * var(--nav-head-h))
   );
-  transition: transform 0.34s cubic-bezier(0.4, 0, 0.15, 1);
+  transition: transform 0.34s cubic-bezier(0.4, 0, 0.15, 1), opacity 0.2s ease;
+
+  // Liegt die offene Seite in einer zugeklappten Gruppe (oder gar nicht in der
+  // Navigation), zeigt die Marke ins Leere — dann lieber gar nicht zeigen.
+  &--ruht {
+    opacity: 0;
+  }
 
   &::before {
     // horizontaler Bemaszungs-Tick

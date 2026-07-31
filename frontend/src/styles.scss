@@ -1893,25 +1893,79 @@ button {
    Wer am Schreibtisch eingeklappt hat, saehe am Handy sonst eine breite Leiste mit
    zentrierten, unbeschrifteten Zahlen — die Einstellung ist fuer Breite gedacht,
    und die gibt es dort nicht zu gewinnen. */
-/* Gruppentitel der Navigation (D1/D2). Hoehe ist FIX (--nav-head-h, gesetzt am
-   app-root): die orange Bemaszungsmarke rechnet ihren Weg aus Zeilen- und
-   Kopfhoehen, ein aus dem Inhalt folgender Kopf wuerde sie verschieben. */
+/* Gruppenkopf der Navigation: zugleich Titel UND Einklapp-Schalter
+   (Disclosure-Muster). Hoehe ist FIX (--nav-head-h, gesetzt am app-root): die
+   orange Bemaszungsmarke rechnet ihren Weg aus Zeilen- und Kopfhoehen, ein aus
+   dem Inhalt folgender Kopf wuerde sie verschieben. */
 .nav__gruppe {
   display: flex;
   align-items: center;
+  gap: var(--space-2);
+  box-sizing: border-box;
+  width: 100%;
   height: var(--nav-head-h);
   margin: 0;
   padding: 0 var(--space-3);
+  border: 0;
+  background: transparent;
   font-family: var(--font-mono);
   font-size: 0.62rem;
   letter-spacing: 0.14em;
   text-transform: uppercase;
+  text-align: left;
   color: var(--on-command-muted);
+  cursor: pointer;
+}
+.nav__gruppe:hover {
+  color: var(--on-command);
+}
+.nav__gruppe:focus-visible {
+  outline: 2.5px solid var(--focus-ring-on-command);
+  outline-offset: -2px;
+  border-radius: var(--radius-sm);
+}
+/* Der Bereich, in dem die offene Seite liegt, wird am Kopf hell — auch wenn die
+   Gruppe zugeklappt ist und ihre aktive Zeile gerade nicht zu sehen ist. */
+.nav__gruppe.is-aktiv {
+  color: var(--on-command);
+}
+/* Chevron aus zwei Rahmenkanten (keine Zeichenabhaengigkeit): offen zeigt er
+   nach unten, zugeklappt nach rechts. */
+.nav__gruppe-pfeil {
+  flex: none;
+  width: 0.4rem;
+  height: 0.4rem;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg) translate(-1px, -1px);
+  transition: transform 0.18s ease;
+}
+.nav__gruppe.is-zu .nav__gruppe-pfeil {
+  transform: rotate(-45deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .nav__gruppe-pfeil {
+    transition: none;
+  }
+}
+/* Zugeklappte Gruppe mit der offenen Seite darin: oranger Punkt am rechten Rand.
+   Farbe ist nie alleiniger Traeger — daneben steht ein `sr-only`-Text. */
+.nav__gruppe-punkt {
+  flex: none;
+  margin-left: auto;
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 50%;
+  background: var(--accent);
 }
 /* Erste Gruppe schliesst buendig an die Marke an, die folgenden bekommen Luft —
    der Abstand ist Teil von --nav-head-h und darf NICHT als margin dazukommen. */
 .nav__gruppe:not(:first-of-type) {
   border-top: 1px solid var(--command-line);
+}
+/* Zugeklappt: die Punkte gehen weg, der Kopf bleibt stehen. */
+.nav__list.is-zu {
+  display: none;
 }
 
 @media (min-width: 721px) {
@@ -1933,10 +1987,8 @@ button {
     clip-path: inset(50%);
     white-space: nowrap;
   }
-  .shell--schmal .nav,
-  .shell--schmal .messkante {
-    padding-left: 0;
-  }
+  /* Die Einrueckung des Scrollbereichs raeumt app.scss selbst weg (dort steht,
+     warum sie hier nicht wirken kann). */
   .shell--schmal .messkante {
     display: none;
   }
@@ -1951,20 +2003,19 @@ button {
   .shell--schmal .nav__gruppe {
     display: none;
   }
+  /* Ohne Koepfe gibt es keinen Schalter mehr — eine zugeklappte Gruppe waere
+     dann samt Punkten unerreichbar. Eingeklappt zeigt die Leiste deshalb ALLE
+     Kennungen; die Klappwahl gilt wieder, sobald die Beschriftungen zurueck
+     sind. Die Bemaszungsmarke ist hier ausgeblendet, ihre Rechnung stoert das
+     nicht. */
+  .shell--schmal .nav__list.is-zu {
+    display: block;
+  }
   .shell--schmal .sidebar__brand {
     justify-content: center;
     padding-inline: 0;
   }
 }
-/* Unter 721 px ist die Navigation ohnehin eine Kopfleiste — der Schalter hat dort
-   nichts zu gewinnen und wird ausgeblendet (er bleibt fuer Screenreader irrelevant,
-   weil er dann auch aus dem Fokusfluss faellt). */
-@media (max-width: 720px) {
-  .nav-toggle {
-    display: none;
-  }
-}
-
 .nav-toggle {
   display: flex;
   align-items: center;
@@ -1990,6 +2041,17 @@ button {
 .nav-toggle:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+/* Unter 721 px ist die Navigation ohnehin eine Kopfleiste — der Schalter hat dort
+   nichts zu gewinnen und wird ausgeblendet (er bleibt fuer Screenreader irrelevant,
+   weil er dann auch aus dem Fokusfluss faellt). Die Regel steht NACH der
+   Grundregel: bei gleicher Spezifitaet gewinnt die spaetere — davor stehend
+   wurde sie von `display: flex` ueberschrieben und der Schalter blieb am Handy
+   sichtbar. */
+@media (max-width: 720px) {
+  .nav-toggle {
+    display: none;
+  }
 }
 
 /* ============== Plantafel: Board-Breite (aus plantafel.scss ausgelagert) =====

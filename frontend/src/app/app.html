@@ -39,44 +39,68 @@
         <span class="nav-toggle__text">Einklappen</span>
       </button>
 
+      <!-- `nav` ist der Scrollbereich, `nav__scroll` der Inhalt: Die Sidebar ist
+           auf Schirmhoehe festgenagelt, die Punkteliste kann laenger werden. Ohne
+           eigenen Scrollbereich lief der Ueberhang unten aus der Navy-Flaeche
+           heraus und stand auf dem hellen Seitenhintergrund. Die Messkante gehoert
+           IN den mitscrollenden Inhalt — sonst liefe die Bemaszung davon. -->
       <nav class="nav" aria-label="Hauptnavigation">
-        <!-- Messkante: Maszband-Leiste; orange Bemaszungsmarke verfaehrt zum aktiven Punkt -->
-        <div
-          class="messkante"
-          aria-hidden="true"
-          [style.--active-index]="activeIndex()"
-          [style.--active-heads]="activeHeads()"
-        >
-          <span class="messkante__mark"></span>
-        </div>
+        <div class="nav__scroll">
+          <!-- Messkante: Maszband-Leiste; orange Bemaszungsmarke verfaehrt zum aktiven Punkt -->
+          <div
+            class="messkante"
+            aria-hidden="true"
+            [style.--active-index]="activeIndex()"
+            [style.--active-heads]="activeHeads()"
+          >
+            <span class="messkante__mark" [class.messkante__mark--ruht]="!markeSichtbar()"></span>
+          </div>
 
-        <!-- Gruppiert (D1/D2). Die Ueberschrift ist `aria-hidden` und der Name
-             haengt am <ul> — im ARIA-Modell traegt die Liste ihren Namen selbst,
-             eine Ueberschrift dazwischen waere doppelt. Gleiches Muster wie in
-             der Kommandopalette. -->
-        @for (g of sichtbareGruppen(); track g.id) {
-          <p class="nav__gruppe" aria-hidden="true">{{ g.titel }}</p>
-          <ul class="nav__list" [attr.aria-label]="g.titel">
-            @for (item of g.punkte; track item.path) {
-              <li>
-                <!-- Eingeklappt sieht ein sehender Nutzer nur noch die Kennung („50").
-                     Der Tooltip nennt den Bereich; der zugängliche Name steht ohnehin
-                     im (nur optisch verborgenen) Label. -->
-                <a
-                  class="nav__link"
-                  [routerLink]="item.path"
-                  routerLinkActive="is-active"
-                  #rla="routerLinkActive"
-                  [attr.aria-current]="rla.isActive ? 'page' : null"
-                  [attr.title]="navSchmal() ? item.label : null"
-                >
-                  <span class="nav__mark" aria-hidden="true">{{ item.mark }}</span>
-                  <span class="nav__label">{{ item.label }}</span>
-                </a>
-              </li>
-            }
-          </ul>
-        }
+          <!-- Gruppiert und einklappbar (Disclosure-Muster): Der Kopf ist der
+               Schalter und traegt den Namen, die Liste haengt als `aria-controls`
+               daran. Der Name steht damit EINMAL im Baum — die Liste selbst
+               bekommt kein zweites `aria-label`. -->
+          @for (g of sichtbareGruppen(); track g.id) {
+            <button
+              type="button"
+              class="nav__gruppe"
+              [class.is-zu]="!offen(g.id)"
+              [class.is-aktiv]="aktiveGruppe() === g.id"
+              [attr.aria-expanded]="offen(g.id)"
+              [attr.aria-controls]="'navgrp-' + g.id"
+              (click)="gruppeUmschalten(g.id)"
+            >
+              <span class="nav__gruppe-pfeil" aria-hidden="true"></span>
+              <span class="nav__gruppe-titel">{{ g.titel }}</span>
+              <!-- Der aktive Bereich ist nicht nur farbig markiert: zugeklappt
+                   sagt es auch der Text an (CLAUDE.md — Status nie nur ueber Farbe). -->
+              @if (aktiveGruppe() === g.id && !offen(g.id)) {
+                <span class="nav__gruppe-punkt" aria-hidden="true"></span>
+                <span class="sr-only">— enthält die offene Seite</span>
+              }
+            </button>
+            <ul class="nav__list" [class.is-zu]="!offen(g.id)" [id]="'navgrp-' + g.id">
+              @for (item of g.punkte; track item.path) {
+                <li>
+                  <!-- Eingeklappt sieht ein sehender Nutzer nur noch die Kennung („50").
+                       Der Tooltip nennt den Bereich; der zugängliche Name steht ohnehin
+                       im (nur optisch verborgenen) Label. -->
+                  <a
+                    class="nav__link"
+                    [routerLink]="item.path"
+                    routerLinkActive="is-active"
+                    #rla="routerLinkActive"
+                    [attr.aria-current]="rla.isActive ? 'page' : null"
+                    [attr.title]="navSchmal() ? item.label : null"
+                  >
+                    <span class="nav__mark" aria-hidden="true">{{ item.mark }}</span>
+                    <span class="nav__label">{{ item.label }}</span>
+                  </a>
+                </li>
+              }
+            </ul>
+          }
+        </div>
       </nav>
 
       <p class="sidebar__foot">
