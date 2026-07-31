@@ -11,7 +11,9 @@ offen registriert wird (`auth=None` oder vergessenes `require*`):
     Beweis, dass der Endpunkt tatsächlich ein Recht prüft — und dass 403 vor 404
     kommt (Pfadparameter mit beliebiger UUID). POST-Operationen sind hier
     ausgenommen, weil django-ninja den Request-Body VOR dem View validiert (leerer
-    Body → 422 vor `require*`); sie deckt der statische Scan ab.
+    Body → 422 vor `require*`); sie deckt der statische Scan ab. Die wenigen
+    persönlichen Ressourcen ohne Modul-Recht (`NO_ROLE_GET_OK`) führen stattdessen
+    den inhaltlichen Nachweis in `test_ohne_rolle_sieht_leeres_postfach`.
   * `test_jeder_endpunkt_ruft_require` — statischer Quelltext-Scan: die
     View-Funktion jeder Nicht-Whitelist-Operation enthält einen `require*`-Aufruf.
     Deckt auch POST/PUT ab, wo der behavioral-Test nicht greift.
@@ -67,7 +69,45 @@ NO_REQUIRE_OK = {
     # NICHT in WHITELIST), aber bewusst OHNE Modul-Recht — er widerruft nur das
     # präsentierte Token, kein Zielkonto (analog /api/auth/password).
     "/api/auth/device/logout",
+    # Das persönliche Postfach (Migration 0137). Dieselbe Begründung wie beim
+    # eigenen Passwort: Der Endpunkt wirkt AUSSCHLIESSLICH auf `request.user`;
+    # es gibt keinen Parameter, mit dem sich ein fremdes Postfach adressieren
+    # ließe (`benachrichtigung_service` filtert ausnahmslos auf den Akteur).
+    #
+    # Warum kein Modul-Recht: Das Postfach ist bereichsübergreifend. Hinge es an
+    # `workflow/LESEN`, bekäme ein reines Buchhaltungskonto seine Freigabe- und
+    # Rechnungsmeldungen nie zu sehen — ein Recht aus dem falschen Bereich als
+    # Tor für alle anderen. Der Inhalt selbst ist getort, nur an anderer Stelle:
+    # Eine Benachrichtigung darf nur enthalten, was ihr Empfänger am Ziel ohnehin
+    # sehen darf (`docs/INVARIANTEN.md`, Abschnitt 5) — geprüft in
+    # `test_aufgabe_dialog_api.py`.
+    "/api/benachrichtigungen",
+    "/api/benachrichtigungen/zaehler",
+    "/api/benachrichtigungen/{notification_id}/gelesen",
+    "/api/benachrichtigungen/alle-gelesen",
 }
+
+# Teilmenge von NO_REQUIRE_OK mit GET-Operationen: Sie können den
+# 403-ohne-Rolle-Nachweis nicht führen, weil sie gar kein Modul-Recht prüfen.
+# Bewusst als EIGENE, kleine Liste geführt statt NO_REQUIRE_OK pauschal auch
+# hier auszuwerten — wer einen Endpunkt vom statischen Scan befreit, soll nicht
+# nebenbei und unbemerkt auch den verhaltensbasierten Nachweis verlieren.
+#
+# Was an ihrer Stelle nachgewiesen wird: dass ein rollenloses Konto zwar 200
+# bekommt, darin aber NICHTS steht, was ihm nicht gehört (siehe
+# `test_ohne_rolle_sieht_leeres_postfach` unten).
+NO_ROLE_GET_OK = {
+    "/api/benachrichtigungen",
+    "/api/benachrichtigungen/zaehler",
+}
+
+# Die „Teilmenge" oben ist eine Zusage — hier wird sie haltbar gemacht. Sonst
+# könnte jemand einen Pfad nur hier eintragen und damit den verhaltensbasierten
+# Nachweis abschalten, ohne dass der statische Scan ihn je gesehen hätte.
+assert NO_ROLE_GET_OK <= NO_REQUIRE_OK, (
+    "NO_ROLE_GET_OK muss Teilmenge von NO_REQUIRE_OK sein: "
+    f"{NO_ROLE_GET_OK - NO_REQUIRE_OK}"
+)
 
 _REQUIRE_CALL = re.compile(r"\brequire(_scoped|_create)?\s*\(")
 
@@ -145,6 +185,8 @@ def test_anonymer_zugriff_401(path, method, _vf):
 def test_ohne_rolle_403_bei_get(path, _vf):
     """Eingeloggt, aber ohne jede Rolle → 403 auf jeder GET-Operation (das Recht
     fehlt). Beweist die tatsächliche Rechteprüfung; 403 kommt vor 404."""
+    if path in NO_ROLE_GET_OK:
+        pytest.skip(f"{path}: persönliche Ressource ohne Modul-Recht.")
     user, _app_user = make_role_user(None)  # app_user vorhanden, keine Rolle
     client = Client()
     client.force_login(user)
@@ -153,6 +195,40 @@ def test_ohne_rolle_403_bei_get(path, _vf):
         f"GET {path} -> {r.status_code} (erwartet 403 ohne Rolle). "
         "Fehlt hier der require*-Aufruf?"
     )
+
+
+@pytest.mark.django_db
+def test_ohne_rolle_sieht_leeres_postfach():
+    """Ersatznachweis für die Postfach-GETs (`NO_ROLE_GET_OK`).
+
+    Sie antworten einem rollenlosen Konto mit 200 statt 403 — das ist richtig
+    (jeder hat ein eigenes Postfach) und darf trotzdem nichts preisgeben. Der
+    Beweis ist inhaltlich statt statuscodebasiert.
+
+    Wichtig: Es liegt eine **fremde** Benachrichtigung in der Tabelle. Gegen eine
+    leere Tabelle zu prüfen bewiese gar nichts — der Test bestünde auch dann,
+    wenn der Service überhaupt nicht auf den Empfänger filterte.
+    """
+    from db_core.services import aufgabe as aufgabe_service
+
+    besitzer, besitzer_app_user = make_role_user("ADMINISTRATION")
+    empfaenger, _ = make_role_user("ADMINISTRATION")
+    task = aufgabe_service.create_task(
+        besitzer_app_user.id,
+        title="Fremde Aufgabe",
+        assigned_to_user_id=empfaenger.app_user_id,
+    )
+    aufgabe_service.complete_task(empfaenger.app_user_id, task.id)
+
+    user, _app_user = make_role_user(None)
+    client = Client()
+    client.force_login(user)
+
+    r = client.get("/api/benachrichtigungen")
+    assert r.status_code == 200
+    assert r.json()["items"] == [], "Fremde Benachrichtigung sichtbar!"
+    assert r.json()["total"] == 0
+    assert client.get("/api/benachrichtigungen/zaehler").json()["ungelesen"] == 0
 
 
 @lru_cache(maxsize=None)

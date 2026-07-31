@@ -11,7 +11,7 @@ eigenen Dateien (unten).
 | | |
 |---|---|
 | **Live** | `mitra.tech-artist.de`, deployt **2026-07-22** aus `main` @ `0fb1ae1` |
-| **Migrationskopf** | **0136** (Stand live: 0134; `0135`/`0136` — Wartungsvertrag ↔ Anlage — sind noch nicht ausgerollt) |
+| **Migrationskopf** | **0138** (Stand live: 0134; `0135`–`0138` sind noch nicht ausgerollt: Wartungsvertrag ↔ Anlage, Aufgaben-Faden + Benachrichtigungen) |
 | **Branches** | `develop` = Arbeit · `main` = was live läuft · beide stehen auf `0fb1ae1` |
 | **⚠️ Nicht gepusht** | `main` liegt **27 Commits vor `origin/main`** — auf GitHub fehlt der Stand |
 | **Daten** | **Echtbetrieb**, keine Demo: ~2 Mio Artikel, echte Kundendaten, `MCN_SEED=0` |
@@ -66,6 +66,18 @@ eigenen Dateien (unten).
    als `PROPERTY_OWNER` eingetragen (`backend/api/projekt.py`), `tenure.occupancy` wird
    nie angefasst. Zieht nach sich: `tenure.ownership_period`/`ownership_interest` haben
    **kein ORM-Modell und keinen Endpoint** (Eigentums-Ansicht ist ein Platzhalter).
+
+**Aus dem Aufgaben-Slice 2026-07-31 — bewusst offen gelassen**
+5a. **Das Postfach trägt heute nur Aufgaben.** `notify.notification` ist
+   bereichsübergreifend gebaut (weiches Ziel `target_type`/`target_id`), gefüttert
+   wird sie aber allein vom Aufgaben-Service. Naheliegende nächste Absender:
+   Termin zugewiesen, Vier-Augen-Antrag wartet, KI-Vorschlag liegt vor. Jede neue
+   Art kostet eine Migration (`kind` ist ein geschlossenes CHECK) — Absicht, siehe
+   `ENTSCHEIDUNGEN.md`.
+5c. **Keine Mail-Zusammenfassung.** Die Glocke ist In-System. Ein Tagesauszug per
+   Mail hinge am Scheduler (`deploy/scheduler-entrypoint.sh`, läuft nächtlich) —
+   und daran, dass `MCN_EMAIL_BACKEND` je scharfgeschaltet wird. Solange es auf
+   Konsole steht, wäre er wirkungslos.
 
 **Aus dem Praxistest 2026-07-28 — entschieden, aber nicht gebaut**
 5b. **Reiter der Liegenschaftsmappe zusammenlegen (11 → 6).** Recherche mit

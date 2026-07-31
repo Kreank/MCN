@@ -1,0 +1,299 @@
+// =============================================================================
+// Aufgaben-Detail: links die Angaben, rechts der Faden.
+// Zwei Spalten, weil beides zusammengehoert — wer eine Rueckfrage schreibt,
+// braucht den Auftragsbezug daneben, nicht eine Bildschirmhoehe darueber.
+// =============================================================================
+
+:host {
+  display: block;
+}
+
+.ad {
+  max-width: 76rem;
+}
+
+// --------------------------------- Kopf --------------------------------------
+.ad__kopf {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0 var(--space-4);
+  align-items: start;
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--line);
+}
+.ad__zurueck {
+  grid-column: 1 / -1;
+  justify-self: start;
+  margin-bottom: var(--space-2);
+  color: var(--ink-muted);
+  font-size: var(--step--1);
+  text-decoration: none;
+
+  &:hover {
+    color: var(--ink);
+    text-decoration: underline;
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+.ad__kicker {
+  grid-column: 1;
+  margin: 0;
+  color: var(--ink-hint);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.ad__titel {
+  grid-column: 1;
+  margin: 0.1rem 0 var(--space-2);
+  font-family: var(--font-display);
+  font-size: var(--step-2);
+  line-height: 1.2;
+  color: var(--ink);
+}
+.ad__marken {
+  grid-column: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.ad__frist {
+  color: var(--ink-muted);
+  font-size: var(--step--1);
+}
+.ad__aktionen {
+  grid-column: 2;
+  grid-row: 2 / span 3;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+// -------------------------------- Spalten ------------------------------------
+.ad__spalten {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+}
+@media (max-width: 900px) {
+  .ad__spalten {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ad__kopf {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ad__aktionen {
+    grid-column: 1;
+    grid-row: auto;
+    margin-top: var(--space-3);
+  }
+}
+
+.ad__block {
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--paper);
+}
+.ad__block--faden {
+  display: flex;
+  flex-direction: column;
+}
+.ad__block-titel {
+  margin: 0 0 var(--space-3);
+  font-family: var(--font-display);
+  font-size: var(--step-0);
+  color: var(--ink);
+}
+.ad__unter-titel {
+  margin: var(--space-4) 0 var(--space-2);
+  font-size: var(--step--1);
+  font-weight: 600;
+  color: var(--ink-muted);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.ad__beschreibung {
+  margin: 0 0 var(--space-3);
+  color: var(--ink);
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+.ad__von {
+  color: var(--ink-muted);
+}
+
+// --------------------------------- Bezuege -----------------------------------
+.ad__bezuege {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--space-1);
+
+  a {
+    display: grid;
+    grid-template-columns: 5.5rem minmax(0, 1fr) auto;
+    gap: var(--space-2);
+    align-items: baseline;
+    padding: var(--space-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    color: var(--ink);
+    text-decoration: none;
+
+    &:hover {
+      border-color: var(--accent);
+      background: var(--surface);
+    }
+    &:focus-visible {
+      outline: 2.5px solid var(--focus-ring);
+      outline-offset: 2px;
+    }
+  }
+}
+.ad__bezug-art {
+  color: var(--ink-hint);
+  font-size: var(--step--1);
+}
+.ad__bezug-name {
+  font-weight: 600;
+}
+.ad__bezug-nr {
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+}
+
+// ---------------------------------- Faden ------------------------------------
+.ad__zustand {
+  margin: 0;
+  padding: var(--space-3) 0;
+  color: var(--ink-muted);
+  font-size: var(--step--1);
+  line-height: 1.5;
+
+  .btn {
+    margin-top: var(--space-2);
+  }
+}
+
+// Der Umschlag scrollt und ist fokussierbar; die <ol> darin bleibt eine <ol>
+// (eine ARIA-Rolle auf ihr würde die Listensemantik überschreiben).
+.ad__faden-rahmen {
+  max-height: 32rem;
+  overflow-y: auto;
+
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+.ad__faden {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--space-3);
+}
+// Sprungpunkt ans Ende — nimmt keinen Platz und trägt keinen Inhalt.
+.ad__faden-ende {
+  height: 0;
+  list-style: none;
+}
+.ad__eintrag {
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+// Der Systemvermerk ist blasser und ohne Rahmenfarbe: Er berichtet, er spricht
+// nicht. Erkennbar bleibt er zusaetzlich am Wort „Vorgang" — nie nur an der
+// Farbe (WCAG 2.2 AA).
+.ad__eintrag--system {
+  border-style: dashed;
+  background: none;
+  color: var(--ink-muted);
+}
+.ad__eintrag-kopf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0 0 0.3rem;
+}
+.ad__eintrag-wer {
+  font-weight: 600;
+  font-size: var(--step--1);
+  color: var(--ink);
+}
+.ad__eintrag--system .ad__eintrag-wer {
+  color: var(--ink-muted);
+}
+.ad__eintrag-art {
+  padding: 0.05rem 0.35rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  color: var(--ink-hint);
+  font-size: 0.66rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.ad__eintrag-zeit {
+  margin-left: auto;
+  color: var(--ink-hint);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+}
+.ad__eintrag-text {
+  margin: 0;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+// -------------------------------- Schreiben ----------------------------------
+.ad__schreiben {
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+}
+.ad__schreiben-label {
+  display: block;
+  margin-bottom: var(--space-1);
+  font-size: var(--step--1);
+  font-weight: 600;
+  color: var(--ink);
+}
+.ad__schreiben-feld {
+  width: 100%;
+  padding: var(--space-2);
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  line-height: 1.5;
+  resize: vertical;
+
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 1px;
+  }
+}
+.ad__schreiben-hinweis {
+  margin: var(--space-1) 0 var(--space-2);
+  color: var(--ink-hint);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+.ad__schreiben-aktionen {
+  display: flex;
+  justify-content: flex-end;
+}

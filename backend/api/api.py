@@ -23,6 +23,7 @@ from api.auftrag import router as auftrag_router
 from api.auth import router as auth_router
 from api.auswertungen import router as auswertungen_router
 from api.beleg import router as beleg_router
+from api.benachrichtigung import router as benachrichtigung_router
 from api.belegerfassung import router as belegerfassung_router
 from api.belegung import router as belegung_router
 from api.dateien import router as dateien_router
@@ -89,6 +90,9 @@ api.add_router("/workflow", aufgabe_router, tags=["workflow"])
 api.add_router("/workflow", auftrag_router, tags=["workflow"])
 api.add_router("/workflow", site_report_router, tags=["workflow"])
 api.add_router("/planung", planung_router, tags=["planung"])
+# Persönliches Postfach — bereichsübergreifend und ohne Modulrecht, deshalb ein
+# eigener Zweig auf oberster Ebene statt eines Anhängsels an /workflow.
+api.add_router("/benachrichtigungen", benachrichtigung_router, tags=["benachrichtigung"])
 # Qualifikationen + Zuweisungs-Vorlagen (0078). Liegt unter /planung, weil es
 # Planungswerkzeuge sind — die NACHWEISE am Mitarbeiter hängen darin aber am
 # `hr`-Recht (Personalakte), nicht an `workflow`.

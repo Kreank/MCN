@@ -4,6 +4,7 @@ import { filter } from 'rxjs';
 import { ThemeService } from './core/theme';
 import { AuthService } from './core/auth.service';
 import { Kommandopalette } from './shared/kommandopalette/kommandopalette';
+import { Benachrichtigungen } from './shared/benachrichtigungen/benachrichtigungen';
 
 const NAV_SPEICHER = 'mcn.nav.schmal';
 
@@ -74,7 +75,7 @@ const NAV_GRUPPEN: readonly { id: string; titel: string; pfade: readonly string[
 
 @Component({
   selector: 'app-root',
-  imports: [RouterOutlet, RouterLink, RouterLinkActive, Kommandopalette],
+  imports: [RouterOutlet, RouterLink, RouterLinkActive, Kommandopalette, Benachrichtigungen],
   templateUrl: './app.html',
   styleUrl: './app.scss',
 })

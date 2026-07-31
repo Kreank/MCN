@@ -1,0 +1,94 @@
+<button
+  type="button"
+  class="glocke"
+  (click)="umschalten()"
+  aria-haspopup="dialog"
+  [attr.aria-expanded]="offen()"
+  [attr.aria-label]="glockenLabel()"
+  [title]="glockenLabel()"
+>
+  <span class="glocke__glyph" aria-hidden="true">◔</span>
+  <!-- Die Zahl ist aria-hidden: Der zugängliche Name des Knopfes nennt sie
+       bereits im Klartext („3 ungelesen"), eine zweite Nennung wäre Doppelung. -->
+  @if (hatUngelesen()) {
+    <span class="glocke__zahl" aria-hidden="true">{{ zaehlerText() }}</span>
+  }
+</button>
+
+<dialog
+  #dlg
+  class="bn"
+  aria-label="Benachrichtigungen"
+  (cancel)="onCancel($event)"
+  (click)="onKlick($event)"
+>
+  <div class="bn__panel">
+    <div class="bn__kopf">
+      <h2 class="bn__titel">Benachrichtigungen</h2>
+      <div class="bn__kopf-aktionen">
+        @if (hatUngelesen()) {
+          <button type="button" class="bn__link" (click)="alleGelesen()">
+            Alle als gelesen
+          </button>
+        }
+        <button
+          type="button"
+          class="bn__schliessen"
+          (click)="schliessen()"
+          aria-label="Benachrichtigungen schließen"
+        >
+          <span aria-hidden="true">✕</span>
+        </button>
+      </div>
+    </div>
+
+    @if (laedt()) {
+      <p class="bn__zustand" role="status">Benachrichtigungen werden geladen …</p>
+    } @else if (fehler()) {
+      <div class="bn__zustand" role="alert">
+        <p>Die Benachrichtigungen konnten nicht geladen werden.</p>
+        <button type="button" class="btn" (click)="erneutVersuchen()">
+          Erneut versuchen
+        </button>
+      </div>
+    } @else if (items().length === 0) {
+      <p class="bn__zustand" role="status">
+        Nichts Neues. Hier steht, was an Ihren Aufgaben geschieht — wenn Ihnen
+        jemand eine zuweist, sie erledigt oder eine Rückfrage stellt.
+      </p>
+    } @else {
+      <ul class="bn__liste">
+        @for (n of items(); track n.id) {
+          <li class="bn__zeile" [class.bn__zeile--ungelesen]="!n.read_at">
+            @if (istAnklickbar(n)) {
+              <button type="button" class="bn__ziel" (click)="anspringen(n)">
+                <span class="bn__meta">
+                  <span class="stamp" [class]="artClass(n.kind)">{{ artLabel(n.kind) }}</span>
+                  <span class="bn__zeit">{{ zeit(n.created_at) }}</span>
+                  @if (!n.read_at) {
+                    <span class="bn__neu">neu</span>
+                  }
+                </span>
+                <span class="bn__sache">{{ n.title }}</span>
+                @if (n.body) {
+                  <span class="bn__text">{{ n.body }}</span>
+                }
+              </button>
+            } @else {
+              <div class="bn__ziel bn__ziel--tot">
+                <span class="bn__meta">
+                  <span class="stamp" [class]="artClass(n.kind)">{{ artLabel(n.kind) }}</span>
+                  <span class="bn__zeit">{{ zeit(n.created_at) }}</span>
+                </span>
+                <span class="bn__sache">{{ n.title }}</span>
+                @if (n.body) {
+                  <span class="bn__text">{{ n.body }}</span>
+                }
+              </div>
+            }
+          </li>
+        }
+      </ul>
+    }
+  </div>
+</dialog>

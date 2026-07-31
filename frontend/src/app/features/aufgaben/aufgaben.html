@@ -116,7 +116,9 @@
                 >{{ t.status === 'ERLEDIGT' ? '✓' : '' }}</span
               >
               <span class="row__body">
-                <span class="row__title">{{ t.title }}</span>
+                <!-- Der Titel führt auf die Aufgabenseite: dort stehen der
+                     Verlauf und das Feld für Rückfragen. -->
+                <a class="row__title" [routerLink]="['/aufgaben', t.id]">{{ t.title }}</a>
                 <span class="row__meta">
                   @if (t.due_date) {
                     <span class="row__due">fällig {{ t.due_date }}</span>

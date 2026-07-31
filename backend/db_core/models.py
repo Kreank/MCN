@@ -5326,3 +5326,77 @@ class DeviceToken(models.Model):
 
     def __str__(self):
         return f"device_token({self.device_name or '—'})"
+
+
+class TaskComment(models.Model):
+    """workflow.task_comment — Faden an der Aufgabe (Migration 0137).
+
+    Append-only wie workflow.project_log: kein UPDATE, kein DELETE. Eine
+    Rückfrage, die man hinterher umschreiben kann, ist als Nachweis wertlos;
+    Korrektur = neuer Eintrag. `kind` trennt die Wortmeldung eines Menschen
+    (KOMMENTAR) vom Statuswechsel-Vermerk des Services (SYSTEM) — beides im
+    selben Faden, damit die Aufgabe EINE Chronik hat.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    task = models.ForeignKey(
+        Task, models.DO_NOTHING, db_column="task_id", related_name="comments"
+    )
+    kind = models.TextField()  # KOMMENTAR | SYSTEM
+    body = models.TextField()
+    created_by = models.ForeignKey(
+        AppUser, models.DO_NOTHING, db_column="created_by", related_name="task_comments"
+    )
+    created_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'workflow"."task_comment'
+        ordering = ["created_at", "id"]
+
+    def __str__(self):
+        return f"{self.kind}: {self.body[:40]}"
+
+
+class Notification(models.Model):
+    """notify.notification — persönliches Postfach je Benutzer (Migration 0137).
+
+    Bereichsübergreifend: das Ziel ist eine WEICHE Referenz (`target_type` +
+    `target_id`, kein FK), damit dieselbe Tabelle später Termine, Freigaben und
+    KI-Vorschläge trägt. Änderbar ist ausschließlich `read_at` (DB-Trigger
+    `notify.guard_notification`); sich selbst benachrichtigen verbietet ein
+    CHECK physisch.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    recipient = models.ForeignKey(
+        AppUser,
+        models.DO_NOTHING,
+        db_column="recipient_user_id",
+        related_name="notifications",
+    )
+    kind = models.TextField()
+    title = models.TextField()
+    body = models.TextField(null=True, blank=True)
+    target_type = models.TextField()
+    target_id = models.UUIDField()
+    triggered_by = models.ForeignKey(
+        AppUser,
+        models.DO_NOTHING,
+        db_column="triggered_by",
+        null=True,
+        blank=True,
+        related_name="ausgeloeste_notifications",
+    )
+    read_at = models.DateTimeField(null=True, blank=True)
+    version = models.IntegerField()
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'notify"."notification'
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.kind} → {self.recipient_id}"

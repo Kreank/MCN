@@ -1,0 +1,258 @@
+<p class="sr-only" role="status">{{ ansage() }}</p>
+
+@switch (state().kind) {
+  @case ('loading') {
+    <p class="lade-hinweis" role="status">Aufgabe wird geladen …</p>
+  }
+  @case ('forbidden') {
+    <app-kein-zugriff [detail]="$any(state()).detail" />
+  }
+  @case ('error') {
+    <div class="note note--error" role="alert">
+      <p class="note__titel">Aufgabe konnte nicht geladen werden.</p>
+      <p class="note__text">
+        Möglicherweise wurde sie entfernt, oder sie gehört nicht zu Ihren
+        Aufgaben.
+      </p>
+      <div class="note__aktionen">
+        <button type="button" class="btn btn--primary" (click)="retry()">
+          Erneut versuchen
+        </button>
+        <a class="btn" routerLink="/aufgaben">Zur Aufgabenliste</a>
+      </div>
+    </div>
+  }
+  @case ('ready') {
+    <article class="ad">
+      <header class="ad__kopf">
+        <a class="ad__zurueck" routerLink="/aufgaben">
+          <span aria-hidden="true">←</span> Aufgaben
+        </a>
+        <p class="ad__kicker">Aufgabe</p>
+        <h1 class="ad__titel">{{ daten()!.title }}</h1>
+
+        <div class="ad__marken">
+          <span class="stamp" [class]="statusClass(daten()!.status)">
+            {{ statusLabel(daten()!.status) }}
+          </span>
+          @if (daten()!.due_date) {
+            <span class="ad__frist">Fällig {{ datum(daten()!.due_date) }}</span>
+          }
+        </div>
+
+        @if (darfAendern()) {
+          <div class="ad__aktionen">
+            @if (daten()!.status === 'OFFEN') {
+              <button
+                type="button"
+                class="btn btn--primary"
+                [disabled]="aktionBusy()"
+                (click)="erledigen()"
+              >
+                Erledigt
+              </button>
+              <button
+                type="button"
+                class="btn"
+                [disabled]="aktionBusy()"
+                (click)="verwerfenFragen()"
+              >
+                Verwerfen
+              </button>
+            } @else {
+              <button
+                type="button"
+                class="btn"
+                [disabled]="aktionBusy()"
+                (click)="wiederOeffnen()"
+              >
+                Wieder öffnen
+              </button>
+            }
+          </div>
+        }
+      </header>
+
+      @if (aktionsFehler()) {
+        <p class="note note--error" role="alert">{{ aktionsFehler() }}</p>
+      }
+
+      <div class="ad__spalten">
+        <!-- Linke Spalte: was die Aufgabe ist und wen sie betrifft. -->
+        <section class="ad__block" aria-labelledby="ad-daten">
+          <h2 class="ad__block-titel" id="ad-daten">Angaben</h2>
+
+          @if (daten()!.description) {
+            <p class="ad__beschreibung">{{ daten()!.description }}</p>
+          }
+
+          <dl class="feld-raster">
+            <div class="feld">
+              <dt class="feld__label">Zuständig</dt>
+              <dd class="feld__wert" [class.feld__wert--leer]="!daten()!.assigned_to">
+                {{ daten()!.assigned_to?.display_name ?? 'Niemandem zugewiesen' }}
+              </dd>
+            </div>
+            <div class="feld">
+              <dt class="feld__label">Erstellt von</dt>
+              <dd class="feld__wert" [class.feld__wert--leer]="!daten()!.created_by">
+                {{ daten()!.created_by?.display_name ?? '—' }}
+              </dd>
+            </div>
+            <div class="feld">
+              <dt class="feld__label">Angelegt</dt>
+              <dd class="feld__wert">{{ zeitpunkt(daten()!.created_at) }}</dd>
+            </div>
+            @if (daten()!.completed_at) {
+              <div class="feld">
+                <dt class="feld__label">Erledigt</dt>
+                <dd class="feld__wert">
+                  {{ zeitpunkt(daten()!.completed_at!) }}
+                  @if (daten()!.completed_by) {
+                    <span class="ad__von">durch {{ daten()!.completed_by!.display_name }}</span>
+                  }
+                </dd>
+              </div>
+            }
+          </dl>
+
+          @if (daten()!.project || daten()!.party || daten()!.work_order) {
+            <h3 class="ad__unter-titel">Bezug</h3>
+            <ul class="ad__bezuege">
+              @if (daten()!.work_order; as a) {
+                <li>
+                  <a [routerLink]="['/auftraege', a.id]">
+                    <span class="ad__bezug-art">Auftrag</span>
+                    <span class="ad__bezug-name">{{ a.title }}</span>
+                    <span class="ad__bezug-nr">{{ a.order_number }}</span>
+                  </a>
+                </li>
+              }
+              @if (daten()!.project; as p) {
+                <li>
+                  <a [routerLink]="['/projekte', p.id]">
+                    <span class="ad__bezug-art">Projekt</span>
+                    <span class="ad__bezug-name">{{ p.name }}</span>
+                    <span class="ad__bezug-nr">{{ p.project_number }}</span>
+                  </a>
+                </li>
+              }
+              @if (daten()!.party; as k) {
+                <li>
+                  <a [routerLink]="['/kontakte', k.id]">
+                    <span class="ad__bezug-art">Kontakt</span>
+                    <span class="ad__bezug-name">{{ k.display_name }}</span>
+                  </a>
+                </li>
+              }
+            </ul>
+          }
+        </section>
+
+        <!-- Rechte Spalte: der Faden. -->
+        <section class="ad__block ad__block--faden" aria-labelledby="ad-faden">
+          <h2 class="ad__block-titel" id="ad-faden">Rückfragen und Verlauf</h2>
+
+          @if (fadenLaedt()) {
+            <p class="ad__zustand" role="status">Verlauf wird geladen …</p>
+          } @else if (fadenFehler()) {
+            <div class="ad__zustand" role="alert">
+              <p>Der Verlauf konnte nicht geladen werden.</p>
+              <button type="button" class="btn" (click)="fadenErneut()">
+                Erneut versuchen
+              </button>
+            </div>
+          } @else if (faden().length === 0) {
+            <p class="ad__zustand">
+              Noch keine Einträge. Wer hier etwas schreibt, erreicht damit die
+              Gegenseite — Ersteller und Zuständige bekommen eine
+              Benachrichtigung.
+            </p>
+          } @else {
+            <!-- tabindex/role sitzen auf dem UMSCHLAG, nicht auf der <ol>: Eine
+                 ARIA-Rolle überschreibt die implizite — aus der Liste würde eine
+                 „region", und Screenreader verlören „Liste mit N Einträgen"
+                 samt Positionsangabe (WCAG 1.3.1). Der Umschlag ist der
+                 Scroll-Container und macht den überstehenden Teil per Tastatur
+                 erreichbar (WCAG 2.1.1); die Liste bleibt eine Liste. -->
+            <div
+              class="ad__faden-rahmen"
+              tabindex="0"
+              role="region"
+              aria-label="Verlauf der Aufgabe"
+            >
+            <ol class="ad__faden">
+              @for (k of faden(); track k.id) {
+                <li class="ad__eintrag" [class.ad__eintrag--system]="k.kind === 'SYSTEM'">
+                  <p class="ad__eintrag-kopf">
+                    <span class="ad__eintrag-wer">{{ k.created_by.display_name }}</span>
+                    @if (k.kind === 'SYSTEM') {
+                      <span class="ad__eintrag-art">Vorgang</span>
+                    }
+                    <span class="ad__eintrag-zeit">{{ zeitpunkt(k.created_at) }}</span>
+                  </p>
+                  <p class="ad__eintrag-text">{{ k.body }}</p>
+                </li>
+              }
+              <!-- Der Sprungpunkt liegt IN der Liste: Sie ist der Scroll-
+                   Container, ein Marker außerhalb würde die Seite scrollen und
+                   den frischen Beitrag trotzdem nicht sichtbar machen. -->
+              <li class="ad__faden-ende" #fadenEnde aria-hidden="true"></li>
+            </ol>
+            </div>
+          }
+
+          @if (darfAendern()) {
+            <form class="ad__schreiben" [formGroup]="form" (ngSubmit)="absenden()">
+              <label class="ad__schreiben-label" for="ad-body">
+                Rückfrage oder Antwort
+              </label>
+              <!-- maxlength: Ohne es wäre „Senden" bei einem eingefügten
+                   Riesentext nur grau, ohne dass irgendwo stünde, warum
+                   (WCAG 3.3.1). Der Server prüft dieselbe Grenze. -->
+              <textarea
+                id="ad-body"
+                class="ad__schreiben-feld"
+                formControlName="body"
+                rows="3"
+                [attr.maxlength]="maxZeichen"
+                [attr.aria-describedby]="'ad-body-hinweis'"
+                placeholder="Was ist unklar?"
+                (keydown)="onFeldKey($event)"
+              ></textarea>
+              <p class="ad__schreiben-hinweis" id="ad-body-hinweis">
+                Einträge bleiben dauerhaft stehen und lassen sich nicht ändern.
+                Strg + Enter sendet. Noch {{ restZeichen() }} von
+                {{ maxZeichen }} Zeichen.
+              </p>
+              <div class="ad__schreiben-aktionen">
+                <button
+                  type="submit"
+                  class="btn btn--primary"
+                  [disabled]="sendeBusy() || form.invalid"
+                >
+                  {{ sendeBusy() ? 'Wird gesendet …' : 'Senden' }}
+                </button>
+              </div>
+            </form>
+          }
+        </section>
+      </div>
+    </article>
+
+    <app-bestaetigung
+      [offen]="verwerfenOffen()"
+      titel="Aufgabe verwerfen?"
+      [text]="
+        'Die Aufgabe „' +
+        daten()!.title +
+        '“ wird als verworfen geführt. Sie bleibt samt Verlauf erhalten, gilt aber nicht mehr als offen.'
+      "
+      bestaetigenLabel="Verwerfen"
+      [gefahr]="true"
+      [laedt]="aktionBusy()"
+      (bestaetigen)="verwerfenBestaetigen()"
+      (abbrechen)="verwerfenAbbrechen()"
+    />
+  }
+}

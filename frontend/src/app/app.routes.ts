@@ -383,6 +383,17 @@ export const routes: Routes = [
         loadComponent: () => import('./features/aufgaben/aufgaben').then((m) => m.Aufgaben),
       },
       {
+        // Die Aufgabe als eigene Seite: Ohne sie hätte eine Benachrichtigung
+        // kein Ziel zum Anspringen und eine Rückfrage keinen Ort. `darfGuard`
+        // (nicht `darfAlleGuard`), weil der Endpunkt den row_scope auswertet —
+        // der Monteur sieht die ihm zugewiesene Aufgabe.
+        path: 'aufgaben/:id',
+        title: 'Aufgabe — Mitra Sanitär',
+        canActivate: [darfGuard('workflow', 'LESEN')],
+        loadComponent: () =>
+          import('./features/aufgabe-detail/aufgabe-detail').then((m) => m.AufgabeDetail),
+      },
+      {
         // Vier-Augen-Anträge. Die Liste verlangt nur security/LESEN; Genehmigen
         // und Ablehnen gatet der Server zusätzlich mit security/FREIGEBEN.
         path: 'freigaben',

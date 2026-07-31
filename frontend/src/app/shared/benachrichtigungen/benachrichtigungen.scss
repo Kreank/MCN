@@ -1,0 +1,258 @@
+// =============================================================================
+// Benachrichtigungs-Glocke — eigenes Stylesheet, eigenes Budget.
+// app.scss ist am 8-kB-Budget ausgereizt (siehe kommandopalette.scss); die
+// Glocke bringt ihren Stil deshalb selbst mit.
+//
+// Formensprache wie die Kommandopalette: Navy-Kommandostreifen in der Kopfzeile,
+// darunter ein heller Panelkoerper. Orange traegt NIE Text auf hellem Grund
+// (--accent-ink dafuer); die Zahlplakette ist umgekehrt weisse Schrift auf
+// --accent-ink und damit selbst kontrastsicher.
+// =============================================================================
+
+:host {
+  display: contents; // Die Glocke sitzt direkt im Flexfluss der Kopfzeile.
+}
+
+// -------------------------------- Trigger ------------------------------------
+.glocke {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 var(--space-2);
+  border: 1.5px solid var(--command-line);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--command-2) 70%, transparent);
+  color: var(--on-command);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+
+  &:hover {
+    background: var(--command-2);
+    border-color: var(--accent);
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring-on-command);
+    outline-offset: 2px;
+  }
+}
+.glocke__glyph {
+  font-size: 1.15rem;
+  line-height: 1;
+}
+// Die Plakette sitzt in der Ecke des Knopfes. Sie ist nie das einzige Signal:
+// der zugaengliche Name des Knopfes nennt die Zahl im Klartext.
+.glocke__zahl {
+  position: absolute;
+  top: -0.4rem;
+  right: -0.4rem;
+  min-width: 1.15rem;
+  padding: 0.05rem 0.28rem;
+  border-radius: 999px;
+  background: var(--accent-ink);
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  line-height: 1.5;
+  text-align: center;
+}
+
+// ------------------------------- Dialogkern ----------------------------------
+.bn {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  width: 100%;
+  height: 100%;
+  max-width: 100vw;
+  max-height: 100dvh;
+  background: transparent;
+  color: var(--ink);
+  overflow: visible;
+}
+.bn:not([open]) {
+  display: none;
+}
+.bn[open] {
+  display: flex;
+  // Oben rechts verankert: Das Panel bleibt der Auszug der Glocke, unter der es
+  // haengt — mittig gesetzt laese es sich als eigener Seitenwechsel.
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding: clamp(var(--space-3), 5vh, 4.5rem) var(--space-4) var(--space-4);
+  background: var(--overlay);
+}
+.bn::backdrop {
+  background: transparent;
+}
+
+.bn__panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 28rem;
+  max-height: min(34rem, 78dvh);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--paper);
+  box-shadow: var(--shadow-2);
+  overflow: hidden;
+}
+
+.bn__kopf {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-3) var(--space-2);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.bn__titel {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--step-0);
+  color: var(--ink);
+}
+.bn__kopf-aktionen {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.bn__link {
+  padding: 0.3rem 0.5rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--accent-ink);
+  font: inherit;
+  font-size: var(--step--1);
+  cursor: pointer;
+
+  &:hover {
+    text-decoration: underline;
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+.bn__schliessen {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  min-height: 32px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+  color: var(--ink-muted);
+  font: inherit;
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--line-strong);
+    color: var(--ink);
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+
+.bn__zustand {
+  margin: 0;
+  padding: var(--space-4) var(--space-3);
+  color: var(--ink-muted);
+  font-size: var(--step--1);
+  line-height: 1.5;
+  text-align: center;
+
+  .btn {
+    margin-top: var(--space-2);
+  }
+}
+
+// -------------------------------- Liste --------------------------------------
+.bn__liste {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+}
+.bn__zeile + .bn__zeile {
+  border-top: 1px solid var(--line);
+}
+// Ungelesen traegt ZWEI Signale: die orange Kante links und das Wort „neu".
+// Farbe allein waere ein Verstoss gegen WCAG 2.2 AA (und gegen CLAUDE.md).
+.bn__zeile--ungelesen {
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  box-shadow: inset 3px 0 0 var(--accent-ink);
+}
+
+.bn__ziel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  width: 100%;
+  padding: var(--space-3);
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+
+  &:hover {
+    background: var(--surface);
+  }
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: -2px;
+  }
+}
+.bn__ziel--tot {
+  cursor: default;
+
+  &:hover {
+    background: none;
+  }
+}
+
+.bn__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--step--1);
+}
+.bn__zeit {
+  color: var(--ink-hint);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+}
+.bn__neu {
+  color: var(--accent-ink);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.bn__sache {
+  color: var(--ink);
+  font-weight: 600;
+  line-height: 1.35;
+}
+.bn__text {
+  color: var(--ink-muted);
+  font-size: var(--step--1);
+  line-height: 1.4;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .glocke {
+    transition: none;
+  }
+}

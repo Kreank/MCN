@@ -4,6 +4,7 @@ import { Observable } from 'rxjs';
 import {
   AssignableUser,
   Task,
+  TaskComment,
   TaskCreate,
   TaskPage,
   TaskQuery,
@@ -25,7 +26,30 @@ export class AufgabeService {
     if (query.status) params = params.set('status', query.status);
     if (query.project_id) params = params.set('project_id', query.project_id);
     if (query.party_id) params = params.set('party_id', query.party_id);
+    if (query.work_order_id) params = params.set('work_order_id', query.work_order_id);
+    if (query.assigned_to_user_id) {
+      params = params.set('assigned_to_user_id', query.assigned_to_user_id);
+    }
     return this.http.get<TaskPage>(this.base, { params });
+  }
+
+  /** Eine Aufgabe einzeln (Detailseite). Fremde Aufgabe → 404. */
+  get(id: string): Observable<Task> {
+    return this.http.get<Task>(`${this.base}/${id}`);
+  }
+
+  /** Der Faden: Rückfragen und Systemvermerke, älteste zuerst. */
+  comments(id: string): Observable<TaskComment[]> {
+    return this.http.get<TaskComment[]>(`${this.base}/${id}/comments`);
+  }
+
+  /**
+   * Rückfrage oder Antwort schreiben. Append-only — der Eintrag lässt sich
+   * danach weder ändern noch löschen (DB-Trigger), und die Gegenseite bekommt
+   * eine Benachrichtigung.
+   */
+  comment(id: string, body: string): Observable<TaskComment> {
+    return this.http.post<TaskComment>(`${this.base}/${id}/comments`, { body });
   }
 
   /** Neue Aufgabe anlegen (Status OFFEN). Erfordert Recht workflow.ANLEGEN. */

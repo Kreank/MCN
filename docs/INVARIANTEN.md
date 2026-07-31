@@ -165,6 +165,16 @@ Ausführliche Herleitungen: `docs/archiv/chronik-2026-07.md`.
   Zeilen-Scope, keinen aufgeweichten Guard.
 - **Die EIGENE-Sicht bei Einsätzen hängt allein an der Zuweisung, nie am Auftrag** — ein freier
   Termin wird dadurch nicht öffentlich.
+- **Eine Benachrichtigung darf nur enthalten, was ihr Empfänger am Ziel ohnehin sehen darf.**
+  Die Glocke umgeht sonst jedes Tor: Sie trägt Text an jemanden, den die API mit 404 abweist.
+  Konkret gefunden (Review 2026-07-31): Der Auszug einer Rückfrage ging an den *Ersteller* einer
+  Aufgabe, während `_guard_own_task` nur den *Zuständigen* durchließ. Behoben, indem „eigen" für
+  Aufgaben **zugewiesen ODER selbst erstellt** heißt — Liste und Detail-Guard müssen dieselbe
+  Definition benutzen, sonst zeigt die eine, was die andere verweigert.
+- **Wer den Zugriff verliert, erfährt es** (`AUFGABE_ENTZOGEN`). Eine Aufgabe, die nach dem
+  Umhängen einfach aus der Liste verschwindet, ist derselbe stille Verlust wie eine, von der
+  niemand erfährt — nur andersherum. Die Meldung trägt dann bewusst **nichts Neues**: Titel und
+  den Namen des neuen Zuständigen, keinen Auszug aus dem Faden.
 
 ## 6. Vier-Augen-Flow
 

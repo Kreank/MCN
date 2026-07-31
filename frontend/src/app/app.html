@@ -105,6 +105,13 @@
           <app-kommandopalette />
         }
 
+        <!-- Die Glocke: was an den eigenen Aufgaben geschieht. Bringt wie die
+             Palette ihren eigenen Stil mit (`display: contents` am Host), damit
+             app.scss nicht weiter belastet wird. -->
+        @if (auth.istAngemeldet()) {
+          <app-benachrichtigungen />
+        }
+
         <!-- Der Auftrag ist der zentrale Neu-Fall: primärer globaler CTA. Springt
              auf die Auftragsliste und öffnet dort den Anlage-Dialog (neu=1). -->
         @if (darfNeuerAuftrag()) {

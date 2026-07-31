@@ -263,6 +263,71 @@ Einheitennummer abgeleitet ist (`abgeleitet`).
 deutbare Etage ist — „links hinten" bleibt unangetastet im Ungedeutet-Band. Und
 eine nackte Zahl in der *Nummer* wird nie zum Stockwerk („3" = Wohnung 3).
 
+## Benachrichtigungen: ein Postfach für alles, kein Kanal je Bereich (2026-07-31)
+
+**Entschieden:** `notify.notification` ist eine **einzige, bereichsübergreifende**
+Tabelle in einem eigenen Schema. Das Ziel ist eine **weiche** Referenz
+(`target_type` + `target_id`, kein FK) — dasselbe Zugeständnis wie in
+`audit.domain_event`. Die Route zum Ziel baut das Frontend; in der DB steht
+bewusst keine URL.
+
+**Warum:** Ein harter FK ginge nur auf genau eine Tabelle. Bei der zweiten
+Benachrichtigungsart (Termin, Freigabe, KI-Vorschlag) stünde man vor der Wahl,
+eine zweite Tabelle anzulegen oder fünf nullbare FK-Spalten zu führen — beides
+endet in einer Glocke, die je Bereich anders funktioniert. In `workflow` gelegt
+hätte die Tabelle denselben Sog erzeugt.
+
+**Niemand benachrichtigt sich selbst — und die DB verbietet es** (CHECK
+`notification_kein_selbstruf`, nicht nur eine Service-Prüfung). Wer seine eigene
+Aufgabe abhakt, bekommt dafür keinen roten Punkt. Das ist die Sorte Rauschen, an
+der ein Postfach binnen einer Woche stirbt; danach liest es niemand mehr, und
+die Meldung, auf die es ankam, geht mit unter.
+
+**Änderbar ist ausschließlich `read_at`** (Trigger `notify.guard_notification`).
+Eine Benachrichtigung, der man nicht ansieht, was sie ursprünglich meldete, ist
+keine.
+
+**`kind` ist ein geschlossenes Vokabular** — eine neue Art kostet eine Migration.
+Absicht: Eine freie Textspalte hätte binnen weniger Slices vier Schreibweisen
+derselben Art, und das UI könnte für keine eine verlässliche Beschriftung geben.
+
+**Das Postfach hängt an KEINEM Modul-Recht** — dieselbe Begründung wie beim
+eigenen Passwort (`/api/auth/password`): Der Endpunkt wirkt ausschließlich auf
+`request.user`, es gibt keinen Parameter für ein fremdes Postfach. Hinge es an
+`workflow/LESEN`, bekäme ein reines Buchhaltungskonto seine Freigabemeldungen nie
+zu Gesicht — ein Recht aus dem falschen Bereich als Tor für alle anderen. Der
+flächendeckende Wächtertest (`test_endpoint_schutz.py`) trägt die Ausnahme
+namentlich; an ihre Stelle tritt ein inhaltlicher Nachweis (rollenloses Konto →
+200, aber leer).
+
+**Abfragetakt statt Push:** Die Glocke holt einmal pro Minute *nur den Zähler*
+(`/api/benachrichtigungen/zaehler`, ein Zugriff auf den Teilindex) — und nur,
+solange der Reiter sichtbar ist. Websockets wären für „ein Zahlwert pro Minute"
+die deutlich teurere Antwort auf dieselbe Frage. Erst wenn Meldungen sekundengenau
+ankommen müssen, wird das neu aufgemacht.
+
+## Die Rückfrage gehört an den Datensatz, nicht ins Telefon (2026-07-31)
+
+**Entschieden:** Aufgaben tragen einen **append-only Faden**
+(`workflow.task_comment`, Muster `workflow.project_log`): kein UPDATE, kein
+DELETE, Korrektur nur als neuer Eintrag. Statuswechsel schreiben **SYSTEM**-Zeilen
+in denselben Faden.
+
+**Warum append-only:** Eine Rückfrage, die man hinterher stillschweigend
+umschreiben kann, ist als Nachweis wertlos — und genau als Nachweis wird sie
+gebraucht („wir hatten doch besprochen, dass …"). Das UI bietet deshalb gar kein
+Bearbeiten an; eine Schaltfläche, die der Server verweigert, wäre schlimmer als
+keine.
+
+**Warum SYSTEM-Zeilen im selben Faden:** Das Audit ist für die Revision, der
+Faden für die zwei Menschen, die an der Aufgabe arbeiten. „Erledigt am Freitag"
+muss zwischen den Rückfragen stehen, die dazu führten, sonst erzählt der Verlauf
+die halbe Geschichte und der Rest bleibt im Telefonprotokoll.
+
+**Kein `seq` wie bei `ai.conversation_turn`:** Dort nummeriert die Reihenfolge
+den Modellkontext und muss lückenlos sein. Hier genügt `created_at, id` — mit
+`seq` wären zwei gleichzeitige Beiträge ein UNIQUE-Konflikt für nichts.
+
 ---
 Viel Erfolg. Halte dich an das Slice-Rezept, verifiziere end-to-end (nicht nur
 Typecheck), und lass jeden substanziellen Slice von einem Opus-Reviewer prüfen.

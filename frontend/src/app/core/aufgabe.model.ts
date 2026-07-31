@@ -24,6 +24,13 @@ export interface Task {
   completed_at: string | null;
   created_at: string;
   assigned_to: UserRef | null;
+  /**
+   * Der Ersteller. War bis Migration 0137 nirgends sichtbar — dabei ist er
+   * derjenige, an den sich eine Rückfrage richtet und der die Erledigung
+   * erfahren muss. Nullbar, weil ältere Antworten das Feld nicht führten.
+   */
+  created_by: UserRef | null;
+  completed_by: UserRef | null;
   project: TaskProjectRef | null;
   party: TaskPartyRef | null;
   /**
@@ -76,6 +83,19 @@ export interface AssignableUser {
   display_name: string;
 }
 
+/**
+ * Ein Eintrag im Faden der Aufgabe (workflow.task_comment, Migration 0137).
+ * `KOMMENTAR` = Wortmeldung eines Menschen, `SYSTEM` = Statuswechsel-Vermerk.
+ * Append-only: Die DB verbietet Ändern und Löschen.
+ */
+export interface TaskComment {
+  id: string;
+  kind: 'KOMMENTAR' | 'SYSTEM';
+  body: string;
+  created_at: string;
+  created_by: UserRef;
+}
+
 export interface TaskQuery {
   page: number;
   page_size: number;
@@ -84,4 +104,5 @@ export interface TaskQuery {
   project_id?: string | null;
   party_id?: string | null;
   work_order_id?: string | null;
+  assigned_to_user_id?: string | null;
 }
