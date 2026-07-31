@@ -297,6 +297,50 @@
   border: 1.5px solid var(--line);
   border-radius: var(--radius-lg);
 }
+/* Warnblock: Login-Konten ohne fachliche Identität. Bewusst auffällig — der
+   Zustand ist kaputt (anmelden ja, speichern nein) und wird sonst nie bemerkt.
+   Warnung nicht nur über Farbe: Titel und Fließtext sagen es aus. */
+.verwaist {
+  margin-bottom: var(--space-5);
+  padding: var(--space-4);
+  border: 1.5px solid color-mix(in srgb, var(--warn-ink) 55%, var(--line-strong));
+  border-left-width: 4px;
+  border-radius: var(--radius-lg);
+  background: var(--warn-tint);
+
+  &__titel {
+    margin: 0 0 var(--space-2);
+    font-size: var(--step-0);
+    color: var(--warn-ink);
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  &__text {
+    margin: 0 0 var(--space-3);
+    font-size: var(--step--1);
+    color: var(--ink-muted);
+    max-width: 68ch;
+  }
+
+  &__liste {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  &__zeile {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
+  }
+}
+
 /* Kopfzeile über der Benutzertabelle: erklärt den Zustand „angelegt, aber
    rechtelos" und trägt die Anlage-Aktion. */
 .zuordnungen-kopf {

@@ -5,6 +5,7 @@ import { AuthService } from '../../core/auth.service';
 import { RechtematrixService } from '../../core/rechtematrix.service';
 import {
   AppUserRow,
+  LoginOhneIdentitaet,
   PermissionCell,
   Role,
   UserRole,
@@ -146,6 +147,20 @@ export class Rechtematrix {
   protected readonly sperrenZiel = signal<BenutzerZeile | null>(null);
   protected readonly sperrenLaedt = signal(false);
 
+  // --- Login-Konten ohne fachliche Identität (Altbestand) ------------------
+  // Anmelden geht, speichern nicht. Solche Konten stehen nicht in der
+  // Benutzerliste und wären ohne diesen Block unsichtbar.
+  protected readonly verwaisteLogins = signal<LoginOhneIdentitaet[]>([]);
+  protected readonly ergaenzenFuer = signal<LoginOhneIdentitaet | null>(null);
+  protected readonly ergaenzenLaedt = signal(false);
+  protected readonly ergaenzenMeldung = signal<string | null>(null);
+  protected readonly ergaenzenForm = this.fb.group({
+    display_name: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.required],
+    }),
+  });
+
   // Label-Helfer für das Template.
   protected readonly modulLabel = modulLabel;
   protected readonly aktionLabel = aktionLabel;
@@ -174,8 +189,9 @@ export class Rechtematrix {
       matrix: this.svc.getPermissions(),
       users: this.svc.listUsers(),
       userRoles: this.svc.listUserRoles(true),
+      verwaist: this.svc.listLoginsOhneIdentitaet(),
     }).subscribe({
-      next: ({ matrix, users, userRoles }) => {
+      next: ({ matrix, users, userRoles, verwaist }) => {
         this.modules.set(matrix.modules);
         this.actions.set(matrix.actions);
         this.roles.set(matrix.roles);
@@ -184,6 +200,7 @@ export class Rechtematrix {
           this.aktiveRolle.set(matrix.roles[0].code);
         }
         this.benutzer.set(this.baueBenutzer(users, userRoles));
+        this.verwaisteLogins.set(verwaist);
         this.state.set({ kind: 'ready' });
       },
       error: (err: unknown) => {
@@ -324,8 +341,12 @@ export class Rechtematrix {
     forkJoin({
       users: this.svc.listUsers(),
       userRoles: this.svc.listUserRoles(true),
+      verwaist: this.svc.listLoginsOhneIdentitaet(),
     }).subscribe({
-      next: ({ users, userRoles }) => this.benutzer.set(this.baueBenutzer(users, userRoles)),
+      next: ({ users, userRoles, verwaist }) => {
+        this.benutzer.set(this.baueBenutzer(users, userRoles));
+        this.verwaisteLogins.set(verwaist);
+      },
       error: (err: unknown) =>
         this.zuordnungMeldung.set(
           fehlerDetail(err) ?? 'Die Rollenzuordnungen konnten nicht neu geladen werden.',
@@ -519,6 +540,56 @@ export class Rechtematrix {
         );
       },
     });
+  }
+
+  // Fehlende Identität ergänzen (Altbestand) --------------------------------
+
+  starteErgaenzen(l: LoginOhneIdentitaet): void {
+    if (!this.darfAnlegen()) return;
+    this.zuordnungErfolg.set(null);
+    this.zuordnungMeldung.set(null);
+    this.ergaenzenMeldung.set(null);
+    // Vorschlag aus dem Adressteil vor dem @, damit nicht bei null angefangen
+    // wird — korrigierbar, bevor es abgeschickt wird.
+    const vorschlag = l.email.split('@')[0].replace(/[._-]+/g, ' ').trim();
+    this.ergaenzenForm.reset({
+      display_name: vorschlag.charAt(0).toUpperCase() + vorschlag.slice(1),
+    });
+    this.ergaenzenFuer.set(l);
+  }
+
+  ergaenzenSchliessen(): void {
+    if (this.ergaenzenLaedt()) return;
+    this.ergaenzenFuer.set(null);
+    this.ergaenzenMeldung.set(null);
+  }
+
+  ergaenzenAbsenden(): void {
+    const ziel = this.ergaenzenFuer();
+    if (!ziel || this.ergaenzenLaedt()) return;
+    this.ergaenzenMeldung.set(null);
+    this.ergaenzenForm.markAllAsTouched();
+    if (this.ergaenzenForm.invalid) return;
+    this.ergaenzenLaedt.set(true);
+    this.svc
+      .identitaetErgaenzen(ziel.id, this.ergaenzenForm.getRawValue().display_name.trim())
+      .subscribe({
+        next: (u) => {
+          this.ergaenzenLaedt.set(false);
+          this.ergaenzenFuer.set(null);
+          this.zuordnungErfolg.set(
+            `„${u.display_name}“ kann jetzt auch speichern. Weisen Sie ihm noch ` +
+              `eine Rolle zu — bis dahin sieht er nichts.`,
+          );
+          this.ladeZuordnungen();
+        },
+        error: (err: unknown) => {
+          this.ergaenzenLaedt.set(false);
+          this.ergaenzenMeldung.set(
+            fehlerDetail(err) ?? 'Die Identität konnte nicht ergänzt werden.',
+          );
+        },
+      });
   }
 
   protected sperrenText(): string {

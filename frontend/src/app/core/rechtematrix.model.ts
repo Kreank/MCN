@@ -64,6 +64,16 @@ export interface AppUserCreateInput {
   password: string;
 }
 
+/**
+ * Ein Login-Konto ohne fachliche Identität (Altbestand aus dem Django-Admin).
+ * Anmelden geht, speichern nicht — deshalb gehört es sichtbar gemacht.
+ */
+export interface LoginOhneIdentitaet {
+  id: number;
+  email: string;
+  is_active: boolean;
+}
+
 /** Eine Rollenzuordnung (security.user_role), zeitlich gültig. */
 export interface UserRole {
   id: string;

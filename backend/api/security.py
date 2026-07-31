@@ -91,6 +91,23 @@ class AppUserStatusIn(Schema):
     status: str
 
 
+class LoginOhneIdentitaetOut(Schema):
+    """Ein Login-Konto, dem die fachliche Identität fehlt.
+
+    Der gefährliche Zwischenzustand: anmelden geht, speichern nicht. Diese
+    Konten stehen NICHT in `/users` (die Liste kommt aus app_user) und wären
+    ohne diesen Endpunkt im Produkt unerreichbar.
+    """
+
+    id: int
+    email: str
+    is_active: bool
+
+
+class IdentitaetErgaenzenIn(Schema):
+    display_name: str
+
+
 class UserRoleOut(Schema):
     id: UUID
     user_id: UUID
@@ -263,6 +280,45 @@ def create_user(request, payload: AppUserCreateIn):
             display_name=payload.display_name,
             email=payload.email,
             password=payload.password,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return Status(201, AppUserOut(
+        id=konto.id, display_name=konto.display_name, status=konto.status,
+        roles=[], email=login.email, kann_anmelden=login.is_active,
+    ))
+
+
+@router.get("/logins-ohne-identitaet", response=list[LoginOhneIdentitaetOut])
+def list_logins_ohne_identitaet(request):
+    """Login-Konten ohne fachliche Identität — Altbestand aus dem Django-Admin.
+
+    Sichtbar zu machen ist der halbe Zweck: Wer so ein Konto hat, kann sich
+    anmelden und scheitert dann an jedem Speichern.
+    """
+    require(request, "security", "LESEN")
+    return [
+        LoginOhneIdentitaetOut(id=u.id, email=u.email, is_active=u.is_active)
+        for u in rechte_pflege.list_logins_ohne_identitaet()
+    ]
+
+
+@router.post(
+    "/logins-ohne-identitaet/{login_id}/identitaet",
+    response={201: AppUserOut},
+    auth=django_auth,
+)
+def identitaet_ergaenzen(request, login_id: int, payload: IdentitaetErgaenzenIn):
+    """Einem bestehenden Login die fehlende fachliche Identität geben.
+
+    Recht: `security/ANLEGEN` — es entsteht ein neuer `app_user`, fachlich
+    dasselbe Gewicht wie eine Neuanlage. Anmeldedaten bleiben unangetastet,
+    eine Rolle gibt es nicht dazu.
+    """
+    actor = require_create(request, "security", "ANLEGEN")
+    try:
+        konto, login = rechte_pflege.identitaet_ergaenzen(
+            actor, login_id=login_id, display_name=payload.display_name
         )
     except ValueError as exc:
         raise HttpError(422, str(exc))

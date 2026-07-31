@@ -462,3 +462,129 @@ def test_benutzer_sperren_nur_lesen_403(client_with_role):
         content_type="application/json",
     )
     assert r.status_code == 403, r.content
+
+
+# --- Login-Konten ohne fachliche Identitaet (Altbestand) --------------------
+#
+# Konten, die direkt im Django-Admin entstanden sind, haben app_user_id = NULL:
+# anmelden geht, speichern nicht. Sie stehen NICHT in /users und waeren ohne
+# eigenen Weg im Produkt unerreichbar.
+
+LOGINS_URL = "/api/security/logins-ohne-identitaet"
+
+
+def _login_ohne_identitaet(email="alt@mitra-sanitaer.de"):
+    """Ein Login-Konto wie aus dem Django-Admin: ohne app_user."""
+    from accounts.models import User
+
+    return User.objects.create_user(
+        username=email, email=email, password="Werkstatt-2026-xyz"
+    )
+
+
+@pytest.mark.django_db
+def test_verwaiste_logins_werden_gelistet():
+    """Das Konto muss sichtbar werden — sonst merkt niemand, dass es kaputt ist."""
+    client, _ = _login_mit_app_user("ADMINISTRATION")
+    _login_ohne_identitaet("julian.alt@mitra-sanitaer.de")
+    r = client.get(LOGINS_URL)
+    assert r.status_code == 200, r.content
+    assert "julian.alt@mitra-sanitaer.de" in [z["email"] for z in r.json()]
+
+
+@pytest.mark.django_db
+def test_verwaiste_logins_zeigen_nur_die_ohne_identitaet():
+    """Wer eine Identitaet hat, gehoert nicht in diese Liste."""
+    client, app_user = _login_mit_app_user("ADMINISTRATION")
+    r = client.get(LOGINS_URL)
+    assert r.status_code == 200, r.content
+    # Das eigene Konto hat einen app_user und darf hier nicht auftauchen.
+    assert all(z["id"] != app_user.id for z in r.json())
+
+
+@pytest.mark.django_db
+def test_identitaet_ergaenzen_201():
+    """Der Altbestands-Weg: Login behaelt Adresse und Passwort, bekommt aber
+    die fehlende Haelfte — und taucht danach in der Benutzerliste auf."""
+    from accounts.models import User
+
+    client, _ = _login_mit_app_user("ADMINISTRATION")
+    alt = _login_ohne_identitaet("murat.alt@mitra-sanitaer.de")
+
+    r = client.post(
+        f"{LOGINS_URL}/{alt.id}/identitaet",
+        data=json.dumps({"display_name": "Murat Beispiel"}),
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    body = r.json()
+    assert body["display_name"] == "Murat Beispiel"
+    assert body["email"] == "murat.alt@mitra-sanitaer.de"
+    assert body["roles"] == []
+
+    alt.refresh_from_db()
+    assert str(alt.app_user_id) == body["id"]
+    # Anmeldedaten unangetastet.
+    assert alt.check_password("Werkstatt-2026-xyz")
+    # Jetzt in der Benutzerliste, nicht mehr in der Verwaisten-Liste.
+    assert "Murat Beispiel" in [u["display_name"] for u in client.get(USERS_URL).json()]
+    assert alt.id not in [z["id"] for z in client.get(LOGINS_URL).json()]
+
+
+@pytest.mark.django_db
+def test_identitaet_ergaenzen_zweimal_422():
+    """Ein zweiter Versuch darf keine zweite Identitaet erzeugen."""
+    client, _ = _login_mit_app_user("ADMINISTRATION")
+    alt = _login_ohne_identitaet("doppelt.alt@mitra-sanitaer.de")
+    daten = json.dumps({"display_name": "Erste Identitaet"})
+    assert client.post(f"{LOGINS_URL}/{alt.id}/identitaet", data=daten,
+                       content_type="application/json").status_code == 201
+    r = client.post(f"{LOGINS_URL}/{alt.id}/identitaet", data=daten,
+                    content_type="application/json")
+    assert r.status_code == 422, r.content
+    assert "bereits" in r.json()["detail"]
+
+
+@pytest.mark.django_db
+def test_anlegen_mit_adresse_eines_verwaisten_kontos_weist_den_weg():
+    """Genau die Sackgasse aus dem Test: die Adresse gibt es schon, aber nur als
+    halbes Konto. Die Meldung muss auf den richtigen Weg zeigen, nicht bloss
+    ablehnen."""
+    client, _ = _login_mit_app_user("ADMINISTRATION")
+    _login_ohne_identitaet("sackgasse@mitra-sanitaer.de")
+    r = client.post(USERS_URL, data=json.dumps({
+        "display_name": "Neuer Versuch",
+        "email": "sackgasse@mitra-sanitaer.de",
+        "password": "Werkstatt-2026-xyz",
+    }), content_type="application/json")
+    assert r.status_code == 422, r.content
+    detail = r.json()["detail"]
+    assert "Identität" in detail
+    assert "zweites Konto" in detail
+
+
+@pytest.mark.django_db
+def test_identitaet_ergaenzen_leerer_name_422():
+    client, _ = _login_mit_app_user("ADMINISTRATION")
+    alt = _login_ohne_identitaet("leername.alt@mitra-sanitaer.de")
+    r = client.post(f"{LOGINS_URL}/{alt.id}/identitaet",
+                    data=json.dumps({"display_name": "  "}),
+                    content_type="application/json")
+    assert r.status_code == 422, r.content
+
+
+@pytest.mark.django_db
+def test_identitaet_ergaenzen_nur_lesen_403(client_with_role):
+    """Verlangt security/ANLEGEN."""
+    r = client_with_role("NUR_LESEN").post(
+        f"{LOGINS_URL}/1/identitaet",
+        data=json.dumps({"display_name": "Unbefugt"}),
+        content_type="application/json",
+    )
+    assert r.status_code == 403, r.content
+
+
+@pytest.mark.django_db
+def test_verwaiste_logins_ohne_login_401():
+    r = Client().get(LOGINS_URL)
+    assert r.status_code == 401, r.content

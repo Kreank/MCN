@@ -219,6 +219,57 @@ def list_login_accounts():
     }
 
 
+def list_logins_ohne_identitaet():
+    """Login-Konten, denen die fachliche Identität fehlt (`app_user_id IS NULL`).
+
+    Diese Konten sind der gefährliche Zwischenzustand: **anmelden geht,
+    speichern nicht** — `business_transaction` verlangt die UUID und bricht
+    sonst hart ab. Im Bestand entstehen sie, wenn jemand Konten direkt im
+    Django-Admin angelegt hat, bevor es die Benutzeranlage im Produkt gab.
+
+    Sie tauchen in `list_users()` nicht auf (die Liste kommt aus app_user),
+    wären also unsichtbar und unerreichbar — deshalb diese eigene Liste.
+    """
+    from accounts.models import User
+
+    return User.objects.filter(app_user_id__isnull=True).order_by("email")
+
+
+def identitaet_ergaenzen(actor_app_user_id, *, login_id, display_name):
+    """Gibt einem bestehenden Login-Konto die fehlende fachliche Identität.
+
+    Der Weg für Altbestand: `create_user` scheitert hier zu Recht mit „Adresse
+    bereits verwendet" — das Konto SOLL nicht doppelt entstehen, ihm fehlt nur
+    die andere Hälfte. Passwort und Anmeldung bleiben unangetastet.
+
+    Wie beim Anlegen gibt es **keine Rolle** dazu; die vergibt man bewusst.
+    """
+    from accounts.models import User
+    from db_core.models import AppUser
+
+    display_name = (display_name or "").strip()
+    if not display_name:
+        raise ValueError("Der Anzeigename darf nicht leer sein.")
+
+    login = User.objects.filter(id=login_id).first()
+    if login is None:
+        raise ValueError("Login-Konto nicht gefunden.")
+    if login.app_user_id:
+        raise ValueError(
+            "Dieses Konto hat bereits eine fachliche Identität — es steht in der "
+            "Benutzerliste."
+        )
+
+    with business_transaction(actor_app_user_id):
+        konto = AppUser.objects.create(
+            id=uuid.uuid4(), display_name=display_name, status="ACTIVE", version=1
+        )
+        login.app_user_id = konto.id
+        login.save(update_fields=["app_user_id"])
+
+    return konto, login
+
+
 def create_user(actor_app_user_id, *, display_name, email, password, is_active=True):
     """Legt einen neuen Benutzer an: fachliche Identität UND Login-Konto.
 
@@ -258,7 +309,17 @@ def create_user(actor_app_user_id, *, display_name, email, password, is_active=T
 
     # Case-insensitiv, wie die DB-Constraint uniq_user_email_ci. Ein klarer 422
     # ist besser als ein IntegrityError aus der Tiefe.
-    if User.objects.filter(email__iexact=email).exists():
+    vorhanden = User.objects.filter(email__iexact=email).first()
+    if vorhanden is not None:
+        if vorhanden.app_user_id is None:
+            # Der häufige Fall bei Altbestand: das Login gibt es schon (etwa aus
+            # dem Django-Admin), nur die fachliche Identität fehlt. Nicht in eine
+            # Sackgasse schicken, sondern den richtigen Weg nennen.
+            raise ValueError(
+                f"Für {email} gibt es bereits ein Login-Konto, dem nur die "
+                f"fachliche Identität fehlt. Ergänzen Sie sie über „Konten ohne "
+                f"Identität“ — ein zweites Konto wäre falsch."
+            )
         raise ValueError(f"Diese E-Mail-Adresse wird bereits verwendet: {email}")
 
     try:

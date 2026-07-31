@@ -185,6 +185,36 @@
             </p>
           }
 
+          @if (verwaisteLogins().length) {
+            <section class="verwaist" aria-labelledby="verwaist-titel">
+              <h3 class="verwaist__titel" id="verwaist-titel">
+                <span aria-hidden="true">▲</span>
+                {{ verwaisteLogins().length }} Konto(s) ohne fachliche Identität
+              </h3>
+              <p class="verwaist__text">
+                Diese Konten können sich <strong>anmelden, aber nichts speichern</strong> —
+                jeder Schreibvorgang bricht ab. So entstehen Konten, die direkt in der
+                Django-Verwaltung angelegt wurden. Ergänzen Sie die fehlende Hälfte;
+                Adresse und Passwort bleiben unverändert.
+              </p>
+              <ul class="verwaist__liste">
+                @for (l of verwaisteLogins(); track l.id) {
+                  <li class="verwaist__zeile">
+                    <span class="benutzer-tabelle__mail">{{ l.email }}</span>
+                    @if (!l.is_active) {
+                      <span class="chip chip--status">Anmeldung gesperrt</span>
+                    }
+                    @if (darfAnlegen()) {
+                      <button type="button" class="btn" (click)="starteErgaenzen(l)">
+                        Identität ergänzen
+                      </button>
+                    }
+                  </li>
+                }
+              </ul>
+            </section>
+          }
+
           @if (darfAnlegen()) {
             <div class="zuordnungen-kopf">
               <p class="zuordnungen-kopf__hinweis">
@@ -393,6 +423,51 @@
       (click)="anlegenAbsenden()"
     >
       {{ anlegenLaedt() ? 'Anlegen …' : 'Anlegen' }}
+    </button>
+  </div>
+</app-dialog>
+
+<!-- ==================== Dialog: fehlende Identität ergänzen =============== -->
+<app-dialog
+  [offen]="!!ergaenzenFuer()"
+  [titel]="
+    ergaenzenFuer() ? 'Identität ergänzen — ' + ergaenzenFuer()!.email : 'Identität ergänzen'
+  "
+  [escapeSchliesst]="!ergaenzenLaedt()"
+  [backdropSchliesst]="!ergaenzenLaedt()"
+  (schliessen)="ergaenzenSchliessen()"
+>
+  <form class="zuweisen-form" [formGroup]="ergaenzenForm" (ngSubmit)="ergaenzenAbsenden()" novalidate>
+    <p class="verwaist__text">
+      Das Login bleibt wie es ist — Adresse und Passwort ändern sich nicht. Es
+      bekommt nur die fachliche Identität, ohne die kein Speichern möglich ist.
+      Eine Rolle vergeben Sie danach.
+    </p>
+    <app-feld
+      [control]="ergaenzenForm.controls.display_name"
+      label="Anzeigename"
+      hinweis="So erscheint die Person in Auswahlfeldern, Vorgängen und Berichten."
+      [pflicht]="true"
+    />
+
+    @if (ergaenzenMeldung(); as m) {
+      <p class="note note--error" role="alert">
+        <span aria-hidden="true">▲</span> {{ m }}
+      </p>
+    }
+  </form>
+
+  <div dialog-aktionen class="dialog__aktionen">
+    <button type="button" class="btn" [disabled]="ergaenzenLaedt()" (click)="ergaenzenSchliessen()">
+      Abbrechen
+    </button>
+    <button
+      type="button"
+      class="btn btn--primary"
+      [disabled]="ergaenzenLaedt()"
+      (click)="ergaenzenAbsenden()"
+    >
+      {{ ergaenzenLaedt() ? 'Ergänzen …' : 'Ergänzen' }}
     </button>
   </div>
 </app-dialog>

@@ -4,6 +4,7 @@ import { Observable } from 'rxjs';
 import {
   AppUserCreateInput,
   AppUserRow,
+  LoginOhneIdentitaet,
   PermissionCell,
   PermissionMatrix,
   PermissionSetInput,
@@ -57,6 +58,19 @@ export class RechtematrixService {
   /** Benutzer sperren/freigeben (`security/AENDERN`). Kein Löschen — append-only. */
   setUserStatus(id: string, status: 'ACTIVE' | 'DISABLED'): Observable<AppUserRow> {
     return this.http.post<AppUserRow>(`${this.base}/users/${id}/status`, { status });
+  }
+
+  /** Login-Konten ohne fachliche Identität (Altbestand, z. B. aus dem Django-Admin). */
+  listLoginsOhneIdentitaet(): Observable<LoginOhneIdentitaet[]> {
+    return this.http.get<LoginOhneIdentitaet[]>(`${this.base}/logins-ohne-identitaet`);
+  }
+
+  /** Einem bestehenden Login die fehlende Identität geben (`security/ANLEGEN`). */
+  identitaetErgaenzen(loginId: number, display_name: string): Observable<AppUserRow> {
+    return this.http.post<AppUserRow>(
+      `${this.base}/logins-ohne-identitaet/${loginId}/identitaet`,
+      { display_name },
+    );
   }
 
   listUserRoles(activeOnly = false): Observable<UserRole[]> {
