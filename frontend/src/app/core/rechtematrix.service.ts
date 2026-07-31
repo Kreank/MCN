@@ -2,6 +2,7 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import {
+  AppUserCreateInput,
   AppUserRow,
   PermissionCell,
   PermissionMatrix,
@@ -42,6 +43,20 @@ export class RechtematrixService {
 
   listUsers(): Observable<AppUserRow[]> {
     return this.http.get<AppUserRow[]>(`${this.base}/users`);
+  }
+
+  /**
+   * Neuen Benutzer anlegen (fachliche Identität + Login). Verlangt
+   * `security/ANLEGEN`; 422 bei doppelter Adresse, zu schwachem Passwort oder
+   * leerem Anzeigenamen. Der neue Benutzer hat zunächst KEINE Rolle.
+   */
+  createUser(payload: AppUserCreateInput): Observable<AppUserRow> {
+    return this.http.post<AppUserRow>(`${this.base}/users`, payload);
+  }
+
+  /** Benutzer sperren/freigeben (`security/AENDERN`). Kein Löschen — append-only. */
+  setUserStatus(id: string, status: 'ACTIVE' | 'DISABLED'): Observable<AppUserRow> {
+    return this.http.post<AppUserRow>(`${this.base}/users/${id}/status`, { status });
   }
 
   listUserRoles(activeOnly = false): Observable<UserRole[]> {

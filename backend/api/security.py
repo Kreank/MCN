@@ -2,9 +2,9 @@
 
 Rechte-Tore (Modul `security`):
   * Lesen (Rollen, Matrix, Benutzer, Zuordnungen, Anträge): `LESEN`.
-  * Matrix-Zelle ändern, Rolle zuweisen/beenden: `AENDERN`.
+  * Matrix-Zelle ändern, Rolle zuweisen/beenden, Benutzer sperren: `AENDERN`.
   * Freigabeantrag entscheiden (genehmigen/ablehnen): `FREIGEBEN`.
-  * Freigabeantrag stellen/zurückziehen: `ANLEGEN`.
+  * Freigabeantrag stellen/zurückziehen, **Benutzer anlegen**: `ANLEGEN`.
 
 Startmatrix (Migration 0026): `security`-Schreibrechte (ANLEGEN/AENDERN/FREIGEBEN)
 haben ausschließlich ADMINISTRATION und GESCHAEFTSFUEHRUNG — also gibt es
@@ -66,6 +66,29 @@ class AppUserOut(Schema):
     display_name: str
     status: str
     roles: list[str]
+    # Die Anmeldeadresse liegt im Login-Konto (accounts.User), nicht in
+    # security.app_user. Für die Verwaltungsoberfläche gehört beides zusammen:
+    # ohne Adresse sind zwei „Julian" nicht auseinanderzuhalten. None heißt:
+    # fachliche Identität ohne Login (Altbestand).
+    email: str | None = None
+    kann_anmelden: bool = False
+
+
+class AppUserCreateIn(Schema):
+    """Neuer Benutzer — fachliche Identität und Login in einem Schritt.
+
+    Ohne diesen Weg gab es einen Zirkelschluss: `hr.employee.app_user_id` ist
+    NOT NULL, das Mitarbeiterformular verlangt also ein Benutzerkonto, und ein
+    Benutzerkonto ließ sich nirgends im Produkt anlegen.
+    """
+
+    display_name: str
+    email: str
+    password: str
+
+
+class AppUserStatusIn(Schema):
+    status: str
 
 
 class UserRoleOut(Schema):
@@ -207,13 +230,70 @@ def list_users(request):
     active = {}
     for ur in rechte_pflege.list_user_roles(active_only=True, on=today):
         active.setdefault(ur.user_id, []).append(ur.role_id)
-    return [
-        AppUserOut(
-            id=u.id, display_name=u.display_name, status=u.status,
-            roles=sorted(active.get(u.id, [])),
+    logins = rechte_pflege.list_login_accounts()
+    out = []
+    for u in AppUser.objects.order_by("display_name"):
+        login = logins.get(u.id)
+        out.append(
+            AppUserOut(
+                id=u.id, display_name=u.display_name, status=u.status,
+                roles=sorted(active.get(u.id, [])),
+                email=login.email if login else None,
+                kann_anmelden=bool(login and login.is_active),
+            )
         )
-        for u in AppUser.objects.order_by("display_name")
-    ]
+    return out
+
+
+@router.post("/users", response={201: AppUserOut}, auth=django_auth)
+def create_user(request, payload: AppUserCreateIn):
+    """Benutzer anlegen — fachliche Identität + Login in einer Transaktion.
+
+    Recht: `security/ANLEGEN`. Das halten laut Startmatrix (0026) nur
+    ADMINISTRATION und GESCHAEFTSFUEHRUNG — Benutzeranlage ist faktisch die
+    Vergabe eines Systemzugangs und gehört nicht weiter gestreut.
+
+    Der neue Benutzer bekommt **keine Rolle** und darf damit zunächst nichts;
+    die Rolle vergibt man anschließend bewusst über `POST /user-roles`.
+    """
+    actor = require_create(request, "security", "ANLEGEN")
+    try:
+        konto, login = rechte_pflege.create_user(
+            actor,
+            display_name=payload.display_name,
+            email=payload.email,
+            password=payload.password,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return Status(201, AppUserOut(
+        id=konto.id, display_name=konto.display_name, status=konto.status,
+        roles=[], email=login.email, kann_anmelden=login.is_active,
+    ))
+
+
+@router.post("/users/{user_id}/status", response=AppUserOut, auth=django_auth)
+def set_user_status(request, user_id: UUID, payload: AppUserStatusIn):
+    """Benutzer sperren oder wieder freigeben (kein Löschen — append-only)."""
+    actor, _ = require(request, "security", "AENDERN")
+    try:
+        konto = rechte_pflege.set_user_status(
+            actor, user_id=user_id, status=payload.status
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    login = rechte_pflege.list_login_accounts().get(konto.id)
+    today = date.today()
+    rollen = sorted(
+        ur.role_id
+        for ur in rechte_pflege.list_user_roles(active_only=True, on=today)
+        if ur.user_id == konto.id
+    )
+    return AppUserOut(
+        id=konto.id, display_name=konto.display_name, status=konto.status,
+        roles=rollen, email=login.email if login else None,
+        kann_anmelden=bool(login and login.is_active),
+    )
 
 
 @router.get("/user-roles", response=list[UserRoleOut])

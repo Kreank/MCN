@@ -48,6 +48,20 @@ export interface AppUserRow {
   display_name: string;
   status: string;
   roles: string[];
+  /** Anmeldeadresse aus dem Login-Konto; null = Identität ohne Login. */
+  email: string | null;
+  kann_anmelden: boolean;
+}
+
+/**
+ * Payload für einen neuen Benutzer (POST /users). Legt fachliche Identität und
+ * Login in einem Schritt an — ohne diesen Weg verlangt das Mitarbeiterformular
+ * ein Benutzerkonto, das sich nirgends anlegen ließ.
+ */
+export interface AppUserCreateInput {
+  display_name: string;
+  email: string;
+  password: string;
 }
 
 /** Eine Rollenzuordnung (security.user_role), zeitlich gültig. */

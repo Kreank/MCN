@@ -36,6 +36,9 @@ interface BenutzerZeile {
   id: string;
   display_name: string;
   status: string;
+  /** Anmeldeadresse; null bei fachlicher Identität ohne Login (Altbestand). */
+  email: string | null;
+  kann_anmelden: boolean;
   zuordnungen: Zuordnung[];
 }
 
@@ -115,6 +118,34 @@ export class Rechtematrix {
   protected readonly beendenZiel = signal<BeendenZiel | null>(null);
   protected readonly beendenLaedt = signal(false);
 
+  // --- Benutzer anlegen (Dialog) -------------------------------------------
+  // Eigenes Recht: security/ANLEGEN. Ein Konto anzulegen ist die Vergabe eines
+  // Systemzugangs und damit eine andere Entscheidung als eine Rolle zu ändern.
+  protected readonly darfAnlegen = computed(() => this.auth.darf('security', 'ANLEGEN'));
+  protected readonly anlegenOffen = signal(false);
+  protected readonly anlegenLaedt = signal(false);
+  protected readonly anlegenMeldung = signal<string | null>(null);
+  protected readonly anlegenForm = this.fb.group({
+    display_name: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.required],
+    }),
+    email: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.required, Validators.email],
+    }),
+    // Mindestlänge nur als Sofort-Hinweis; die verbindliche Prüfung macht
+    // Djangos validate_password auf dem Server (422 im Klartext).
+    password: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.required, Validators.minLength(8)],
+    }),
+  });
+
+  // --- Benutzer sperren/freigeben (Bestätigung) ----------------------------
+  protected readonly sperrenZiel = signal<BenutzerZeile | null>(null);
+  protected readonly sperrenLaedt = signal(false);
+
   // Label-Helfer für das Template.
   protected readonly modulLabel = modulLabel;
   protected readonly aktionLabel = aktionLabel;
@@ -181,6 +212,8 @@ export class Rechtematrix {
       id: u.id,
       display_name: u.display_name,
       status: u.status,
+      email: u.email,
+      kann_anmelden: u.kann_anmelden,
       zuordnungen: (proUser.get(u.id) ?? []).sort((a, b) =>
         a.role_label.localeCompare(b.role_label, 'de'),
       ),
@@ -395,5 +428,109 @@ export class Rechtematrix {
       `mit sofortiger Wirkung beendet. Die Zuordnung wird nicht gelöscht, sondern ` +
       `historisch abgeschlossen — rückgängig machen lässt sich das nicht.`
     );
+  }
+
+  // Benutzer anlegen ---------------------------------------------------------
+
+  starteAnlegen(): void {
+    if (!this.darfAnlegen()) return;
+    this.zuordnungErfolg.set(null);
+    this.zuordnungMeldung.set(null);
+    this.anlegenMeldung.set(null);
+    this.anlegenForm.reset({ display_name: '', email: '', password: '' });
+    this.anlegenOffen.set(true);
+  }
+
+  anlegenSchliessen(): void {
+    if (this.anlegenLaedt()) return;
+    this.anlegenOffen.set(false);
+    this.anlegenMeldung.set(null);
+  }
+
+  anlegenAbsenden(): void {
+    if (this.anlegenLaedt()) return;
+    this.anlegenMeldung.set(null);
+    this.anlegenForm.markAllAsTouched();
+    if (this.anlegenForm.invalid) return;
+    const v = this.anlegenForm.getRawValue();
+    this.anlegenLaedt.set(true);
+    this.svc
+      .createUser({
+        display_name: v.display_name.trim(),
+        email: v.email.trim(),
+        password: v.password,
+      })
+      .subscribe({
+        next: (u) => {
+          this.anlegenLaedt.set(false);
+          this.anlegenOffen.set(false);
+          this.zuordnungErfolg.set(
+            `Benutzer „${u.display_name}“ wurde angelegt. Er hat noch keine Rolle — ` +
+              `weisen Sie ihm jetzt eine zu.`,
+          );
+          this.ladeZuordnungen();
+        },
+        error: (err: unknown) => {
+          this.anlegenLaedt.set(false);
+          // Der Server erklärt im Klartext, was fehlt (Adresse doppelt, Passwort
+          // zu schwach) — wörtlich anzeigen.
+          this.anlegenMeldung.set(
+            fehlerDetail(err) ?? 'Der Benutzer konnte nicht angelegt werden.',
+          );
+        },
+      });
+  }
+
+  // Benutzer sperren/freigeben -----------------------------------------------
+
+  starteSperren(b: BenutzerZeile): void {
+    if (!this.darfAendern()) return;
+    this.zuordnungErfolg.set(null);
+    this.zuordnungMeldung.set(null);
+    this.sperrenZiel.set(b);
+  }
+
+  sperrenAbbrechen(): void {
+    if (this.sperrenLaedt()) return;
+    this.sperrenZiel.set(null);
+  }
+
+  sperrenBestaetigen(): void {
+    const ziel = this.sperrenZiel();
+    if (!ziel || this.sperrenLaedt()) return;
+    const neu = ziel.status === 'ACTIVE' ? 'DISABLED' : 'ACTIVE';
+    this.sperrenLaedt.set(true);
+    this.svc.setUserStatus(ziel.id, neu).subscribe({
+      next: (u) => {
+        this.sperrenLaedt.set(false);
+        this.sperrenZiel.set(null);
+        this.zuordnungErfolg.set(
+          neu === 'DISABLED'
+            ? `${u.display_name} kann sich nicht mehr anmelden.`
+            : `${u.display_name} kann sich wieder anmelden.`,
+        );
+        this.ladeZuordnungen();
+      },
+      error: (err: unknown) => {
+        this.sperrenLaedt.set(false);
+        this.sperrenZiel.set(null);
+        this.zuordnungMeldung.set(
+          fehlerDetail(err) ?? 'Der Status konnte nicht geändert werden.',
+        );
+      },
+    });
+  }
+
+  protected sperrenText(): string {
+    const ziel = this.sperrenZiel();
+    if (!ziel) return '';
+    if (ziel.status === 'ACTIVE') {
+      return (
+        `${ziel.display_name} kann sich danach nicht mehr anmelden. Das Konto wird ` +
+        `NICHT gelöscht — es bleibt als Urheber vergangener Vorgänge sichtbar und ` +
+        `lässt sich jederzeit wieder freigeben.`
+      );
+    }
+    return `${ziel.display_name} kann sich danach wieder anmelden.`;
   }
 }
