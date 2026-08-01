@@ -185,6 +185,49 @@
             </p>
           }
 
+          @if (verwaisteLogins().length) {
+            <section class="verwaist" aria-labelledby="verwaist-titel">
+              <h3 class="verwaist__titel" id="verwaist-titel">
+                <span aria-hidden="true">▲</span>
+                {{ verwaisteLogins().length }} Konto(s) ohne fachliche Identität
+              </h3>
+              <p class="verwaist__text">
+                Diese Konten können sich <strong>anmelden, aber nichts speichern</strong> —
+                jeder Schreibvorgang bricht ab. So entstehen Konten, die direkt in der
+                Django-Verwaltung angelegt wurden. Ergänzen Sie die fehlende Hälfte;
+                Adresse und Passwort bleiben unverändert.
+              </p>
+              <ul class="verwaist__liste">
+                @for (l of verwaisteLogins(); track l.id) {
+                  <li class="verwaist__zeile">
+                    <span class="benutzer-tabelle__mail">{{ l.email }}</span>
+                    @if (!l.is_active) {
+                      <span class="chip chip--status">Anmeldung gesperrt</span>
+                    }
+                    @if (darfAnlegen()) {
+                      <button type="button" class="btn" (click)="starteErgaenzen(l)">
+                        Identität ergänzen
+                      </button>
+                    }
+                  </li>
+                }
+              </ul>
+            </section>
+          }
+
+          @if (darfAnlegen()) {
+            <div class="zuordnungen-kopf">
+              <p class="zuordnungen-kopf__hinweis">
+                Ein neuer Benutzer bekommt Anmeldedaten, aber zunächst
+                <strong>keine Rolle</strong> — und darf damit nichts. Die Rolle
+                vergeben Sie anschließend in derselben Tabelle.
+              </p>
+              <button type="button" class="btn btn--primary" (click)="starteAnlegen()">
+                Benutzer anlegen
+              </button>
+            </div>
+          }
+
           <div class="tabelle-rahmen">
             <table class="benutzer-tabelle">
               <caption class="sr-only">
@@ -194,6 +237,7 @@
               <thead>
                 <tr>
                   <th scope="col">Benutzer</th>
+                  <th scope="col">Anmeldung</th>
                   <th scope="col">Status</th>
                   <th scope="col">Aktive Rollen</th>
                   @if (darfAendern()) {
@@ -206,7 +250,17 @@
                   <tr>
                     <th scope="row">{{ b.display_name }}</th>
                     <td>
-                      <span class="chip chip--status">{{ b.status }}</span>
+                      @if (b.email) {
+                        <span class="benutzer-tabelle__mail">{{ b.email }}</span>
+                      } @else {
+                        <span class="keine-rollen">Kein Login-Konto</span>
+                      }
+                    </td>
+                    <td>
+                      <!-- Status nie nur über Farbe (CLAUDE.md, WCAG 2.2). -->
+                      <span class="chip chip--status">
+                        {{ b.status === 'ACTIVE' ? 'Aktiv' : 'Gesperrt' }}
+                      </span>
                     </td>
                     <td>
                       @if (b.zuordnungen.length) {
@@ -238,6 +292,17 @@
                       <td class="aktionen-zelle">
                         <button type="button" class="btn" (click)="starteZuweisen(b)">
                           Rolle zuweisen
+                        </button>
+                        <button
+                          type="button"
+                          class="btn"
+                          (click)="starteSperren(b)"
+                          [attr.aria-label]="
+                            (b.status === 'ACTIVE' ? 'Benutzer sperren: ' : 'Benutzer freigeben: ') +
+                            b.display_name
+                          "
+                        >
+                          {{ b.status === 'ACTIVE' ? 'Sperren' : 'Freigeben' }}
                         </button>
                       </td>
                     }
@@ -308,4 +373,113 @@
   [laedt]="beendenLaedt()"
   (bestaetigen)="beendenBestaetigen()"
   (abbrechen)="beendenAbbrechen()"
+/>
+
+<!-- ============================ Dialog: Benutzer anlegen ================== -->
+<app-dialog
+  [offen]="anlegenOffen()"
+  titel="Benutzer anlegen"
+  [escapeSchliesst]="!anlegenLaedt()"
+  [backdropSchliesst]="!anlegenLaedt()"
+  (schliessen)="anlegenSchliessen()"
+>
+  <form class="zuweisen-form" [formGroup]="anlegenForm" (ngSubmit)="anlegenAbsenden()" novalidate>
+    <app-feld
+      [control]="anlegenForm.controls.display_name"
+      label="Anzeigename"
+      hinweis="So erscheint die Person in Auswahlfeldern, Vorgängen und Berichten."
+      [pflicht]="true"
+    />
+    <app-feld
+      [control]="anlegenForm.controls.email"
+      label="E-Mail-Adresse"
+      typ="email"
+      hinweis="Damit meldet sich die Person an. Groß-/Kleinschreibung spielt keine Rolle."
+      [pflicht]="true"
+    />
+    <app-feld
+      [control]="anlegenForm.controls.password"
+      label="Erstes Passwort"
+      typ="password"
+      hinweis="Teilen Sie es der Person mit — sie sollte es nach dem ersten Anmelden ändern."
+      [pflicht]="true"
+    />
+
+    @if (anlegenMeldung(); as m) {
+      <p class="note note--error" role="alert">
+        <span aria-hidden="true">▲</span> {{ m }}
+      </p>
+    }
+  </form>
+
+  <div dialog-aktionen class="dialog__aktionen">
+    <button type="button" class="btn" [disabled]="anlegenLaedt()" (click)="anlegenSchliessen()">
+      Abbrechen
+    </button>
+    <button
+      type="button"
+      class="btn btn--primary"
+      [disabled]="anlegenLaedt()"
+      (click)="anlegenAbsenden()"
+    >
+      {{ anlegenLaedt() ? 'Anlegen …' : 'Anlegen' }}
+    </button>
+  </div>
+</app-dialog>
+
+<!-- ==================== Dialog: fehlende Identität ergänzen =============== -->
+<app-dialog
+  [offen]="!!ergaenzenFuer()"
+  [titel]="
+    ergaenzenFuer() ? 'Identität ergänzen — ' + ergaenzenFuer()!.email : 'Identität ergänzen'
+  "
+  [escapeSchliesst]="!ergaenzenLaedt()"
+  [backdropSchliesst]="!ergaenzenLaedt()"
+  (schliessen)="ergaenzenSchliessen()"
+>
+  <form class="zuweisen-form" [formGroup]="ergaenzenForm" (ngSubmit)="ergaenzenAbsenden()" novalidate>
+    <p class="verwaist__text">
+      Das Login bleibt wie es ist — Adresse und Passwort ändern sich nicht. Es
+      bekommt nur die fachliche Identität, ohne die kein Speichern möglich ist.
+      Eine Rolle vergeben Sie danach.
+    </p>
+    <app-feld
+      [control]="ergaenzenForm.controls.display_name"
+      label="Anzeigename"
+      hinweis="So erscheint die Person in Auswahlfeldern, Vorgängen und Berichten."
+      [pflicht]="true"
+    />
+
+    @if (ergaenzenMeldung(); as m) {
+      <p class="note note--error" role="alert">
+        <span aria-hidden="true">▲</span> {{ m }}
+      </p>
+    }
+  </form>
+
+  <div dialog-aktionen class="dialog__aktionen">
+    <button type="button" class="btn" [disabled]="ergaenzenLaedt()" (click)="ergaenzenSchliessen()">
+      Abbrechen
+    </button>
+    <button
+      type="button"
+      class="btn btn--primary"
+      [disabled]="ergaenzenLaedt()"
+      (click)="ergaenzenAbsenden()"
+    >
+      {{ ergaenzenLaedt() ? 'Ergänzen …' : 'Ergänzen' }}
+    </button>
+  </div>
+</app-dialog>
+
+<!-- =================== Bestätigung: Benutzer sperren/freigeben ============ -->
+<app-bestaetigung
+  [offen]="!!sperrenZiel()"
+  [titel]="sperrenZiel()?.status === 'ACTIVE' ? 'Benutzer sperren?' : 'Benutzer freigeben?'"
+  [text]="sperrenText()"
+  [bestaetigenLabel]="sperrenZiel()?.status === 'ACTIVE' ? 'Sperren' : 'Freigeben'"
+  [gefahr]="sperrenZiel()?.status === 'ACTIVE'"
+  [laedt]="sperrenLaedt()"
+  (bestaetigen)="sperrenBestaetigen()"
+  (abbrechen)="sperrenAbbrechen()"
 />

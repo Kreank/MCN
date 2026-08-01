@@ -10,10 +10,10 @@ eigenen Dateien (unten).
 
 | | |
 |---|---|
-| **Live** | `mitra.tech-artist.de`, deployt **2026-07-22** aus `main` @ `0fb1ae1` |
-| **Migrationskopf** | **0138** (Stand live: 0134; `0135`–`0138` sind noch nicht ausgerollt: Wartungsvertrag ↔ Anlage, Aufgaben-Faden + Benachrichtigungen) |
-| **Branches** | `develop` = Arbeit · `main` = was live läuft · beide stehen auf `0fb1ae1` |
-| **⚠️ Nicht gepusht** | `main` liegt **27 Commits vor `origin/main`** — auf GitHub fehlt der Stand |
+| **Live** | `mitra.tech-artist.de`, deployt **2026-07-31** aus `main` @ `8001dea` |
+| **Migrationskopf** | **0139** — vollständig ausgerollt (`0139` = neue Rolle AZUBI) |
+| **Branches** | `develop` = Arbeit · `main` = was live läuft · beide stehen auf `8001dea` |
+| **✅ Gepusht** | `origin/main` und `origin/develop` stehen auf `8001dea` (2026-07-31) — der alte Rückstand von 27 Commits ist aufgeholt |
 | **Daten** | **Echtbetrieb**, keine Demo: ~2 Mio Artikel, echte Kundendaten, `MCN_SEED=0` |
 | **Backup** | Dienst läuft (nächtlich 02:30 + `MCN_BACKUP_RUN_ON_START=1`); manuelle Dumps in `backups-manuell/` |
 
