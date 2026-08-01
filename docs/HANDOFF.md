@@ -10,13 +10,24 @@ eigenen Dateien (unten).
 
 | | |
 |---|---|
-| **Live** | `mitra.tech-artist.de`, deployt **2026-07-31** aus `main` @ `8001dea` |
-| **Migrationskopf live** | **0139** (`0139_rolle_azubi`) — im Repo steht der Kopf auf **0143** |
-| **Branches** | `develop` = Arbeit (**voraus**) · `main` = was live läuft @ `90af608` |
-| **⚠️ Deploy steht aus** | `develop` trägt den Slice „Material→Rechnung, Kalender/ICS, öffentliche Links" (2026-08-01 vom Dev-PC gepusht, Fast-Forward). Der Rollout zieht **fünf** Migrationen nach: `0139_material_abrechenbar`, `0140`, `0141`, `0142`, `0143_merge`. |
-| **Daten** | **Echtbetrieb**, keine Demo: ~2 Mio Artikel, echte Kundendaten, `MCN_SEED=0` |
+| **Live** | `mitra.tech-artist.de`, deployt **2026-08-01** aus `main` @ `c5a01c2` — verifiziert: HTTP 200, alle Container healthy |
+| **Migrationskopf live** | **0143** (`0143_merge_azubi_und_material`) — vollständig ausgerollt |
+| **Branches** | `develop` = `main` = `c5a01c2`; **lokal 1 Commit vor `origin`** (Testfix noch nicht gepusht) |
+| **Nutzung** | **Testbetrieb** — der Server dient dem Probelauf durch Chef/Kollegen. Echte Kundendaten und ~2 Mio Artikel liegen drauf, aber es hängt kein Tagesgeschäft daran. `MCN_SEED=0`. |
 | **Backup** | Dienst läuft (nächtlich 02:30 + `MCN_BACKUP_RUN_ON_START=1`); manuelle Dumps in `backups-manuell/` |
 | **Testsuite** | **grün** (2026-08-01): `4455 passed, 21 skipped`, gegen frisch gebaute Test-DB |
+
+> **⚠️ Demo-Passwort-Automatik ist ABGESCHALTET** (2026-08-01). Bis dahin setzte der
+> Entrypoint bei **jedem** Containerstart für **alle** aktiven Konten dasselbe
+> Passwort aus `MCN_DEMO_PASSWORD` — ohne `--nur-ohne-passwort`, also wurden
+> individuell vergebene Passwörter überschrieben (belegt: „6 gesetzt, 0
+> übersprungen"). Der Befehl sichert sich mit zwei Schaltern ab, aber auf diesem
+> Server waren **beide** gesetzt. Jetzt: `MCN_DEMO_INSTANZ=0`, `MCN_DEMO_PASSWORD`
+> auskommentiert; Sicherungskopie `deploy/.env.bak-vor-demo-abschaltung-2026-08-01-1926`.
+>
+> **Folge für einen Neu-Seed:** Frisch geseedete Konten bekommen ohne diesen Schritt
+> ein *unbenutzbares* Passwort — niemand käme hinein. Wer neu seedet, setzt die zwei
+> Zeilen kurz zurück, startet einmal, und schaltet sie wieder ab.
 
 > **Zwei parallele `0139`.** Der AZUBI-Strang (über `main` ausgeliefert) und der
 > Material-Strang sind unabhängig auf `0138` aufgesetzt. `0143_merge_azubi_und_material`
@@ -56,13 +67,15 @@ eigenen Dateien (unten).
 1. **`MCN_BACKUP_DIR` liegt auf derselben Platte.** Für GoBD-Ernstfall: zweites Ziel
    off-box (rsync/S3) + **Restore-Probelauf** auf Wegwerf-Server + MinIO-Versioning.
    Ein Backup, das nie zurückgespielt wurde, ist eine Hoffnung.
-2. **Vor dem anstehenden Deploy:** `deploy/.env` braucht **nichts** nachgetragen —
-   die drei neuen Schalter (`MCN_PUBLIC_LINK_MAIL`, `…_TTL_DAYS`, `…_IP_THRESHOLD`)
-   haben sichere Defaults, der scharfe ist fail-closed (ohne ihn 422 statt Mailversand).
-   `MCN_FRONTEND_BASE_URL` ist korrekt gesetzt. **Beachten:** `0141` ändert den
-   Default-Akteur des Queue-Workers auf den Systemakteur „Online-Selbstbedienung"
-   (statt „erster aktiver Account"); `MCN_AI_ACTOR_ID` ist nicht gesetzt, der neue
-   Default greift also.
+2. **Die sechs Login-Passwörter sind alle gleich** — Nachwehe der abgeschalteten
+   Automatik (siehe Kasten oben). Sie sind gültig und niemand ist ausgesperrt, aber
+   jeder sollte sich einmal anmelden und im Produkt sein eigenes setzen; ab jetzt
+   bleibt es erhalten. Der Reset-per-Mail-Weg funktioniert dafür **nicht**, solange
+   `MCN_EMAIL_BACKEND` auf Konsole steht.
+3. **`CLAUDE.md` behauptet Echtbetrieb** („Jeder Deploy trifft Produktivdaten"),
+   tatsächlich ist es **Testbetrieb** (Stand 2026-08-01, Aussage des Users). Die
+   Formulierung bremst jede neue Session unnötig aus — beim nächsten Anfassen
+   angleichen.
 
 **Erledigt am 2026-08-01** *(hier nur als Beleg, dass es nicht vergessen wurde)*
 - `main`/`develop` sind auf `origin` — der Rückstand von 27 Commits ist Geschichte.
