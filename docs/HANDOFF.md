@@ -11,11 +11,18 @@ eigenen Dateien (unten).
 | | |
 |---|---|
 | **Live** | `mitra.tech-artist.de`, deployt **2026-07-31** aus `main` @ `8001dea` |
-| **Migrationskopf** | **0139** — vollständig ausgerollt (`0139` = neue Rolle AZUBI) |
-| **Branches** | `develop` = Arbeit · `main` = was live läuft · beide stehen auf `8001dea` |
-| **✅ Gepusht** | `origin/main` und `origin/develop` stehen auf `8001dea` (2026-07-31) — der alte Rückstand von 27 Commits ist aufgeholt |
+| **Migrationskopf live** | **0139** (`0139_rolle_azubi`) — im Repo steht der Kopf auf **0143** |
+| **Branches** | `develop` = Arbeit (**voraus**) · `main` = was live läuft @ `90af608` |
+| **⚠️ Deploy steht aus** | `develop` trägt den Slice „Material→Rechnung, Kalender/ICS, öffentliche Links" (2026-08-01 vom Dev-PC gepusht, Fast-Forward). Der Rollout zieht **fünf** Migrationen nach: `0139_material_abrechenbar`, `0140`, `0141`, `0142`, `0143_merge`. |
 | **Daten** | **Echtbetrieb**, keine Demo: ~2 Mio Artikel, echte Kundendaten, `MCN_SEED=0` |
 | **Backup** | Dienst läuft (nächtlich 02:30 + `MCN_BACKUP_RUN_ON_START=1`); manuelle Dumps in `backups-manuell/` |
+| **Testsuite** | **grün** (2026-08-01): `4455 passed, 21 skipped`, gegen frisch gebaute Test-DB |
+
+> **Zwei parallele `0139`.** Der AZUBI-Strang (über `main` ausgeliefert) und der
+> Material-Strang sind unabhängig auf `0138` aufgesetzt. `0143_merge_azubi_und_material`
+> führt sie zusammen; `0139_rolle_azubi` behält bewusst ihren Namen, weil Django
+> angewendete Migrationen über den **Namen** führt — nach einer Umbenennung liefe
+> sie auf dem Server ein zweites Mal. Graph verifiziert: ein Blatt, kein Zyklus.
 
 **Deploy-Ablauf und die zwei scharfen `.env`-Schalter stehen in `CLAUDE.md`**
 (Abschnitt „Betrieb, Branches & Deployment"). Kurzform: DB sichern → `develop`→`main`
@@ -46,15 +53,26 @@ eigenen Dateien (unten).
 ## 🔴 Offene Punkte
 
 **Betrieb / Ops**
-1. **`main` nach `origin` pushen** — 27 Commits liegen nur lokal. Ohne Push gibt es
-   keine zweite Kopie des Live-Stands.
-2. **Volle Backend-Suite lief vor dem Deploy am 22.07. NICHT.** Der Rollout stützte
-   sich auf saubere Migrationen, Healthchecks und fehlerfreie Logs. Vor dem nächsten
-   Deploy nachholen: `cd backend && MCN_DEBUG=1 MCN_DB_NAME=mitra_crm_test
-   MCN_DB_PASSWORD=mcn_dev_local uv run pytest -q`.
-3. **`MCN_BACKUP_DIR` liegt auf derselben Platte.** Für GoBD-Ernstfall: zweites Ziel
+1. **`MCN_BACKUP_DIR` liegt auf derselben Platte.** Für GoBD-Ernstfall: zweites Ziel
    off-box (rsync/S3) + **Restore-Probelauf** auf Wegwerf-Server + MinIO-Versioning.
    Ein Backup, das nie zurückgespielt wurde, ist eine Hoffnung.
+2. **Vor dem anstehenden Deploy:** `deploy/.env` braucht **nichts** nachgetragen —
+   die drei neuen Schalter (`MCN_PUBLIC_LINK_MAIL`, `…_TTL_DAYS`, `…_IP_THRESHOLD`)
+   haben sichere Defaults, der scharfe ist fail-closed (ohne ihn 422 statt Mailversand).
+   `MCN_FRONTEND_BASE_URL` ist korrekt gesetzt. **Beachten:** `0141` ändert den
+   Default-Akteur des Queue-Workers auf den Systemakteur „Online-Selbstbedienung"
+   (statt „erster aktiver Account"); `MCN_AI_ACTOR_ID` ist nicht gesetzt, der neue
+   Default greift also.
+
+**Erledigt am 2026-08-01** *(hier nur als Beleg, dass es nicht vergessen wurde)*
+- `main`/`develop` sind auf `origin` — der Rückstand von 27 Commits ist Geschichte.
+- Die volle Backend-Suite läuft wieder. Sie war seit `0114_geraetetoken` im Teardown
+  kaputt: Djangos `flush` leert `public.accounts_user`, aber `security.device_token`
+  hält einen Fremdschlüssel darauf und ist als `managed = False` nie Teil des
+  TRUNCATE — Postgres verweigert das zu Recht. 19 Tests starben daran, ausgerechnet
+  die für Mahnungs-Schreibpfad, Abrechnung unter Nebenläufigkeit und Löschschutz.
+  Behoben in `backend/conftest.py` (Details siehe Kommentar dort); **kein Eingriff
+  ins Fachschema**. Gegenprobe gegen `main` bestätigt: vorbestehend, keine Regression.
 
 **Fachlich — bewusst vertagt (Zusage an den User, 2026-07-20)**
 4. **`building.address_id` ist über die API nicht befüllbar.** Spalte und
