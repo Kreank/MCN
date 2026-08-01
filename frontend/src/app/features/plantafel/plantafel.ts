@@ -15,7 +15,6 @@ import { map } from 'rxjs';
 import { EinsatzService } from '../../core/einsatz.service';
 import { PlanungStammdatenService } from '../../core/planung-stammdaten.service';
 import {
-  AnrufResult,
   AppointmentCategory,
   BacklogJob,
   BoardAbsence,
@@ -46,7 +45,7 @@ import { Feld, FeldOption } from '../../shared/formular/feld';
 import { ReferenzWahl, RefSuche } from '../../shared/formular/referenz-wahl';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { SchwebendesPanel, panelOeffnen } from '../../shared/schwebendes-panel';
-import { AnrufDialog } from '../anruf/anruf-dialog';
+import { AnrufEinstieg, BAND_SPEICHER, TAG_VON, TAG_BIS } from '../../core/anruf-einstieg';
 import { VerbotenState, fehlerDetail, fehlerState } from '../../shared/http-fehler';
 
 type ViewState =
@@ -78,6 +77,10 @@ export const ANSICHTEN: { wert: Ansicht; label: string }[] = [
  *
  * Voreinstellung 07–17 Uhr (übliche Arbeitszeit im Handwerk); der Disponent kann
  * sie in der Steuerleiste ändern (`bandEinstellung`, gemerkt im Browser).
+ * `TAG_VON`/`TAG_BIS` und der Speicherschlüssel stehen in `core/anruf-einstieg`
+ * und werden von dort importiert: Der globale Anruf-Einstieg klemmt seinen
+ * Terminvorschlag in dasselbe Band, und zwei Wahrheiten über ein und dieselbe
+ * Nutzereinstellung wären eine Falle.
  *
  * **INVARIANTE: Das Grundraster ist kein FILTER.** Liegt ein Termin außerhalb
  * (Notdienst 21–23 Uhr), **weitet sich das Band automatisch** (`zeitBand`) und
@@ -85,12 +88,9 @@ export const ANSICHTEN: { wert: Ansicht; label: string }[] = [
  * das wäre der gefährlichste denkbare Fehler einer Plantafel: Der Disponent hält
  * einen Monteur für frei, obwohl er im Notdienst ist.
  */
-const TAG_VON = 7;
-const TAG_BIS = 17;
 
 /** Grenzen der Einstellung (die Skala braucht mindestens vier Stunden Breite). */
 const BAND_MIN_STUNDEN = 4;
-const BAND_SPEICHER = 'mcn.plantafel.zeitband';
 
 /**
  * Die Stundenspalte der Tagesansicht.
@@ -309,7 +309,7 @@ function montagVon(iso: string): string {
   selector: 'app-plantafel',
   imports: [
     RouterLink, PlanungNav, KeinZugriff, ReactiveFormsModule, Dialog, Feld, ReferenzWahl,
-    SchwebendesPanel, AnrufDialog,
+    SchwebendesPanel,
   ],
   templateUrl: './plantafel.html',
   styleUrl: './plantafel.scss',
@@ -322,6 +322,7 @@ export class Plantafel {
   private readonly propertySvc = inject(PropertyService);
   private readonly partySvc = inject(PartyService);
   private readonly auth = inject(AuthService);
+  private readonly anruf = inject(AnrufEinstieg);
   private readonly fb = inject(FormBuilder);
 
   protected readonly ansichten = ANSICHTEN;
@@ -1568,13 +1569,6 @@ export class Plantafel {
   /** Mehrfachauswahl im Dialog (Hero: „Mitarbeiter und Ressourcen zuweisen"). */
   protected readonly gewaehlteMitarbeiter = signal<string[]>([]);
 
-  // Anruf-Dialog (eigener Zustand, damit er sich nicht mit dem Termin-Dialog
-  // ins Gehege kommt — beide dürfen nie gleichzeitig offen sein, aber sie teilen
-  // sich auch keine Felder).
-  protected readonly anrufOffen = signal(false);
-  protected readonly anrufDatum = signal('');
-  protected readonly anrufZeit = signal('');
-  protected readonly anrufMitarbeiter = signal<string[]>([]);
   protected readonly gewaehlteRessourcen = signal<string[]>([]);
   /** Beim Bearbeiten: der Auftrag ist unveränderlich (DB-Trigger WF-01). */
   protected readonly auftragGesperrt = signal(false);
@@ -1886,74 +1880,27 @@ export class Plantafel {
   }
 
   /**
-   * „Anruf annehmen" — der Weg für den Kunden, der gerade am Telefon ist.
-   *
-   * Bewusst eine Schwester von `neuerTermin()` statt eines Parameters daran: Die
-   * beiden teilen nur den Slot, sonst nichts. `neuerTermin` setzt einen Termin
-   * an einen BESTEHENDEN Auftrag; hier entstehen Kunde, Auftrag und Termin
-   * zusammen. Das in eine Methode zu zwingen hieße, zwei Formulare mit einer
-   * Zustandsmaschine zu bedienen.
+   * Was beim Bauen schon dastand, gilt als gesehen: Wer innerhalb der 15
+   * Sekunden Bestätigungsdauer auf die Plantafel wechselt, soll die Ansage nicht
+   * ein zweites Mal hören — das Board lädt beim Betreten ohnehin frisch.
    */
-  anrufAnnehmen(laneIdx?: number, slotIdx?: number): void {
-    if (!this.darfPlanen()) return;
-    const lane = laneIdx !== undefined ? this.lanes()[laneIdx] : null;
-    const band = this.bandEinstellung();
-
-    if (slotIdx !== undefined) {
-      // Aus einer Zelle heraus: exakt der angeklickte Slot.
-      const slot = this.slots()[slotIdx];
-      this.anrufDatum.set(slot.dayIso);
-      const stunde = this.ansicht() === 'tag' ? slot.start.getHours() : band.von + 2;
-      this.anrufZeit.set(`${`${stunde}`.padStart(2, '0')}:00`);
-    } else {
-      // Aus der Kopfleiste: HEUTE und die nächste volle Stunde. Nicht
-      // `slots()[0]` — das wäre in der Wochenansicht der Montag der
-      // angezeigten Woche, mitten in der Woche also ein Datum in der
-      // Vergangenheit. Wer am Telefon einen Termin macht, meint fast nie
-      // rückwirkend.
-      const jetzt = new Date();
-      this.anrufDatum.set(
-        [
-          jetzt.getFullYear(),
-          String(jetzt.getMonth() + 1).padStart(2, '0'),
-          String(jetzt.getDate()).padStart(2, '0'),
-        ].join('-'),
-      );
-      // Ins eingestellte Zeitband klemmen: Nach Feierabend angerufen heißt
-      // Termin am nächsten Arbeitsbeginn, nicht um 23:00.
-      const naechste = Math.min(Math.max(jetzt.getHours() + 1, band.von), band.bis - 1);
-      this.anrufZeit.set(`${`${naechste}`.padStart(2, '0')}:00`);
-    }
-
-    this.anrufMitarbeiter.set(lane?.kind === 'USER' ? [lane.id] : []);
-    this.anrufOffen.set(true);
-  }
+  private anrufGesehen = this.anruf.letztesErgebnis();
 
   /**
-   * Der Durchstich hat Kunde, Auftrag und Termin angelegt.
+   * Ein Anruf ist angenommen worden — irgendwo in der App, seit der
+   * Vereinheitlichung nicht mehr zwingend hier. Ohne dieses Nachladen zeigte das
+   * Board den neuen Termin erst beim nächsten Laden.
    *
-   * Die Meldung nennt den Status beim Namen, statt pauschal „freigegeben" zu
-   * behaupten: Auf dem Vorlege-Weg steht der Auftrag in FREIGABE_AUSSTEHEND, und
-   * der Termin ist zwar geplant, aber noch nicht ausführbar — der Monteur darf
-   * erst nach der Entscheidung losfahren. Wer das aus der Meldung nicht erfährt,
-   * hält den Vorgang für erledigt und wundert sich am Termintag.
+   * Bewusst OHNE `sagen()`: Die Bestätigung der App-Schale ist bereits eine
+   * `role="status"`-Region und nennt Auftrag, Termin und Rückstand. Eine zweite
+   * Ansage von hier würde dieselbe Nachricht doppelt vorlesen.
    */
-  anrufFertig(res: AnrufResult): void {
-    this.anrufOffen.set(false);
-    const vorgelegt = res.order_status === 'FREIGABE_AUSSTEHEND';
-    const abschluss = vorgelegt
-      ? 'angelegt und zur Entscheidung vorgelegt'
-      : 'angelegt und freigegeben';
-    const nachsatz = res.im_rueckstand
-      ? 'Der Termin liegt im Rückstand.'
-      : `Termin ${res.job_number} geplant.`;
-    this.sagen(
-      vorgelegt
-        ? `Auftrag ${res.order_number} ${abschluss} — er wartet auf Freigabe. ${nachsatz}`
-        : `Auftrag ${res.order_number} ${abschluss}. ${nachsatz}`,
-    );
+  private readonly anrufWirkung = effect(() => {
+    const res = this.anruf.letztesErgebnis();
+    if (!res || res === this.anrufGesehen) return;
+    this.anrufGesehen = res;
     this.refresh();
-  }
+  });
 
   /** „+ Neuer Termin" (Kopfleiste) oder Klick in eine leere Zelle. */
   neuerTermin(laneIdx?: number, slotIdx?: number): void {

@@ -12,6 +12,15 @@
         Betreff durchsuchbar und nach Status gefiltert.
       </p>
     </div>
+    <!-- Der Vorgang ist der Bürger DIESER Seite, also steht sein Anlegen hier —
+         nicht mehr als zweiter Knopf in der globalen Kopfleiste. Fürs Sofort am
+         Telefon gibt es dort „Anruf annehmen"; hier landet die Meldung OHNE
+         Termin im Eingangskorb. -->
+    @if (darfErfassen()) {
+      <a class="btn btn--primary page-head__neu" routerLink="/schnellerfassung">
+        <span aria-hidden="true">＋</span> Meldung erfassen
+      </a>
+    }
   </header>
 
   <app-eingang-nav />

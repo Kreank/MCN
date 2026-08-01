@@ -12,6 +12,8 @@ import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } fro
 import { filter } from 'rxjs';
 import { ThemeService } from './core/theme';
 import { AuthService } from './core/auth.service';
+import { AnrufEinstieg } from './core/anruf-einstieg';
+import { AnrufDialog } from './features/anruf/anruf-dialog';
 import { Kommandopalette } from './shared/kommandopalette/kommandopalette';
 import { Benachrichtigungen } from './shared/benachrichtigungen/benachrichtigungen';
 
@@ -113,7 +115,14 @@ const NAV_GRUPPEN: readonly NavGruppeDef[] = [
 
 @Component({
   selector: 'app-root',
-  imports: [RouterOutlet, RouterLink, RouterLinkActive, Kommandopalette, Benachrichtigungen],
+  imports: [
+    RouterOutlet,
+    RouterLink,
+    RouterLinkActive,
+    Kommandopalette,
+    Benachrichtigungen,
+    AnrufDialog,
+  ],
   templateUrl: './app.html',
   styleUrl: './app.scss',
 })
@@ -123,6 +132,7 @@ export class App {
   private readonly injector = inject(Injector);
   protected readonly themeSvc = inject(ThemeService);
   protected readonly auth = inject(AuthService);
+  protected readonly anruf = inject(AnrufEinstieg);
 
   // Rechte-Gates spiegeln die Server-Durchsetzung (permissions.py): das UI
   // blendet aus, was ohnehin mit 403 abgelehnt würde. Übersicht bleibt frei.
@@ -268,30 +278,25 @@ export class App {
   ];
 
   /**
-   * Header-CTA „Meldung erfassen" — der Schnelleinstieg legt Person +
-   * Liegenschaft + Vorgang atomar an. Nur zeigen, wenn ALLE vier beteiligten
-   * Tore vorliegen (der Server würde sonst mit 403 abbrechen und alles
-   * zurückrollen). Spiegelt die Server-Durchsetzung, setzt sie nicht durch.
+   * Der einzige globale CTA: „☎ Anruf annehmen".
+   *
+   * Geprüft wird das MINDESTE, mit dem der Durchstich gelingen kann — bestehender
+   * Kontakt, bestehende Liegenschaft, Ausgang „vorlegen" (`api/telefonauftrag.py`
+   * staffelt die Tore nach dem tatsächlich Geschriebenen). Die schärferen Fälle
+   * (neuer Kontakt braucht identity.ANLEGEN, neue Liegenschaft property.ANLEGEN
+   * +AENDERN, Freigeben workflow.FREIGEBEN) weist der Server ab; sie hier
+   * mitzufordern würde den Knopf für Konten verstecken, die ihn benutzen können.
+   *
+   * `darfAlle`, nicht `darf`: `/planung/anruf` ist durchgehend fail-closed
+   * (`require`) — ein Konto mit row_scope EIGENE bekommt 403, obwohl es die
+   * Rechte trägt. Das Gate spiegelt die Server-Durchsetzung, es ersetzt sie nicht.
    */
-  /**
-   * Header-CTA „＋ Neuer Auftrag" — der globale Schnelleinstieg legt jetzt einen
-   * Auftrag an (nicht mehr nur einen Vorgang). `darfAlle`, nicht `darf`:
-   * `POST /api/workflow/work_orders` ist fail-closed (`permissions.require`) —
-   * ein Konto mit row_scope EIGENE bekommt 403. Der CTA springt auf die
-   * Auftragsliste und öffnet dort den Anlage-Dialog (Query `neu=1`).
-   */
-  protected readonly darfNeuerAuftrag = computed(() =>
-    this.auth.darfAlle('workflow', 'ANLEGEN'),
-  );
-
-  protected readonly darfSchnellerfassung = computed(
+  protected readonly darfAnruf = computed(
     () =>
-      // `darfAlle`: `quick-intake` ist an allen vier Toren fail-closed (`require`)
-      // — ein Konto mit row_scope EIGENE bekommt 403, obwohl es die Rechte trägt.
-      this.auth.darfAlle('identity', 'ANLEGEN') &&
-      this.auth.darfAlle('property', 'ANLEGEN') &&
-      this.auth.darfAlle('property', 'AENDERN') &&
-      this.auth.darfAlle('workflow', 'ANLEGEN'),
+      this.auth.darfAlle('workflow', 'ANLEGEN') &&
+      this.auth.darfAlle('workflow', 'AENDERN') &&
+      this.auth.darfAlle('identity', 'LESEN') &&
+      this.auth.darfAlle('property', 'LESEN'),
   );
 
   /** Nur Navigationspunkte, für die (mindestens) ein Recht vorliegt. */

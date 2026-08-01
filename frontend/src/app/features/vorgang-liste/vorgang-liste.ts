@@ -8,6 +8,7 @@ import {
   ServiceCaseBoard,
   ServiceCaseStatus,
 } from '../../core/projekt.model';
+import { AuthService } from '../../core/auth.service';
 import { EingangNav } from '../eingang-nav/eingang-nav';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
 import { VerbotenState, fehlerState } from '../../shared/http-fehler';
@@ -40,6 +41,20 @@ type Segment = { value: ServiceCaseStatus | null; label: string };
 })
 export class VorgangListe {
   private readonly svc = inject(ProjektService);
+  private readonly auth = inject(AuthService);
+
+  /**
+   * „＋ Meldung erfassen" (früher ein Header-CTA). `quick-intake` ist an allen
+   * vier Toren fail-closed (`require`) — ein Konto mit row_scope EIGENE bekommt
+   * 403, obwohl es die Rechte trägt. Gleiches Gate wie der Routen-Guard.
+   */
+  protected readonly darfErfassen = computed(
+    () =>
+      this.auth.darfAlle('identity', 'ANLEGEN') &&
+      this.auth.darfAlle('property', 'ANLEGEN') &&
+      this.auth.darfAlle('property', 'AENDERN') &&
+      this.auth.darfAlle('workflow', 'ANLEGEN'),
+  );
 
   protected readonly pageSize = 20;
   protected readonly segments: Segment[] = [

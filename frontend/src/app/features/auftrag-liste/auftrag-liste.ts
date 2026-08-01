@@ -158,11 +158,13 @@ export class AuftragListe {
         this.fetch();
       });
     this.fetch();
-    // Der Header-CTA „＋ Neuer Auftrag" springt mit ?neu=1 hierher und öffnet den
-    // Anlage-Dialog. Als Stream (nicht Snapshot): so greift der Klick auch, wenn
-    // man bereits auf /auftraege steht (der Router verwendet dieselbe Instanz
-    // weiter, der Konstruktor läuft nicht erneut). Nach dem Öffnen wird der Param
-    // entfernt — sonst öffnete Reload/Zurück den Dialog immer wieder.
+    // `?neu=1` öffnet den Anlage-Dialog beim Betreten. Der frühere Header-CTA ist
+    // fort (der globale Knopf ist „Anruf annehmen"); die Query bleibt als
+    // Sprungziel für Verweise aus anderen Ansichten. Als Stream, nicht Snapshot:
+    // so greift sie auch, wenn man bereits auf /auftraege steht (der Router
+    // verwendet dieselbe Instanz weiter, der Konstruktor läuft nicht erneut).
+    // Nach dem Öffnen wird der Param entfernt — sonst öffnete Reload/Zurück den
+    // Dialog immer wieder.
     this.route.queryParamMap.pipe(takeUntilDestroyed()).subscribe((pm) => {
       if (pm.get('neu') && this.darfAnlegen() && !this.neuOffen()) {
         this.neuOeffnen();

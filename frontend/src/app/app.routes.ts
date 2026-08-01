@@ -148,8 +148,9 @@ export const routes: Routes = [
         // Schnelleinstieg „Meldung erfassen" — legt Person + Liegenschaft +
         // Vorgang atomar an. `POST /workflow/quick-intake` ist fail-closed
         // (`require` auf identity/property/workflow) — ein Konto mit row_scope
-        // EIGENE bekommt 403. Der Header-CTA blendet sich für den Monteur ohnehin
-        // aus; der Guard darf die Direkt-URL nicht offenlassen.
+        // EIGENE bekommt 403. Der Knopf steht seit der Vereinheitlichung im
+        // Eingang (`vorgang-liste`) und blendet sich für den Monteur ohnehin aus;
+        // der Guard darf die Direkt-URL trotzdem nicht offenlassen.
         path: 'schnellerfassung',
         title: 'Meldung erfassen — Mitra Sanitär',
         canActivate: [darfAlleGuard('workflow', 'ANLEGEN')],
