@@ -4,6 +4,9 @@ import { Observable } from 'rxjs';
 import {
   AnrechenbarerAbschlag,
   BelegVorschau,
+  Freigabelink,
+  FreigabelinkInput,
+  FreigabelinkNeu,
   InvoiceCreate,
   InvoiceUpdate,
   InvoiceDetail,
@@ -324,5 +327,30 @@ export class BelegService {
    */
   removeLastInvoiceLine(id: string): Observable<InvoiceDetail> {
     return this.http.delete<InvoiceDetail>(`/api/invoicing/invoices/${id}/lines/last`);
+  }
+
+  // --- Freigabelinks (anmeldefreier Kundenweg, Recht invoicing/VERSENDEN) ---
+
+  /**
+   * Erzeugt einen Freigabelink zum versendeten Angebot.
+   *
+   * ⚠️ Die zurückgegebene `url` ist **einmalig**: In der Datenbank liegt nur ihr
+   * SHA-256-Hash, sie lässt sich später nicht mehr abrufen. Wer den Dialog
+   * schließt, ohne sie zu kopieren, erzeugt einen neuen Link.
+   */
+  freigabelinkErzeugen(id: string, input: FreigabelinkInput = {}): Observable<FreigabelinkNeu> {
+    return this.http.post<FreigabelinkNeu>(`${this.base}/${id}/freigabelink`, input);
+  }
+
+  /** Offene und verbrauchte Links zu diesem Angebot — ohne Klartext. */
+  freigabelinks(id: string): Observable<Freigabelink[]> {
+    return this.http.get<Freigabelink[]>(`${this.base}/${id}/freigabelinks`);
+  }
+
+  /** Zieht einen Link zurück (stilllegen, nicht löschen). Idempotent. */
+  freigabelinkWiderrufen(linkId: string): Observable<{ detail: string }> {
+    return this.http.delete<{ detail: string }>(
+      `/api/invoicing/freigabelinks/${linkId}`,
+    );
   }
 }

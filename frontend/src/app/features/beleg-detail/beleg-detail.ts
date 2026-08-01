@@ -10,6 +10,8 @@ import { PropertyService } from '../../core/property.service';
 import { ProjektService } from '../../core/projekt.service';
 import { AuthService } from '../../core/auth.service';
 import {
+  Freigabelink,
+  FreigabelinkNeu,
   KalkAbschnitt,
   Kalkulation,
   LINE_TYPE_LABEL,
@@ -35,6 +37,8 @@ import {
   serverFehlerZuruecksetzen,
 } from '../../shared/formular/formular.util';
 import { VerbotenState, fehlerDetail, fehlerState, istVerboten } from '../../shared/http-fehler';
+import { inZwischenablage } from '../../shared/zwischenablage';
+import { isoDatumDe } from '../../shared/datum';
 
 type ViewState =
   | { kind: 'loading' }
@@ -204,6 +208,24 @@ export class BelegDetail {
       validators: [Validators.required, Validators.email],
     }),
   });
+
+  // --- Freigabelink (anmeldefreier Kundenweg, Migration 0141) --------------
+  //
+  // Recht `invoicing/VERSENDEN` wie der Mailversand: Der Link ist ein Zustellweg
+  // für denselben Beleg. Der Server prüft es ohnehin — das UI blendet die
+  // Aktion nur aus, wo sie zu 403 führte.
+  protected readonly kannFreigabelink = computed(
+    () => this.darfVersenden() && this.daten()?.status === 'VERSENDET',
+  );
+  protected readonly linkOffen = signal(false);
+  protected readonly linkLaedt = signal(false);
+  protected readonly linkListeLaedt = signal(false);
+  protected readonly linkMeldung = signal<string | null>(null);
+  protected readonly linkListe = signal<Freigabelink[]>([]);
+  /** Die Klartext-URL des GERADE erzeugten Links — nur im Speicher dieser Seite.
+   *  Beim Schließen des Dialogs verworfen; der Server kennt sie nicht mehr. */
+  protected readonly neuerLink = signal<FreigabelinkNeu | null>(null);
+  protected readonly kopiert = signal(false);
 
   protected readonly tabs: MappeTab[] = [
     { id: 'positionen', label: 'Positionen' },
@@ -609,6 +631,109 @@ export class BelegDetail {
         this.versandMeldung.set(apiFehlerZuweisen(err, this.versandForm).formular);
       },
     });
+  }
+
+  // ---- Freigabelink -------------------------------------------------------
+  linkOeffnen(): void {
+    this.linkMeldung.set(null);
+    this.neuerLink.set(null);
+    this.kopiert.set(false);
+    this.meldung.set(null);
+    this.linkOffen.set(true);
+    this.linkListeLaden();
+  }
+
+  linkSchliessen(): void {
+    if (this.linkLaedt()) return;
+    // Die Klartext-URL wird hier bewusst verworfen: Sie existiert nur in dieser
+    // Sitzung, und ein Dialog, der sie „später wieder zeigt", würde eine
+    // Wiederherstellbarkeit vortäuschen, die es nicht gibt.
+    this.neuerLink.set(null);
+    this.kopiert.set(false);
+    this.linkOffen.set(false);
+  }
+
+  private linkListeLaden(): void {
+    const d = this.daten();
+    if (!d) return;
+    this.linkListeLaedt.set(true);
+    this.svc.freigabelinks(d.id).subscribe({
+      next: (items) => {
+        this.linkListeLaedt.set(false);
+        this.linkListe.set(items);
+      },
+      error: (err) => {
+        this.linkListeLaedt.set(false);
+        this.linkMeldung.set(this.fehlerText(err));
+      },
+    });
+  }
+
+  linkErzeugen(): void {
+    const d = this.daten();
+    if (!d || this.linkLaedt()) return;
+    this.linkMeldung.set(null);
+    this.kopiert.set(false);
+    this.linkLaedt.set(true);
+    this.svc.freigabelinkErzeugen(d.id).subscribe({
+      next: (neu) => {
+        this.linkLaedt.set(false);
+        this.neuerLink.set(neu);
+        this.linkListeLaden();
+      },
+      error: (err) => {
+        this.linkLaedt.set(false);
+        this.linkMeldung.set(this.fehlerText(err));
+      },
+    });
+  }
+
+  async linkKopieren(): Promise<void> {
+    const neu = this.neuerLink();
+    if (!neu) return;
+    // Nie „kopiert" melden, ohne es zu prüfen (siehe shared/zwischenablage.ts).
+    const ok = await inZwischenablage(neu.url);
+    this.kopiert.set(ok);
+    if (!ok) {
+      this.linkMeldung.set(
+        'Der Link ließ sich nicht automatisch kopieren. Bitte markieren und von Hand kopieren.',
+      );
+    }
+  }
+
+  linkWiderrufen(link: Freigabelink): void {
+    if (this.linkLaedt()) return;
+    this.linkMeldung.set(null);
+    this.linkLaedt.set(true);
+    this.svc.freigabelinkWiderrufen(link.id).subscribe({
+      next: () => {
+        this.linkLaedt.set(false);
+        if (this.neuerLink()?.id === link.id) this.neuerLink.set(null);
+        this.linkListeLaden();
+      },
+      error: (err) => {
+        this.linkLaedt.set(false);
+        this.linkMeldung.set(this.fehlerText(err));
+      },
+    });
+  }
+
+  /** Zustand eines Links als WORT — Farbe allein trägt nichts (WCAG 2.2 AA). */
+  linkZustand(link: Freigabelink): string {
+    if (link.revoked_at) return 'Widerrufen';
+    if (link.used_at) return 'Verwendet';
+    if (!link.offen) return 'Abgelaufen';
+    return 'Offen';
+  }
+
+  linkZustandKlasse(link: Freigabelink): string {
+    if (link.used_at) return 'stamp--positive';
+    if (link.revoked_at || !link.offen) return 'stamp--warn';
+    return '';
+  }
+
+  linkDatum(iso: string | null): string {
+    return iso ? isoDatumDe(iso.slice(0, 10)) : '–';
   }
 
   /** URL der (archivierten oder on-the-fly gerenderten) PDF-Ausfertigung. */

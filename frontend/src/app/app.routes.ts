@@ -25,6 +25,19 @@ export const routes: Routes = [
         (m) => m.PasswortZuruecksetzen,
       ),
   },
+  // ⚠️ ANMELDEFREIE KUNDENSEITE. Muss — wie /login — VOR dem ''-Knoten stehen:
+  // sonst zöge dessen `canActivateChild: [authGuard]` den Kunden auf die
+  // Anmeldemaske, und der Link wäre wertlos. Kein Guard, kein Modulrecht, keine
+  // Sidebar. Autorisierung ist ausschließlich das Token in der URL; die Regeln
+  // dazu stehen serverseitig in api/oeffentlich.py.
+  {
+    path: 'angebot/:token',
+    title: 'Angebot — Mitra Sanitär',
+    loadComponent: () =>
+      import('./features/oeffentliches-angebot/oeffentliches-angebot').then(
+        (m) => m.OeffentlichesAngebot,
+      ),
+  },
   // Alles Übrige ist anmeldepflichtig — ein Wächter am gemeinsamen Elternknoten.
   // Bereiche mit Modulrecht tragen zusätzlich einen darfGuard (spiegelt die
   // Server-Durchsetzung; verhindert Zugriff per direkter URL/returnUrl).

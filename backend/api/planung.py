@@ -28,6 +28,7 @@ from db_core.betriebszeit import Betriebszeitpunkt
 from db_core.models import (
     AppointmentCategory,
     AppUser,
+    Article,
     JobAssignment,
     JobResource,
     MaterialEntry,
@@ -36,6 +37,7 @@ from db_core.models import (
     StatusChange,
     TimeEntry,
 )
+from db_core.services import artikel as artikel_service
 from db_core.services import einsatz as einsatz_service
 from db_core.services import planung as planung_service
 
@@ -93,6 +95,19 @@ class CategoryRefOut(Schema):
     color_token: str
 
 
+class TradeRefOut(Schema):
+    """Gewerk am Einsatz (company.trade, Migration 0120) — Name IMMER dabei.
+
+    Wie die Kategorie ein schlanker Verweis: `code` steckt auch in der
+    Einsatznummer (E-HZG-26-0142), `label` ist der Klartext für die Anzeige. Das
+    Gewerk wird als **Text** gezeigt, nie als Farbpunkt (WCAG 1.4.1).
+    """
+
+    id: UUID
+    code: str
+    label: str
+
+
 class ResourceRefOut(Schema):
     id: UUID
     resource_number: str
@@ -118,6 +133,10 @@ class ServiceJobOut(Schema):
     work_order: WorkOrderRefOut | None = None
     property: PropertyRefOut | None = None
     category: CategoryRefOut | None = None
+    # Gewerk (0120). Der auftragsgebundene Einsatz erbt es beim Anlegen vom
+    # Auftrag; der freie Termin bleibt ohne, bis jemand eines wählt. `null` heißt
+    # „kein Gewerk gepflegt" — nicht „Sonstiges".
+    trade: TradeRefOut | None = None
     assignee_count: int = 0
 
 
@@ -154,10 +173,21 @@ class TimeEntryOut(Schema):
 
 
 class MaterialEntryOut(Schema):
+    """Eine Materialbuchung am Einsatz — **ohne jedes Geldfeld**.
+
+    Die Buchung führt keinen Preis (Migration 0139 hat bewusst keine Geldspalte
+    ergänzt): Die Erfassung vor Ort liefert die Menge, das Belegwesen den Preis.
+    `source_article_id` ist die **Identität** des Verbrauchten und macht die
+    Buchung abrechenbar — sie ist kein Lagerbezug (B-26).
+    """
     description: str
     quantity: Decimal
     unit: str
     note: str | None = None
+    source_article_id: UUID | None = None
+    # Artikelnummer als Lesehilfe („welchen Artikel habe ich gewählt?"). Preisfrei,
+    # deshalb auch für den Monteur unbedenklich.
+    source_article_number: str | None = None
 
 
 class ScheduleOut(ServiceJobOut):
@@ -242,6 +272,10 @@ class ServiceJobCreateIn(Schema):
     on_site_contact_party_id: UUID | None = None
     access_instructions: str | None = None
     appointment_category_id: UUID | None = None
+    # Gewerk (0120). Ohne Angabe erbt der auftragsgebundene Einsatz das Gewerk
+    # seines Auftrags (der Service leitet es ab) — ein Einsatz zum Heizungsauftrag
+    # ist ein Heizungseinsatz. Der freie Termin bleibt ohne Gewerk.
+    trade_id: UUID | None = None
 
 
 class ServiceJobUpdateIn(Schema):
@@ -251,6 +285,13 @@ class ServiceJobUpdateIn(Schema):
     deshalb müssen die Felder von „nicht mitgeschickt" unterscheidbar sein
     (Pydantic: ``model_fields_set``). Der Auftragsbezug fehlt hier bewusst: er ist
     in der DB unveränderlich (WF-01).
+
+    Für ``trade_id`` gilt dieselbe Semantik wie für alle anderen optionalen Felder
+    hier: **nicht mitgeschickt = unverändert, ausdrückliches ``null`` = Gewerk
+    entfernen.** Bewusst KEIN erneutes Erben vom Auftrag beim Update — das Erben
+    ist eine Anlage-Voreinstellung (create_service_job), keine laufende Bindung;
+    sonst könnte man ein bewusst abweichendes Gewerk am Einsatz gar nicht mehr
+    löschen, ohne dass es sofort wieder erschiene.
     """
 
     on_site_contact_party_id: UUID | None = None
@@ -259,6 +300,7 @@ class ServiceJobUpdateIn(Schema):
     building_id: UUID | None = None
     unit_id: UUID | None = None
     access_instructions: str | None = None
+    trade_id: UUID | None = None
 
 
 class ScheduleIn(Schema):
@@ -291,6 +333,26 @@ class MaterialLogIn(Schema):
     quantity: Decimal
     unit: str
     note: str | None = None
+    # Optionaler Artikelbezug (Migration 0139). Nur damit ist der Preis später
+    # ermittelbar; ohne ihn geht die Buchung in die Preisklärung des
+    # Abrechnungslaufs — sie verschwindet nicht und wird nie mit 0,00 € berechnet.
+    # **Kein Preisfeld**: Ein Preis, den der Monteur auf der Baustelle nennt, wäre
+    # eine Preisvereinbarung (Invariante Kap. 3).
+    source_article_id: UUID | None = None
+
+
+class MaterialArtikelOut(Schema):
+    """Treffer der **preisfreien** Artikelsuche für die Materialbuchung.
+
+    Eigenes Schema statt `ArticleOut` — und zwar strukturell, nicht durch Weglassen
+    beim Befüllen: `ArticleOut` führt `list_price`. Der Monteur sieht sein ganzes
+    Objekt, **aber nie Preise** (Invariante Kap. 5); ein Feld, das es hier gar nicht
+    gibt, kann auch niemand versehentlich befüllen.
+    """
+    id: UUID
+    article_number: str
+    description: str
+    unit: str
 
 
 # --- Mapper ----------------------------------------------------------------
@@ -394,6 +456,15 @@ def _category_ref(job):
     return CategoryRefOut(id=c.id, name=c.name, color_token=c.color_token)
 
 
+def _trade_ref(job):
+    """Gewerk des Einsatzes. Wird überall per select_related("trade") mitgeladen
+    (kein N+1); ohne Gewerk bleibt das Feld None."""
+    t = getattr(job, "trade", None)
+    if t is None:
+        return None
+    return TradeRefOut(id=t.id, code=t.code, label=t.label)
+
+
 def _service_job_out(job, assignee_count=0):
     return ServiceJobOut(
         id=job.id,
@@ -408,6 +479,7 @@ def _service_job_out(job, assignee_count=0):
         work_order=_work_order_ref(job),
         property=_property_ref(job),
         category=_category_ref(job),
+        trade=_trade_ref(job),
         assignee_count=assignee_count,
     )
 
@@ -438,6 +510,7 @@ def list_einsaetze(
 
     qs = ServiceJob.objects.select_related(
         "work_order__property__address", "property__address", "appointment_category",
+        "trade",
         "building__address", "unit",
         "work_order__building__address", "work_order__unit",
     )
@@ -508,6 +581,7 @@ def _einsatz_detail(job_id):
             "property__address",
             "on_site_contact_party",
             "appointment_category",
+            "trade",
             "building__address",
             "unit",
             "work_order__building__address",
@@ -561,10 +635,18 @@ def _einsatz_detail(job_id):
         )
         for t in times
     ]
-    materials = MaterialEntry.objects.filter(service_job_id=job.id).order_by("created_at")
+    materials = (
+        MaterialEntry.objects.filter(service_job_id=job.id)
+        .select_related("source_article")
+        .order_by("created_at")
+    )
     material_entries = [
         MaterialEntryOut(
-            description=m.description, quantity=m.quantity, unit=m.unit, note=m.note
+            description=m.description, quantity=m.quantity, unit=m.unit, note=m.note,
+            source_article_id=m.source_article_id,
+            source_article_number=(
+                m.source_article.article_number if m.source_article_id else None
+            ),
         )
         for m in materials
     ]
@@ -662,6 +744,7 @@ def _reload_job(job_id):
             "work_order__property__address",
             "property__address",
             "appointment_category",
+            "trade",
             "building__address",
             "unit",
             "work_order__building__address",
@@ -725,6 +808,7 @@ def create_einsatz(request, payload: ServiceJobCreateIn):
             on_site_contact_party_id=payload.on_site_contact_party_id,
             access_instructions=payload.access_instructions,
             appointment_category_id=payload.appointment_category_id,
+            trade_id=payload.trade_id,
         )
     except ValueError as exc:
         raise HttpError(422, str(exc))
@@ -735,6 +819,9 @@ def create_einsatz(request, payload: ServiceJobCreateIn):
 # nachtragen darf: was er vor Ort erfährt. Titel und Liegenschaft sind
 # Dispositionsdaten und bleiben ihm verwehrt (403) — sonst könnte er einen fremd
 # geplanten Termin umwidmen oder ihn einer beliebigen Liegenschaft zuordnen.
+# **`trade_id` gehört hier NICHT hinein**: Das Gewerk bestimmt die Disposition
+# (es steckt in der Einsatznummer und steuert, wer den Termin überhaupt zu sehen
+# bekommt, sobald das Board danach filtert).
 _EIGENE_UPDATE_FELDER = {"on_site_contact_party_id", "access_instructions"}
 
 
@@ -956,7 +1043,12 @@ def log_material(request, job_id: UUID, payload: MaterialLogIn):
 
     `require_scoped`: der Monteur bucht Material auf seinen zugewiesenen Einsätzen
     (fremder Einsatz → 404). recorded_by ist stets der Akteur — es gibt kein
-    fremdes Owner-Feld zu setzen. Das Korrekturfenster B-28 prüft die DB (→ 422)."""
+    fremdes Owner-Feld zu setzen. Das Korrekturfenster B-28 prüft die DB (→ 422).
+
+    **Seit Migration 0139 ist diese Buchung abrechenbar.** Mit `source_article_id`
+    ermittelt der Abrechnungslauf den Preis über die eine Rechenstelle; ohne ihn
+    landet die Buchung in der Preisklärung. Ein Preisfeld gibt es hier nicht — der
+    Monteur erfasst Mengen, nicht Geld."""
     actor, scope = require_scoped(request, "workflow", "AENDERN")
     _load_job_or_404(job_id)
     _guard_own_job(job_id, actor, scope)
@@ -969,9 +1061,11 @@ def log_material(request, job_id: UUID, payload: MaterialLogIn):
             unit=payload.unit,
             recorded_by=actor,
             note=payload.note,
+            source_article_id=payload.source_article_id,
         )
     except ValueError as exc:
         raise HttpError(422, str(exc))
+    entry = MaterialEntry.objects.select_related("source_article").get(id=entry.id)
     return Status(
         201,
         MaterialEntryOut(
@@ -979,8 +1073,49 @@ def log_material(request, job_id: UUID, payload: MaterialLogIn):
             quantity=entry.quantity,
             unit=entry.unit,
             note=entry.note,
+            source_article_id=entry.source_article_id,
+            source_article_number=(
+                entry.source_article.article_number if entry.source_article_id else None
+            ),
         ),
     )
+
+
+@router.get("/material-artikel", response=list[MaterialArtikelOut])
+def material_artikel_suche(request, q: str = "", limit: int = 20):
+    """**Preisfreie** Artikelsuche für die Materialbuchung am Einsatz.
+
+    Warum ein eigener Endpunkt und nicht `GET /pricing/articles`: Jener liefert
+    `list_price` und hängt fail-closed an `pricing/LESEN` — ein Recht, das der
+    Monteur nicht hat und nicht bekommen soll. Er braucht aber genau diese Auswahl:
+    Ohne Artikelbezug ist seine Materialbuchung nicht bepreisbar, und dann fehlt sie
+    entweder auf der Rechnung oder blockiert sie. Die Antwort führt deshalb
+    **strukturell kein Geldfeld** (eigenes Schema, siehe `MaterialArtikelOut`) —
+    dieselbe Bauweise wie beim preisfreien Angebot für den Monteur.
+
+    `require_scoped(workflow, AENDERN)` — dasselbe Recht wie das Buchen selbst.
+    Der row_scope wird hier bewusst **nicht** ausgewertet, und das ist kein
+    vergessener Filter: Der Artikelstamm ist Stammdaten ohne Eigentümer, es gibt
+    keine „eigene" Artikelzeile. Was der Scope begrenzt, ist der **Einsatz**, auf
+    den gebucht werden darf — und das setzt `log_material` mit `_guard_own_job`
+    durch (fremder Einsatz → 404). Ein Konto ohne `workflow/AENDERN` bekommt 403.
+
+    Nur AKTIVE Artikel: Ausrangiertes Material soll nicht neu gebucht werden
+    (dieselbe Grenze wie `list_articles`).
+    """
+    require_scoped(request, "workflow", "AENDERN")
+    limit = max(1, min(limit, 50))
+    qs = Article.objects.filter(status="AKTIV")
+    such_q = artikel_service.build_article_search_q((q or "").strip())
+    if such_q is not None:
+        qs = qs.filter(such_q)
+    return [
+        MaterialArtikelOut(
+            id=a.id, article_number=a.article_number,
+            description=a.description, unit=a.unit,
+        )
+        for a in qs.order_by("article_number", "id")[:limit]
+    ]
 
 
 # --- Plantafel-Board (Schwimmbahnen) ---------------------------------------
@@ -1054,6 +1189,9 @@ class BoardJobOut(Schema):
     # Kompakte Zieladresse (Straße, Stadt) — „wo ist der Einsatz" auf der Kachel.
     property_address: str | None = None
     category: CategoryRefOut | None = None
+    # Gewerk (0120) — als TEXT auf der Kachel, nicht als Farbe. Der Disponent
+    # filtert das Board danach; ohne die Ausgabe wäre der Filter blind.
+    trade: TradeRefOut | None = None
     assignee_ids: list[UUID]
     resource_ids: list[UUID]
     conflicts: list[KonfliktOut] = []
@@ -1076,6 +1214,7 @@ def _board_job_out(j, *, konflikte=()):
         property_name=prop.name if prop else None,
         property_address=_ort_adresse_kurz(prop, building, unit),
         category=_category_ref(j),
+        trade=_trade_ref(j),
         assignee_ids=[a.assignee_id for a in j.assignments.all()],
         resource_ids=[link.resource_id for link in j.resource_links.all()],
         conflicts=[KonfliktOut(**k) for k in konflikte],
@@ -1094,6 +1233,7 @@ class BacklogJobOut(Schema):
     property_name: str | None = None
     property_address: str | None = None
     category: CategoryRefOut | None = None
+    trade: TradeRefOut | None = None
     order_number: str | None = None
 
 
@@ -1139,6 +1279,7 @@ def plantafel(
     date_to: date | None = Query(None),
     q: str | None = Query(None),
     category_id: UUID | None = Query(None),
+    trade_id: UUID | None = Query(None),
     backlog_q: str | None = Query(None),
 ):
     """Plantafel-Daten für einen Zeitraum — Bahnen, Kacheln, Rückstand, Sperrflächen.
@@ -1150,6 +1291,9 @@ def plantafel(
     * **Rückstand** (`backlog`) sind die UNGEPLANTEN Einsätze (ohne Planbeginn).
     * **Sperrflächen** sind genehmigte Abwesenheiten und Feiertage.
     * **Konflikte** hängen an der Kachel und blockieren nichts.
+
+    `trade_id` filtert **Raster UND Rückstand** (siehe `board_daten`) — wer nach
+    Gewerk disponiert, zieht aus dem Rückstand desselben Gewerks ins Raster.
 
     Standardfenster: 7 Tage ab heute, maximal 45 Tage."""
     require(request, "workflow", "LESEN")
@@ -1170,6 +1314,7 @@ def plantafel(
         date_to=end,
         q=q,
         category_id=category_id,
+        trade_id=trade_id,
         backlog_q=backlog_q,
     )
 
@@ -1191,6 +1336,7 @@ def plantafel(
                 property_name=prop.name if prop else None,
                 property_address=_ort_adresse_kurz(prop, building, unit),
                 category=_category_ref(j),
+                trade=_trade_ref(j),
                 order_number=(
                     j.work_order.order_number if j.work_order_id else None
                 ),
@@ -1295,6 +1441,10 @@ class TerminUpdateIn(Schema):
     Rückstand** (Zeitraum weg, Status GEPLANT → UNGEPLANT). Dieser Statuswechsel
     ist begründungspflichtig → `reason` ist dann Pflicht (sonst 422).
 
+    ``trade_id`` folgt derselben Regel wie die übrigen Felder: weglassen =
+    unverändert, ausdrückliches ``null`` = Gewerk entfernen (kein erneutes Erben
+    vom Auftrag, siehe `ServiceJobUpdateIn`).
+
     Der Auftragsbezug fehlt bewusst — er ist in der DB unveränderlich (WF-01).
     """
 
@@ -1307,6 +1457,7 @@ class TerminUpdateIn(Schema):
     on_site_contact_party_id: UUID | None = None
     access_instructions: str | None = None
     appointment_category_id: UUID | None = None
+    trade_id: UUID | None = None
     assignee_ids: list[UUID] | None = None
     resource_ids: list[UUID] | None = None
     # Begründung für den Statuswechsel GEPLANT → UNGEPLANT (Rückweg in den

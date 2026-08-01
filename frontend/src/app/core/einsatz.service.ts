@@ -10,6 +10,7 @@ import {
   JobAssignmentInput,
   JobAssignmentResult,
   JobStatusInput,
+  MaterialArtikel,
   MaterialEntry,
   MaterialLogInput,
   Plantafel,
@@ -79,6 +80,7 @@ export class EinsatzService {
     const q = query.q?.trim();
     if (q) params = params.set('q', q);
     if (query.category_id) params = params.set('category_id', query.category_id);
+    if (query.trade_id) params = params.set('trade_id', query.trade_id);
     const bq = query.backlog_q?.trim();
     if (bq) params = params.set('backlog_q', bq);
     return this.http.get<Plantafel>('/api/planung/plantafel', { params });
@@ -193,5 +195,19 @@ export class EinsatzService {
   /** Material buchen (Recht workflow.AENDERN; auch Monteur auf eigenen Einsätzen). */
   logMaterial(id: string, payload: MaterialLogInput): Observable<MaterialEntry> {
     return this.http.post<MaterialEntry>(`${this.base}/${id}/materials`, payload);
+  }
+
+  /**
+   * **Preisfreie** Artikelsuche für die Materialbuchung (Recht workflow.AENDERN).
+   *
+   * Bewusst NICHT `GET /api/pricing/articles`: Jener liefert `list_price` und
+   * hängt an `pricing/LESEN` — ein Recht, das der Monteur nicht hat und nicht
+   * bekommen soll. Diese Antwort führt strukturell kein Geldfeld.
+   */
+  materialArtikelSuche(q: string, limit = 20): Observable<MaterialArtikel[]> {
+    const params = new HttpParams().set('q', q).set('limit', String(limit));
+    return this.http.get<MaterialArtikel[]>('/api/planung/material-artikel', {
+      params,
+    });
   }
 }

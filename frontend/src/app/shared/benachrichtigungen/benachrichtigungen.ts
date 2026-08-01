@@ -245,14 +245,21 @@ export class Benachrichtigungen implements OnDestroy {
         return 'Verworfen';
       case 'AUFGABE_KOMMENTAR':
         return 'Rückfrage';
+      case 'ANGEBOT_ANGENOMMEN':
+        return 'Angenommen';
+      case 'ANGEBOT_ABGELEHNT':
+        return 'Abgelehnt';
       default:
         return 'Hinweis';
     }
   }
 
   protected artClass(kind: string): string {
-    if (kind === 'AUFGABE_ERLEDIGT') return 'stamp--positive';
+    if (kind === 'AUFGABE_ERLEDIGT' || kind === 'ANGEBOT_ANGENOMMEN') {
+      return 'stamp--positive';
+    }
     if (kind === 'AUFGABE_VERWORFEN') return 'stamp--warn';
+    if (kind === 'ANGEBOT_ABGELEHNT') return 'stamp--negativ';
     return '';
   }
 }

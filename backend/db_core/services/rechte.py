@@ -124,6 +124,42 @@ def require(app_user_id, module, action, on=None):
     return scope
 
 
+def empfaenger_mit_recht(module, action, on=None):
+    """app_user-Ids, die diese Aktion heute mit Scope 'ALLE' ausführen dürfen.
+
+    Gedacht als **Empfängerkreis für Benachrichtigungen**: „Eine Benachrichtigung
+    darf nur enthalten, was ihr Empfänger am Ziel ohnehin sehen darf"
+    (`docs/INVARIANTEN.md`, Abschnitt 5). Wer eine Meldung an „die zuständige
+    Rolle" schickt, muss diesen Kreis aus derselben Matrix ableiten, aus der die
+    API ihre 403 zieht — sonst trägt die Glocke Text an jemanden, den der
+    Endpunkt abweist.
+
+    **Nur 'ALLE'.** Ein Konto mit `row_scope='EIGENE'` bekäme auf dem
+    zugehörigen Endpunkt ohnehin 403 (`api/permissions.require` weitet 'EIGENE'
+    nie auf) — es darf das Ziel also nicht sehen und gehört nicht in den Kreis.
+
+    Systemakteure (`is_system`) bleiben außen vor: Sie haben kein Postfach, das
+    jemand liest.
+    """
+    _validate(module, action)
+    codes = set(
+        RolePermission.objects.filter(
+            module=module, action=action, allowed=True, row_scope="ALLE"
+        ).values_list("role_id", flat=True)
+    )
+    if not codes:
+        return []
+    on = on or date.today()
+    ids = (
+        UserRole.objects.filter(role_id__in=codes, valid_from__lte=on)
+        .filter(Q(valid_until__isnull=True) | Q(valid_until__gt=on))
+        .filter(user__status="ACTIVE", user__is_system=False)
+        .values_list("user_id", flat=True)
+        .distinct()
+    )
+    return list(ids)
+
+
 def _validate(module, action):
     """Tippfehler im Aufrufer sollen laut scheitern, nicht still 403 liefern."""
     if module not in MODULES:

@@ -211,3 +211,93 @@
   text-align: right !important;
   font-variant-numeric: tabular-nums;
 }
+
+// ----------------------------- Freigabelink ---------------------------------
+// Der Dialog, in dem die Klartext-URL EINMAL erscheint. Alles hier hat einen
+// Grund: Die Warnung steht ueber dem Feld (nicht darunter), weil sie sonst erst
+// gelesen wuerde, wenn der Dialog schon geschlossen ist; „Kopiert" traegt ein
+// Zeichen neben der Farbe (WCAG 2.2 AA); der Zustand jedes Links steht als Wort.
+
+.dialog-hinweis {
+  margin: 0 0 var(--space-4);
+  color: var(--ink-muted);
+  font-size: var(--step--1);
+}
+
+.dialog-abschnitt {
+  margin: var(--space-5) 0 var(--space-3);
+  font-family: var(--font-display);
+  font-size: var(--step-0);
+}
+
+.link-neu {
+  margin-bottom: var(--space-4);
+  padding: var(--space-4);
+  border: 1.5px solid color-mix(in srgb, var(--warn-ink) 45%, var(--line-strong));
+  border-left-width: 3px;
+  border-radius: var(--radius);
+  background: var(--warn-tint);
+}
+
+.link-neu__warnung {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-3);
+  color: var(--warn-ink);
+  font-size: var(--step--1);
+}
+
+.link-neu__mark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 0.85rem;
+  line-height: 1;
+}
+
+.link-neu__url {
+  width: 100%;
+  margin-top: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+}
+
+.link-neu__aktionen {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.link-liste {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.link-liste__zeile {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.link-liste__text {
+  flex: 1 1 14rem;
+  color: var(--ink-muted);
+  font-size: var(--step--1);
+}

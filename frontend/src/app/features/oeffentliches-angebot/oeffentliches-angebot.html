@@ -1,0 +1,277 @@
+<section class="oa" aria-labelledby="oa-titel">
+  @switch (state().kind) {
+    @case ('loading') {
+      <div class="oa__karte">
+        <p class="lade-hinweis" role="status">Angebot wird geladen …</p>
+      </div>
+    }
+
+    <!-- Unbekannt, abgelaufen, widerrufen: EINE Seite. Der Server unterscheidet
+         diese Fälle bewusst nicht, und diese Ansicht darf die Unterscheidung
+         nicht hintenherum wieder einführen — auch nicht im Kleingedruckten.
+         Ein bereits beantworteter Link landet NICHT hier, sondern auf dem Beleg
+         mit dem Abschnitt „Stand". -->
+    @case ('ungueltig') {
+      <div class="oa__karte oa__karte--schmal">
+        <h1 id="oa-titel" class="oa__titel">Dieser Link ist nicht mehr gültig</h1>
+        <p class="oa__text">{{ $any(state()).detail }}</p>
+        <p class="oa__text oa__text--leise">
+          Rufen Sie uns gern an — wir schicken Ihnen einen neuen Link.
+        </p>
+      </div>
+    }
+
+    @case ('gebremst') {
+      <div class="oa__karte oa__karte--schmal">
+        <h1 id="oa-titel" class="oa__titel">Bitte kurz warten</h1>
+        <p class="oa__text">{{ $any(state()).detail }}</p>
+      </div>
+    }
+
+    @case ('error') {
+      <div class="oa__karte oa__karte--schmal">
+        <h1 id="oa-titel" class="oa__titel">Das hat gerade nicht geklappt</h1>
+        <p class="oa__text">{{ $any(state()).detail }}</p>
+        <p class="oa__aktionen">
+          <button type="button" class="btn btn--primary" (click)="laden()">
+            Erneut versuchen
+          </button>
+        </p>
+      </div>
+    }
+
+    <!-- Erfolgsseite direkt nach der Entscheidung. Ein Neuladen führt NICHT
+         hierher, sondern zurück auf den Beleg — dort steht derselbe Ausgang im
+         Abschnitt „Stand". Der Link bleibt bis zum Ablaufdatum lesbar. -->
+    @case ('fertig') {
+      <div class="oa__karte oa__karte--schmal">
+        <p class="oa__kicker">
+          <span class="oa__scale" aria-hidden="true"></span>
+          Ihre Rückmeldung
+        </p>
+        <h1 id="oa-titel" class="oa__titel">
+          {{ ergebnis()!.quote_number ? 'Angebot ' + ergebnis()!.quote_number : 'Angebot' }}
+        </h1>
+        <p class="oa__objekt">{{ ergebnis()!.title }}</p>
+
+        <p
+          class="oa__ergebnis stamp {{ ausgangKlasse(ergebnis()!.ausgang) }}"
+          role="status"
+        >
+          <span aria-hidden="true">{{ ausgangZeichen(ergebnis()!.ausgang) }}</span>
+          {{ ausgangLabel(ergebnis()!.ausgang) }}
+        </p>
+        <p class="oa__text">{{ ergebnis()!.meldung }}</p>
+        <p class="oa__text oa__text--leise">
+          Sie können diese Seite über denselben Link jederzeit wieder aufrufen und
+          Ihr Angebot nachlesen. Eine weitere Rückmeldung ist darüber nicht mehr
+          möglich — wir melden uns bei Ihnen.
+        </p>
+      </div>
+    }
+
+    @case ('ready') {
+      <article class="oa__karte">
+        <!-- Briefkopf -->
+        <header class="oa__kopf">
+          <div class="oa__brand">
+            <span class="oa__mark brand-logo-box" aria-hidden="true">
+              <img class="brand-logo" src="mitra-emblem.svg" alt="" />
+            </span>
+            @if (daten()!.aussteller; as a) {
+              <address class="oa__aussteller">
+                <strong class="oa__firma">{{ a.company_name }}</strong>
+                @if (a.street) {
+                  <span>{{ a.street }}</span>
+                }
+                @if (a.postal_code || a.city) {
+                  <span>{{ a.postal_code }} {{ a.city }}</span>
+                }
+                @if (a.phone) {
+                  <span>Telefon: <a [href]="'tel:' + a.phone">{{ a.phone }}</a></span>
+                }
+                @if (a.email) {
+                  <span>E-Mail: <a [href]="'mailto:' + a.email">{{ a.email }}</a></span>
+                }
+              </address>
+            }
+          </div>
+
+          <p class="oa__kicker">
+            <span class="oa__scale" aria-hidden="true"></span>
+            Angebot zur Freigabe
+          </p>
+          <h1 id="oa-titel" class="oa__titel">
+            {{ daten()!.quote_number ? 'Angebot ' + daten()!.quote_number : 'Angebot' }}
+          </h1>
+          <p class="oa__objekt">{{ daten()!.title }}</p>
+
+          <dl class="oa__eckdaten">
+            @if (daten()!.objekt) {
+              <div class="oa__eck">
+                <dt>Objekt</dt>
+                <dd>{{ daten()!.objekt }}</dd>
+              </div>
+            }
+            <div class="oa__eck">
+              <dt>Angebotsdatum</dt>
+              <dd>{{ datum(daten()!.quote_date) }}</dd>
+            </div>
+            @if (daten()!.valid_until_date) {
+              <div class="oa__eck">
+                <dt>Gebunden bis</dt>
+                <dd>{{ datum(daten()!.valid_until_date) }}</dd>
+              </div>
+            }
+            <div class="oa__eck">
+              <dt>Link gültig bis</dt>
+              <dd>{{ datumZeit(daten()!.link_gueltig_bis) }}</dd>
+            </div>
+          </dl>
+        </header>
+
+        @if (daten()!.cover_letter) {
+          <p class="oa__anschreiben">{{ daten()!.cover_letter }}</p>
+        }
+
+        <!-- Positionen. Eine echte Tabelle: Screenreader brauchen die Zuordnung
+             Zelle→Spaltenkopf, und die Spalten sind hier fachlich verschieden. -->
+        @for (block of bloecke(); track $index) {
+          <section class="oa__block">
+            @if (block.titel) {
+              <h2 class="oa__block-titel">{{ block.titel }}</h2>
+              @if (block.beschreibung) {
+                <p class="oa__text oa__text--leise">{{ block.beschreibung }}</p>
+              }
+            }
+
+            <div class="oa__tabelle-rahmen">
+              <table class="oa__tabelle">
+                <caption class="sr-only">
+                  Positionen {{ block.titel ? 'des Abschnitts ' + block.titel : 'des Angebots' }}
+                </caption>
+                <thead>
+                  <tr>
+                    <th scope="col" class="oa__z-nr">Nr.</th>
+                    <th scope="col">Leistung</th>
+                    <th scope="col" class="oa__z-zahl">Menge</th>
+                    <th scope="col" class="oa__z-zahl">Einzelpreis</th>
+                    <th scope="col" class="oa__z-zahl">Betrag netto</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (p of block.positionen; track p.position_number) {
+                    <tr [class.oa__zeile--nachrichtlich]="istNachrichtlich(p)">
+                      <td class="oa__z-nr">{{ p.position_number }}</td>
+                      <td>
+                        <span class="oa__bezeichnung">{{ p.description }}</span>
+                        @if (kindLabel(p)) {
+                          <span class="oa__hinweis">{{ kindLabel(p) }}</span>
+                        }
+                        @if (p.discount_percent) {
+                          <span class="oa__hinweis">Nachlass {{ prozent(p.discount_percent) }}</span>
+                        }
+                      </td>
+                      <td class="oa__z-zahl">
+                        @if (hatBetrag(p) && p.quantity) {
+                          {{ menge(p.quantity) }} {{ p.unit }}
+                        }
+                      </td>
+                      <td class="oa__z-zahl">
+                        @if (hatBetrag(p)) {
+                          {{ geld(p.unit_price, daten()!.currency) }}
+                        }
+                      </td>
+                      <td class="oa__z-zahl">
+                        @if (hatBetrag(p)) {
+                          {{ geld(p.net_amount, daten()!.currency) }}
+                        }
+                      </td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          </section>
+        }
+
+        <!-- Summen -->
+        <dl class="oa__summen">
+          <div class="oa__summe">
+            <dt>Summe netto</dt>
+            <dd>{{ geld(daten()!.net_total, daten()!.currency) }}</dd>
+          </div>
+          <div class="oa__summe">
+            <dt>Umsatzsteuer</dt>
+            <dd>{{ geld(daten()!.tax_total, daten()!.currency) }}</dd>
+          </div>
+          <div class="oa__summe oa__summe--gesamt">
+            <dt>Gesamtbetrag brutto</dt>
+            <dd>{{ geld(daten()!.gross_total, daten()!.currency) }}</dd>
+          </div>
+        </dl>
+
+        @if (fehler(); as m) {
+          <div #meldeBox class="oa__alert" role="alert" tabindex="-1">
+            <span class="oa__alert-mark" aria-hidden="true">!</span>
+            <span>{{ m }}</span>
+          </div>
+        }
+
+        <!-- Entscheidung -->
+        @if (daten()!.entscheidbar) {
+          <section class="oa__entscheidung" aria-labelledby="oa-entscheidung-titel">
+            <h2 id="oa-entscheidung-titel" class="oa__block-titel">Ihre Rückmeldung</h2>
+            <p class="oa__text">
+              Beide Antworten sind verbindlich und lassen sich über diesen Link
+              nicht zurücknehmen. Bei Fragen rufen Sie uns bitte an, bevor Sie
+              entscheiden.
+            </p>
+            <div class="oa__aktionen">
+              <button
+                type="button"
+                class="btn btn--primary"
+                (click)="fragenOeffnen('ANGENOMMEN')"
+              >
+                Angebot annehmen
+              </button>
+              <button type="button" class="btn" (click)="fragenOeffnen('ABGELEHNT')">
+                Angebot ablehnen
+              </button>
+            </div>
+          </section>
+        } @else {
+          <section class="oa__entscheidung" aria-labelledby="oa-ausgang-titel">
+            <h2 id="oa-ausgang-titel" class="oa__block-titel">Stand</h2>
+            <p class="oa__ergebnis stamp {{ ausgangKlasse(daten()!.status) }}">
+              <span aria-hidden="true">{{ ausgangZeichen(daten()!.status) }}</span>
+              {{ ausgangLabel(daten()!.status) }}
+            </p>
+            @if (daten()!.ausgang_am) {
+              <p class="oa__text">
+                Festgehalten am {{ datumZeitGenau(daten()!.ausgang_am) }}.
+              </p>
+            }
+            <p class="oa__text">
+              Zu diesem Angebot liegt bereits eine Entscheidung vor. Eine weitere
+              Rückmeldung ist über diesen Link nicht möglich. Den Beleg können Sie
+              hier weiterhin nachlesen.
+            </p>
+          </section>
+        }
+      </article>
+    }
+  }
+
+  <app-bestaetigung
+    [offen]="fragen() !== null"
+    [titel]="titelFuer(fragen())"
+    [text]="textFuer(fragen())"
+    [bestaetigenLabel]="knopfFuer(fragen())"
+    abbrechenLabel="Zurück"
+    [gefahr]="fragen() === 'ABGELEHNT'"
+    [laedt]="sendet()"
+    (bestaetigen)="bestaetigen()"
+    (abbrechen)="fragenSchliessen()"
+  />
+</section>

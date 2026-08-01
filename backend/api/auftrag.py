@@ -533,6 +533,28 @@ class OffeneZeitgruppeOut(Schema):
     vorschlaege: list[PreisVorschlagOut] = []
 
 
+class OffeneMaterialbuchungOut(Schema):
+    """Am Einsatz gebuchtes Material, das noch keine Abrechnungsbindung trägt.
+
+    Bis Migration 0139 war diese Zeile ein Datensatz ohne Ausgang — erfasst, aber
+    nirgends abrechenbar. Sie führt **keinen** Einkaufs-/Listenpreis; `einzelpreis`
+    ist der vom Server ermittelte VK und **null = unbekannt, nie 0**. Fehlt der
+    Artikelbezug, steht hier `MATERIAL_OHNE_ARTIKEL` — der Preis wird dann geklärt,
+    nicht geraten.
+    """
+    material_entry_id: UUID
+    service_job_id: UUID
+    description: str
+    quantity: Decimal
+    unit: str
+    source_article_id: UUID | None = None
+    preis_status: str            # BEKANNT | UNBEKANNT
+    einzelpreis: Decimal | None = None
+    grund: str | None = None
+    grund_text: str | None = None
+    vorschlaege: list[PreisVorschlagOut] = []
+
+
 class UnsignierterBerichtOut(Schema):
     id: UUID
     report_date: date
@@ -549,6 +571,7 @@ class OffeneAbrechnungOut(Schema):
     hinweis: str
     berichtspositionen: list[OffeneBerichtspositionOut]
     zeitgruppen: list[OffeneZeitgruppeOut]
+    materialbuchungen: list[OffeneMaterialbuchungOut]
     nicht_unterzeichnete_berichte: list[UnsignierterBerichtOut]
 
 

@@ -15,8 +15,10 @@ set -eu
 
 INTERVALL="${MCN_QUEUE_TICK_SECONDS:-20}"
 
-# Optional ein eigener KI-Service-Account als Akteur (empfohlen). Ohne ihn nimmt das
-# Command den ersten aktiven Account.
+# Optional ein eigener KI-Service-Account als Akteur. Ohne ihn nimmt das Command
+# seit Migration 0141 den TECHNISCHEN Akteur „Online-Selbstbedienung"
+# (security.app_user.is_system) — nicht mehr den ersten aktiven Account, der dem
+# erstbesten Menschen die Taten des Automaten in den Audit-Trail schrieb.
 ACTOR_ARG=""
 if [ -n "${MCN_AI_ACTOR_ID:-}" ]; then
     ACTOR_ARG="--actor ${MCN_AI_ACTOR_ID}"

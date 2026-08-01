@@ -46,6 +46,11 @@
   display: inline-flex;
   gap: var(--space-2);
 }
+/* Der Export sitzt am rechten Rand der Leiste — bei schmalen Viewports bricht
+   die Flex-Zeile ohnehin um, dann steht er wieder links. */
+.kal-export {
+  margin-left: auto;
+}
 .kal-monat {
   font-family: var(--font-mono);
   font-size: var(--step-0);

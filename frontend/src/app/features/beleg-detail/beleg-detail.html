@@ -81,6 +81,15 @@
         </button>
       }
 
+      <!-- Freigabelink: der Kunde entscheidet online, ohne Konto (0141). Nur am
+           versendeten Angebot und nur mit invoicing/VERSENDEN — derselbe Rahmen
+           wie der Mailversand, denn es ist derselbe Zustellweg. -->
+      @if (kannFreigabelink()) {
+        <button mappe-kopf type="button" class="btn" (click)="linkOeffnen()">
+          Freigabelink
+        </button>
+      }
+
       <!-- Der Ausgang des versendeten Angebots. Die DB kennt diese Übergänge seit
            Migration 0016 — gesetzt hat sie bisher niemand. ERSETZT fehlt hier
            bewusst: Es verlangt ein Nachfolgeangebot und ist kein Statuswechsel.
@@ -351,6 +360,105 @@
         <button type="button" class="btn" [disabled]="versandLaedt()" (click)="versandSchliessen()">Abbrechen</button>
         <button type="submit" form="angebot-versand-form" class="btn btn--primary" [disabled]="versandLaedt()" [attr.aria-busy]="versandLaedt()">
           {{ versandLaedt() ? 'Wird gesendet …' : 'Senden' }}
+        </button>
+      </div>
+    </app-dialog>
+
+    <!-- --------------------------- Freigabelink --------------------------- -->
+    <app-dialog
+      [offen]="linkOffen()"
+      titel="Freigabelink für den Kunden"
+      weite="normal"
+      (schliessen)="linkSchliessen()"
+    >
+      @if (linkMeldung(); as fm) {
+        <div class="melde melde--fehler" role="alert">
+          <span class="melde__mark" aria-hidden="true">!</span>
+          <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+        </div>
+      }
+
+      <p class="dialog-hinweis">
+        Der Link zeigt dem Kunden dieses Angebot und lässt ihn annehmen oder
+        ablehnen — ohne Konto und ohne Anmeldung. Er gilt nur für dieses eine
+        Angebot, ist 14 Tage gültig und danach oder nach der Antwort verbraucht.
+      </p>
+
+      @if (neuerLink(); as neu) {
+        <!-- role="status": Ein Screenreader soll erfahren, dass die URL jetzt
+             dasteht — sie ist der einzige Ertrag dieses Dialogs. -->
+        <div class="link-neu" role="status">
+          <p class="link-neu__warnung">
+            <span class="link-neu__mark" aria-hidden="true">!</span>
+            <span>
+              <strong>Jetzt kopieren.</strong> Diese Adresse ist danach nicht mehr
+              abrufbar — gespeichert wird nur ihre Prüfsumme. Wer sie verliert,
+              erzeugt einen neuen Link.
+            </span>
+          </p>
+          <label class="feld-gruppe__label" for="freigabelink-url">Adresse</label>
+          <input
+            id="freigabelink-url"
+            class="feld-gruppe__input link-neu__url"
+            type="text"
+            readonly
+            [value]="neu.url"
+            (focus)="$any($event.target).select()"
+          />
+          <div class="link-neu__aktionen">
+            <button type="button" class="btn btn--primary" (click)="linkKopieren()">
+              In die Zwischenablage
+            </button>
+            @if (kopiert()) {
+              <span class="stamp stamp--positive" role="status">
+                <span aria-hidden="true">✓</span> Kopiert
+              </span>
+            }
+          </div>
+        </div>
+      }
+
+      <h3 class="dialog-abschnitt">Vorhandene Links</h3>
+      @if (linkListeLaedt()) {
+        <p class="lade-hinweis" role="status">Links werden geladen …</p>
+      } @else if (!linkListe().length) {
+        <p class="dialog-hinweis">Für dieses Angebot gibt es noch keinen Link.</p>
+      } @else {
+        <ul class="link-liste">
+          @for (l of linkListe(); track l.id) {
+            <li class="link-liste__zeile">
+              <span class="stamp {{ linkZustandKlasse(l) }}">{{ linkZustand(l) }}</span>
+              <span class="link-liste__text">
+                erstellt {{ linkDatum(l.created_at) }}@if (l.created_by) { von {{ l.created_by }} }
+                · gültig bis {{ linkDatum(l.expires_at) }}
+              </span>
+              @if (l.offen) {
+                <button
+                  type="button"
+                  class="btn"
+                  [disabled]="linkLaedt()"
+                  (click)="linkWiderrufen(l)"
+                >
+                  Widerrufen
+                </button>
+              }
+            </li>
+          }
+        </ul>
+      }
+
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="linkLaedt()" (click)="linkSchliessen()">
+          Schließen
+        </button>
+        <button
+          type="button"
+          class="btn btn--primary"
+          [disabled]="linkLaedt()"
+          [attr.aria-busy]="linkLaedt()"
+          (click)="linkErzeugen()"
+        >
+          {{ linkLaedt() ? 'Wird erzeugt …' : 'Neuen Link erzeugen' }}
         </button>
       </div>
     </app-dialog>

@@ -32,6 +32,7 @@ from db_core.gate_errors import as_business_error
 from db_core.models import (
     AppointmentCategory,
     AppUser,
+    Article,
     Building,
     JobAssignment,
     MaterialEntry,
@@ -240,6 +241,7 @@ def update_service_job(
     building_id=_UNSET,
     unit_id=_UNSET,
     access_instructions=_UNSET,
+    trade_id=_UNSET,
 ):
     """Trägt Stammangaben eines Einsatzes nach (Teil-Update, Sentinel-basiert).
 
@@ -256,6 +258,16 @@ def update_service_job(
     * Ein freier Termin darf seinen Titel nicht verlieren.
     * Eine Liegenschaft muss bei auftragsgebundenen Einsätzen die des Auftrags
       sein.
+
+    **Gewerk (`trade_id`):** dieselbe Sentinel-Semantik wie überall hier —
+    ``_UNSET`` heißt „nicht anfassen", ausdrückliches ``None`` heißt „Gewerk
+    entfernen". Es wird beim Update NICHT erneut vom Auftrag geerbt: Das Erben
+    ist eine Voreinstellung der Anlage (`create_service_job`), keine laufende
+    Bindung. Sonst ließe sich ein bewusst abweichendes Gewerk (Sanitärtermin auf
+    einem Heizungsauftrag) nie wieder löschen — es käme beim nächsten Speichern
+    von selbst zurück. Das Gewerk bestimmt zugleich das Kürzel der
+    Einsatznummer; eine bereits vergebene Nummer ändert sich dadurch nicht
+    (der Trigger vergibt sie nur beim INSERT).
     """
     job = ServiceJob.objects.filter(id=service_job_id).first()
     if job is None:
@@ -288,6 +300,9 @@ def update_service_job(
     if on_site_contact_party_id is not _UNSET:
         ensure_party_usable(on_site_contact_party_id, "Ansprechpartner vor Ort")
         felder["on_site_contact_party_id"] = on_site_contact_party_id
+    if trade_id is not _UNSET:
+        ensure_exists(Trade, trade_id, "Gewerk")
+        felder["trade_id"] = trade_id
     if access_instructions is not _UNSET:
         felder["access_instructions"] = (
             access_instructions.strip() or None
@@ -525,10 +540,26 @@ def log_material(
     unit,
     recorded_by,
     note=None,
+    source_article_id=None,
 ):
     """Erfasst einen Materialverbrauch am Einsatz (B-26: reine Verbrauchserfassung,
     keine Bestandsführung). quantity muss > 0 sein; das Korrekturfenster (B-28)
-    prüft die DB."""
+    prüft die DB.
+
+    **`source_article_id` macht die Buchung abrechenbar** (Migration 0139): Nur mit
+    Artikelbezug kann der Abrechnungslauf einen Verkaufspreis ermitteln
+    (`aufschlagsmatrix.vk_vorschlag`) — ohne ihn landet die Buchung in der
+    Preisklärung, statt mit 0,00 € durchzugehen oder stillschweigend zu fehlen.
+    Der Bezug ist **optional**: Die Freitextbuchung („Dichtung aus dem Fahrzeug")
+    bleibt der Alltag und wird nicht erzwungen.
+
+    Der Artikel ist die **Identität** des Verbrauchten, **kein Lagerbestand**
+    (B-26): Hier wird nichts fortgeschrieben, reserviert oder abgebucht.
+
+    **Kein Preis** — nicht als Parameter, nicht in der Zeile. Die Erfassung vor Ort
+    liefert die Menge, das Belegwesen den Preis (Invariante Kap. 3, dieselbe Regel
+    wie am Baustellenbericht).
+    """
     if not description or not description.strip():
         raise ValueError("description darf nicht leer sein.")
     if not unit or not unit.strip():
@@ -537,6 +568,9 @@ def log_material(
         raise ValueError("quantity muss größer als 0 sein.")
     ensure_exists(ServiceJob, service_job_id, "Einsatz")
     ensure_exists(AppUser, recorded_by, "Erfasser")
+    if source_article_id is not None:
+        # Fremdschlüssel vorab prüfen → 422 statt IntegrityError-500.
+        ensure_exists(Article, source_article_id, "Artikel")
     with as_business_error():
         with business_transaction(actor_app_user_id):
             entry = MaterialEntry.objects.create(
@@ -547,5 +581,6 @@ def log_material(
                 unit=unit.strip(),
                 recorded_by_id=recorded_by,
                 note=note,
+                source_article_id=source_article_id,
             )
     return entry

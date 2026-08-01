@@ -33,12 +33,15 @@ from api.buchhaltung import router as buchhaltung_router
 from api.firma import router as firma_router
 from api.geraetewissen import router as geraetewissen_router
 from api.identity import router as identity_router
+from api.kalender import router as kalender_router
 from api.ki import router as ki_router
 from api.lieferant import router as lieferant_router
 from api.lohngruppe import router as lohngruppe_router
 from api.mail import router as mail_router
 from api.maintenance import router as maintenance_router
 from api.mitarbeiter import router as mitarbeiter_router
+from api.oeffentlich import intern_router as freigabelink_router
+from api.oeffentlich import router as oeffentlich_router
 from api.planung import router as planung_router
 from api.projekt import router as projekt_router
 from api.property import router as property_router
@@ -102,7 +105,21 @@ api.add_router("/planung", qualifikation_router, tags=["planung"])
 # quer durch identity/property/workflow und prüft die Rechte entsprechend
 # einzeln.
 api.add_router("/planung", telefonauftrag_router, tags=["planung"])
+# ICS-Export (RFC 5545). Eigener Präfix statt eines Anhängsels an /planung: Die
+# Antwort ist eine Datei, kein JSON — und der abonnierbare Token-Feed wird
+# später unter demselben Zweig wohnen. Das Recht bleibt `workflow/LESEN`.
+api.add_router("/kalender", kalender_router, tags=["kalender"])
 api.add_router("/invoicing", beleg_router, tags=["invoicing"])
+# Freigabelinks am Angebot (erzeugen/auflisten/widerrufen) — Sitzung + Recht
+# `invoicing/VERSENDEN`. Wohnt bei den Belegen, weil es ein Zustellweg für einen
+# Beleg ist; der anmeldefreie Gegenpart steht unter /oeffentlich.
+api.add_router("/invoicing", freigabelink_router, tags=["invoicing"])
+# ⚠️ ANMELDEFREI (auth=None). Der einzige Zweig der API, den ein Kunde ohne
+# Konto erreicht. Autorisierung ist ausschließlich ein Einmal-Token in der URL
+# (in der DB nur als SHA-256-Hash); Drosselung, CSRF und die einheitliche
+# Fehlerantwort stehen in api/oeffentlich.py. Die Pfade sind in
+# api/tests/test_endpoint_schutz.py::WHITELIST mit Begründung eingetragen.
+api.add_router("/oeffentlich", oeffentlich_router, tags=["oeffentlich"])
 api.add_router("/buchhaltung", buchhaltung_router, tags=["buchhaltung"])
 api.add_router("/maintenance", maintenance_router, tags=["maintenance"])
 api.add_router("/hr", mitarbeiter_router, tags=["hr"])

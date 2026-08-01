@@ -16,8 +16,15 @@ Deterministisch, ohne KI. Zwei Wege, je nach `work_order.billing_mode`
   warum MINDERVERBRAUCH die Pauschale *nicht* mindert: siehe den Abschnitt
   „Nachtrag" weiter unten.)
 * **REGIE** → `rechnung_aus_auftrag`: Die Rechnung entsteht aus dem **Ist**
-  (unterzeichnete Berichte + Zeitbuchungen). Einen Nachtrag gibt es hier nicht —
-  das Ist ist bereits vollständig fakturiert.
+  (unterzeichnete Berichte + Zeitbuchungen + am Einsatz gebuchtes Material).
+  Einen Nachtrag gibt es hier nicht — das Ist ist bereits vollständig fakturiert.
+
+  **Material am Einsatz** (`workflow.material_entry`, abrechenbar seit Migration
+  0139) ist die vierte Quelle. Bis dahin war es ein Datensatz ohne Ausgang: Der
+  Monteur hatte zwei „Material"-Formulare vor sich, und nur eines führte zu Geld.
+  Weil sich dieselbe Sache über **beide** erfassen lässt, prüft
+  `_regie_quellenkonflikt_pruefen` die Doppelerfassung an der Artikel-Identität —
+  die vier UNIQUE-Indizes können sie per Konstruktion nicht sehen.
 
 ## Die drei Invarianten dieses Moduls
 
@@ -53,7 +60,7 @@ gilt für **diesen** Beleg — sonst schriebe ein Abrechnungslauf den Stammdaten
 um, den alle anderen Belege ebenfalls verwenden.
 
 **3. Dieselbe Leistung kann physisch nicht zweimal abgerechnet werden.**
-Die Garantie liegt in der **Datenbank** (`invoicing.billing_link`, drei partielle
+Die Garantie liegt in der **Datenbank** (`invoicing.billing_link`, vier partielle
 UNIQUE-Indizes `WHERE released_at IS NULL`), nicht in diesem Service. Der Service
 sperrt die Quellzeilen (`SELECT … FOR UPDATE`) und prüft vor — damit der
 Normalfall ein sauberer 422 statt eines IntegrityError-500 wird. Der Index ist
@@ -107,6 +114,7 @@ from db_core.models import (
     EmploymentContract,
     Invoice,
     InvoiceLine,
+    MaterialEntry,
     Quote,
     QuoteLine,
     SiteReport,
@@ -120,10 +128,13 @@ from db_core.services import aufschlagsmatrix as matrix_service
 from db_core.services import beleg as beleg_service
 from db_core.services import site_report as report_service
 
-# Quellarten der Bindung (Codeliste aus Migration 0084).
+# Quellarten der Bindung (Codeliste aus Migration 0084, erweitert um 0139).
 BERICHTSPOSITION = "BERICHTSPOSITION"
 ZEITBUCHUNG = "ZEITBUCHUNG"
 ANGEBOTSPOSITION = "ANGEBOTSPOSITION"
+# Am Einsatz gebuchtes Material (`workflow.material_entry`, Migration 0139). Bis
+# dahin war es ein Datensatz ohne Ausgang: erfasst, aber nirgends abrechenbar.
+MATERIALBUCHUNG = "MATERIALBUCHUNG"
 
 # Klärungseinheiten (das, wofür ein Mensch einen Preis nennen kann). Die
 # Zeitbuchung ist NICHT die Klärungseinheit: Abgerechnet wird je **Zeitgruppe**
@@ -131,6 +142,11 @@ ANGEBOTSPOSITION = "ANGEBOTSPOSITION"
 # einzelner Stempelung wäre weder bedienbar noch fachlich sinnvoll.
 QUELLE_BERICHTSPOSITION = "BERICHTSPOSITION"
 QUELLE_ZEITGRUPPE = "ZEITGRUPPE"
+# Die Materialbuchung IST ihre eigene Klärungseinheit (anders als die
+# Zeitbuchung): Sie trägt Bezeichnung, Menge und Einheit und wird als **eine**
+# Rechnungsposition abgerechnet — ein Preis je Buchung ist also genau die Einheit,
+# in der ein Mensch entscheiden kann.
+QUELLE_MATERIALBUCHUNG = "MATERIALBUCHUNG"
 # Beim Nachtrag ist die Klärungseinheit die **Abweichungsposition** des Soll-Ist
 # (ihr Schlüssel, z. B. `ARTIKEL:<uuid>:stk`) — nicht die einzelne Berichtszeile:
 # Der Mehrverbrauch entsteht aus der Summe über alle Berichte des Auftrags.
@@ -142,6 +158,14 @@ GRUND_KEINE_VK_REGEL = "KEINE_VK_REGEL"
 GRUND_KEINE_HERKUNFT = "KEINE_HERKUNFT"
 GRUND_LEISTUNG_UNVOLLSTAENDIG = "LEISTUNG_UNVOLLSTAENDIG"
 GRUND_LOHNGRUPPE_FEHLT = "LOHNGRUPPE_FEHLT"
+# Die Materialbuchung nennt keinen Artikel — reiner Freitext („Dichtung aus dem
+# Fahrzeug"). Das ist der **Bestand**: bis Migration 0139 konnte die Buchung gar
+# keinen Artikel tragen. Sie hat damit keine Herkunft, aus der sich ein Preis
+# ableiten ließe — und sie verschwindet trotzdem nicht: eigener Grund, eigene
+# Klärungszeile, Preis vom Menschen. Bewusst NICHT `KEINE_HERKUNFT`: Der Weg
+# heraus ist ein anderer (Artikel zuordnen bzw. Preis nennen, nicht „Artikel im
+# Bericht pflegen"), und der Nutzer soll ihn im Text lesen.
+GRUND_MATERIAL_OHNE_ARTIKEL = "MATERIAL_OHNE_ARTIKEL"
 # Der Server *hat* eine Zahl — aber sie ist 0,00 €. Das ist **kein Preis**,
 # sondern eine Lücke (siehe `_ist_preis`). Eigener Grund, damit der Nutzer den
 # Unterschied zum fehlenden EK sieht: hier steht eine falsche Zahl im Stamm
@@ -274,11 +298,12 @@ def _ist_preis(wert):
 # ---------------------------------------------------------------------------
 
 def _aktive_bindungen(*, quote_line_ids=None, site_report_line_ids=None,
-                      time_entry_ids=None):
+                      time_entry_ids=None, material_entry_ids=None):
     """Die aktiven (nicht gelösten) Bindungen zu den genannten Quellen.
 
-    Gibt drei Mengen belegter Quell-IDs zurück. **Eine** Query je Quellart; die
-    Auswertung läuft nie je Position (kein N+1).
+    Gibt **vier** Mengen belegter Quell-IDs zurück (Angebot, Bericht, Zeit,
+    Material). **Eine** Query je Quellart; die Auswertung läuft nie je Position
+    (kein N+1).
     """
     def _belegt(feld, ids):
         if not ids:
@@ -293,6 +318,7 @@ def _aktive_bindungen(*, quote_line_ids=None, site_report_line_ids=None,
         _belegt("quote_line_id", quote_line_ids),
         _belegt("site_report_line_id", site_report_line_ids),
         _belegt("time_entry_id", time_entry_ids),
+        _belegt("material_entry_id", material_entry_ids),
     )
 
 
@@ -348,10 +374,14 @@ def _IST_QUELLEN(order):
     und löst damit zugleich die Sperre auf, ganz richtig.
 
     **ZEITBUCHUNG zählt immer**: Zeiten fakturiert ausschließlich die Regie.
+    **MATERIALBUCHUNG ebenso** (Migration 0139): Am Einsatz gebuchtes Material
+    fakturiert ausschließlich `rechnung_aus_auftrag`; der Nachtrag rechnet über
+    den Soll-Ist und kennt es nicht. Eine aktive Materialbindung ist deshalb — wie
+    eine Zeitbindung — der Beweis, dass das Ist bereits fakturiert wurde.
     """
     if order is not None and order.billing_mode == PAUSCHAL:
-        return (ZEITBUCHUNG,)
-    return (BERICHTSPOSITION, ZEITBUCHUNG)
+        return (ZEITBUCHUNG, MATERIALBUCHUNG)
+    return (BERICHTSPOSITION, ZEITBUCHUNG, MATERIALBUCHUNG)
 
 
 def _schluessel_string(article_id, assembly_id, description, unit):
@@ -405,14 +435,19 @@ def _billed_je_identitaet(work_order_id):
     ANGEBOTSPOSITION UND BERICHTSPOSITION fakturierbar) — und **nicht an der
     Einheit**: „Stk" und „Stück" desselben Artikels sind derselbe Posten.
 
-    Rückgabe: zwei dicts `{identitaet: {einheit_norm: Decimal}}` — die über
-    `ANGEBOTSPOSITION` bzw. über `BERICHTSPOSITION` fakturierte Menge, je Identität
-    **und Einheit**, je **Rechnungsposition genau einmal** (mehrere Berichtszeilen
-    binden an EINE Nachtragsposition — die Positionsmenge zählt nicht je Bindung
-    mehrfach). Die Aufschlüsselung nach Einheit ist der Divergenz-Detektor: Führt
-    eine Identität mehr als eine Einheit, sind die Mengen NICHT summierbar (5 m + 2
-    Ringe sind nicht 7) — dann greift die Klärung (fail-closed), nicht eine stille
-    Summe.
+    Rückgabe: **drei** dicts `{identitaet: {einheit_norm: Decimal}}` — die über
+    `ANGEBOTSPOSITION`, über `BERICHTSPOSITION` bzw. über `MATERIALBUCHUNG`
+    fakturierte Menge, je Identität **und Einheit**, je **Rechnungsposition genau
+    einmal** (mehrere Berichtszeilen binden an EINE Nachtragsposition — die
+    Positionsmenge zählt nicht je Bindung mehrfach). Die Aufschlüsselung nach
+    Einheit ist der Divergenz-Detektor: Führt eine Identität mehr als eine Einheit,
+    sind die Mengen NICHT summierbar (5 m + 2 Ringe sind nicht 7) — dann greift die
+    Klärung (fail-closed), nicht eine stille Summe.
+
+    **Warum die Materialbuchung hier auftaucht** (Migration 0139): Dieselbe
+    Schraube kann als Berichtsposition UND als Materialbuchung erfasst sein — der
+    Monteur hat beide Formulare vor sich. Die vier UNIQUE-Indizes sehen das per
+    Konstruktion nicht (verschiedene Quellspalten); die Menge je Identität sieht es.
 
     `ZEITBUCHUNG` bleibt außen vor: Arbeitszeit ist kein mengenbasierter Posten.
     Maßgeblich ist `invoice_line.quantity` (was auf der Rechnung steht), nicht die
@@ -426,12 +461,13 @@ def _billed_je_identitaet(work_order_id):
         )
         .exclude(source_kind=ZEITBUCHUNG)
         .select_related(
-            "invoice_line", "quote_line",
+            "invoice_line", "quote_line", "material_entry",
             "site_report_line", "site_report_line__source_quote_line",
         )
     )
     angebot = {}
     bericht = {}
+    material = {}
     gesehen = set()
     for link in links:
         if link.invoice_line_id in gesehen:
@@ -451,28 +487,43 @@ def _billed_je_identitaet(work_order_id):
                                 src.description)
             ziel = bericht
             einheit = _einheit_norm(src.unit)
+        elif link.material_entry_id is not None:
+            me = link.material_entry
+            # Eine Materialbuchung kennt keine Leistung (Stückliste) — nur Artikel
+            # oder Freitext. Dieselbe Identitätsregel wie überall.
+            ident = _identitaet(me.source_article_id, None, me.description)
+            ziel = material
+            einheit = _einheit_norm(me.unit)
         else:  # pragma: no cover — CHECK schließt eine bindungslose Quelle aus
             continue
         je_einheit = ziel.setdefault(ident, {})
         je_einheit[einheit] = je_einheit.get(einheit, Decimal("0.000")) + menge
-    return angebot, bericht
+    return angebot, bericht, material
 
 
-def _billed_fuer(ident, einheit, angebot_billed, bericht_billed):
+def _billed_fuer(ident, einheit, angebot_billed, bericht_billed, material_billed):
     """(A, B, einheiten) für eine Identität unter EINER Einheit.
 
-    `A`/`B` sind die unter genau dieser Einheit gebundenen Mengen. `einheiten` ist
-    die Menge **aller** Einheiten, die für die Identität im Spiel sind (gebunden +
-    die geprüfte). Ist sie größer als eins, wurde derselbe Artikel in verschiedenen
-    Einheiten geführt — die Mengen sind nicht vergleichbar, und der Aufrufer muss in
-    die **Klärung** gehen (fail-closed), statt still zu summieren oder still
-    durchzulassen.
+    `A` ist die über die **Angebotskopie** gebundene Menge, `B` die über das
+    **Ist** gebundene — und „Ist" heißt seit Migration 0139 *Berichtsposition
+    **plus** Materialbuchung*: Beide behaupten dieselbe Sache („dieses Material ist
+    verbaut"), also gehören ihre Mengen in denselben Topf. Zwei getrennte Töpfe
+    hießen, dieselbe Schraube zweimal für offen zu halten — genau die Lücke, die
+    dieser Slice schließt.
+
+    `einheiten` ist die Menge **aller** Einheiten, die für die Identität im Spiel
+    sind (gebunden + die geprüfte). Ist sie größer als eins, wurde derselbe Artikel
+    in verschiedenen Einheiten geführt — die Mengen sind nicht vergleichbar, und der
+    Aufrufer muss in die **Klärung** gehen (fail-closed), statt still zu summieren
+    oder still durchzulassen.
     """
     a_units = angebot_billed.get(ident, {})
     b_units = bericht_billed.get(ident, {})
-    einheiten = set(a_units) | set(b_units) | {einheit}
+    m_units = material_billed.get(ident, {})
+    einheiten = set(a_units) | set(b_units) | set(m_units) | {einheit}
     A = a_units.get(einheit, Decimal("0.000"))
-    B = b_units.get(einheit, Decimal("0.000"))
+    B = (b_units.get(einheit, Decimal("0.000"))
+         + m_units.get(einheit, Decimal("0.000")))
     return A, B, einheiten
 
 
@@ -481,7 +532,7 @@ def bindungen(invoice_id):
     return list(
         BillingLink.objects.filter(invoice_id=invoice_id)
         .select_related("site_report_line__site_report", "time_entry__user",
-                        "quote_line")
+                        "quote_line", "material_entry")
         .order_by("released_at", "created_at")
     )
 
@@ -720,6 +771,33 @@ def _zeitbuchungen(work_order_id):
     )
 
 
+def _materialbuchungen(work_order_id):
+    """Am Einsatz gebuchtes Material des Auftrags (Migration 0139).
+
+    Streng analog zu `_zeitbuchungen`: Der Sammler liefert die **rohen Buchungen**,
+    der Preis entsteht danach (`_material_klaerung` → `_artikel_preis` →
+    `vk_vorschlag`). Keine zweite Preisregel, keine Rechnung im Sammler.
+
+    * Der Auftragsbezug läuft über den Einsatz (`material_entry` kennt keinen
+      Auftrag) — genau wie bei der Zeit. Material an einem **freien Termin** ohne
+      Auftrag gehört zu keiner Baustelle und wird hier nicht gefunden.
+    * Es gibt **kein Statusfilter** wie „unterzeichnet" beim Bericht: Die
+      Materialbuchung ist kein abzunehmender Nachweis, sondern die Aufzeichnung des
+      Monteurs — dasselbe Gewicht wie eine Zeitbuchung.
+    * Kein `quantity`-Filter: Die DB erzwingt `quantity > 0`.
+
+    **Keine Bestandsführung** (B-26): Hier wird nichts fortgeschrieben, reserviert
+    oder abgebucht. Gelesen wird, was jemand aufgeschrieben hat.
+    """
+    return list(
+        MaterialEntry.objects.filter(
+            service_job__work_order_id=work_order_id
+        )
+        .select_related("service_job")
+        .order_by("created_at", "id")
+    )
+
+
 def _stunden(sekunden):
     """Sekunden → Stunden auf der DB-Spaltenskala numeric(15,3).
 
@@ -854,6 +932,14 @@ _GRUND_TEXTE = {
         "Die Position verweist weder auf einen Artikel noch auf eine Leistung — es "
         "gibt nichts, woraus der Server einen Preis rechnen könnte."
     ),
+    GRUND_MATERIAL_OHNE_ARTIKEL: (
+        "Diese Materialbuchung nennt keinen Artikel aus dem Stamm, sondern nur "
+        "einen freien Text — daraus lässt sich kein Verkaufspreis ableiten. Die "
+        "Buchung wird deshalb NICHT mit 0,00 € abgerechnet und auch nicht "
+        "weggelassen: Entweder wird ihr am Einsatz der passende Artikel zugeordnet "
+        "(dann rechnet der Server), oder der Einzelpreis wird hier für DIESEN Beleg "
+        "genannt."
+    ),
 }
 
 
@@ -910,6 +996,54 @@ def _bericht_klaerung(line, regelwerk):
 
     return None, None, _klaerung(
         GRUND_KEINE_HERKUNFT, _GRUND_TEXTE[GRUND_KEINE_HERKUNFT], []
+    )
+
+
+def _material_klaerung(entry, regelwerk):
+    """(preis, ek, klaerung|None) einer Materialbuchung (Migration 0139).
+
+    Dieselbe Rolle wie `_bericht_klaerung`: **die eine Stelle**, an der entschieden
+    wird, ob der Server für diese Buchung einen Preis hat. `offene_abrechnung` und
+    `rechnung_aus_auftrag` rufen sie beide auf — liefen sie auseinander, zeigte die
+    Vorschau etwas anderes, als der Lauf tut.
+
+    Zwei Wege in die Klärung:
+
+    * **Kein Artikel** (Freitext) → `MATERIAL_OHNE_ARTIKEL`. Das ist der Bestand:
+      Bis 0139 konnte die Buchung gar keinen Artikel tragen. Sie darf deshalb
+      weder mit 0,00 € durchgehen noch stillschweigend fehlen — beides wäre eine zu
+      niedrige Rechnung, die plausibel aussieht.
+    * **Artikel ohne ermittelbaren VK** → dieselben Gründe wie überall
+      (`EK_FEHLT`, `KEINE_VK_REGEL`, `VK_NULL`) samt Vorschlägen aus dem Stamm.
+    """
+    def _klaerung(grund, text, vorschlaege):
+        return {
+            "quelle_art": QUELLE_MATERIALBUCHUNG,
+            "quelle_id": entry.id,
+            "bezeichnung": f"Materialbuchung: {entry.description}",
+            "menge": entry.quantity,
+            "einheit": entry.unit,
+            "grund": grund,
+            "grund_text": text,
+            "vorschlaege": vorschlaege,
+        }
+
+    if entry.source_article_id is None:
+        return None, None, _klaerung(
+            GRUND_MATERIAL_OHNE_ARTIKEL,
+            _GRUND_TEXTE[GRUND_MATERIAL_OHNE_ARTIKEL],
+            # Kein Vorschlag: Ohne Artikel gibt es nichts, worauf sich ein
+            # „zuletzt berechnet" beziehen könnte. Eine geratene Zahl wäre hier
+            # schlimmer als keine.
+            [],
+        )
+    vk, ek, grund = _artikel_preis(
+        entry.source_article_id, entry.quantity or Decimal(1), regelwerk
+    )
+    if vk is not None:
+        return vk, ek, None
+    return None, ek, _klaerung(
+        grund, _GRUND_TEXTE[grund], _vorschlaege_artikel(entry.source_article_id)
     )
 
 
@@ -975,12 +1109,15 @@ def offene_abrechnung(work_order_id):
 
     bericht_lines = _berichtspositionen(order.id)
     zeiten = _zeitbuchungen(order.id)
-    _q, belegte_bl, belegte_te = _aktive_bindungen(
+    material = _materialbuchungen(order.id)
+    _q, belegte_bl, belegte_te, belegte_me = _aktive_bindungen(
         site_report_line_ids=[l.id for l in bericht_lines],
         time_entry_ids=[t.id for t in zeiten],
+        material_entry_ids=[m.id for m in material],
     )
     offene_lines = [l for l in bericht_lines if l.id not in belegte_bl]
     offene_zeiten = [t for t in zeiten if t.id not in belegte_te]
+    offenes_material = [m for m in material if m.id not in belegte_me]
 
     regelwerk = matrix_service.lade_regelwerk()
     positionen = []
@@ -1020,23 +1157,45 @@ def offene_abrechnung(work_order_id):
             "vorschlaege": klaerung["vorschlaege"] if klaerung else [],
         })
 
+    # Material am Einsatz (Migration 0139) — **hier wird der fehlende Preis schon
+    # sichtbar**, nicht erst beim Abrechnungslauf. Genau das ist der Hebel: Eine
+    # Freitextbuchung ohne Artikel ist bereits unbekannt, sobald sie gebucht wird.
+    materialien = []
+    for entry in offenes_material:
+        preis, _ek, klaerung = _material_klaerung(entry, regelwerk)
+        materialien.append({
+            "material_entry_id": entry.id,
+            "service_job_id": entry.service_job_id,
+            "description": entry.description,
+            "quantity": entry.quantity,
+            "unit": entry.unit,
+            "source_article_id": entry.source_article_id,
+            "preis_status": PREIS_BEKANNT if preis is not None else PREIS_UNBEKANNT,
+            "einzelpreis": preis,
+            "grund": klaerung["grund"] if klaerung else None,
+            "grund_text": klaerung["grund_text"] if klaerung else None,
+            "vorschlaege": klaerung["vorschlaege"] if klaerung else [],
+        })
+
     return {
         "work_order_id": order.id,
         "billing_mode": order.billing_mode,
         # Der Kern der PAUSCHAL-Regel, für das UI unmissverständlich benannt.
         "abrechenbar": order.billing_mode == REGIE,
         "hinweis": (
-            "Regieabrechnung: Berichtspositionen und Zeiten werden fakturiert."
+            "Regieabrechnung: Berichtspositionen, Zeiten und am Einsatz gebuchtes "
+            "Material werden fakturiert."
             if order.billing_mode == REGIE
             else "Pauschalabrechnung: Die Rechnung ist die Angebotskopie. "
-                 "Berichtspositionen und Zeiten sind Nachweis und interne "
-                 "Nachkalkulation — sie werden NICHT zusätzlich fakturiert. Was "
-                 "über das Angebot hinaus geleistet wurde, rechnet der Nachtrag ab "
-                 "(Reiter „Soll-Ist“) — dort nur die Mehrmenge, nie die ganze "
-                 "Position."
+                 "Berichtspositionen, Zeiten und Materialbuchungen sind Nachweis "
+                 "und interne Nachkalkulation — sie werden NICHT zusätzlich "
+                 "fakturiert. Was über das Angebot hinaus geleistet wurde, rechnet "
+                 "der Nachtrag ab (Reiter „Soll-Ist“) — dort nur die Mehrmenge, nie "
+                 "die ganze Position."
         ),
         "berichtspositionen": positionen,
         "zeitgruppen": gruppen,
+        "materialbuchungen": materialien,
         # Ehrlichkeit statt Stille: unsignierte Berichte fließen NICHT ein.
         "nicht_unterzeichnete_berichte": [
             {"id": r.id, "report_date": r.report_date, "status": r.status,
@@ -1184,7 +1343,7 @@ def _pauschal_mengengrenze_pruefen(order, lines):
         return
     abgleich = report_service.abgleich(order, nur_unterzeichnet=True)
     ist_je = {p["schluessel"]: p["ist"] for p in abgleich["positionen"]}
-    angebot_billed, bericht_billed = _billed_je_identitaet(order.id)
+    angebot_billed, bericht_billed, material_billed = _billed_je_identitaet(order.id)
 
     # Menge dieses Angebots je (Identität, Einheit) — plus der volle Schlüssel für
     # den Ist-Nachschlag (der Abgleich schlüsselt mit Einheit).
@@ -1209,7 +1368,9 @@ def _pauschal_mengengrenze_pruefen(order, lines):
 
     konflikte = []
     for (ident, einheit), rec in q_je.items():
-        A, B, einheiten = _billed_fuer(ident, einheit, angebot_billed, bericht_billed)
+        A, B, einheiten = _billed_fuer(
+            ident, einheit, angebot_billed, bericht_billed, material_billed
+        )
         if len(einheiten) > 1:
             # Derselbe Artikel steht schon unter einer ANDEREN Einheit in Rechnung
             # (z. B. Nachtrag „Stk", Angebot „Stück"). Ohne diesen Zweig sähe die
@@ -1340,7 +1501,9 @@ def rechnung_aus_angebot(
                     "falsch war, ist sie zu stornieren; das gibt die Leistungen "
                     "wieder frei."
                 )
-            belegt, _b, _t = _aktive_bindungen(quote_line_ids=list(quelle.values()))
+            belegt, _b, _t, _m = _aktive_bindungen(
+                quote_line_ids=list(quelle.values())
+            )
             if belegt:
                 _schon_abgerechnet(
                     "Angebotsposition(en)",
@@ -1460,7 +1623,7 @@ def _auftrag_sperren(work_order_id):
 
 
 def _quellen_sperren(*, quote_line_ids=None, site_report_line_ids=None,
-                     time_entry_ids=None):
+                     time_entry_ids=None, material_entry_ids=None):
     """Sperrt die Quellzeilen bis zum Transaktionsende (`SELECT … FOR UPDATE`).
 
     Damit greifen zwei parallele Rechnungsläufe nicht dieselbe Zeitbuchung: Der
@@ -1484,6 +1647,12 @@ def _quellen_sperren(*, quote_line_ids=None, site_report_line_ids=None,
     if time_entry_ids:
         list(
             TimeEntry.objects.filter(id__in=list(time_entry_ids))
+            .select_for_update()
+            .values_list("id", flat=True)
+        )
+    if material_entry_ids:
+        list(
+            MaterialEntry.objects.filter(id__in=list(material_entry_ids))
             .select_for_update()
             .values_list("id", flat=True)
         )
@@ -1515,8 +1684,117 @@ def _bindungen_schreiben(invoice, quellen_je_position):
         )
 
 
+def _regie_quellenkonflikt_pruefen(order, bericht_lines, material_entries):
+    """Dieselbe Sache darf nicht über Bericht UND Materialbuchung fakturiert werden.
+
+    **Der Fall, um den es geht** (Invariante Kap. 2, reproduziert mit 178,50 € auf
+    zwei Rechnungen): Der Monteur hat am Einsatz zwei „Material"-Wege vor sich —
+    die Berichtsposition und die Materialbuchung. Trägt er dieselbe Schraube in
+    beide ein, sind das für die Datenbank **zwei verschiedene Quellen**: Die vier
+    partiellen UNIQUE-Indizes sichern jede Quelle einzeln und können per
+    Konstruktion nicht sehen, dass es dieselbe Schraube ist. Die einzige Klammer,
+    die beide zusammenhält, ist der **Auftrag** — also wird hier über ihn geprüft,
+    genau wie bei `_pauschal_mengengrenze_pruefen` und `_nachtrag_kandidaten`.
+
+    **Der Schlüssel ist die Artikel-IDENTITÄT ohne Einheit** (`_identitaet`) — das
+    ist der Grund, warum „Stk" und „Stück" hier nicht durchrutschen können: Sie
+    ergeben denselben Schlüssel. Divergieren die Einheiten trotzdem, ist das die
+    aussagekräftigere Diagnose und wird als `EinheitUneindeutig` gemeldet.
+
+    **Geprüft wird, was fakturiert wird — nicht, was erfasst ist.** Eine Seite
+    „zählt", wenn dieser Lauf sie abrechnet ODER wenn sie an diesem Auftrag bereits
+    abgerechnet ist (`_billed_je_identitaet`). Damit greift die Sperre auch über
+    **zwei Rechnungen hinweg** (Bericht in RE-1, Material in RE-2) und der Storno
+    löst sie mit, weil er die Bindungen löst.
+
+    **Warum keine Mengenrechnung, sondern fail-closed?** In der Regie gibt es kein
+    unabhängiges Soll, gegen das man rechnen könnte: Beide Quellen *behaupten* das
+    Ist. Sagt der Bericht 3 Schrauben und die Buchung 3, waren es 3 (Doppel-
+    erfassung) — sagt der Bericht 3 und die Buchung 5, weiß niemand, ob es 5 oder 8
+    waren. Das System erfindet die Antwort nicht. Es ist dieselbe Haltung, mit der
+    `mit_zeiten` schon heute die doppelt erfasste Arbeitszeit behandelt: „Nur ein
+    Mensch kann entscheiden, welche von beiden die Wahrheit ist."
+    """
+    _a, bericht_billed, material_billed = _billed_je_identitaet(order.id)
+
+    def _leer():
+        return {"bezeichnung": None, "einheiten": set(), "posten": []}
+
+    bericht_seite = {}
+    material_seite = {}
+
+    for line in bericht_lines:
+        if line.quantity is None:      # TEXT-Zeile: kein Posten
+            continue
+        ident = _identitaet(line.source_article_id, line.source_assembly_id,
+                            line.description)
+        rec = bericht_seite.setdefault(ident, _leer())
+        rec["bezeichnung"] = rec["bezeichnung"] or line.description
+        rec["einheiten"].add(_einheit_norm(line.unit))
+        rec["posten"].append(
+            f"Bericht vom {line.site_report.report_date:%d.%m.%Y}, "
+            f"Pos. {line.position_number} ({line.quantity} {line.unit or ''})".strip()
+        )
+    for ident, je_einheit in bericht_billed.items():
+        rec = bericht_seite.setdefault(ident, _leer())
+        rec["einheiten"] |= set(je_einheit)
+        rec["posten"].append("bereits als Berichtsposition abgerechnet")
+
+    for entry in material_entries:
+        ident = _identitaet(entry.source_article_id, None, entry.description)
+        rec = material_seite.setdefault(ident, _leer())
+        rec["bezeichnung"] = rec["bezeichnung"] or entry.description
+        rec["einheiten"].add(_einheit_norm(entry.unit))
+        rec["posten"].append(f"Buchung „{entry.description}“ "
+                             f"({entry.quantity} {entry.unit})")
+    for ident, je_einheit in material_billed.items():
+        rec = material_seite.setdefault(ident, _leer())
+        rec["einheiten"] |= set(je_einheit)
+        rec["posten"].append("bereits als Materialbuchung abgerechnet")
+
+    doppel = []
+    konflikte = []
+    for ident, b in sorted(bericht_seite.items()):
+        m = material_seite.get(ident)
+        if m is None:
+            continue
+        bez = b["bezeichnung"] or m["bezeichnung"] or ident
+        einheiten = b["einheiten"] | m["einheiten"]
+        if len(einheiten) > 1:
+            konflikte.append({
+                "identitaet": ident,
+                "bezeichnung": bez,
+                "einheiten": sorted(einheiten),
+            })
+        else:
+            doppel.append((bez, b["posten"], m["posten"]))
+
+    if doppel:
+        # Die eindeutige Doppelerfassung zuerst: Sie ist die häufigere und die mit
+        # dem klareren Ausweg. Der Einheiten-Konflikt ist eine Verfeinerung
+        # desselben Befunds und kommt danach dran.
+        namen = "; ".join(
+            f"„{bez}“ ({' + '.join(b_posten)} — UND — {' + '.join(m_posten)})"
+            for bez, b_posten, m_posten in doppel
+        )
+        raise AbrechnungError(
+            "Folgendes Material ist an diesem Auftrag ZWEIMAL erfasst — einmal im "
+            f"Baustellenbericht und einmal als Materialbuchung am Einsatz: {namen}. "
+            "Beide behaupten dieselbe Sache („das ist verbaut worden“); zusammen "
+            "fakturiert stünde es zweimal auf der Rechnung. Welche der beiden "
+            "Erfassungen die Wahrheit ist, entscheidet ein Mensch, nicht der "
+            "Abrechnungslauf: Entweder nur die Berichtspositionen abrechnen "
+            "(mit_material = false) oder nur das gebuchte Material "
+            "(mit_berichten = false) — oder die doppelte Erfassung am Einsatz "
+            "korrigieren, solange das Korrekturfenster (B-28) offen ist. Ist eine "
+            "Seite bereits fakturiert, gibt ein Storno sie wieder frei."
+        )
+    if konflikte:
+        raise EinheitUneindeutig(konflikte)
+
+
 # ---------------------------------------------------------------------------
-# Auftrag → Rechnung (REGIE): Bericht + Zeiten
+# Auftrag → Rechnung (REGIE): Bericht + Zeiten + Material
 # ---------------------------------------------------------------------------
 
 def rechnung_aus_auftrag(
@@ -1527,6 +1805,7 @@ def rechnung_aus_auftrag(
     preise=None,
     mit_berichten=True,
     mit_zeiten=True,
+    mit_material=True,
     invoice_date=None,
     due_date=None,
     payment_term_days=None,
@@ -1534,7 +1813,7 @@ def rechnung_aus_auftrag(
     discount_days=None,
     show_labour_costs=True,
 ):
-    """Erzeugt eine Rechnung im ENTWURF aus **Bericht + Zeiten** (Regieweg).
+    """Erzeugt eine Rechnung im ENTWURF aus **Bericht + Zeiten + Material** (Regieweg).
 
     Nur bei `billing_mode = REGIE`. Bei **PAUSCHAL** wäre das eine
     Doppelabrechnung: Das Angebot enthält die Leistung bereits, Zeiten und
@@ -1552,11 +1831,16 @@ def rechnung_aus_auftrag(
     „Preis nennen" unterlaufen werden. Summen, Steuer und Gesamt rechnet
     **weiterhin ausschließlich der Server**.
 
-    `mit_berichten` / `mit_zeiten` sind bewusst schaltbar: Führt der Bericht die
-    Arbeitszeit **schon als Position** und läuft daneben die Stempeluhr, stünde
-    dieselbe Stunde zweimal auf der Rechnung. Die Bindung verhindert das nicht —
-    es sind zwei verschiedene Quellen. Nur ein Mensch kann entscheiden, welche von
-    beiden die Wahrheit ist.
+    `mit_berichten` / `mit_zeiten` / `mit_material` sind bewusst schaltbar: Führt
+    der Bericht die Arbeitszeit **schon als Position** und läuft daneben die
+    Stempeluhr, stünde dieselbe Stunde zweimal auf der Rechnung. Die Bindung
+    verhindert das nicht — es sind zwei verschiedene Quellen. Nur ein Mensch kann
+    entscheiden, welche von beiden die Wahrheit ist. Dasselbe gilt seit Migration
+    0139 für Material: Es lässt sich als **Berichtsposition** und als
+    **Materialbuchung** erfassen. Anders als bei der Zeit bleibt es hier aber nicht
+    beim Schalter — `_regie_quellenkonflikt_pruefen` **erkennt** die Doppel-
+    erfassung an der Artikel-Identität und weist den Lauf ab, statt sie auf die
+    Rechnung zu lassen.
 
     Tor **B-08** bleibt unangetastet: Der Beleg entsteht im ENTWURF; die
     Veröffentlichung verlangt weiterhin den kaufmännisch geprüften Auftrag (DB).
@@ -1573,10 +1857,10 @@ def rechnung_aus_auftrag(
             "die Abrechnungsart des Auftrags auf REGIE stellen."
         )
     _angebot_bereits_abgerechnet_pruefen(order.id)
-    if not (mit_berichten or mit_zeiten):
+    if not (mit_berichten or mit_zeiten or mit_material):
         raise AbrechnungError(
-            "Weder Berichtspositionen noch Zeiten sollen abgerechnet werden — es "
-            "gibt nichts zu tun."
+            "Weder Berichtspositionen noch Zeiten noch Materialbuchungen sollen "
+            "abgerechnet werden — es gibt nichts zu tun."
         )
     if not TaxCode.objects.filter(code=tax_code).exists():
         raise AbrechnungError(f"Unbekannter Steuercode '{tax_code}' (z. B. DE_19).")
@@ -1584,20 +1868,28 @@ def rechnung_aus_auftrag(
 
     bericht_lines = _berichtspositionen(order.id) if mit_berichten else []
     zeiten = _zeitbuchungen(order.id) if mit_zeiten else []
-    _q, belegte_bl, belegte_te = _aktive_bindungen(
+    material = _materialbuchungen(order.id) if mit_material else []
+    _q, belegte_bl, belegte_te, belegte_me = _aktive_bindungen(
         site_report_line_ids=[l.id for l in bericht_lines],
         time_entry_ids=[t.id for t in zeiten],
+        material_entry_ids=[m.id for m in material],
     )
     # Was schon abgerechnet ist, kommt nicht noch einmal — kein Fehler, sondern
     # der Normalfall der zweiten Abrechnungsrunde.
     bericht_lines = [l for l in bericht_lines if l.id not in belegte_bl]
     zeiten = [t for t in zeiten if t.id not in belegte_te]
+    material = [m for m in material if m.id not in belegte_me]
+
+    # **Der Geld-Wächter am Auftrag** (vor jeder Preisermittlung, damit der Nutzer
+    # den Konflikt sieht statt einer Preisklärung, die ins Leere führt): Dieselbe
+    # Sache darf nicht über Bericht UND Materialbuchung fakturiert werden.
+    _regie_quellenkonflikt_pruefen(order, bericht_lines, material)
 
     entwuerfe = _entwurfsberichte(order.id)
-    if not bericht_lines and not zeiten:
+    if not bericht_lines and not zeiten and not material:
         raise AbrechnungError(
-            "Es gibt nichts abzurechnen: keine offenen Berichtspositionen und "
-            "keine offenen Zeitbuchungen."
+            "Es gibt nichts abzurechnen: keine offenen Berichtspositionen, keine "
+            "offenen Zeitbuchungen und kein offenes Material."
             + (
                 f" Achtung: {len(entwuerfe)} Bericht(e) sind noch nicht "
                 "unterzeichnet und fließen deshalb nicht ein."
@@ -1637,6 +1929,34 @@ def rechnung_aus_auftrag(
             "source_assembly_id": line.source_assembly_id,
         })
         quellen[pos] = (BERICHTSPOSITION, {"site_report_line_id": line.id})
+
+    for entry in material:
+        preis, ek, klaerung = _material_klaerung(entry, regelwerk)
+        genannt = _genannter_preis(
+            genannte, entry.id,
+            bezeichnung=f"Materialbuchung: {entry.description}",
+            server_preis=preis,
+        )
+        if genannt is not None:
+            preis, klaerung = genannt, None
+        if klaerung is not None:
+            klaerungen.append(klaerung)
+            continue
+        pos = len(lines) + 1
+        lines.append({
+            # Material ist § 35a NICHT begünstigt — `_arbeitskosten_anteil` leitet
+            # das aus dem Positionstyp ab. Eine Materialbuchung IST Material; ein
+            # anderer Typ wäre hier eine Behauptung ohne Grundlage.
+            "line_type": "MATERIAL",
+            "description": entry.description,
+            "quantity": entry.quantity,
+            "unit": entry.unit,
+            "unit_price": preis,
+            "unit_cost": ek,
+            "tax_code": tax_code,
+            "source_article_id": entry.source_article_id,
+        })
+        quellen[pos] = (MATERIALBUCHUNG, {"material_entry_id": entry.id})
 
     for gruppe in _zeitgruppen(zeiten):
         satz, ek, klaerung = _zeit_klaerung(gruppe)
@@ -1694,20 +2014,38 @@ def rechnung_aus_auftrag(
                 if k == BERICHTSPOSITION
             ]
             quell_te = [e.id for _p, es in zeit_quellen for e in es]
-            _quellen_sperren(site_report_line_ids=quell_bl, time_entry_ids=quell_te)
+            quell_me = [
+                q["material_entry_id"]
+                for k, q in quellen.values()
+                if k == MATERIALBUCHUNG
+            ]
+            _quellen_sperren(
+                site_report_line_ids=quell_bl, time_entry_ids=quell_te,
+                material_entry_ids=quell_me,
+            )
             # Nach der Sperre erneut prüfen: Ein Nebenläufer kann zwischen der
             # Vorauswahl und der Sperre committet haben (READ COMMITTED). Das gilt
             # auch für die Angebotsrechnung desselben Auftrags — sie greift andere
             # Quellen, läuft also nicht gegen dieselbe Zeilensperre.
             _angebot_bereits_abgerechnet_pruefen(order.id)
-            _q, belegte_bl, belegte_te = _aktive_bindungen(
-                site_report_line_ids=quell_bl, time_entry_ids=quell_te
+            # Und ebenso der Quellenkonflikt Bericht↔Material: Ein Nebenläufer kann
+            # die Gegenseite committet haben, während dieser Lauf seine Preise
+            # ermittelte. Unter der Auftragssperre sieht er jetzt den frischen Stand.
+            _regie_quellenkonflikt_pruefen(
+                order,
+                [l for l in bericht_lines if l.id in set(quell_bl)],
+                [m for m in material if m.id in set(quell_me)],
             )
-            if belegte_bl or belegte_te:
+            _q, belegte_bl, belegte_te, belegte_me = _aktive_bindungen(
+                site_report_line_ids=quell_bl, time_entry_ids=quell_te,
+                material_entry_ids=quell_me,
+            )
+            if belegte_bl or belegte_te or belegte_me:
                 raise AbrechnungError(
-                    "Ein Teil der Berichtspositionen bzw. Zeitbuchungen wurde "
-                    "soeben von einem anderen Vorgang abgerechnet. Bitte den "
-                    "Vorgang wiederholen — die offene Abrechnung hat sich geändert."
+                    "Ein Teil der Berichtspositionen, Zeitbuchungen bzw. "
+                    "Materialbuchungen wurde soeben von einem anderen Vorgang "
+                    "abgerechnet. Bitte den Vorgang wiederholen — die offene "
+                    "Abrechnung hat sich geändert."
                 )
             invoice = beleg_service.create_invoice(
                 actor_app_user_id,
@@ -1816,7 +2154,7 @@ def _nachtrag_kandidaten(order):
     ANGEBOTSPOSITION bzw. BERICHTSPOSITION je Schlüssel bereits fakturierten Mengen.
     """
     ergebnis = report_service.abgleich(order, nur_unterzeichnet=True)
-    angebot_billed, bericht_billed = _billed_je_identitaet(order.id)
+    angebot_billed, bericht_billed, material_billed = _billed_je_identitaet(order.id)
     kandidaten = []
     for pos in ergebnis["positionen"]:
         if pos["art"] not in (report_service.MEHRVERBRAUCH, report_service.ZUSATZ):
@@ -1841,7 +2179,9 @@ def _nachtrag_kandidaten(order):
             pos["source_article_id"], pos["source_assembly_id"], pos["bezeichnung"]
         )
         einheit = _einheit_norm(pos["einheit"])
-        A, B, einheiten = _billed_fuer(ident, einheit, angebot_billed, bericht_billed)
+        A, B, einheiten = _billed_fuer(
+            ident, einheit, angebot_billed, bericht_billed, material_billed
+        )
         einheit_konflikt = len(einheiten) > 1
 
         # Die Pauschale deckt, was fakturiert IST (A) oder zugeordnet ist und noch
@@ -2111,15 +2451,18 @@ def rechnung_aus_nachtrag(
             "daneben stellte dieselbe Mehrmenge ein zweites Mal in Rechnung. Der "
             "Nachtrag ist der PAUSCHAL-Fall."
         )
-    # Zeiten fakturiert ausschließlich die Regie. Aktive Zeitbindungen an einem
-    # PAUSCHAL-Auftrag kann es nach `set_billing_mode` nicht geben — geprüft wird
-    # es trotzdem: Die Sperre soll halten, auch wenn jemand den Modus künftig auf
-    # einem anderen Weg setzt. (Genau dieser Fehler — eine Sperre, die an einem nie
-    # gesetzten Zustand hing — kostete in Welle 5 einen zweiten Anlauf.)
-    regie = _bindungen_am_auftrag(order.id, source_kinds=(ZEITBUCHUNG,))
+    # Zeiten und am Einsatz gebuchtes Material fakturiert ausschließlich die
+    # Regie. Solche Bindungen an einem PAUSCHAL-Auftrag kann es nach
+    # `set_billing_mode` nicht geben — geprüft wird es trotzdem: Die Sperre soll
+    # halten, auch wenn jemand den Modus künftig auf einem anderen Weg setzt.
+    # (Genau dieser Fehler — eine Sperre, die an einem nie gesetzten Zustand hing —
+    # kostete in Welle 5 einen zweiten Anlauf.)
+    regie = _bindungen_am_auftrag(
+        order.id, source_kinds=(ZEITBUCHUNG, MATERIALBUCHUNG)
+    )
     if regie:
         raise AbrechnungError(
-            f"Dieser Auftrag ist bereits über Zeitbuchungen abgerechnet "
+            f"Dieser Auftrag ist bereits über Zeit-/Materialbuchungen abgerechnet "
             f"({', '.join(regie)}) — das ist eine Regieabrechnung über das gesamte "
             "Ist. Ein Nachtrag daneben fakturierte die Mehrmenge ein zweites Mal."
         )
@@ -2138,13 +2481,15 @@ def rechnung_aus_nachtrag(
         with business_transaction(actor_app_user_id):
             _auftrag_sperren(order.id)
 
-            regie = _bindungen_am_auftrag(order.id, source_kinds=(ZEITBUCHUNG,))
+            regie = _bindungen_am_auftrag(
+                order.id, source_kinds=(ZEITBUCHUNG, MATERIALBUCHUNG)
+            )
             if regie:
                 raise AbrechnungError(
-                    f"Dieser Auftrag ist bereits über Zeitbuchungen abgerechnet "
-                    f"({', '.join(regie)}) — das ist eine Regieabrechnung über das "
-                    "gesamte Ist. Ein Nachtrag daneben fakturierte die Mehrmenge ein "
-                    "zweites Mal."
+                    f"Dieser Auftrag ist bereits über Zeit-/Materialbuchungen "
+                    f"abgerechnet ({', '.join(regie)}) — das ist eine "
+                    "Regieabrechnung über das gesamte Ist. Ein Nachtrag daneben "
+                    "fakturierte die Mehrmenge ein zweites Mal."
                 )
 
             kandidaten, _abgleich = _nachtrag_kandidaten(order)
@@ -2248,7 +2593,9 @@ def rechnung_aus_nachtrag(
             # Zweitprüfung derselben Quellzeilen (UNIQUE-Index als letzte Instanz →
             # sauberer 422 statt 500). Die auftragsweite Serialisierung liegt schon
             # in `_auftrag_sperren` oben.
-            _q, belegte, _t = _aktive_bindungen(site_report_line_ids=quell_ids)
+            _q, belegte, _t, _m = _aktive_bindungen(
+                site_report_line_ids=quell_ids
+            )
             if belegte:
                 raise AbrechnungError(
                     "Ein Teil der Abweichungen wurde soeben von einem anderen "

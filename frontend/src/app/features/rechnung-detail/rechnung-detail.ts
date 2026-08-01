@@ -377,6 +377,7 @@ export class RechnungDetail {
       BERICHTSPOSITION: 'aus Baustellenbericht',
       ZEITBUCHUNG: 'aus Zeiterfassung',
       ANGEBOTSPOSITION: 'aus Angebot',
+      MATERIALBUCHUNG: 'aus Materialbuchung am Einsatz',
     };
     return map[q] ?? q;
   }

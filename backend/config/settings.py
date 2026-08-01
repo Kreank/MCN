@@ -268,3 +268,38 @@ MCN_LOGIN_ACCT_THRESHOLD = int(os.environ.get("MCN_LOGIN_ACCT_THRESHOLD", "5"))
 MCN_LOGIN_IP_THRESHOLD = int(os.environ.get("MCN_LOGIN_IP_THRESHOLD", "30"))
 MCN_LOGIN_WINDOW_SECONDS = int(os.environ.get("MCN_LOGIN_WINDOW_SECONDS", "900"))
 MCN_LOGIN_LOCKOUT_SECONDS = int(os.environ.get("MCN_LOGIN_LOCKOUT_SECONDS", "900"))
+
+# --- Öffentliche Links (security.public_link, Migration 0141) --------------
+# Anmeldefreie Routen (heute: „Angebot online annehmen"). Gedrosselt wird über
+# DIESELBE DB-Mechanik wie der Login (security.login_register_failure) mit
+# eigenem Schlüsselnamensraum `plink:ip:…` — siehe
+# db_core/services/oeffentlicher_link.py. Gezählt werden nur FEHLSCHLÄGE
+# (unbekanntes/abgelaufenes Token), damit ein Kunde sich durch Neuladen nicht
+# selbst aussperrt. Die Schwelle ist deutlich strenger als beim Login: Einen
+# Kundenlink öffnet man ein paar Mal, man rät ihn nicht.
+MCN_PUBLIC_LINK_IP_THRESHOLD = int(
+    os.environ.get("MCN_PUBLIC_LINK_IP_THRESHOLD", "10")
+)
+MCN_PUBLIC_LINK_WINDOW_SECONDS = int(
+    os.environ.get("MCN_PUBLIC_LINK_WINDOW_SECONDS", "900")
+)
+MCN_PUBLIC_LINK_LOCKOUT_SECONDS = int(
+    os.environ.get("MCN_PUBLIC_LINK_LOCKOUT_SECONDS", "900")
+)
+# Vorgeschlagene Gültigkeit eines Freigabelinks, wenn der Nutzer nichts angibt.
+MCN_PUBLIC_LINK_TTL_DAYS = int(os.environ.get("MCN_PUBLIC_LINK_TTL_DAYS", "14"))
+
+# ⚠️ EIGENER SCHALTER für den Versand des Freigabelinks per E-Mail.
+#
+# Betreff, Text und Versandweg sind fertig verdrahtet (beleg_versand.
+# send_quote_freigabe_email) — es fehlt bewusst NUR diese Freischaltung. Solange
+# sie auf 0 steht, verweigert der Service den Versand mit 422, BEVOR eine
+# Verbindung aufgebaut oder eine Nachricht gebaut wird.
+#
+# Warum ein zweiter Schalter neben MCN_EMAIL_BACKEND: Der Mail-Backend-Schalter
+# gilt für ALLES (Rechnung, Mahnung, Passwort-Reset). Wer ihn eines Tages auf
+# SMTP stellt, um Rechnungen zu versenden, macht damit sonst zugleich einen
+# fabrikneuen, nie im Feld erprobten Kundenversand scharf — an echte
+# Kundenadressen, im Echtbetrieb. Diese Freischaltung ist die bewusste,
+# getrennte Entscheidung dafür.
+MCN_PUBLIC_LINK_MAIL_ENABLED = os.environ.get("MCN_PUBLIC_LINK_MAIL", "0") == "1"

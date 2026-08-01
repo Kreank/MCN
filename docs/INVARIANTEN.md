@@ -53,10 +53,19 @@ Ausführliche Herleitungen: `docs/archiv/chronik-2026-07.md`.
   (`pricing/AENDERN`) — es lebt nur im Dialog, nie im Payload, sonst schlüge es bei jedem
   Speichern erneut zu. Der **EK wird bewusst nicht übernommen**. Scheitert die Übernahme,
   bleibt die Positionsänderung erhalten und der Fehler wird angezeigt — nie eine Erfolgsmeldung.
-- **Die Doppelabrechnungssperre liegt in der DATENBANK** (`invoicing.billing_link`, drei
-  partielle UNIQUE `WHERE released_at IS NULL`). Ein UNIQUE auf der Rechnungsposition ginge
-  nicht: nach einem Storno müssen dieselben Stunden wieder abrechenbar sein. **Der Storno löst
-  die Bindung.**
+- **Die Doppelabrechnungssperre liegt in der DATENBANK** (`invoicing.billing_link`, **vier**
+  partielle UNIQUE `WHERE released_at IS NULL` — seit 0139 auch `material_entry_id`). Ein
+  UNIQUE auf der Rechnungsposition ginge nicht: nach einem Storno müssen dieselben Stunden
+  wieder abrechenbar sein. **Der Storno löst die Bindung** — und zwar je Rechnung, nicht je
+  Quellart; eine neue Herkunft erbt das automatisch.
+- **Bericht und Materialbuchung behaupten dieselbe Sache — sie werden nie beide fakturiert.**
+  Am Einsatz gibt es zwei „Material"-Formulare (`site_report_line` und `material_entry`, seit
+  0139 beide abrechenbar). Steht dieselbe Artikel-Identität in beiden, weist
+  `_regie_quellenkonflikt_pruefen` den Lauf ab — auch über **zwei Rechnungen hinweg**, weil er
+  am AUFTRAG fragt. **Nicht mengenmäßig verrechnen:** In der Regie gibt es kein unabhängiges
+  Soll; sagt der Bericht 3 und die Buchung 5, weiß niemand, ob es 5 oder 8 waren. Der Ausweg ist
+  ein Schalter (`mit_berichten`/`mit_material`), also eine Entscheidung eines Menschen — dieselbe
+  Haltung wie bei `mit_zeiten`.
 - **Was die DB nicht sehen kann, fängt der Service — und zwar am AUFTRAG.** Angebots- und
   Berichtspositionen sind disjunkte Quellen; dieselbe Leistung ließ sich über beide Wege je
   einmal fakturieren (reproduziert: 178,50 € auf zwei Rechnungen).
@@ -113,6 +122,13 @@ Ausführliche Herleitungen: `docs/archiv/chronik-2026-07.md`.
   er eine **Preisvereinbarung, die der Monteur auf der Baustelle abschließt**; mit Mengen ist er
   ein Leistungsnachweis. Ein Schema-Test durchsucht `information_schema` nach Geldspalten und
   hält die Regel auch gegen künftige Migrationen.
+- **Dasselbe gilt für die Materialbuchung am Einsatz** (`workflow.material_entry`). Sie wurde
+  mit 0139 abrechenbar — über einen **Artikelbezug**, ausdrücklich **nicht** über eine
+  Preisspalte: Die Erfassung vor Ort liefert die **Menge**, das Belegwesen den **Preis**. Der
+  Schema-Test läuft seither über **beide** Tabellen. Die Freitextbuchung ohne Artikel bleibt
+  erlaubt und wird nie mit 0,00 € abgerechnet, sondern geht mit dem Grund
+  `MATERIAL_OHNE_ARTIKEL` in die Preisklärung. Der Artikelbezug ist eine **Identität, kein
+  Lagerbestand** (B-26 — es wird nichts fortgeschrieben, reserviert oder abgebucht).
 - **Ein unterzeichneter Bericht ist versiegelt — auch seine Positionen und seine Anhänge.**
   Ohne den Anhang-Trigger war er nur scheinbar unveränderlich: die Fotos, auf die er sich
   beruft, ließen sich danach noch tauschen.
@@ -171,6 +187,43 @@ Ausführliche Herleitungen: `docs/archiv/chronik-2026-07.md`.
   Aufgabe, während `_guard_own_task` nur den *Zuständigen* durchließ. Behoben, indem „eigen" für
   Aufgaben **zugewiesen ODER selbst erstellt** heißt — Liste und Detail-Guard müssen dieselbe
   Definition benutzen, sonst zeigt die eine, was die andere verweigert.
+- **Ein öffentlicher Link ist ein Bearer-Geheimnis: unbekannt, abgelaufen und widerrufen geben
+  DIESELBE Antwort** — bytegleich, gleicher Statuscode, gleicher Weg (eine indizierte Abfrage
+  auf den Hash). Jede Unterscheidung, im Wortlaut oder in der Laufzeit, sagt dem Ratenden, dass
+  er nah dran war. In der DB liegt nur der SHA-256-Hash (CHECK auf 64 Hex-Zeichen,
+  `security.public_link`/0141), die Einlösung ist endgültig (Guard-Trigger: `used_at` läuft nur
+  vorwärts, `revoked_at` nie zurück). Ein GET auf einen solchen Link schreibt nichts: sonst
+  löste ihn jeder Vorschau-Bot eines Mailprogramms aus.
+- **Ein EINGELÖSTER Link gehört nicht in diese Gruppe — er bleibt lesbar, bis er abläuft.** Wer
+  eingelöst hat, hat den Besitz nachgewiesen; ihm den Ausgang zu verweigern verrät niemandem
+  etwas und lässt nur den Kunden glauben, seine Zusage sei fehlgeschlagen, weil ein Neuladen
+  „ungültiger Link" zeigt. Der frühere Zuschnitt („alle vier gleich") war an dieser einen Stelle
+  falsch und ist zurückgenommen.
+- **Wie oft ein Link zählt, steht AM LINK, nicht im Verbraucher** (`public_link.single_use`,
+  aus `purpose` abgeleitet, fail-closed einmalig). Nur so kann die Datenbank es durchsetzen
+  (`CHECK (NOT single_use OR use_count <= 1)`) und der Guard es einfrieren. Die Angebotsfreigabe
+  ist einmalig, die Kunden-Terminbuchung bewusst nicht (absagen/umbuchen über denselben Link) —
+  ein Unterbau, dessen Token nach dem ersten Klick tot ist, kann das nicht tragen. **Die
+  Einmaligkeit der fachlichen ERKLÄRUNG hängt trotzdem am Beleg**, nicht am Token: Beim Angebot
+  lässt der Statusautomat VERSENDET → ANGENOMMEN/ABGELEHNT genau einmal zu.
+- **Der `purpose` ist die Zuständigkeitsgrenze, nicht nur ein Etikett.** `public_link` trägt die
+  Links aller Bereiche, die Endpunkte hängen je an einem Modulrecht. Auflösen, Auflisten und
+  **Widerrufen** filtern deshalb immer auf den Zweck — sonst legte das Angebotsrecht fremde
+  Links still.
+- **Eine anmeldefreie Antwort wird AUFGEZÄHLT, nie gefiltert.** Der Kunde muss Preise sehen,
+  sonst kann er nichts annehmen; `unit_cost` und `markup_percent` müssen dabei **strukturell**
+  unerreichbar sein, nicht bloß weggelassen. Dasselbe Argument wie bei `QuoteLineMengenOut`:
+  Eine Feldliste, die durch Weglassen entsteht, vergisst beim nächsten Betragsfeld still.
+- **Ein Automat schreibt nie unter dem Namen eines Menschen.** Es gibt genau einen technischen
+  Akteur (`security.app_user.is_system`, 0141); für ihn ist ein Login-Konto physisch
+  ausgeschlossen (Trigger auf `public.accounts_user`, greift bei INSERT **und** UPDATE). Der
+  frühere Rückfall „der älteste aktive Account" ist abgeschafft — er schrieb dem Erstbesten die
+  Taten der Scheduler zu, und ein Audit, das den Falschen nennt, ist schlimmer als eins, das
+  schweigt.
+- **Der Kundenversand hat einen EIGENEN Schalter** (`MCN_PUBLIC_LINK_MAIL`), getrennt von
+  `MCN_EMAIL_BACKEND`. Wer den Backend-Schalter eines Tages auf SMTP stellt, um Rechnungen zu
+  versenden, machte sonst nebenbei einen fabrikneuen Versand an echte Kundenadressen scharf,
+  ohne das je entschieden zu haben.
 - **Wer den Zugriff verliert, erfährt es** (`AUFGABE_ENTZOGEN`). Eine Aufgabe, die nach dem
   Umhängen einfach aus der Liste verschwindet, ist derselbe stille Verlust wie eine, von der
   niemand erfährt — nur andersherum. Die Meldung trägt dann bewusst **nichts Neues**: Titel und

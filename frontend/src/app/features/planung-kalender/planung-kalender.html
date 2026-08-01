@@ -18,7 +18,25 @@
       <button type="button" class="btn" (click)="next()" aria-label="Nächster Monat">›</button>
     </div>
     <span class="kal-monat" aria-hidden="true">{{ monthLabel() }}</span>
+    <!-- ICS-Export des angezeigten Monats (RFC 5545). Download als Blob durch
+         den Auth-Interceptor, nicht als Direktlink — sonst fehlten Session und
+         CSRF. Wer nur eigene Termine sehen darf, bekommt serverseitig auch nur
+         seine. -->
+    <button
+      type="button"
+      class="btn kal-export"
+      [disabled]="icsBusy()"
+      (click)="monatExportieren()"
+    >
+      {{ icsBusy() ? 'Export läuft …' : 'Monat exportieren (.ics)' }}
+    </button>
   </div>
+
+  @if (icsFehler(); as f) {
+    <div class="note note--error" role="alert">
+      <p class="note__text"><strong>Export nicht möglich:</strong> {{ f }}</p>
+    </div>
+  }
 
   <p class="sr-only" role="status">{{ summary() }}</p>
 

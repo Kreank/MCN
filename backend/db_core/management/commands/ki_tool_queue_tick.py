@@ -14,6 +14,7 @@ from django.core.management.base import BaseCommand, CommandError
 from db_core.ai import engine, proposal, runtime
 from db_core.ai import workflow_sprachmemo  # noqa: F401 — registriert den v1-Workflow
 from db_core.models import AppUser
+from db_core.services import oeffentlicher_link
 
 
 class Command(BaseCommand):
@@ -22,8 +23,8 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument(
             "--actor",
-            help="app_user-UUID als Akteur der Runtime-Writes (Default: erster "
-            "aktiver Account). Empfohlen: ein eigener KI-Service-Account.",
+            help="app_user-UUID als Akteur der Runtime-Writes (Default: der "
+            "technische Akteur 'Online-Selbstbedienung', Migration 0141).",
         )
         parser.add_argument(
             "--limit", type=int, default=10, help="Max. neue Calls pro Tick (Default 10)."
@@ -61,7 +62,10 @@ class Command(BaseCommand):
             if actor is None:
                 raise CommandError(f"Kein aktiver security.app_user mit id '{roh}'.")
             return actor
-        actor = AppUser.objects.filter(status="ACTIVE").order_by("created_at").first()
-        if actor is None:
-            raise CommandError("Kein aktiver security.app_user als Akteur gefunden.")
-        return actor
+        # Ohne --actor: der TECHNISCHE Akteur (Migration 0141), nie mehr „der
+        # älteste aktive Account". Der schrieb dem erstbesten Menschen die Taten
+        # eines Automaten in den Audit-Trail.
+        try:
+            return oeffentlicher_link.systemakteur()
+        except oeffentlicher_link.LinkError as exc:
+            raise CommandError(str(exc))

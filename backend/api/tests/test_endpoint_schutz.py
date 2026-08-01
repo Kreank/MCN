@@ -55,6 +55,17 @@ WHITELIST = {
     # Browser des Handwerkers, ohne MCN-Sitzung). Autorisierung ist das Einmal-
     # Token in der URL (in der DB nur als Hash); kein Modul-Recht, auth=None.
     "/api/pricing/warenkorb-return/{token}",
+    # Kunden-Freigabelink zum Angebot: Der Kunde hat kein MCN-Konto und wird
+    # auch keins bekommen — er klickt einen Link aus einer E-Mail. Autorisierung
+    # ist das Einmal-Token in der URL (in der DB nur als SHA-256-Hash,
+    # security.public_link/0141); kein Modul-Recht, auth=None. Abgesichert
+    # stattdessen durch: Drosselung je IP (dieselbe DB-Mechanik wie der Login),
+    # CSRF am POST (_require_csrf), EINE einheitliche Antwort für unbekannt/
+    # abgelaufen/widerrufen/verbraucht, eine Antwort als Positivliste ohne
+    # EK/Marge, und einen Schreibweg über den regulären Service mit dem
+    # Systemakteur. Nachgewiesen in api/tests/test_oeffentlicher_link_api.py.
+    "/api/oeffentlich/angebot/{token}",
+    "/api/oeffentlich/angebot/{token}/entscheidung",
 }
 
 # Authentifiziert (auth=django_auth), aber bewusst OHNE Modul-Recht: jeder darf

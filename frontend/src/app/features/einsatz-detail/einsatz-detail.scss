@@ -224,6 +224,92 @@ a.bezug__item:focus-visible {
   font-style: italic;
 }
 
+// Der Wegweiser zwischen den beiden Erfassungen (Verbrauch vs. unterschriebener
+// Nachweis). Bewusst reiner TEXT mit ruhiger Flaeche — die Unterscheidung darf
+// nicht an einer Farbe haengen (WCAG 1.4.1).
+.erfassung__hinweis {
+  margin: 0 0 var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-sunken);
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--radius);
+  font-size: var(--step--1);
+  line-height: 1.5;
+  color: var(--ink-muted);
+
+  strong {
+    color: var(--ink);
+  }
+}
+
+// ====================== Artikel-Picker der Materialbuchung ==================
+// PREISFREI: Der Server liefert hier strukturell kein Geldfeld. Es gibt also
+// keinen Preis, den dieses Markup versehentlich anzeigen koennte.
+.artikel-wahl {
+  margin: 0 0 var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.artikel-wahl__legende {
+  padding: 0 var(--space-2);
+  font-size: var(--step--1);
+  font-family: var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.artikel-wahl__gewaehlt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-2);
+}
+.artikel-wahl__liste {
+  margin-top: var(--space-2);
+  max-height: 14rem;
+  overflow-y: auto;
+}
+.artikel-wahl__treffer {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.artikel-wahl__treffer-btn {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  width: 100%;
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  cursor: pointer;
+
+  &:hover {
+    background: var(--surface-sunken);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+.artikel-wahl__name {
+  color: var(--ink);
+  font-weight: 600;
+}
+.artikel-wahl__nr {
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
 // ============================ Statusverlauf =================================
 .verlauf {
   list-style: none;
@@ -280,4 +366,24 @@ a.bezug__item:focus-visible {
   font-size: var(--step--1);
   color: var(--ink-muted);
   font-style: italic;
+}
+
+/* Ergaenzende Kleinangabe in einem Feld (z. B. das Gewerk-Kuerzel, das auch in
+   der Einsatznummer steckt). Bewusst Text, nicht Farbe. */
+.feld__zusatz {
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+/* Qualifikationsbedarf des Termins (Reiter „Zuweisungen"). Die Auswahl selbst
+   nutzt die globalen `wahl`-Bausteine; hier nur der Rahmen darum. */
+.bedarf {
+  margin-top: var(--space-5);
+}
+.bedarf__aktionen {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
 }

@@ -39,6 +39,18 @@ export interface CategoryRef {
   color_token: CategoryColorToken;
 }
 
+/**
+ * Gewerk am Einsatz (company.trade). Schlanker Verweis wie `CategoryRef`:
+ * `code` steckt auch in der Einsatznummer (E-HZG-26-0142), `label` ist der
+ * Klartext. Das Gewerk wird immer als **Text** gezeigt, nie als Farbpunkt —
+ * Zuordnung nie nur über Farbe (WCAG 1.4.1).
+ */
+export interface TradeRef {
+  id: string;
+  code: string;
+  label: string;
+}
+
 export interface ResourceRef {
   id: string;
   resource_number: string;
@@ -61,6 +73,9 @@ export interface ServiceJob {
   work_order: WorkOrderRef | null;
   property: PropertyRef | null;
   category: CategoryRef | null;
+  /** Gewerk (null = keines gepflegt, NICHT „Sonstiges"). Der auftragsgebundene
+   * Einsatz erbt es beim Anlegen vom Auftrag. */
+  trade: TradeRef | null;
   assignee_count: number;
 }
 
@@ -130,11 +145,30 @@ export interface TimeEntry {
   user: string | null;
 }
 
+/**
+ * Materialverbrauch am Einsatz — **ohne jedes Geldfeld**.
+ *
+ * Seit Migration 0139 ist die Buchung abrechenbar: `source_article_id` ist die
+ * Identität des Verbrauchten und die einzige Grundlage, aus der der SERVER später
+ * einen Preis ermittelt. Ein Preis steht hier nicht und soll hier nie stehen —
+ * der Monteur erfasst Mengen, nicht Geld (Invarianten Kap. 3 und 5).
+ */
 export interface MaterialEntry {
   description: string;
   quantity: string;
   unit: string;
   note: string | null;
+  source_article_id: string | null;
+  /** Artikelnummer als Lesehilfe — preisfrei. */
+  source_article_number: string | null;
+}
+
+/** Treffer der preisfreien Artikelsuche für die Materialbuchung. */
+export interface MaterialArtikel {
+  id: string;
+  article_number: string;
+  description: string;
+  unit: string;
 }
 
 // --- Schreib-Payloads ------------------------------------------------------
@@ -156,6 +190,9 @@ export interface ServiceJobCreate {
   on_site_contact_party_id?: string | null;
   access_instructions?: string | null;
   appointment_category_id?: string | null;
+  /** Gewerk. Weglassen heißt beim auftragsgebundenen Einsatz: der Server erbt es
+   * vom Auftrag. Der freie Termin bleibt dann ohne Gewerk. */
+  trade_id?: string | null;
 }
 
 // PATCH /api/planung/einsaetze/{id} — Teil-Update: nur gesetzte Felder werden
@@ -166,6 +203,9 @@ export interface ServiceJobUpdate {
   title?: string | null;
   property_id?: string | null;
   access_instructions?: string | null;
+  /** Gewerk ändern; ausdrückliches `null` entfernt es. Es wird dabei NICHT
+   * erneut vom Auftrag geerbt — Erben ist eine Voreinstellung der Anlage. */
+  trade_id?: string | null;
 }
 
 // POST /api/planung/einsaetze/{id}/schedule
@@ -201,6 +241,13 @@ export interface MaterialLogInput {
   quantity: string;
   unit: string;
   note?: string | null;
+  /**
+   * Optionaler Artikelbezug. Nur damit kann der Server später einen Preis
+   * ermitteln; ohne ihn geht die Buchung in die Preisklärung des
+   * Abrechnungslaufs — sie verschwindet nicht und wird nie mit 0,00 € berechnet.
+   * **Kein Preisfeld** — der Preis entsteht im Beleg, nicht auf der Baustelle.
+   */
+  source_article_id?: string | null;
 }
 
 // --- Plantafel-Board -------------------------------------------------------
@@ -263,6 +310,8 @@ export interface BoardJob {
   /** Kompakte Zieladresse (Straße, Stadt) — „wo ist der Einsatz" auf der Kachel. */
   property_address: string | null;
   category: CategoryRef | null;
+  /** Gewerk — als Text auf der Kachel; das Board filtert danach. */
+  trade: TradeRef | null;
   assignee_ids: string[];
   resource_ids: string[];
   conflicts: Konflikt[];
@@ -284,6 +333,7 @@ export interface BacklogJob {
   property_name: string | null;
   property_address: string | null;
   category: CategoryRef | null;
+  trade: TradeRef | null;
   order_number: string | null;
 }
 
@@ -325,6 +375,10 @@ export interface PlantafelQuery {
   date_to: string;
   q?: string | null;
   category_id?: string | null;
+  /** Gewerkfilter. Greift auf BEIDE Bahnen — Raster UND Rückstand: Der Rückstand
+   * ist die Quelle des Ziehens; er darf nicht Termine anbieten, die im gefilterten
+   * Raster sofort wieder verschwinden. */
+  trade_id?: string | null;
   backlog_q?: string | null;
 }
 
@@ -343,6 +397,9 @@ export interface TerminCreate {
   on_site_contact_party_id?: string | null;
   access_instructions?: string | null;
   appointment_category_id?: string | null;
+  /** Gewerk. Ohne Angabe erbt der auftragsgebundene Termin das Gewerk seines
+   * Auftrags; der freie Termin bleibt ohne. */
+  trade_id?: string | null;
   assignee_ids?: string[];
   resource_ids?: string[];
 }
@@ -366,6 +423,9 @@ export interface TerminUpdate {
   on_site_contact_party_id?: string | null;
   access_instructions?: string | null;
   appointment_category_id?: string | null;
+  /** Gewerk ändern; ausdrückliches `null` entfernt es (kein erneutes Erben vom
+   * Auftrag). */
+  trade_id?: string | null;
   assignee_ids?: string[];
   resource_ids?: string[];
   /** Begründung für den Statuswechsel GEPLANT → UNGEPLANT. */

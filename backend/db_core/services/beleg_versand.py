@@ -464,3 +464,156 @@ def send_quote_email(actor, *, quote_id, to_address=None):
         party_id=party.id if party is not None else None,
         is_commercial=True,
     )
+
+
+# --- Freigabelink per E-Mail (fertig verdrahtet, betrieblich noch gesperrt) --
+#
+# ⚠️ **Es geht hier heute keine Mail raus, und das ist Absicht.**
+# `MCN_PUBLIC_LINK_MAIL_ENABLED` (env `MCN_PUBLIC_LINK_MAIL`) steht auf 0. Bis
+# der Betrieb ihn bewusst umlegt, verweigert `_freigabe_versand_erlaubt()` den
+# Versand mit einer klaren 422-Meldung — BEVOR eine Verbindung aufgebaut oder
+# eine Nachricht gebaut wird. Betreff, Text und der ganze Weg dahinter sind
+# fertig; es fehlt genau diese eine Freischaltung.
+#
+# Warum ein eigener Schalter neben `MCN_EMAIL_BACKEND`: Der Backend-Schalter gilt
+# für alles (Rechnung, Mahnung, Passwort-Reset). Wer ihn eines Tages auf SMTP
+# stellt, um Rechnungen zu versenden, machte sonst zugleich einen fabrikneuen
+# Kundenversand an echte Adressen scharf, ohne das je entschieden zu haben.
+
+class FreigabeVersandGesperrt(ValueError):
+    """Der Versand des Freigabelinks ist betrieblich nicht freigeschaltet (→ 422)."""
+
+
+def _freigabe_versand_erlaubt():
+    from django.conf import settings
+
+    if not getattr(settings, "MCN_PUBLIC_LINK_MAIL_ENABLED", False):
+        raise FreigabeVersandGesperrt(
+            "Der E-Mail-Versand des Freigabelinks ist nicht freigeschaltet. "
+            "Der Link wurde erzeugt und kann kopiert und selbst verschickt "
+            "werden. Freischaltung: MCN_PUBLIC_LINK_MAIL=1 in der Umgebung."
+        )
+
+
+def _freigabe_quote(quote_id):
+    quote = (
+        Quote.objects.filter(id=quote_id)
+        .select_related("work_order")
+        .prefetch_related("work_order__parties__party")
+        .first()
+    )
+    if quote is None:
+        raise ValueError("Angebot nicht gefunden.")
+    if quote.status != "VERSENDET":
+        raise ValueError(
+            "Nur ein versendetes Angebot kann online zur Freigabe gestellt werden."
+        )
+    return quote
+
+
+def freigabe_empfaenger(quote_id, *, to_address=None):
+    """Prüft den Versandweg VOR dem Erzeugen des Links und gibt `(quote, party,
+    adresse)` zurück.
+
+    Zwei Fehlerfälle, beide 422 und beide ohne Nebenwirkung:
+
+      * **Kein ableitbarer Empfänger.** Ein Angebot hat keine eigenen
+        Beteiligten; der Empfänger kommt über den *optionalen* Auftrag
+        (INVOICE_RECIPIENT, ersatzweise PRINCIPAL). Ohne Auftrag gibt es keinen —
+        dann muss der Nutzer eine Adresse eintragen, sonst liefe der Versand ins
+        Leere und niemand erführe es.
+      * **Der Versand ist gesperrt** (siehe oben).
+
+    Die Prüfung läuft absichtlich, bevor ein Link entsteht: Ein Link, dessen
+    Klartext in einer Fehlerantwort verlorengeht, wäre unbrauchbar und stünde
+    trotzdem für 14 Tage in der Datenbank.
+    """
+    quote = _freigabe_quote(quote_id)
+    party = beleg_pdf_service.quote_recipient_party(quote)
+    address = (to_address or "").strip() or None
+    if address is None and party is not None:
+        address = primary_email(party.id)
+    if not address:
+        raise ValueError(
+            "Für dieses Angebot ist kein Empfänger ermittelbar (es hängt an "
+            "keinem Auftrag mit Rechnungsempfänger oder dort ist keine "
+            "E-Mail-Adresse gepflegt). Bitte eine Adresse angeben oder den "
+            "Link kopieren und selbst verschicken."
+        )
+    _freigabe_versand_erlaubt()
+    return quote, party, address
+
+
+def _freigabe_body(quote, link_url, company_name, gueltig_bis):
+    """Sachliche Standardnachricht mit dem Freigabelink (Stil wie `_quote_body`)."""
+    number = quote.quote_number or "(ohne Nummer)"
+    frist = gueltig_bis.strftime("%d.%m.%Y") if gueltig_bis else None
+    lines = [
+        "Sehr geehrte Damen und Herren,",
+        "",
+        f"unser Angebot {number} können Sie online einsehen und direkt "
+        "annehmen oder ablehnen:",
+        "",
+        link_url,
+        "",
+        "Der Link gehört nur zu diesem Angebot und erlaubt nichts weiter als "
+        "diese eine Entscheidung.",
+    ]
+    if frist:
+        lines.append(f"Er ist bis zum {frist} gültig.")
+    lines += [
+        "",
+        "Wenn Sie lieber telefonisch oder schriftlich antworten möchten, "
+        "ist uns das ebenso recht.",
+        "",
+        "Mit freundlichen Grüßen",
+    ]
+    if company_name:
+        lines.append(company_name)
+    return "\n".join(lines)
+
+
+def send_quote_freigabe_email(actor, *, quote_id, link_url, gueltig_bis=None,
+                              to_address=None):
+    """Versendet den Freigabelink zu einem versendeten Angebot.
+
+    Reine Zustellung, kein Statuswechsel — das Angebot ist mit dem Versand
+    bereits festgeschrieben (B-30). Protokolliert über `content.communication`
+    wie jeder andere Versand.
+
+    ⚠️ **Der Link steht im Text und landet damit in `content.communication`.**
+    Das ist hier vertretbar und anders als beim Passwort-Reset (`api/auth.py`
+    protokolliert dessen Link bewusst NICHT): Ein Reset-Token öffnet ein Konto,
+    dieser Link erlaubt genau eine Entscheidung an genau einem Angebot, und wer
+    das Protokoll lesen darf, darf das Angebot ohnehin sehen. Wem das zu weit
+    geht, widerruft den Link — dafür gibt es `revoked_at`.
+
+    Fehler: Angebot unbekannt/nicht VERSENDET → ValueError (422); kein
+    Empfänger → ValueError (422); Versand nicht freigeschaltet →
+    FreigabeVersandGesperrt (422); SMTP/Schlüssel → aus `send_mail`.
+    """
+    quote, party, address = freigabe_empfaenger(quote_id, to_address=to_address)
+    # Zweite, absichtlich redundante Prüfung unmittelbar vor dem Versand: Der
+    # Aufrufer könnte `freigabe_empfaenger` überspringen — diese Zeile ist die
+    # letzte Stelle, an der die Sperre noch greift.
+    _freigabe_versand_erlaubt()
+
+    profile = firma_service.get_company_profile()
+    company_name = (
+        profile.company_name if profile and profile.company_name else None
+    )
+    subject = (
+        f"Angebot {quote.quote_number} — Ihre Freigabe"
+        if quote.quote_number
+        else "Ihr Angebot — Ihre Freigabe"
+    )
+    body = _freigabe_body(quote, link_url, company_name, gueltig_bis)
+
+    return send_mail(
+        actor,
+        to_address=address,
+        subject=subject,
+        body=body,
+        party_id=party.id if party is not None else None,
+        is_commercial=True,
+    )

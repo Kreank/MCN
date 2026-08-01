@@ -9,7 +9,9 @@ import {
 } from '../../core/einsatz.model';
 import { PlanungNav } from '../planung-nav/planung-nav';
 import { KeinZugriff } from '../../shared/kein-zugriff/kein-zugriff';
-import { VerbotenState, fehlerState } from '../../shared/http-fehler';
+import { VerbotenState, fehlerDetail, fehlerState } from '../../shared/http-fehler';
+import { KalenderService, icsFehlertext } from '../../core/kalender.service';
+import { dateiDownloadAusloesen } from '../../shared/datei-download';
 
 type ViewState =
   | { kind: 'loading' }
@@ -67,6 +69,10 @@ function addMonthsIso(monthIso: string, n: number): string {
 })
 export class PlanungKalender {
   private readonly svc = inject(EinsatzService);
+  private readonly kalenderSvc = inject(KalenderService);
+
+  protected readonly icsBusy = signal(false);
+  protected readonly icsFehler = signal<string | null>(null);
 
   protected readonly weekdays = WEEKDAYS;
   protected readonly monthStart = signal(monthStartIso());
@@ -156,6 +162,37 @@ export class PlanungKalender {
     return s.jobs
       .filter((j) => localDayIso(j.scheduled_start) === dayIso)
       .sort((a, b) => (a.scheduled_start < b.scheduled_start ? -1 : 1));
+  }
+
+  /**
+   * Den angezeigten Monat als .ics herunterladen.
+   *
+   * Exportiert bewusst den KALENDERMONAT, nicht das (um Vor-/Nachlauftage
+   * geweitete) Gitter: „Juli exportieren" soll den Juli liefern und nicht
+   * stillschweigend drei Junitermine mitnehmen.
+   */
+  monatExportieren(): void {
+    if (this.icsBusy()) return;
+    const von = this.monthStart();
+    const bis = addDaysIso(addMonthsIso(von, 1), -1);
+    this.icsBusy.set(true);
+    this.icsFehler.set(null);
+    this.kalenderSvc.zeitraum(von, bis).subscribe({
+      next: (blob) => {
+        dateiDownloadAusloesen(blob, `einsaetze-${von}_${bis}.ics`);
+        this.icsBusy.set(false);
+      },
+      error: (err) => {
+        this.icsBusy.set(false);
+        void this.icsFehlerAnzeigen(err);
+      },
+    });
+  }
+
+  /** Bei responseType 'blob' ist auch der 422-Körper ein Blob — als Text lesen. */
+  private async icsFehlerAnzeigen(err: unknown): Promise<void> {
+    const detail = (await icsFehlertext(err)) ?? fehlerDetail(err);
+    this.icsFehler.set(detail ?? 'Der Kalenderexport ist fehlgeschlagen.');
   }
 
   private fetch(): void {

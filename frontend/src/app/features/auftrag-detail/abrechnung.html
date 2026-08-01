@@ -211,6 +211,48 @@
           </div>
         }
 
+        <!-- Material am Einsatz (Migration 0139). Bis dahin war es erfasst, aber
+             nirgends abrechenbar — und genau deshalb steht der fehlende Preis
+             HIER schon, nicht erst als 422 im Abrechnungslauf. -->
+        <h4 class="ab__h4">Material am Einsatz</h4>
+        @if (o.materialbuchungen.length === 0) {
+          <p class="ab__leer">Kein offenes Material.</p>
+        } @else {
+          <div class="ab__wrap">
+            <table class="ab__tab">
+              <caption class="sr-only">
+                Am Einsatz gebuchtes Material dieses Auftrags mit Preisstatus
+              </caption>
+              <thead>
+                <tr>
+                  <th scope="col">Material</th>
+                  <th scope="col" class="num">Menge</th>
+                  <th scope="col">Preis</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (m of o.materialbuchungen; track m.material_entry_id) {
+                  <tr [class.ab__zeile--offen]="unbekannt(m)">
+                    <td>{{ m.description }}</td>
+                    <td class="num">{{ menge(m.quantity, m.unit) }}</td>
+                    <td>
+                      @if (unbekannt(m)) {
+                        <span class="stamp stamp--warn ab__marke">
+                          <span aria-hidden="true">▲</span> Preis unbekannt
+                        </span>
+                        <span class="ab__grund">{{ m.grund_text }}</span>
+                      } @else {
+                        <span class="ab__preis">{{ euro(m.einzelpreis) }}</span>
+                        <span class="ab__preis-fein">je {{ m.unit || 'Einheit' }}</span>
+                      }
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+
         <p class="ab__fuss">
           Ein unbekannter Preis wird <strong>nicht</strong> zu 0,00 €: Beim Abrechnen fragt das
           System ihn ab. Beträge und Summen rechnet ausschließlich der Server.
@@ -303,6 +345,12 @@
                 label="Zeitbuchungen abrechnen"
                 typ="checkbox"
                 hinweis="Führt der Bericht die Arbeitszeit schon als Position und läuft daneben die Stempeluhr, stünde dieselbe Stunde zweimal auf der Rechnung. Nur ein Mensch kann entscheiden, welche die Wahrheit ist."
+              />
+              <app-feld
+                [control]="regieForm.controls.mit_material"
+                label="Material am Einsatz abrechnen"
+                typ="checkbox"
+                hinweis="Dasselbe Material lässt sich im Bericht UND als Buchung am Einsatz erfassen. Steht es in beiden, weist der Server den Lauf ab — dann hier oder oben genau eine der beiden Quellen abwählen."
               />
               <button
                 type="submit"

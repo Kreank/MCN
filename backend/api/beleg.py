@@ -114,8 +114,9 @@ class QuoteLineOut(Schema):
     # Anrechnungsposition einer Schlussrechnung (negativer Betrag). Read-only: der
     # Editor darf sie nicht ändern — sie wird aus der Verkettung erzeugt.
     advance_invoice_id: UUID | None = None
-    # Herkunft der **Abrechnungsbindung** (Migration 0084):
-    # BERICHTSPOSITION | ZEITBUCHUNG | ANGEBOTSPOSITION — oder null (frei erfasst).
+    # Herkunft der **Abrechnungsbindung** (Migration 0084, vierte Quelle seit 0139):
+    # BERICHTSPOSITION | ZEITBUCHUNG | ANGEBOTSPOSITION | MATERIALBUCHUNG —
+    # oder null (frei erfasst).
     #
     # Nur bei Rechnungen gesetzt. Das UI braucht es, um genau **diese** Zeilen als
     # unveränderlich zu kennzeichnen (der Trigger sperrt UPDATE/DELETE je Zeile,
@@ -1408,13 +1409,18 @@ class PreisKlaerungOut(Schema):
     nennt den Einzelpreis und schickt denselben Aufruf mit `preise` erneut. Eine
     0-€-Position gibt es nicht, und weggelassen wird auch nichts.
     """
-    quelle_art: str               # BERICHTSPOSITION | ZEITGRUPPE
+    quelle_art: str               # BERICHTSPOSITION | ZEITGRUPPE | MATERIALBUCHUNG
     quelle_id: UUID
     bezeichnung: str
     menge: Decimal | None = None
     einheit: str | None = None
     # EK_FEHLT | KEINE_VK_REGEL | KEINE_HERKUNFT | LEISTUNG_UNVOLLSTAENDIG |
-    # LOHNGRUPPE_FEHLT | VK_NULL | LOHNSATZ_NULL
+    # LOHNGRUPPE_FEHLT | VK_NULL | LOHNSATZ_NULL | MATERIAL_OHNE_ARTIKEL
+    #
+    # MATERIAL_OHNE_ARTIKEL: Die Materialbuchung am Einsatz nennt keinen Artikel,
+    # sondern nur freien Text — daraus lässt sich kein VK ableiten. Der Ausweg ist
+    # ein anderer als bei EK_FEHLT (Artikel am Einsatz zuordnen bzw. Preis nennen),
+    # deshalb ein eigener Grund.
     #
     # VK_NULL / LOHNSATZ_NULL sind die **stille Null**: Der Server hat eine Zahl,
     # aber sie ist 0,00 € (0-EK aus dem Import, Festpreis 0,00, Lohnsatz 0,00 €/h
@@ -1469,6 +1475,11 @@ class RechnungAusAuftragIn(Schema):
     preise: dict[UUID, Decimal] = {}
     mit_berichten: bool = True
     mit_zeiten: bool = True
+    # Am Einsatz gebuchtes Material (Migration 0139). Der Schalter ist der Ausweg
+    # aus der Doppelerfassung: Steht dieselbe Sache im Bericht UND als
+    # Materialbuchung, weist der Server den Lauf ab — dann entscheidet ein Mensch,
+    # welche der beiden Quellen die Wahrheit ist.
+    mit_material: bool = True
     invoice_date: date | None = None
     due_date: date | None = None
     payment_term_days: int | None = None
@@ -1521,16 +1532,27 @@ def rechnung_aus_angebot(request, payload: RechnungAusAngebotIn):
 
 @router.post(
     "/invoices/aus-auftrag",
-    response={201: InvoiceDetailOut, 422: PreisKlaerungFehlerOut},
+    response={
+        201: InvoiceDetailOut,
+        422: PreisKlaerungFehlerOut | EinheitUneindeutigFehlerOut,
+    },
     auth=django_auth,
 )
 def rechnung_aus_auftrag(request, payload: RechnungAusAuftragIn):
-    """Rechnung (ENTWURF) aus **Bericht + Zeiten** eines REGIE-Auftrags.
+    """Rechnung (ENTWURF) aus **Bericht + Zeiten + Material** eines REGIE-Auftrags.
 
     Nur unterzeichnete Berichte (ein nicht abgenommener Nachweis ist keine
-    Abrechnungsgrundlage) und nur Arbeitszeit-Buchungen; alles, was bereits eine
-    aktive Bindung trägt, bleibt draußen. **Preise rechnet der Server**
-    (`vk_vorschlag` / `wage_group.hourly_rate`).
+    Abrechnungsgrundlage), nur Arbeitszeit-Buchungen und das am Einsatz gebuchte
+    Material; alles, was bereits eine aktive Bindung trägt, bleibt draußen.
+    **Preise rechnet der Server** (`vk_vorschlag` / `wage_group.hourly_rate`).
+
+    Ist dieselbe Sache sowohl als **Berichtsposition** als auch als
+    **Materialbuchung** erfasst, antwortet der Endpunkt fail-closed mit **422** —
+    zusammen fakturiert stünde sie zweimal auf der Rechnung, und keine der vier
+    UNIQUE-Sperren sähe es (verschiedene Quellen). Der Ausweg ist ein Schalter
+    (`mit_berichten` / `mit_material`), nicht eine Vermutung des Servers.
+    Divergieren dabei die Einheiten desselben Artikels („Stk"/„Stück"), kommt die
+    Antwort als `einheit_uneindeutig`.
 
     Steht für eine Position kein Preis fest, antwortet der Endpunkt mit **422 und
     einer strukturierten Klärungsliste** (`preis_unbekannt`) — nicht mit 0,00 €
@@ -1549,6 +1571,7 @@ def rechnung_aus_auftrag(request, payload: RechnungAusAuftragIn):
             preise={str(k): v for k, v in (payload.preise or {}).items()},
             mit_berichten=payload.mit_berichten,
             mit_zeiten=payload.mit_zeiten,
+            mit_material=payload.mit_material,
             invoice_date=payload.invoice_date,
             due_date=payload.due_date,
             payment_term_days=payload.payment_term_days,
@@ -1562,6 +1585,14 @@ def rechnung_aus_auftrag(request, payload: RechnungAusAuftragIn):
             PreisKlaerungFehlerOut(
                 detail=str(exc),
                 preis_unbekannt=[PreisKlaerungOut(**p) for p in exc.positionen],
+            ),
+        )
+    except abrechnung_service.EinheitUneindeutig as exc:
+        return Status(
+            422,
+            EinheitUneindeutigFehlerOut(
+                detail=str(exc),
+                einheit_uneindeutig=[EinheitKonfliktOut(**k) for k in exc.konflikte],
             ),
         )
     except ValueError as exc:

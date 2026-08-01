@@ -141,6 +141,27 @@ export class PreisKlaerung {
     return p.quelle_art === 'ZEITGRUPPE' ? 'Stundensatz (€/h)' : 'Einzelpreis (€)';
   }
 
+  /**
+   * Woher die zu klärende Position stammt — im Klartext.
+   *
+   * Vorher stand an jeder Nicht-Zeit-Position „Berichtsposition". Das war schon
+   * beim Nachtrag (ABWEICHUNG) falsch und wäre es bei der Materialbuchung
+   * (Migration 0139) wieder: Der Nutzer soll in der Klärungsmaske sehen, WO er die
+   * Position findet, wenn er statt eines Preises lieber die Quelle korrigiert.
+   */
+  protected quelleLabel(p: PreisKlaerungPos): string {
+    switch (p.quelle_art) {
+      case 'ZEITGRUPPE':
+        return 'Zeiten';
+      case 'MATERIALBUCHUNG':
+        return 'Material am Einsatz';
+      case 'ABWEICHUNG':
+        return 'Abweichung (Soll-Ist)';
+      default:
+        return 'Berichtsposition';
+    }
+  }
+
   protected onAbsenden(): void {
     if (this.laedt()) return;
     const form = this.form();

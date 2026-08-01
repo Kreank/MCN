@@ -1,0 +1,344 @@
+// Die öffentliche Angebotsseite. Läuft ohne Leitstand-Rahmen; alle Farben und
+// Abstände kommen aus den Design-Tokens, damit Light/Dark und die
+// Kontrastnachweise aus `_tokens.scss` automatisch gelten.
+//
+// WCAG-relevante Festlegungen, die hier NICHT verhandelbar sind:
+//   * `--accent` (#ef804e) erscheint nur als FLÄCHE (Messkante, Rahmen), nie als
+//     Text auf hell — dafür steht `--accent-ink` bereit (5,31:1).
+//   * Jeder Zustand trägt Wort UND Zeichen; die Farbe ist nie der einzige Träger.
+//   * Fokusringe sind sichtbar und liegen außerhalb der Elementkante.
+//   * `prefers-reduced-motion` schaltet jede Bewegung ab.
+
+:host {
+  display: block;
+}
+
+.oa {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-6) var(--space-4) var(--space-8);
+}
+
+.oa__karte {
+  width: 100%;
+  max-width: 52rem;
+  padding: var(--space-6);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
+}
+
+.oa__karte--schmal {
+  max-width: 34rem;
+}
+
+// -------------------------------- Briefkopf ---------------------------------
+.oa__kopf {
+  padding-bottom: var(--space-5);
+  border-bottom: 1px solid var(--line);
+}
+
+.oa__brand {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-5);
+}
+
+.oa__mark {
+  display: grid;
+  place-items: center;
+  width: 3rem;
+  height: 3rem;
+  border-radius: var(--radius);
+}
+
+.oa__aussteller {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  font-style: normal;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+  text-align: right;
+
+  a {
+    color: var(--accent-ink);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    border-radius: var(--radius-sm);
+
+    &:focus-visible {
+      outline: 2.5px solid var(--focus-ring);
+      outline-offset: 2px;
+    }
+  }
+}
+
+.oa__firma {
+  color: var(--ink);
+  font-size: var(--step-0);
+}
+
+.oa__kicker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-hint);
+}
+
+// Messkante — Reinform des Akzents ausschließlich als Fläche/Deko.
+.oa__scale {
+  width: 2rem;
+  height: 0.5rem;
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--line-strong) 0,
+    var(--line-strong) 1px,
+    transparent 1px,
+    transparent 0.5rem
+  );
+  border-bottom: 2px solid var(--accent);
+}
+
+.oa__titel {
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-display);
+  font-size: var(--step-2);
+}
+
+.oa__objekt {
+  margin: 0 0 var(--space-4);
+  color: var(--ink-muted);
+  font-size: var(--step-1);
+}
+
+.oa__eckdaten {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: var(--space-3) var(--space-5);
+  margin: 0;
+}
+
+.oa__eck {
+  dt {
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-hint);
+  }
+  dd {
+    margin: 0.15rem 0 0;
+    color: var(--ink);
+  }
+}
+
+// -------------------------------- Inhalt ------------------------------------
+.oa__anschreiben {
+  margin: var(--space-5) 0 0;
+  white-space: pre-line;
+  color: var(--ink);
+}
+
+.oa__block {
+  margin-top: var(--space-6);
+}
+
+.oa__block-titel {
+  margin: 0 0 var(--space-3);
+  font-family: var(--font-display);
+  font-size: var(--step-1);
+}
+
+.oa__text {
+  margin: 0 0 var(--space-3);
+  color: var(--ink);
+}
+
+.oa__text--leise {
+  color: var(--ink-muted);
+  font-size: var(--step--1);
+}
+
+// Breite Inhalte scrollen in ihrem eigenen Rahmen — die Seite selbst nie.
+.oa__tabelle-rahmen {
+  overflow-x: auto;
+}
+
+.oa__tabelle {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--step-0);
+
+  th,
+  td {
+    padding: var(--space-3) var(--space-2);
+    text-align: left;
+    vertical-align: top;
+    border-bottom: 1px solid var(--line);
+  }
+
+  thead th {
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-hint);
+    border-bottom: 1.5px solid var(--line-strong);
+    white-space: nowrap;
+  }
+}
+
+.oa__z-nr {
+  width: 3rem;
+  font-family: var(--font-mono);
+  color: var(--ink-muted);
+}
+
+.oa__z-zahl {
+  text-align: right !important;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.oa__bezeichnung {
+  display: block;
+}
+
+// „nicht in der Summe" steht als TEXT daneben (siehe .oa__hinweis) — der
+// gestrichelte Rand ist nur die Verstärkung, nie der alleinige Träger.
+.oa__zeile--nachrichtlich td {
+  border-left: 2px dashed var(--line-strong);
+}
+
+.oa__hinweis {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+// -------------------------------- Summen ------------------------------------
+.oa__summen {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: var(--space-6) 0 0;
+  padding-top: var(--space-4);
+  border-top: 1.5px solid var(--line-strong);
+}
+
+.oa__summe {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+
+  dt {
+    color: var(--ink-muted);
+  }
+  dd {
+    margin: 0;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.oa__summe--gesamt {
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--line);
+  font-size: var(--step-1);
+
+  dt {
+    color: var(--ink);
+    font-weight: 600;
+  }
+  dd {
+    font-weight: 700;
+  }
+}
+
+// ------------------------------ Entscheidung --------------------------------
+.oa__entscheidung {
+  margin-top: var(--space-6);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--line);
+}
+
+.oa__aktionen {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.oa__ergebnis {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+  font-size: var(--step-0);
+}
+
+// -------------------------------- Fehler ------------------------------------
+.oa__alert {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+  padding: var(--space-3) var(--space-4);
+  border: 1.5px solid color-mix(in srgb, var(--warn-ink) 45%, var(--line-strong));
+  border-left-width: 3px;
+  border-radius: var(--radius);
+  background: var(--warn-tint);
+  color: var(--warn-ink);
+  font-size: var(--step--1);
+
+  &:focus-visible {
+    outline: 2.5px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+
+.oa__alert-mark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 0.85rem;
+  line-height: 1;
+}
+
+// -------------------------------- Schmal ------------------------------------
+@media (max-width: 40rem) {
+  .oa {
+    padding: var(--space-4) var(--space-3) var(--space-6);
+  }
+  .oa__karte {
+    padding: var(--space-4);
+  }
+  .oa__aussteller {
+    text-align: left;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oa *,
+  .oa *::before,
+  .oa *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

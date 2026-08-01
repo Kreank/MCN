@@ -9,6 +9,7 @@ import {
   BillingMode,
   OffeneAbrechnung,
   OffeneBerichtsposition,
+  OffeneMaterialbuchung,
   OffeneZeitgruppe,
   WorkOrderDetail,
 } from '../../core/auftrag.model';
@@ -144,6 +145,7 @@ export class Abrechnung {
     tax_code: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
     mit_berichten: this.fb.control(true, { nonNullable: true }),
     mit_zeiten: this.fb.control(true, { nonNullable: true }),
+    mit_material: this.fb.control(true, { nonNullable: true }),
   });
 
   // --- Preisklärung ---------------------------------------------------------
@@ -301,6 +303,7 @@ export class Abrechnung {
       tax_code: v.tax_code,
       mit_berichten: v.mit_berichten,
       mit_zeiten: v.mit_zeiten,
+      mit_material: v.mit_material,
       preise,
     };
     this.aktionLaedt.set(true);
@@ -356,7 +359,9 @@ export class Abrechnung {
     return iso ? isoDatumDe(iso) : '—';
   }
 
-  unbekannt(p: OffeneBerichtsposition | OffeneZeitgruppe): boolean {
+  unbekannt(
+    p: OffeneBerichtsposition | OffeneZeitgruppe | OffeneMaterialbuchung,
+  ): boolean {
     return p.preis_status === 'UNBEKANNT';
   }
 

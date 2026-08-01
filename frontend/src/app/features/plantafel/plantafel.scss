@@ -380,19 +380,23 @@
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
-  overflow: hidden;
   overflow-wrap: anywhere;
+  // `overflow: hidden` kommt aus der gemeinsamen Ellipsis-Gruppe weiter unten.
 }
 .tile__ort,
 .tile__status {
   font-size: 0.66rem;
   color: var(--ink-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  // Ellipsis kommt aus der gemeinsamen Gruppe weiter unten.
 }
+/* GEWERK an der Kachel — bewusst ein TEXT-Stempel, kein Farbpunkt (Zuordnung nie
+   nur ueber Farbe, WCAG 1.4.1; die Kategorie besetzt die Kachelfarbe ohnehin).
+   Teilt sich die Grundform mit „Freier Termin"/„Serientermin" und wird bei
+   schmalen Kacheln ebenso ausgeblendet — die volle Angabe bleibt in
+   `title`/`aria-label` und in der Einsatz-Mappe. */
 .tile__frei,
-.tile__serie {
+.tile__serie,
+.tile__gewerk {
   align-self: flex-start;
   padding: 0 0.3rem;
   font-size: 0.64rem;
@@ -401,7 +405,15 @@
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
 }
-.tile__kat {
+/* Dieselbe Schwelle wie fuer Ort/Kategorie/Konflikte (styles.scss) — hier
+   gehalten, damit die globale Datei unberuehrt bleibt. */
+@container plantafel-kachel (max-width: 8rem) {
+  .tile__gewerk {
+    display: none;
+  }
+}
+.tile__kat,
+.pkarte__gewerk {
   align-self: flex-start;
   margin: 0.1rem 0;
   font-size: 0.64rem;
@@ -449,9 +461,14 @@
 .tile__link {
   overflow: hidden;
 }
+// Eine Stelle fuer „eine Zeile, sonst Ellipse" — vorher stand das Tripel
+// dreimal im Blatt.
 .tile__time,
 .tile__title,
-.tile__ort {
+.tile__ort,
+.tile__status,
+.tile__gewerk,
+.tile__adresse {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -464,9 +481,7 @@
   // getoenten Kachel unter 4,5:1 — auf kat-amber dunkel bis 3,99:1.
   // --ink-muted haelt ueber alle acht Toene und beide Themes >= 5,08:1.
   color: var(--ink-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  // Ellipsis kommt aus der Gruppe darueber (war hier doppelt).
 }
 // Kachel-Aktionen bauen ebenfalls auf `.minibtn` auf.
 .tile__griff {

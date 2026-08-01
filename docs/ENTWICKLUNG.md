@@ -151,8 +151,11 @@ Anmeldung. Nicht verwechseln.
     die Rolle nur `EIGENE` sehen darf, der Endpunkt das aber nicht umsetzt.
     `EIGENE` wird **nie** stillschweigend zu `ALLE`.
   - `require_scoped(...)` — nur für Endpunkte, die wirklich auf eigene Zeilen
-    filtern (aktuell: Aufgaben, Einsätze inkl. Zeit-/Materialbuchung, **Dateien**).
-    Wer das nutzt, **muss** filtern, sonst ist die Begrenzung wirkungslos.
+    filtern (aktuell: Aufgaben, Einsätze inkl. Zeit-/Materialbuchung, **Dateien**,
+    **ICS-Kalenderexport**). Wer das nutzt, **muss** filtern, sonst ist die
+    Begrenzung wirkungslos. Beim Export heißt „filtern", dass ein mitgeschickter
+    `assignee_id` bei Scope `EIGENE` **überschrieben** wird, nicht bloß
+    vorbelegt — sonst zöge ein Monteur den Kalender eines Kollegen.
   - `require_create(...)` — für ANLEGEN, **aber nur bei Zeilen ohne setzbares
     Owner-Feld UND ohne fremdes Elternobjekt.**
 - **Faustregel (aus drei Review-Befunden gelernt):** Hängt die neue Zeile an einem

@@ -13,7 +13,10 @@ export type BenachrichtigungArt =
   | 'AUFGABE_ERLEDIGT'
   | 'AUFGABE_WIEDEROFFEN'
   | 'AUFGABE_VERWORFEN'
-  | 'AUFGABE_KOMMENTAR';
+  | 'AUFGABE_KOMMENTAR'
+  // Ein Kunde hat über seinen Freigabelink entschieden (Migration 0141).
+  | 'ANGEBOT_ANGENOMMEN'
+  | 'ANGEBOT_ABGELEHNT';
 
 export interface BenachrichtigungAusloeser {
   id: string;
@@ -55,5 +58,6 @@ export interface BenachrichtigungZaehler {
  */
 export function zielRoute(n: Benachrichtigung): string[] | null {
   if (n.target_type === 'workflow.task') return ['/aufgaben', n.target_id];
+  if (n.target_type === 'invoicing.quote') return ['/dokumente', n.target_id];
   return null;
 }

@@ -123,6 +123,10 @@ class AppUser(models.Model):
     display_name = models.TextField()
     principal_party_id = models.UUIDField(null=True, blank=True)
     status = models.TextField()  # ACTIVE | DISABLED
+    # Technischer Akteur (Scheduler, Online-Selbstbedienung), Migration 0141.
+    # Für solche Zeilen ist ein Login-Konto physisch ausgeschlossen — ein
+    # Trigger auf public.accounts_user weist es ab.
+    is_system = models.BooleanField(db_default=False)
     version = models.IntegerField()
     # db_default: die DB füllt die Zeitstempel selbst (DEFAULT now()); ohne das
     # würde die ORM ein explizites NULL einsetzen und den DB-Default aushebeln.
@@ -2436,6 +2440,17 @@ class MaterialEntry(models.Model):
 
     Reine Verbrauchserfassung (B-26: keine Bestandsführung). service_job ist
     Pflicht. Korrekturfenster B-28 setzt die DB durch.
+
+    **Seit Migration 0139 abrechenbar** (`abrechnung._materialbuchungen`): Mit
+    `source_article_id` läuft die Preisermittlung über dieselbe eine Rechenstelle
+    wie überall (`aufschlagsmatrix.vk_vorschlag`); die Bindung entsteht als
+    `billing_link` mit `source_kind='MATERIALBUCHUNG'`.
+
+    **Die Zeile führt KEINEN Preis** — und das bleibt so (Invariante Kap. 3,
+    dieselbe Regel wie am Baustellenbericht): Die Erfassung vor Ort liefert die
+    **Menge**, das Belegwesen den **Preis**. Ein Schema-Test durchsucht
+    `information_schema` nach Geldspalten und hält die Regel gegen künftige
+    Migrationen.
     """
 
     id = models.UUIDField(primary_key=True)
@@ -2448,6 +2463,18 @@ class MaterialEntry(models.Model):
     description = models.TextField()
     quantity = models.DecimalField(max_digits=15, decimal_places=3)
     unit = models.TextField()
+    # Optionaler Artikelbezug (0139): die IDENTITÄT des Verbrauchten, kein
+    # Lagerbuchungssatz (B-26 — kein Bestand, keine Fortschreibung). Ohne ihn ist
+    # der Preis nicht ermittelbar; der Abrechnungslauf schickt die Buchung dann in
+    # die Klärung, statt sie mit 0,00 € durchzulassen.
+    source_article = models.ForeignKey(
+        "Article",
+        models.DO_NOTHING,
+        db_column="source_article_id",
+        null=True,
+        blank=True,
+        related_name="material_entries",
+    )
     note = models.TextField(null=True, blank=True)
     recorded_by = models.ForeignKey(
         AppUser,
@@ -4192,8 +4219,12 @@ class BillingLink(models.Model):
     „Diese Berichtsposition / diese Zeitbuchung / diese Angebotsposition ist in
     DIESER Rechnungsposition abgerechnet."
 
+    Seit Migration 0139 kommt die **vierte** Herkunft dazu: die am Einsatz
+    gebuchte Materialposition (`workflow.material_entry`,
+    `source_kind='MATERIALBUCHUNG'`).
+
     **INVARIANTE: Dieselbe Leistung kann physisch nicht zweimal abgerechnet
-    werden.** Drei partielle UNIQUE-Indizes (je Quellspalte,
+    werden.** Vier partielle UNIQUE-Indizes (je Quellspalte,
     `WHERE released_at IS NULL`) garantieren das in der **Datenbank** — nicht im
     Service. Zwei parallele Rechnungsläufe können dieselbe Zeitbuchung nicht
     beide greifen.
@@ -4223,10 +4254,14 @@ class BillingLink(models.Model):
         InvoiceLine, models.DO_NOTHING, db_column="invoice_line_id",
         null=True, blank=True, related_name="billing_links",
     )
-    # BERICHTSPOSITION | ZEITBUCHUNG | ANGEBOTSPOSITION
+    # BERICHTSPOSITION | ZEITBUCHUNG | ANGEBOTSPOSITION | MATERIALBUCHUNG
     source_kind = models.TextField()
     site_report_line = models.ForeignKey(
         SiteReportLine, models.DO_NOTHING, db_column="site_report_line_id",
+        null=True, blank=True, related_name="billing_links",
+    )
+    material_entry = models.ForeignKey(
+        MaterialEntry, models.DO_NOTHING, db_column="material_entry_id",
         null=True, blank=True, related_name="billing_links",
     )
     time_entry = models.ForeignKey(
@@ -5400,3 +5435,55 @@ class Notification(models.Model):
 
     def __str__(self):
         return f"{self.kind} → {self.recipient_id}"
+
+
+class PublicLink(models.Model):
+    """security.public_link — ein anmeldefreier Link auf genau ein Ziel (0141).
+
+    **Eine Tabelle für alle Link-Arten.** Die Mechanik (nur SHA-256-Hash,
+    Ablauf, Widerruf, Einmal-Einlösung) ist für jeden Verbraucher identisch;
+    verbraucherspezifisch ist allein das Ziel, und das ist eine WEICHE Referenz
+    (`target_type` + `target_id`, kein FK) wie bei `notify.notification`.
+
+    `purpose` ist ein geschlossenes Vokabular — eine neue Link-Art kostet eine
+    Migration. `token_hash` trägt einen CHECK auf 64 Hex-Zeichen: dass hier nie
+    Klartext landet, ist physisch geprüft, nicht bloß Konvention.
+
+    `single_use` sagt, ob der Link nach der ersten Einlösung verbraucht ist. Die
+    Angebotsfreigabe ist einmalig, die Terminbuchung (nächster Slice) bewusst
+    nicht — der Kunde darf über denselben Link absagen und umbuchen. Der Wert
+    wird zentral aus `purpose` abgeleitet (`oeffentlicher_link.link_erzeugen`)
+    und von der DB durchgesetzt (`CHECK (NOT single_use OR use_count <= 1)`).
+
+    Änderbar sind ausschließlich `used_at`, `revoked_at`, `use_count` und
+    `version` (DB-Trigger `security.guard_public_link`); der Widerruf ist eine
+    Einbahnstraße, `used_at` läuft nur vorwärts und wird nie wieder NULL.
+    """
+
+    id = models.UUIDField(primary_key=True)
+    purpose = models.TextField()  # ANGEBOT_FREIGABE
+    target_type = models.TextField()
+    target_id = models.UUIDField()
+    token_hash = models.TextField()
+    expires_at = models.DateTimeField()
+    single_use = models.BooleanField(db_default=True)
+    used_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    use_count = models.IntegerField(db_default=0)
+    created_by = models.ForeignKey(
+        AppUser,
+        models.DO_NOTHING,
+        db_column="created_by",
+        related_name="public_links",
+    )
+    version = models.IntegerField()
+    created_at = models.DateTimeField(db_default=Now())
+    updated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        managed = False
+        db_table = 'security"."public_link'
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.purpose} → {self.target_type} {self.target_id}"

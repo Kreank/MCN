@@ -100,6 +100,18 @@
           }
         </select>
       </label>
+      <!-- Gewerkfilter (0120). Er greift auf Raster UND Rückstand — anders als der
+           Kategoriefilter, der nur das Raster betrifft. Begründung steht im
+           Service (`board_daten`): Der Rückstand ist die Quelle des Ziehens. -->
+      <label class="feldchen">
+        <span class="feldchen__label">Gewerk</span>
+        <select class="feldchen__select" (change)="gewerkFilterSetzen($any($event.target).value)">
+          <option value="" [selected]="!gewerkFilter()">Alle Gewerke</option>
+          @for (t of gewerke(); track t.id) {
+            <option [value]="t.id" [selected]="t.id === gewerkFilter()">{{ t.label }}</option>
+          }
+        </select>
+      </label>
       @if (filterAktiv()) {
         <button type="button" class="btn" (click)="filterZuruecksetzen()">Filter zurücksetzen</button>
       }
@@ -146,6 +158,15 @@
   @if (bandErweitert(); as be) {
     <p class="raster-hinweis" role="status">
       <span aria-hidden="true">↔</span> {{ be }}
+    </p>
+  }
+
+  <!-- Der Gewerkfilter blendet Termine aus — auch im Rückstand. Das MUSS
+       dastehen: Ein Termin, den der Disponent nicht sieht, ist der gefährlichste
+       Fehler einer Plantafel. Text, nicht nur ein gesetztes Dropdown. -->
+  @if (gewerkHinweis(); as gh) {
+    <p class="raster-hinweis" role="status">
+      <span aria-hidden="true">⚒</span> {{ gh }}
     </p>
   }
 
@@ -234,9 +255,18 @@
             </label>
 
             @if (backlog().length === 0) {
+              <!-- „Alles ist terminiert" ist eine BEHAUPTUNG über den Bestand —
+                   sie darf nur fallen, wenn nichts gefiltert ist. Der Gewerkfilter
+                   dünnt auch den Rückstand aus; ein leerer Rückstand heißt dann
+                   „keiner in DIESEM Gewerk", nicht „keiner". -->
               <p class="pool__leer">
-                @if (backlogSuche()) {
+                @if (backlogSuche() && gewerkFilter()) {
+                  Kein ungeplanter Termin dieses Gewerks passt zur Suche.
+                } @else if (backlogSuche()) {
                   Kein ungeplanter Termin passt zur Suche.
+                } @else if (gewerkFilter()) {
+                  Kein ungeplanter Termin in diesem Gewerk — andere Gewerke blendet
+                  der Gewerkfilter oben aus.
                 } @else {
                   Kein ungeplanter Termin — alles ist terminiert.
                 }
@@ -274,6 +304,10 @@
                           <span class="kat-dot" aria-hidden="true"></span>
                           {{ job.category.name }}
                         </span>
+                      }
+                      @if (job.trade) {
+                        <!-- Gewerk als TEXT-Stempel, nie als Farbpunkt. -->
+                        <span class="pkarte__gewerk">Gewerk: {{ job.trade.label }}</span>
                       }
                       @if (darfUmplanen()) {
                         <div class="pkarte__aktionen">
@@ -544,6 +578,7 @@
                             (b.job.is_free ? ' · Freier Termin' : '') +
                             (b.job.series_id ? ' · Serientermin' : '') +
                             (b.job.category ? ' · ' + b.job.category.name : '') +
+                            (b.job.trade ? ' · Gewerk ' + b.job.trade.label : '') +
                             ' · ' + statusLabel(b.job.status) +
                             (b.job.conflicts.length ? ' · ' + konfliktText(b.job) : '')
                           "
@@ -555,6 +590,7 @@
                             (b.job.is_free ? ', freier Termin ohne Auftrag' : '') +
                             (b.job.series_id ? ', Serientermin' : '') +
                             (b.job.category ? ', Kategorie ' + b.job.category.name : '') +
+                            (b.job.trade ? ', Gewerk ' + b.job.trade.label : '') +
                             (b.job.conflicts.length
                               ? ', Konflikt: ' + konfliktText(b.job)
                               : '')
@@ -622,6 +658,13 @@
                               <span class="kat-dot" aria-hidden="true"></span>
                               {{ b.job.category.name }}
                             </span>
+                          }
+                          @if (b.job.trade) {
+                            <!-- Gewerk als TEXT (nie nur Farbe). Bei schmalen
+                                 Kacheln blendet die Container-Query es aus — die
+                                 Angabe bleibt in title/aria-label und in der
+                                 Mappe erhalten. -->
+                            <span class="tile__gewerk">{{ b.job.trade.label }}</span>
                           }
                           <span class="tile__status">{{ statusLabel(b.job.status) }}</span>
                         </a>
@@ -832,6 +875,21 @@
           Das Ende wird daraus vorgeschlagen — du kannst es jederzeit überschreiben.
         </p>
       }
+
+      <!-- Gewerk (0120). Beim ANLEGEN eines Auftragstermins darf es leer bleiben:
+           Der Server erbt es dann vom Auftrag. Beim BEARBEITEN steht das
+           gespeicherte Gewerk drin — leeren heißt dort „entfernen". -->
+      <app-feld
+        [control]="form.controls.trade_id"
+        label="Gewerk"
+        typ="select"
+        [optionen]="gewerkOptionen()"
+        [hinweis]="
+          auftragGesperrt()
+            ? 'Leeren entfernt das Gewerk von diesem Termin — es wird dann nicht erneut vom Auftrag übernommen.'
+            : 'Leer lassen: Ein Auftragstermin übernimmt das Gewerk seines Auftrags.'
+        "
+      />
 
       @if (rueckstandModus()) {
         <!-- Rückweg ins Backlog: Zeitraum fällt weg, Status GEPLANT → UNGEPLANT.

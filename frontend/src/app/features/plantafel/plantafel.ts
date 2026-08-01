@@ -34,6 +34,8 @@ import {
   serviceJobStatusLabel,
 } from '../../core/einsatz.model';
 import { AuftragService } from '../../core/auftrag.service';
+import { FirmaService } from '../../core/firma.service';
+import { Trade } from '../../core/firma.model';
 import { PropertyService } from '../../core/property.service';
 import { Building, gebaeudeLabel } from '../../core/property.model';
 import { PartyService } from '../../core/party.service';
@@ -316,6 +318,7 @@ export class Plantafel {
   private readonly svc = inject(EinsatzService);
   private readonly stammSvc = inject(PlanungStammdatenService);
   private readonly auftragSvc = inject(AuftragService);
+  private readonly firmaSvc = inject(FirmaService);
   private readonly propertySvc = inject(PropertyService);
   private readonly partySvc = inject(PartyService);
   private readonly auth = inject(AuthService);
@@ -327,9 +330,16 @@ export class Plantafel {
   protected readonly state = signal<ViewState>({ kind: 'loading' });
   private reqId = 0;
 
-  /** Filter: Suche im Raster, Kategorie, Suche im Rückstand. */
+  /** Filter: Suche im Raster, Kategorie, Gewerk, Suche im Rückstand. */
   protected readonly suche = signal('');
   protected readonly katFilter = signal('');
+  /**
+   * Gewerkfilter. Anders als der Kategoriefilter greift er auf **Raster UND
+   * Rückstand** (der Server tut dasselbe): Wer nach Heizung disponiert, zieht aus
+   * dem Heizungs-Rückstand — ein Sanitärtermin, der beim Ablegen sofort wieder
+   * verschwände, wäre schlimmer als keiner.
+   */
+  protected readonly gewerkFilter = signal('');
   protected readonly backlogSuche = signal('');
   /** Rückstandsleiste ein-/ausklappbar (auf schmalen Bildschirmen Platz). */
   protected readonly poolOffen = signal(true);
@@ -337,6 +347,10 @@ export class Plantafel {
   /** Stammdaten für Dialog und Filter. */
   protected readonly kategorien = signal<AppointmentCategory[]>([]);
   protected readonly ressourcen = signal<Resource[]>([]);
+  /** Gewerke (company.trade) — nur AKTIVE: ein stillgelegtes Gewerk soll man
+   * nicht mehr neu vergeben können. Bestandstermine zeigen ihres trotzdem, die
+   * Ausgabe hängt nicht an dieser Liste. */
+  protected readonly gewerke = signal<Trade[]>([]);
 
   private readonly dowFmt = new Intl.DateTimeFormat('de-DE', { weekday: 'short' });
   private readonly dayFmt = new Intl.DateTimeFormat('de-DE', {
@@ -385,6 +399,12 @@ export class Plantafel {
     this.stammSvc.listVorlagen().subscribe({
       next: (v) => this.vorlagen.set(v),
       error: () => this.vorlagen.set([]),
+    });
+    // `company/LESEN` hat jede Rolle (Migration 0024) — der Gewerkfilter steht
+    // also auch dem Disponenten ohne Firmenrechte zur Verfügung.
+    this.firmaSvc.listTrades(false).subscribe({
+      next: (t) => this.gewerke.set(t),
+      error: () => this.gewerke.set([]),
     });
 
     // Liegenschaft gewechselt (freier Termin): der bisherige Zielort passt nicht
@@ -1596,6 +1616,10 @@ export class Plantafel {
     building_id: this.fb.control('', { nonNullable: true }),
     unit_id: this.fb.control('', { nonNullable: true }),
     appointment_category_id: this.fb.control('', { nonNullable: true }),
+    /** Gewerk (0120). Beim Anlegen leer = der Server erbt es vom Auftrag; beim
+     * BEARBEITEN ist das Feld mit dem gespeicherten Gewerk vorbelegt, ein
+     * geleertes Feld entfernt es dann ausdrücklich. */
+    trade_id: this.fb.control('', { nonNullable: true }),
     on_site_contact_party_id: this.fb.control('', { nonNullable: true }),
     access_instructions: this.fb.control('', { nonNullable: true }),
     start_datum: this.fb.control('', { nonNullable: true }),
@@ -1609,6 +1633,11 @@ export class Plantafel {
   protected readonly katOptionen = computed(() => [
     { wert: '', label: 'Ohne Kategorie' },
     ...this.kategorien().map((k) => ({ wert: k.id, label: k.name })),
+  ]);
+
+  protected readonly gewerkOptionen = computed(() => [
+    { wert: '', label: 'Ohne Gewerk' },
+    ...this.gewerke().map((t) => ({ wert: t.id, label: t.label })),
   ]);
 
   // ---- Gebäude/Einheit am freien Termin -----------------------------------
@@ -1939,7 +1968,7 @@ export class Plantafel {
     this.rueckstandModus.set(false);
     this.form.reset({
       work_order_id: '', title: '', property_id: '', building_id: '', unit_id: '',
-      appointment_category_id: '',
+      appointment_category_id: '', trade_id: '',
       on_site_contact_party_id: '', access_instructions: '', rueckstand_grund: '',
       start_datum: slot.dayIso,
       start_zeit: `${`${stunde}`.padStart(2, '0')}:00`,
@@ -1997,6 +2026,9 @@ export class Plantafel {
       building_id: '',
       unit_id: '',
       appointment_category_id: job.category?.id ?? '',
+      // Vorbelegung aus der Kachel, damit das Feld nicht kurz leer steht; der
+      // GET unten setzt den maßgeblichen Wert.
+      trade_id: job.trade?.id ?? '',
       on_site_contact_party_id: '',
       access_instructions: '',
       rueckstand_grund: '',
@@ -2023,6 +2055,7 @@ export class Plantafel {
         this.form.patchValue({
           title: d.own_title ?? '',
           appointment_category_id: d.category?.id ?? '',
+          trade_id: d.trade?.id ?? '',
           on_site_contact_party_id: d.on_site_contact_party_id ?? '',
           access_instructions: d.access_instructions ?? '',
         });
@@ -2283,6 +2316,10 @@ export class Plantafel {
     const gemeinsam = {
       title: v.title.trim() || null,
       appointment_category_id: v.appointment_category_id || null,
+      // Beim Anlegen heißt `null`: „erbe vom Auftrag" (der Server tut es). Beim
+      // Bearbeiten ist das Feld mit dem gespeicherten Gewerk vorbelegt — ein
+      // leeres Feld ist dort also ein ausdrückliches Entfernen.
+      trade_id: v.trade_id || null,
       scheduled_start: start,
       scheduled_end: end,
       assignee_ids: this.gewaehlteMitarbeiter(),
@@ -2341,6 +2378,10 @@ export class Plantafel {
     this.katFilter.set(wert);
     this.fetch();
   }
+  gewerkFilterSetzen(wert: string): void {
+    this.gewerkFilter.set(wert);
+    this.fetch();
+  }
   backlogSucheSetzen(wert: string): void {
     this.backlogSuche.set(wert);
     this.fetch();
@@ -2348,12 +2389,32 @@ export class Plantafel {
   filterZuruecksetzen(): void {
     this.suche.set('');
     this.katFilter.set('');
+    this.gewerkFilter.set('');
     this.backlogSuche.set('');
     this.fetch();
   }
   protected readonly filterAktiv = computed(
-    () => !!this.suche() || !!this.katFilter() || !!this.backlogSuche(),
+    () =>
+      !!this.suche() ||
+      !!this.katFilter() ||
+      !!this.gewerkFilter() ||
+      !!this.backlogSuche(),
   );
+
+  /**
+   * Ansage, dass der Gewerkfilter AUCH den Rückstand ausdünnt.
+   *
+   * Ein Termin, den der Disponent nicht mehr sieht, ist der gefährlichste Fehler
+   * einer Plantafel — deshalb wird das Filtern ausgesprochen und nicht
+   * stillschweigend getan.
+   */
+  protected readonly gewerkHinweis = computed(() => {
+    const id = this.gewerkFilter();
+    if (!id) return null;
+    const t = this.gewerke().find((g) => g.id === id);
+    const name = t ? t.label : 'dem gewählten Gewerk';
+    return `Gefiltert auf ${name}: Raster und Rückstand zeigen nur Termine dieses Gewerks. Termine ohne Gewerk sind ausgeblendet.`;
+  });
 
   private laden(stillestehen: boolean): void {
     const id = ++this.reqId;
@@ -2364,6 +2425,7 @@ export class Plantafel {
         date_to: this.bis(),
         q: this.suche(),
         category_id: this.katFilter() || null,
+        trade_id: this.gewerkFilter() || null,
         backlog_q: this.backlogSuche(),
       })
       .subscribe({

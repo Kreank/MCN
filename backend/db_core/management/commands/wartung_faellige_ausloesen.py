@@ -51,6 +51,7 @@ from django.utils.dateparse import parse_date
 
 from db_core.models import AppUser, MaintenanceContract
 from db_core.services import faelligkeit as faelligkeit_service
+from db_core.services import oeffentlicher_link
 from db_core.services import wartung as wartung_service
 
 ART_LABELS = {
@@ -239,10 +240,14 @@ class Command(BaseCommand):
             if actor is None:
                 raise CommandError(f"Kein aktiver security.app_user mit id '{roh}'.")
             return actor
-        actor = AppUser.objects.filter(status="ACTIVE").order_by("created_at").first()
-        if actor is None:
-            raise CommandError("Kein aktiver security.app_user als Auslöser gefunden.")
-        return actor
+        # Ohne --actor: der TECHNISCHE Akteur (Migration 0141), nie mehr „der
+        # älteste aktive Account". Der schrieb dem erstbesten Menschen die Taten
+        # eines Automaten in den Audit-Trail — ein Audit, das den Falschen nennt,
+        # ist schlimmer als eins, das schweigt.
+        try:
+            return oeffentlicher_link.systemakteur()
+        except oeffentlicher_link.LinkError as exc:
+            raise CommandError(str(exc))
 
     def _folge(self, event):
         """Textbaustein, welches Folgeobjekt entstand."""

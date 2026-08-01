@@ -726,12 +726,25 @@ def _soll_stunden(vertraege, tage, freie_tage=()):
     return summe if getroffen else None
 
 
-def board_daten(*, date_from, date_to, q=None, category_id=None, backlog_q=None):
+def board_daten(
+    *, date_from, date_to, q=None, category_id=None, trade_id=None, backlog_q=None
+):
     """Alles, was die Plantafel für einen Zeitraum braucht — in einem Rutsch.
 
     `q`/`category_id` filtern die Kacheln IM Raster (nicht die Bahnen: eine Bahn
     verschwindet nicht, nur weil gerade nichts darauf liegt). `backlog_q` sucht
     im Rückstand.
+
+    **`trade_id` greift bewusst auf BEIDE Bahnen** — Raster UND Rückstand. Der
+    Rückstand ist die Quelle des Ziehens: Zeigte er weiter alle Gewerke, während
+    das Raster nur Heizung zeigt, zöge der Disponent einen Sanitärtermin ins
+    Raster und die Kachel verschwände im selben Moment wieder aus seiner Sicht.
+    Der Zähler `backlog_total` zählt danach ebenfalls gefiltert, damit die
+    Leiste („N weitere") nicht mehr behauptet, als sie zeigt.
+
+    (Der ältere `category_id`-Filter wirkt weiterhin nur aufs Raster. Das bleibt
+    hier absichtlich unangetastet — eine Verhaltensänderung an einem bestehenden
+    Filter gehört nicht in diesen Slice.)
     """
     tage = _tage(date_from, date_to)
     fenster_start, fenster_ende = _fenster(date_from, date_to)
@@ -748,7 +761,7 @@ def board_daten(*, date_from, date_to, q=None, category_id=None, backlog_q=None)
         )
         .select_related(
             "work_order__property__address", "property__address",
-            "appointment_category",
+            "appointment_category", "trade",
             "building__address", "unit",
             "work_order__building__address", "work_order__unit",
         )
@@ -759,6 +772,8 @@ def board_daten(*, date_from, date_to, q=None, category_id=None, backlog_q=None)
         qs = qs.filter(_suchfilter(q))
     if category_id:
         qs = qs.filter(appointment_category_id=category_id)
+    if trade_id:
+        qs = qs.filter(trade_id=trade_id)
     jobs = list(qs)
 
     # --- Bahnen: ALLE aktiven Mitarbeiter und Betriebsmittel ----------------
@@ -860,7 +875,7 @@ def board_daten(*, date_from, date_to, q=None, category_id=None, backlog_q=None)
         .exclude(status__in=("ABGESCHLOSSEN", "AUSGEFALLEN"))
         .select_related(
             "work_order__property__address", "property__address",
-            "appointment_category",
+            "appointment_category", "trade",
             "building__address", "unit",
             "work_order__building__address", "work_order__unit",
         )
@@ -868,6 +883,10 @@ def board_daten(*, date_from, date_to, q=None, category_id=None, backlog_q=None)
     )
     if backlog_q:
         bqs = bqs.filter(_suchfilter(backlog_q))
+    # Symmetrisch zum Raster (siehe Docstring): Wer nach Gewerk disponiert, soll
+    # aus dem Rückstand desselben Gewerks ziehen.
+    if trade_id:
+        bqs = bqs.filter(trade_id=trade_id)
     backlog_total = bqs.count()
     backlog = list(bqs[:100])
 
@@ -1116,6 +1135,7 @@ def update_termin(
     on_site_contact_party_id=_UNSET_TERMIN,
     access_instructions=_UNSET_TERMIN,
     appointment_category_id=_UNSET_TERMIN,
+    trade_id=_UNSET_TERMIN,
     assignee_ids=None,
     resource_ids=None,
     reason=None,
@@ -1124,8 +1144,9 @@ def update_termin(
 
     `assignee_ids`/`resource_ids` sind der SOLL-Zustand (Vollersetzung): Was nicht
     mehr drinsteht, wird gelöst. `None` heißt „nicht anfassen". Die übrigen Felder
-    nutzen dasselbe Sentinel-Muster wie `update_service_job`: „nicht mitgeschickt"
-    ist etwas anderes als „ausdrücklich auf NULL".
+    (einschließlich `trade_id`) nutzen dasselbe Sentinel-Muster wie
+    `update_service_job`: „nicht mitgeschickt" ist etwas anderes als
+    „ausdrücklich auf NULL".
 
     **`scheduled_start=None` (ausdrücklich) legt den Termin ZURÜCK IN DEN
     RÜCKSTAND**: Zeitraum auf NULL, Status GEPLANT → UNGEPLANT. Das ist die
@@ -1174,6 +1195,10 @@ def update_termin(
                 ("unit_id", unit_id),
                 ("on_site_contact_party_id", on_site_contact_party_id),
                 ("access_instructions", access_instructions),
+                # Gewerk (0120): „nicht mitgeschickt" = unverändert,
+                # ausdrückliches None = entfernen. Kein erneutes Erben vom
+                # Auftrag — siehe update_service_job.
+                ("trade_id", trade_id),
             ):
                 if wert is not _UNSET_TERMIN:
                     stamm[name] = wert
@@ -1373,8 +1398,15 @@ def serie_anlegen(
     Jedes Vorkommen ist ein **eigenständiger Einsatz** mit eigener Nummer, eigenem
     Status und eigenen Zuweisungen (kein virtuelles Vorkommen, keine Serienregel in
     der DB — siehe Migration 0077). Kopiert werden Auftrag/Titel/Liegenschaft,
-    Gebäude/Einheit, Kategorie, Vor-Ort-Kontakt, Zutrittshinweise, Mitarbeiter und
-    Ressourcen; die **Dauer** des Ausgangstermins bleibt erhalten.
+    Gebäude/Einheit, Kategorie, **Gewerk**, Vor-Ort-Kontakt, Zutrittshinweise,
+    Mitarbeiter und Ressourcen; die **Dauer** des Ausgangstermins bleibt erhalten.
+
+    Das **Gewerk** wird ausdrücklich vom Ausgangstermin übernommen und nicht neu
+    vom Auftrag abgeleitet: Ein freier Termin verlöre es sonst ganz, und ein
+    bewusst abweichendes Gewerk (Sanitärtermin auf einem Heizungsauftrag) kippte
+    in jedem Folgetermin auf das des Auftrags zurück. Seit die Plantafel nach
+    Gewerk filtert, hieße das: Die Folgetermine verschwinden aus der Sicht, in
+    der der Disponent sie geplant hat.
 
     Der Ausgangstermin bekommt dieselbe `series_id` — er IST das erste Vorkommen.
     Trägt er schon eine, wird die bestehende Serie fortgesetzt.
@@ -1485,6 +1517,10 @@ def serie_anlegen(
                     on_site_contact_party_id=job.on_site_contact_party_id,
                     access_instructions=job.access_instructions,
                     appointment_category_id=job.appointment_category_id,
+                    # Gewerk vom AUSGANGSTERMIN, nicht vom Auftrag (siehe
+                    # Docstring). Es geht mit in den INSERT, weil der
+                    # Nummerntrigger das Kürzel daraus bildet.
+                    trade_id=job.trade_id,
                 )
                 ServiceJob.objects.filter(id=neu.id).update(
                     series_id=series_id, series_anchor=anker

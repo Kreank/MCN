@@ -131,6 +131,28 @@ export interface OffeneZeitgruppe {
   vorschlaege: PreisVorschlag[];
 }
 
+/**
+ * Am Einsatz gebuchtes Material ohne Abrechnungsbindung (Migration 0139).
+ *
+ * Bis dahin war diese Zeile ein Datensatz ohne Ausgang — erfasst, aber nirgends
+ * abrechenbar. Sie führt **keinen** Einkaufspreis; `einzelpreis` ist der vom
+ * Server ermittelte VK und **null = unbekannt, nie 0**. Ohne Artikelbezug steht
+ * hier `MATERIAL_OHNE_ARTIKEL` — dann muss ein Mensch den Preis nennen.
+ */
+export interface OffeneMaterialbuchung {
+  material_entry_id: string;
+  service_job_id: string;
+  description: string;
+  quantity: string;
+  unit: string;
+  source_article_id: string | null;
+  preis_status: PreisStatus;
+  einzelpreis: string | null;
+  grund: string | null;
+  grund_text: string | null;
+  vorschlaege: PreisVorschlag[];
+}
+
 export interface UnsignierterBericht {
   id: string;
   report_date: string;
@@ -146,6 +168,7 @@ export interface OffeneAbrechnung {
   hinweis: string;
   berichtspositionen: OffeneBerichtsposition[];
   zeitgruppen: OffeneZeitgruppe[];
+  materialbuchungen: OffeneMaterialbuchung[];
   nicht_unterzeichnete_berichte: UnsignierterBericht[];
 }
 

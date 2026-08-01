@@ -100,6 +100,7 @@
             <button type="button" class="btn" (click)="dialogOeffnen('termin')">Termin setzen</button>
             <button type="button" class="btn" (click)="dialogOeffnen('status')">Status ändern</button>
             <button type="button" class="btn" (click)="dialogOeffnen('kategorie')">Kategorie</button>
+            <button type="button" class="btn" (click)="dialogOeffnen('gewerk')">Gewerk</button>
           }
           @if (darfKontaktPflegen()) {
             <!-- Bei einer Begehung ist der Kontakt oft erst nach dem Termin
@@ -107,6 +108,21 @@
                  am auftragsgebundenen Einsatz ist er Dispositionsdatum. -->
             <button type="button" class="btn" (click)="dialogOeffnen('kontakt')">
               Kontakt nachtragen
+            </button>
+          }
+          @if (daten()!.scheduled_start) {
+            <!-- ICS-Download (RFC 5545). Nur mit Planbeginn: ohne Beginn gäbe es
+                 keinen gültigen Kalendereintrag, und ein Knopf, der immer 422
+                 antwortet, ist keine Funktion. Bewusst ein <button> statt eines
+                 Links auf die API-URL — der Download läuft als Blob durch den
+                 Auth-Interceptor (Session + CSRF). -->
+            <button
+              type="button"
+              class="btn"
+              [disabled]="icsBusy()"
+              (click)="kalenderHerunterladen()"
+            >
+              {{ icsBusy() ? 'Kalendereintrag wird erzeugt …' : 'In den Kalender (.ics)' }}
             </button>
           }
         </div>
@@ -127,6 +143,18 @@
                 <span class="kat-chip {{ categoryClass(c.color_token) }}">
                   <span class="kat-dot" aria-hidden="true"></span>{{ c.name }}
                 </span>
+              } @else {
+                —
+              }
+            </dd>
+          </div>
+          <div class="feld">
+            <dt class="feld__label">Gewerk</dt>
+            <!-- Als TEXT, nie als Farbe (WCAG 1.4.1). Das Kürzel steckt auch in
+                 der Einsatznummer (E-HZG-26-…) — deshalb wird es mitgezeigt. -->
+            <dd class="feld__wert" [class.feld__wert--leer]="!daten()!.trade">
+              @if (daten()!.trade; as t) {
+                {{ t.label }} <span class="feld__zusatz">({{ t.code }})</span>
               } @else {
                 —
               }
@@ -201,6 +229,95 @@
           </ul>
         }
 
+        @if (darfBedarfSehen()) {
+          <!-- Qualifikationsbedarf DIESES Termins. Der Bedarf der Kategorie
+               bleibt unberührt — wirksam ist die Vereinigung beider. Die
+               Plantafel WARNT bei fehlendem Nachweis, sie blockiert nicht
+               (weiche Invariante wie die Doppelbelegung). -->
+          <section class="bedarf">
+            <h3 class="erfassung__titel">Erforderliche Qualifikationen</h3>
+            @if (bedarfMeldung(); as bm) {
+              <div
+                class="melde melde--{{ bm.art === 'erfolg' ? 'erfolg' : 'fehler' }}"
+                [attr.role]="bm.art === 'fehler' ? 'alert' : 'status'"
+              >
+                <span class="melde__mark" aria-hidden="true">{{ bm.art === 'fehler' ? '!' : '✓' }}</span>
+                <span class="melde__text">{{ bm.text }}</span>
+              </div>
+            }
+            @switch (bedarfState()) {
+              @case ('loading') {
+                <p class="lade-hinweis" role="status">Qualifikationen werden geladen …</p>
+              }
+              @case ('error') {
+                <p class="note note--error" role="alert">
+                  Der Qualifikationsbedarf ließ sich nicht laden.
+                </p>
+              }
+              @case ('ready') {
+                @if (qualKatalog().length === 0) {
+                  <div class="tab-platzhalter">
+                    <p>
+                      Es ist noch kein Qualifikationskatalog gepflegt — unter
+                      Planung → Einstellungen anlegen.
+                    </p>
+                  </div>
+                } @else {
+                  <fieldset class="wahl" [disabled]="!darfBedarfPflegen() || bedarfBusy()">
+                    <legend class="wahl__legend">Was dieser Termin zusätzlich verlangt</legend>
+                    <p class="wahl__hinweis">
+                      Zusätzlich zum Bedarf der Terminkategorie. Fehlt einem
+                      eingeplanten Mitarbeiter ein Nachweis, <strong>warnt</strong> die
+                      Plantafel — geplant werden kann trotzdem.
+                    </p>
+                    <ul class="wahl__liste">
+                      @for (q of qualKatalog(); track q.id) {
+                        <li>
+                          <label class="wahl__opt">
+                            <input
+                              type="checkbox"
+                              [checked]="bedarfGesetzt(q.id)"
+                              (change)="bedarfUmschalten(q.id)"
+                            />
+                            <span>
+                              {{ q.label }}
+                              @if (q.kind) {
+                                <span class="wahl__sub">{{ q.kind }}</span>
+                              }
+                            </span>
+                          </label>
+                        </li>
+                      }
+                    </ul>
+                  </fieldset>
+                  @if (darfBedarfPflegen()) {
+                    <div class="bedarf__aktionen">
+                      <button
+                        type="button"
+                        class="btn btn--primary"
+                        [disabled]="bedarfBusy() || !bedarfGeaendert()"
+                        [attr.aria-busy]="bedarfBusy()"
+                        (click)="bedarfSpeichern()"
+                      >
+                        {{ bedarfBusy() ? 'Wird gespeichert …' : 'Bedarf speichern' }}
+                      </button>
+                      @if (bedarfGeaendert()) {
+                        <button type="button" class="btn" [disabled]="bedarfBusy()" (click)="bedarfVerwerfen()">
+                          Änderungen verwerfen
+                        </button>
+                      }
+                    </div>
+                  } @else {
+                    <p class="wahl__hinweis">
+                      Den Bedarf pflegt die Disposition.
+                    </p>
+                  }
+                }
+              }
+            }
+          </section>
+        }
+
         <h3 class="erfassung__titel">Ressourcen</h3>
         @if (darfDispo()) {
           <div class="tab-toolbar">
@@ -239,6 +356,18 @@
       }
 
       @if (tab() === 'erfassung') {
+        <!-- Es gibt an diesem Termin ZWEI Wege, Material zu erfassen. Beide sind
+             richtig, aber sie führen an verschiedene Orte — und wer das nicht
+             weiß, erfasst am falschen. Der Unterschied steht deshalb als TEXT
+             da, nicht als Farbe (WCAG 1.4.1). -->
+        <p class="erfassung__hinweis">
+          <strong>Hier steht, was am Termin verbraucht und gearbeitet wurde.</strong>
+          Beides geht in die Abrechnung des Auftrags und in die Nachkalkulation.
+          <br />
+          Was der Kunde <strong>unterschreibt</strong>, gehört dagegen in den
+          Baustellenbericht (Reiter „Berichte“) — er ist der Leistungsnachweis und
+          führt bewusst keine Preise.
+        </p>
         @if (darfErfassen()) {
           <div class="tab-toolbar">
             <button type="button" class="btn btn--primary" (click)="dialogOeffnen('zeit')">
@@ -275,13 +404,20 @@
             </ul>
           }
           @if (daten()!.material_entries.length > 0) {
-            <h3 class="erfassung__titel">Material</h3>
+            <h3 class="erfassung__titel">Material (Verbrauch am Termin)</h3>
             <ul class="erfassung-liste">
               @for (m of daten()!.material_entries; track $index) {
                 <li class="erfassung-zeile">
                   <span class="erfassung-zeile__kopf">
                     <span class="erfassung-zeile__menge">{{ m.quantity }} {{ m.unit }}</span>
                     <span class="erfassung-zeile__akteur">{{ m.description }}</span>
+                    <!-- Text, nicht Farbe: „ohne Artikel" ist kein Fehler, aber es
+                         kostet das Büro beim Abrechnen einen Handgriff. -->
+                    @if (m.source_article_number) {
+                      <span class="stamp stamp--type">Artikel {{ m.source_article_number }}</span>
+                    } @else {
+                      <span class="stamp">ohne Artikel — Preis wird beim Abrechnen genannt</span>
+                    }
                   </span>
                   @if (m.note) { <span class="erfassung-zeile__note">{{ m.note }}</span> }
                 </li>
@@ -292,6 +428,14 @@
       }
 
       @if (tab() === 'berichte') {
+        <p class="erfassung__hinweis">
+          <strong>Der Baustellenbericht ist der Leistungsnachweis für den Kunden</strong>
+          — er wird unterschrieben und ist danach unveränderlich. Er führt bewusst
+          <strong>keine Preise</strong>.
+          <br />
+          Der reine Verbrauch am Termin (Zeiten, Material) gehört in den Reiter
+          „Zeiten &amp; Material“.
+        </p>
         <app-berichte [serviceJobId]="daten()!.id" />
       }
 
@@ -481,6 +625,80 @@
             <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
           </div>
         }
+        <p class="note">
+          Diese Buchung erfasst den <strong>Verbrauch am Termin</strong> — sie wird
+          später mit dem Auftrag abgerechnet. Was der Kunde unterschreibt, steht im
+          Baustellenbericht (Reiter „Berichte“).
+        </p>
+
+        <!-- Artikel-Picker: optional, PREISFREI. Der Server liefert hier
+             strukturell kein Geldfeld — der Monteur sieht nie Preise. -->
+        <fieldset class="artikel-wahl">
+          <legend class="artikel-wahl__legende">Artikel aus dem Stamm (optional)</legend>
+          @if (artikelWahl(); as a) {
+            <p class="artikel-wahl__gewaehlt">
+              <span class="stamp stamp--type">Artikel</span>
+              <span class="artikel-wahl__name">{{ a.description }}</span>
+              <span class="artikel-wahl__nr">{{ a.article_number }}</span>
+              <button type="button" class="btn" (click)="artikelLoesen()">
+                Zuordnung entfernen
+              </button>
+            </p>
+            <p class="feld-gruppe__hinweis">
+              Bezeichnung und Einheit wurden übernommen und dürfen unten geändert
+              werden. Mit Artikel kann das Büro den Preis ermitteln; ohne Artikel
+              muss es ihn beim Abrechnen von Hand nennen.
+            </p>
+          } @else {
+            <div class="feld-gruppe">
+              <label class="feld-gruppe__label" for="material-artikel-suche">
+                Artikel suchen
+              </label>
+              <input
+                id="material-artikel-suche"
+                class="feld-gruppe__input"
+                type="search"
+                autocomplete="off"
+                placeholder="Nummer oder Bezeichnung"
+                (input)="onArtikelSuche($any($event.target).value)"
+              />
+              <p class="feld-gruppe__hinweis">
+                Optional. Ohne Artikel bleibt es eine Freitextbuchung — sie geht
+                nicht verloren, das Büro muss den Preis dann aber selbst nennen.
+              </p>
+            </div>
+            <!-- aria-live: Die Trefferliste ändert sich, ohne dass der Fokus sie
+                 berührt — ohne Ansage bliebe sie für Screenreader stumm. -->
+            <div
+              class="artikel-wahl__liste"
+              aria-live="polite"
+              [attr.aria-busy]="artikelLaedt()"
+            >
+              @if (artikelLaedt()) {
+                <p class="lade-hinweis">Artikel werden gesucht …</p>
+              } @else if (artikelFehler()) {
+                <p class="note">
+                  Die Artikelsuche steht Ihnen nicht zur Verfügung. Erfassen Sie das
+                  Material als freien Text — das ist ausdrücklich erlaubt.
+                </p>
+              } @else if (artikelTreffer().length === 0) {
+                <p class="note">Kein passender Artikel gefunden.</p>
+              } @else {
+                <ul class="artikel-wahl__treffer">
+                  @for (a of artikelTreffer(); track a.id) {
+                    <li>
+                      <button type="button" class="artikel-wahl__treffer-btn" (click)="artikelWaehlen(a)">
+                        <span class="artikel-wahl__name">{{ a.description }}</span>
+                        <span class="artikel-wahl__nr">{{ a.article_number }} · {{ a.unit }}</span>
+                      </button>
+                    </li>
+                  }
+                </ul>
+              }
+            </div>
+          }
+        </fieldset>
+
         <app-feld [control]="materialForm.controls.description" label="Bezeichnung" [pflicht]="true" platzhalter="z. B. Kupferrohr 15 mm" />
         <app-feld [control]="materialForm.controls.quantity" label="Menge" typ="zahl" [pflicht]="true" hinweis="z. B. 2,5" />
         <app-feld [control]="materialForm.controls.unit" label="Einheit" [pflicht]="true" platzhalter="z. B. m, Stk, kg" />
@@ -548,6 +766,36 @@
       <div dialog-aktionen class="dialog__aktionen">
         <button type="button" class="btn" [disabled]="dialogLaedt()" (click)="dialogSchliessen()">Abbrechen</button>
         <button type="submit" form="kategorie-form" class="btn btn--primary" [disabled]="dialogLaedt()" [attr.aria-busy]="dialogLaedt()">
+          {{ dialogLaedt() ? 'Wird gespeichert …' : 'Speichern' }}
+        </button>
+      </div>
+    </app-dialog>
+
+    <!-- ------------------------------ Gewerk-Dialog ----------------------- -->
+    <!-- Das Gewerk steuert das Kürzel der Einsatznummer (bereits vergeben bleibt
+         sie unverändert) und den Gewerkfilter der Plantafel. Beim Anlegen erbt
+         der auftragsgebundene Einsatz es vom Auftrag; hier lässt es sich
+         abweichend setzen oder ausdrücklich entfernen. -->
+    <app-dialog [offen]="dialogOffen() === 'gewerk'" titel="Gewerk" (schliessen)="dialogSchliessen()">
+      <form id="gewerk-form" class="dialog-form" (submit)="$event.preventDefault(); gewerkAbsenden()" novalidate>
+        @if (formularMeldung(); as fm) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+          </div>
+        }
+        <app-feld
+          [control]="gewerkForm.controls.trade_id"
+          label="Gewerk"
+          typ="select"
+          platzhalter="— kein Gewerk —"
+          hinweis="Leer lassen entfernt das Gewerk. Es wird danach nicht erneut vom Auftrag übernommen. Eine bereits vergebene Einsatznummer ändert sich nie."
+          [optionen]="gewerkOpt()"
+        />
+      </form>
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="dialogLaedt()" (click)="dialogSchliessen()">Abbrechen</button>
+        <button type="submit" form="gewerk-form" class="btn btn--primary" [disabled]="dialogLaedt()" [attr.aria-busy]="dialogLaedt()">
           {{ dialogLaedt() ? 'Wird gespeichert …' : 'Speichern' }}
         </button>
       </div>

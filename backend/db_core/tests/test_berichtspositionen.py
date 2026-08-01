@@ -131,28 +131,55 @@ def _mat(desc, qty, *, unit="m", price="10.00", kind="NORMAL", article_id=None):
 
 # --- Die Invariante: keine Preise ------------------------------------------
 
+GELDSPALTEN = {
+    "unit_price", "net_amount", "gross_amount", "price", "amount",
+    "discount_percent", "tax_code", "tax_rate_percent", "unit_cost",
+    "markup_percent", "list_price", "fixed_price", "purchase_price",
+    "hourly_rate", "total_price",
+}
+
+
 @pytest.mark.django_db
-def test_positionstabelle_hat_keine_geldspalte(db):
-    """INVARIANTE: Der Bericht führt keine Preise — auch nicht „für später".
+@pytest.mark.parametrize(
+    "tabelle,wofuer",
+    [
+        ("site_report_line", "Bericht"),
+        # Seit Migration 0139 (Material am Einsatz wird abrechenbar) gilt die Regel
+        # für BEIDE Erfassungen vor Ort. Die Materialbuchung bekam einen
+        # Artikelbezug — und ausdrücklich KEINE Preisspalte: Sie liefert die Menge,
+        # das Belegwesen den Preis. Ohne diesen Fall im Test wäre die naheliegende
+        # „Verbesserung" („dann speichern wir den Preis doch gleich mit") beim
+        # nächsten Slice durchgerutscht.
+        ("material_entry", "Materialbuchung"),
+    ],
+)
+def test_erfassung_fuehrt_keine_geldspalte(db, tabelle, wofuer):
+    """INVARIANTE: Die Erfassung vor Ort führt keine Preise — auch nicht „für später".
 
     Ein vom Kunden unterschriebener Bericht mit Preisen wäre eine
-    Preisvereinbarung. Deshalb darf die Tabelle gar keine Geldspalte haben.
+    Preisvereinbarung, die der Monteur auf der Baustelle abschließt. Für die
+    Materialbuchung gilt dasselbe: Sie ist die Aufzeichnung des Monteurs, und der
+    Monteur sieht nie Preise (Invariante Kap. 5). Deshalb dürfen die Tabellen gar
+    keine Geldspalte haben.
     """
     with connection.cursor() as cur:
         cur.execute(
             """
             SELECT column_name FROM information_schema.columns
-            WHERE table_schema = 'workflow' AND table_name = 'site_report_line'
-            """
+            WHERE table_schema = 'workflow' AND table_name = %s
+            """,
+            [tabelle],
         )
         spalten = {r[0] for r in cur.fetchall()}
-    verboten = {
-        "unit_price", "net_amount", "gross_amount", "price", "amount",
-        "discount_percent", "tax_code", "tax_rate_percent", "unit_cost",
-        "markup_percent", "list_price",
-    }
-    assert not (spalten & verboten), f"Geldspalte am Bericht: {spalten & verboten}"
-    # Und die Codeliste kennt keine ZWISCHENSUMME (der Bericht summiert nichts).
+    assert spalten, f"Tabelle workflow.{tabelle} nicht gefunden"
+    assert not (spalten & GELDSPALTEN), (
+        f"Geldspalte an der {wofuer}: {spalten & GELDSPALTEN}"
+    )
+
+
+@pytest.mark.django_db
+def test_bericht_summiert_nichts(db):
+    """Die Codeliste kennt keine ZWISCHENSUMME — der Bericht rechnet nicht."""
     assert "ZWISCHENSUMME" not in report_service.BERICHT_LINE_TYPES
 
 

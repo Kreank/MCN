@@ -121,8 +121,9 @@ export interface QuoteLine {
    */
   advance_invoice_id?: string | null;
   /**
-   * Herkunft der **Abrechnungsbindung** (Migration 0084) — nur bei Rechnungen:
-   * `BERICHTSPOSITION` | `ZEITBUCHUNG` | `ANGEBOTSPOSITION`, sonst null.
+   * Herkunft der **Abrechnungsbindung** (Migration 0084, vierte Quelle seit 0139)
+   * — nur bei Rechnungen: `BERICHTSPOSITION` | `ZEITBUCHUNG` |
+   * `ANGEBOTSPOSITION` | `MATERIALBUCHUNG`, sonst null.
    *
    * Eine gebundene Zeile stammt aus dem Abrechnungslauf und ist der Nachweis,
    * dass genau diese Leistung fakturiert wurde. Der DB-Trigger
@@ -134,7 +135,13 @@ export interface QuoteLine {
 }
 
 /** Quellart einer Abrechnungsbindung. */
-export type BillingSource = 'BERICHTSPOSITION' | 'ZEITBUCHUNG' | 'ANGEBOTSPOSITION';
+export type BillingSource =
+  | 'BERICHTSPOSITION'
+  | 'ZEITBUCHUNG'
+  | 'ANGEBOTSPOSITION'
+  // Am Einsatz gebuchtes Material (Migration 0139). Ohne diesen Wert stünde auf
+  // der Rechnungszeile der rohe Code statt eines Satzes, den ein Mensch liest.
+  | 'MATERIALBUCHUNG';
 
 // ---------------------------------------------------------------------------
 // Die Mengensicht: das Angebot OHNE Geld (GET /invoicing/quotes/mengen, 0102)
@@ -716,6 +723,13 @@ export interface RechnungAusAuftrag {
   preise?: Record<string, string>;
   mit_berichten?: boolean;
   mit_zeiten?: boolean;
+  /**
+   * Am Einsatz gebuchtes Material (Migration 0139). Der Schalter ist der Ausweg
+   * aus der Doppelerfassung: Steht dieselbe Sache im Bericht UND als
+   * Materialbuchung, weist der Server den Lauf ab — welche der beiden die
+   * Wahrheit ist, entscheidet ein Mensch.
+   */
+  mit_material?: boolean;
   invoice_date?: string | null;
   due_date?: string | null;
   payment_term_days?: number | null;
@@ -771,7 +785,14 @@ export interface PreisKlaerung {
   /** ABWEICHUNG: der Nachtrag klärt je **Abweichung** des Soll-Ist (ihr
    *  Schlüssel), nicht je Berichtszeile — die Mehrmenge entsteht aus der Summe
    *  über alle Berichte. */
-  quelle_art: 'BERICHTSPOSITION' | 'ZEITGRUPPE' | 'ABWEICHUNG';
+  quelle_art:
+    | 'BERICHTSPOSITION'
+    | 'ZEITGRUPPE'
+    // Am Einsatz gebuchtes Material (Migration 0139). Grund
+    // `MATERIAL_OHNE_ARTIKEL`: reine Freitextbuchung, aus der sich kein VK
+    // ableiten lässt — geklärt wird sie trotzdem, statt sie wegzulassen.
+    | 'MATERIALBUCHUNG'
+    | 'ABWEICHUNG';
   quelle_id: string;
   bezeichnung: string;
   menge: string | null;
@@ -787,4 +808,39 @@ export interface PreisKlaerung {
 export interface PreisKlaerungFehler {
   detail: string;
   preis_unbekannt: PreisKlaerung[];
+}
+
+// --- Freigabelink zum Angebot (security.public_link, Migration 0141) --------
+
+/**
+ * Ein anmeldefreier Link, über den der Kunde genau dieses eine Angebot annehmen
+ * oder ablehnen kann.
+ *
+ * **Ohne Klartext.** Die URL steht ausschließlich in der Antwort auf das
+ * Erzeugen (`FreigabelinkNeu`); danach kennt der Server nur noch den
+ * SHA-256-Hash und kann sie nicht wiederherstellen.
+ */
+export interface Freigabelink {
+  id: string;
+  expires_at: string;
+  created_at: string;
+  used_at: string | null;
+  revoked_at: string | null;
+  /** Noch einlösbar? (nicht verbraucht, nicht widerrufen, nicht abgelaufen) */
+  offen: boolean;
+  created_by: string | null;
+}
+
+/** Die EINZIGE Stelle, an der die vollständige URL vorkommt. */
+export interface FreigabelinkNeu extends Freigabelink {
+  url: string;
+  mail_versandt: boolean;
+}
+
+export interface FreigabelinkInput {
+  /** Gültigkeit in Tagen; weggelassen = Betriebsvorgabe (14). */
+  gueltig_tage?: number | null;
+  /** ⚠️ Betrieblich gesperrt — der Server antwortet dann mit 422. */
+  per_mail?: boolean;
+  to_address?: string | null;
 }
