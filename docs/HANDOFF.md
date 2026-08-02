@@ -10,12 +10,17 @@ eigenen Dateien (unten).
 
 | | |
 |---|---|
-| **Live** | `mitra.tech-artist.de`, deployt **2026-08-01** aus `main` @ `c5a01c2` — verifiziert: HTTP 200, alle Container healthy |
+| **Live** | `mitra.tech-artist.de`, deployt **2026-08-02** aus `main` @ `d78caf0` — verifiziert: HTTP 200, `/api/docs` 200, alle Container healthy, `bezug` im ausgelieferten OpenAPI |
 | **Migrationskopf live** | **0143** (`0143_merge_azubi_und_material`) — vollständig ausgerollt |
-| **Branches** | `develop` = `main` = `c5a01c2`; **lokal 1 Commit vor `origin`** (Testfix noch nicht gepusht) |
+| **Branches** | `develop` = `main` = `origin` = `d78caf0` — alles deckungsgleich |
 | **Nutzung** | **Testbetrieb** — der Server dient dem Probelauf durch Chef/Kollegen. Echte Kundendaten und ~2 Mio Artikel liegen drauf, aber es hängt kein Tagesgeschäft daran. `MCN_SEED=0`. |
 | **Backup** | Dienst läuft (nächtlich 02:30 + `MCN_BACKUP_RUN_ON_START=1`); manuelle Dumps in `backups-manuell/` |
-| **Testsuite** | **grün** (2026-08-01): `4455 passed, 21 skipped`, gegen frisch gebaute Test-DB |
+| **Testsuite** | **grün** (2026-08-02): `4463 passed, 21 skipped`, gegen frisch gebaute Test-DB |
+
+> **⚠️ Zwei volle Suiten gleichzeitig zerstören sich gegenseitig.** Beide bauen
+> `test_mitra_crm_test` mit `--create-db` neu — der eine Lauf zieht dem anderen die
+> Datenbank weg. Ergebnis: „32 failed, 3776 errors", die nichts mit dem Code zu tun
+> haben. Immer nur **eine** Suite laufen lassen (`pgrep -f bin/pytest` vorher).
 
 > **⚠️ Demo-Passwort-Automatik ist ABGESCHALTET** (2026-08-01). Bis dahin setzte der
 > Entrypoint bei **jedem** Containerstart für **alle** aktiven Konten dasselbe
@@ -76,6 +81,18 @@ eigenen Dateien (unten).
    tatsächlich ist es **Testbetrieb** (Stand 2026-08-01, Aussage des Users). Die
    Formulierung bremst jede neue Session unnötig aus — beim nächsten Anfassen
    angleichen.
+
+**Erledigt am 2026-08-02**
+- **Der Belegbezug steht** (`d78caf0`, live): Angebot, Rechnung und Bildschirm nennen
+  Wohneinheit, Eigentümer, Mieter und „Vertreten durch". Eigentümer-Kaskade
+  Wohnung → Liegenschaft → Gemeinschaft, damit WEG, Mietshaus und Eigenheim ohne
+  Konfiguration bedient sind. Eingefroren in `billing_snapshot`, Live-Fallback je
+  Feld. Regel und Schaden in `INVARIANTEN.md` §2; Auflöser in
+  `services/belegbezug.py`. **Kein Schemaeingriff.**
+  *Nächster Schritt dort:* Ein Auftrag über **mehrere** Wohnungen (drei Bäder, eine
+  Rechnung) zeigt heute nur die Einheit am Auftrag. Nach der Eigentumsgrenze wäre
+  das dreimal Sondereigentum — also drei Eigentümer auf einem Beleg. Mit dem User
+  am fertigen Blatt klären, bevor gebaut wird.
 
 **Erledigt am 2026-08-01** *(hier nur als Beleg, dass es nicht vergessen wurde)*
 - `main`/`develop` sind auf `origin` — der Rückstand von 27 Commits ist Geschichte.

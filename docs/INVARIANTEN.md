@@ -63,7 +63,10 @@ Ausführliche Herleitungen: `docs/archiv/chronik-2026-07.md`.
   Verwaltung), `INVOICE_DEBTOR` (wer zahlt: WEG **oder** einzelner Eigentümer),
   `INVOICE_RECIPIENT` (wer die Post bekommt). Die Verwaltung ist **kein** Beteiligter an der
   Liegenschaft, sondern ausschließlich über ein Mandat verbunden.
-  *Stand 2026-08-02: Regel gilt fachlich und im Schema; die Umsetzung im Belegkopf ist offen.*
+  *Stand 2026-08-02: umgesetzt und live (`services/belegbezug.py`, Commit `d78caf0`).
+  Der Bezug friert beim Veröffentlichen in `billing_snapshot` mit ein — live gelesen
+  zeigte eine alte Rechnung nach einem Eigentümerwechsel den NEUEN Eigentümer.
+  Offen: ein Auftrag über **mehrere** Wohnungen zeigt nur die Einheit am Auftrag.*
 - **Belegposition ist eine Kopie, kein Verweis.** Werte sind eingefroren; ein neuer
   Listenpreis verfälscht kein geschriebenes Angebot. Umgekehrt schreibt das Speichern einer
   Position **niemals** in `pricing.article`.
