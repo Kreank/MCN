@@ -331,3 +331,47 @@ den Modellkontext und muss lückenlos sein. Hier genügt `created_at, id` — mi
 ---
 Viel Erfolg. Halte dich an das Slice-Rezept, verifiziere end-to-end (nicht nur
 Typecheck), und lass jeden substanziellen Slice von einem Opus-Reviewer prüfen.
+
+## Entwürfe sind löschbar, Ausgestelltes nie (2026-08-02)
+
+**Sascha:** *„Warum können wir Entwürfe nicht löschen? Finde ich blöd, das müllt
+das System zu. Berichte, aus denen Rechnungen erstellt werden oder halt bestätigt
+sind — das man die nicht mehr löschen kann, ok. Aber Entwürfe … bei Angebote und
+Rechnungen dasselbe. Entwürfe alle löschbar. Sobald versendet oder bestätigt fest
+und nicht mehr änderbar."*
+
+**Entscheidung.** Die Löschsperre wird statusabhängig:
+
+| | löschbar | fest |
+|---|---|---|
+| Baustellenbericht | `ENTWURF` | `ABGESCHLOSSEN`, `UNTERZEICHNET` |
+| Angebot | `ENTWURF` | ab `VERSENDET` |
+| Rechnung | `ENTWURF` | ab `VEROEFFENTLICHT` |
+
+**Warum das kein Aufweichen ist.** Die GoBD verlangt Unveränderlichkeit ab dem
+Zeitpunkt, an dem ein Beleg **entsteht** — nicht währenddessen. Ein Entwurf ist
+kein Dokument: Er trägt keine Nummer, ist nie beim Kunden gewesen und begründet
+keine Forderung. Ihn aufzubewahren dokumentiert nichts, es sammelt nur Müll an,
+in dem später niemand den echten Beleg findet.
+
+Bisher sperrte `util.forbid_mutation()` **pauschal** jedes DELETE, ohne den
+Status anzusehen. Genau das ist der Fehler: Die Sperre ist richtig, sie greift
+nur zu früh.
+
+### Die Fallstricke — beim Bauen zwingend zu beachten
+
+1. **Ein Rechnungsentwurf hält Abrechnungsbindungen** (`invoicing.billing_link`).
+   Wird er gelöscht, ohne sie zu lösen, bleiben die Quellen (Stunden, Material,
+   Berichts- und Angebotszeilen) **für immer** als abgerechnet markiert — die
+   Arbeit wäre nie wieder fakturierbar, und der Grund wäre nirgends sichtbar.
+   Der Storno löst die Bindung bereits; das Löschen muss denselben Weg gehen.
+2. **Abhängige Zeilen zuerst**: Positionen, Rubriken, Beteiligte hängen per
+   Fremdschlüssel am Kopf und tragen eigene `no_delete`-Trigger.
+3. **Ein Berichtsentwurf kann in einem Rechnungsentwurf gebunden sein.** Dann ist
+   er nicht frei löschbar — erst die Rechnung, dann der Bericht. Die Meldung muss
+   sagen, welcher Beleg im Weg steht, sonst sucht der Bearbeiter im Dunkeln.
+4. **Kein Kaskadenlöschen über Statusgrenzen hinweg.** Ein Auftrag mit einem
+   unterzeichneten Bericht bleibt, wie er ist.
+
+**Nicht verhandelbar bleibt:** Ausgestelltes wird nie gelöscht, sondern storniert
+(B-21/B-30). Daran ändert diese Entscheidung nichts.
