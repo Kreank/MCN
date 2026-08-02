@@ -73,8 +73,15 @@ Und über allem der echte Zustand — `git log`, `ls backend/db_core/migrations/
 - **`main` = was live läuft** auf `mitra.tech-artist.de`. NICHT direkt darauf
   entwickeln. Ein neuer Server-Stand entsteht bewusst: `develop` → `main` mergen,
   dann bauen und ausrollen (Ablauf unten).
-  ⚠️ **Seit 2026-07-17 ist das ECHTBETRIEB, keine Demo mehr**: ~2 Mio Artikel und
-  echte Kundendaten. Jeder Deploy trifft Produktivdaten.
+  ⚠️ **Es ist TESTBETRIEB — nicht Echtbetrieb** (Sascha, 2026-08-02). Deployt wird,
+  damit Sascha und seine Chefs von überall testen können; **es hängt kein
+  Tagesgeschäft daran.** Auf dem Server liegen zwar ~2 Mio Artikel und echte
+  Kundendaten (also kein Demo-Seed, `MCN_SEED=0` bleibt stehen), aber ein Deploy
+  unterbricht keinen laufenden Betrieb.
+  **Warum das hier steht:** Frühere Fassungen behaupteten „ECHTBETRIEB, jeder Deploy
+  trifft Produktivdaten". Das hat eine Session dazu gebracht, mitten im Rollout
+  anzuhalten und Rückfragen zu stellen, wo Weiterarbeiten richtig gewesen wäre.
+  Sorgfalt ja — Schockstarre nein.
 - **`develop` = Arbeitsbranch.** Hier wird entwickelt. Beim Session-Start prüfen,
   dass man dort steht.
 - **Deployment liegt in `deploy/`**, Anleitung `docs/deployment.md`. Vier Container

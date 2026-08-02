@@ -89,7 +89,26 @@ from db_core.services.beleg import (
 )
 from db_core.services.beleg_pdf import empfaenger_zeilen
 
+#: Nur im Entwurf ist ein Bericht änderbar — daran hat 0144 nichts gelockert.
+#: ABGESCHLOSSEN ist Abrechnungsgrundlage und damit ebenso fest wie
+#: UNTERZEICHNET; die Datenbank setzt es zusätzlich durch (Trigger aus 0144).
 _EDITIERBAR = ("ENTWURF",)
+
+#: Klartext für Fehlermeldungen. Vor 0144 stand in den Meldungen pauschal
+#: „unterzeichnet" — bei einem abgeschlossenen Bericht schickte das den
+#: Bearbeiter auf die Suche nach einer Unterschrift, die es gar nicht gibt.
+_STATUS_TEXT = {
+    "ENTWURF": "im Entwurf",
+    "ABGESCHLOSSEN": "abgeschlossen",
+    "UNTERZEICHNET": "unterzeichnet",
+}
+
+
+def _nicht_editierbar(report):
+    return SiteReportError(
+        f"Der Bericht ist {_STATUS_TEXT.get(report.status, report.status)} — "
+        "seine Positionen sind unveränderlich."
+    )
 
 # Positionsarten der BERICHTSposition (Migration 0080). Bewusst OHNE
 # 'ZWISCHENSUMME' — der Bericht summiert nichts (er führt keine Beträge, und
@@ -417,7 +436,10 @@ def update_report(actor_app_user_id, *, report_id, **fields):
     if report is None:
         raise SiteReportError("Bericht nicht gefunden.")
     if report.status not in _EDITIERBAR:
-        raise SiteReportError("Ein unterzeichneter Bericht ist unveränderlich.")
+        raise SiteReportError(
+            f"Der Bericht ist {_STATUS_TEXT.get(report.status, report.status)} "
+            "und damit unveränderlich."
+        )
 
     allowed = ("report_date", "service_job_id", "weather", "activity_text",
                "hours_worked", "materials_note", "remarks")
@@ -478,19 +500,62 @@ def update_report(actor_app_user_id, *, report_id, **fields):
     return report
 
 
-def sign_report(actor_app_user_id, *, report_id, signed_by_name, signature_png):
-    """Besiegelt den Bericht mit der Kundenunterschrift (ENTWURF → UNTERZEICHNET).
+def abschliessen(actor_app_user_id, *, report_id):
+    """Erklärt den Bericht für fertig — ohne Unterschrift (ENTWURF → ABGESCHLOSSEN).
 
-    `signature_png` sind die PNG-Bytes der Unterschrift (Canvas). Sie werden im
-    Objektspeicher abgelegt (content.file, SHA-256-Dedup) und referenziert. Danach
-    ist der Bericht unveränderlich (Trigger). Fehlt Name oder Unterschrift, oder ist
-    der Bericht nicht mehr im ENTWURF → SiteReportError.
+    Der Normalfall dieses Betriebs: Rund 80 % der Berichte unterschreibt niemand
+    (Sascha, 2026-08-02), fertig und Abrechnungsgrundlage sind sie trotzdem. Vor
+    Migration 0144 mussten sie als ENTWURF liegenbleiben und fielen damit aus der
+    Abrechnung — zusammen mit den Berichten, an denen der Monteur noch tippte.
+
+    Ab hier ist der Bericht **inhaltlich unveränderlich** (Trigger): Er ist
+    Abrechnungsgrundlage, und die verschiebt man nicht nachträglich. Wer sich
+    vertan hat, schreibt einen weiteren Bericht — dieselbe Regel wie bei Belegen
+    (Korrektur nur als Folgedokument, B-21). Der einzige verbleibende Weg ist die
+    nachgereichte Unterschrift.
+
+    Der Briefkopf friert hier ein, genau wie beim Unterzeichnen (Befund B9,
+    Migration 0132) — sonst zeigte ein abgeschlossener Bericht nach einem Umzug
+    des Kunden eine andere Anschrift als die Rechnung, die auf ihm fußt.
     """
     report = SiteReport.objects.filter(id=report_id).first()
     if report is None:
         raise SiteReportError("Bericht nicht gefunden.")
+    if report.status == "ABGESCHLOSSEN":
+        raise SiteReportError("Der Bericht ist bereits abgeschlossen.")
     if report.status != "ENTWURF":
+        raise SiteReportError(
+            f"Nur ein Bericht im Entwurf lässt sich abschließen (Status: {report.status})."
+        )
+    with as_business_error():
+        with business_transaction(actor_app_user_id):
+            report.status = "ABGESCHLOSSEN"
+            # VOR dem Statuswechsel-Save und in DERSELBEN Transaktion — danach
+            # sperrt der Versiegelungs-Trigger das Nachtragen.
+            report.header_snapshot = kopfdaten(report)
+            report.save(update_fields=["status", "header_snapshot", "updated_at"])
+    report.refresh_from_db()
+    return report
+
+
+def sign_report(actor_app_user_id, *, report_id, signed_by_name, signature_png):
+    """Besiegelt den Bericht mit der Kundenunterschrift.
+
+    Zulässig aus **ENTWURF** (der Kunde unterschreibt direkt vor Ort) und aus
+    **ABGESCHLOSSEN** (die Unterschrift wird nachgereicht — seit 0144). Danach ist
+    der Bericht vollständig unveränderlich (Trigger).
+
+    `signature_png` sind die PNG-Bytes der Unterschrift (Canvas). Sie werden im
+    Objektspeicher abgelegt (content.file, SHA-256-Dedup) und referenziert. Fehlt
+    Name oder Unterschrift → SiteReportError.
+    """
+    report = SiteReport.objects.filter(id=report_id).first()
+    if report is None:
+        raise SiteReportError("Bericht nicht gefunden.")
+    if report.status == "UNTERZEICHNET":
         raise SiteReportError("Der Bericht ist bereits unterzeichnet.")
+    if report.status not in ("ENTWURF", "ABGESCHLOSSEN"):
+        raise SiteReportError(f"Unerwarteter Berichtsstatus: {report.status}.")
     name = _clean(signed_by_name)
     if not name:
         raise SiteReportError("Der Name des Unterzeichnenden ist erforderlich.")
@@ -533,14 +598,22 @@ def sign_report(actor_app_user_id, *, report_id, signed_by_name, signature_png):
             report.signed_at = datetime.now(dt_timezone.utc)
             report.signature_file_id = datei.id
             report.status = "UNTERZEICHNET"
+            felder = ["signed_by_name", "signed_at", "signature_file_id",
+                      "status", "updated_at"]
             # Den Briefkopf einfrieren (Befund B9, Migration 0132) — IN
             # derselben Transaktion und VOR dem Statuswechsel-Save, sonst
             # sperrte der Versiegelungs-Trigger das Nachtragen.
-            report.header_snapshot = kopfdaten(report)
-            report.save(update_fields=[
-                "signed_by_name", "signed_at", "signature_file_id", "status",
-                "header_snapshot", "updated_at",
-            ])
+            #
+            # Aber nur, wenn er noch nicht steht: Bei einer NACHGEREICHTEN
+            # Unterschrift (ABGESCHLOSSEN → UNTERZEICHNET, seit 0144) ist er
+            # bereits vom Abschluss her eingefroren. Ihn dort neu zu berechnen
+            # hieße, ihn eine Woche später mit inzwischen geänderten Stammdaten
+            # zu überschreiben — genau das, was das Einfrieren verhindern soll.
+            # Der Trigger lehnt es zu Recht ab.
+            if not report.header_snapshot:
+                report.header_snapshot = kopfdaten(report)
+                felder.insert(-1, "header_snapshot")
+            report.save(update_fields=felder)
     report.refresh_from_db()
     return report
 
@@ -924,9 +997,7 @@ def set_report_lines(actor_app_user_id, *, report_id, lines):
     if report is None:
         raise SiteReportError("Bericht nicht gefunden.")
     if report.status not in _EDITIERBAR:
-        raise SiteReportError(
-            "Der Bericht ist unterzeichnet — seine Positionen sind unveränderlich."
-        )
+        raise _nicht_editierbar(report)
     prepared = _prepare_report_lines(lines, report)
 
     with as_business_error():
@@ -984,9 +1055,7 @@ def vorbelegen_aus_angebot(actor_app_user_id, *, report_id, quote_id):
     if report is None:
         raise SiteReportError("Bericht nicht gefunden.")
     if report.status not in _EDITIERBAR:
-        raise SiteReportError(
-            "Der Bericht ist unterzeichnet — seine Positionen sind unveränderlich."
-        )
+        raise _nicht_editierbar(report)
     if report.work_order_id is None:
         raise SiteReportError(
             "Der Bericht hängt an keinem Auftrag (freier Termin) — es gibt kein "

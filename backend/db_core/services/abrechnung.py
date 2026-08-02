@@ -718,19 +718,36 @@ def _vorschlaege_lohn():
 # Quellen des Auftrags
 # ---------------------------------------------------------------------------
 
-def _berichtspositionen(work_order_id):
-    """Positionen aus den **unterzeichneten** Berichten des Auftrags.
+#: Berichtszustände, die eine Abrechnung tragen (seit Migration 0144).
+#: `ENTWURF` fehlt hier bewusst — daran tippt der Monteur womöglich noch.
+ABRECHENBARE_BERICHTE = ("ABGESCHLOSSEN", "UNTERZEICHNET")
 
-    Entwurfsberichte fließen **nicht** ein: Ein nicht abgenommener Nachweis ist
-    keine Abrechnungsgrundlage. Sie werden aber auch nicht verschwiegen — der
-    Aufrufer bekommt sie benannt (`_entwurfsberichte`).
+
+def _berichtspositionen(work_order_id):
+    """Positionen aus den **abgeschlossenen und unterzeichneten** Berichten.
+
+    Bis Migration 0144 zog diese Funktion allein aus `UNTERZEICHNET`, begründet
+    mit „ein nicht abgenommener Nachweis ist keine Abrechnungsgrundlage". Die
+    Begründung stimmt — nur traf die Umsetzung den Normalfall dieses Betriebs:
+    Rund 80 % der Berichte unterschreibt niemand (Sascha, 2026-08-02), fertig
+    sind sie trotzdem. Sie mussten als ENTWURF liegenbleiben und fielen damit
+    aus der Abrechnung heraus.
+
+    Seit 0144 trennt der dritte Zustand die beiden Fälle: `ABGESCHLOSSEN` heißt
+    „fertig, niemand hat unterschrieben" und ist voll abrechenbar, `ENTWURF`
+    heißt „in Arbeit" und bleibt draußen. Die Unterschrift ist damit ein
+    **Merkmal** — bei Streit über einen Posten weiterhin sichtbar — und kein
+    **Tor** mehr.
+
+    Entwürfe werden nicht verschwiegen: Der Aufrufer bekommt sie benannt
+    (`_entwurfsberichte`).
 
     TEXT-Zeilen tragen keine Menge und sind Kommentar, kein Posten.
     """
     return list(
         SiteReportLine.objects.filter(
             site_report__work_order_id=work_order_id,
-            site_report__status="UNTERZEICHNET",
+            site_report__status__in=ABRECHENBARE_BERICHTE,
         )
         .exclude(line_type=report_service.TEXT_TYPE)
         .select_related("site_report")
@@ -740,11 +757,17 @@ def _berichtspositionen(work_order_id):
 
 
 def _entwurfsberichte(work_order_id):
-    """Die (noch) nicht unterzeichneten Berichte des Auftrags — benannt, nicht
-    verschwiegen. Sie sind der häufigste Grund für eine „zu kleine" Rechnung."""
+    """Die Berichte, die **nicht** in die Abrechnung eingehen — benannt, nicht
+    verschwiegen. Sie sind der häufigste Grund für eine „zu kleine" Rechnung.
+
+    Seit 0144 sind das nur noch die echten Entwürfe: `ABGESCHLOSSEN` fließt ein
+    und darf hier nicht mehr auftauchen, sonst meldete die Vorschau eine Lücke,
+    die gar keine ist — und der Bearbeiter suchte nach fehlendem Geld, das längst
+    in der Rechnung steht.
+    """
     return list(
         SiteReport.objects.filter(work_order_id=work_order_id)
-        .exclude(status="UNTERZEICHNET")
+        .exclude(status__in=ABRECHENBARE_BERICHTE)
         .order_by("report_date", "created_at")
     )
 

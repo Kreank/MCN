@@ -45,6 +45,14 @@ from db_core.services.beleg_pdf import (
 
 log = logging.getLogger(__name__)
 
+#: Berichtsstatus im Klartext (Migration 0144). „Abgeschlossen" ist der
+#: Normalfall dieses Betriebs: fertig, aber ohne Kundenunterschrift.
+_STATUS_TEXT = {
+    "ENTWURF": "Entwurf",
+    "ABGESCHLOSSEN": "Abgeschlossen",
+    "UNTERZEICHNET": "Unterzeichnet",
+}
+
 # Foto-Kategorien in Anzeige-Reihenfolge mit Abschnittstitel.
 _FOTO_GRUPPEN = (
     ("FOTO_VORHER", "Fotos — vorher"),
@@ -273,8 +281,11 @@ def render_site_report_pdf(report_id):
 
     issuer = issuer_stammdaten()
     logo = _logo_bytes(CompanyProfile.objects.first())
+    # ENTWURF-Aufdruck nur beim echten Entwurf. Ein abgeschlossener Bericht
+    # (0144) ist fertig und Abrechnungsgrundlage — ihn als „Entwurf" zu stempeln
+    # entwertete genau das Dokument, auf dem die Rechnung fußt.
     pdf = new_beleg_pdf(issuer=issuer, logo_bytes=logo,
-                        entwurf=report.status != "UNTERZEICHNET")
+                        entwurf=report.status == "ENTWURF")
 
     # Briefkopf (Befund B3/B8, Runde 2). Bis hierher stand im PDF nur
     # „Auftrag: <Titel>" und „Objekt: <Name · Stadt>" — kein Auftraggeber, keine
@@ -326,7 +337,7 @@ def render_site_report_pdf(report_id):
         ("Monteur", report.author.display_name if report.author else None),
         ("Arbeitsstunden", _num(report.hours_worked) if report.hours_worked else None),
         ("Wetter", report.weather),
-        ("Status", "Unterzeichnet" if report.status == "UNTERZEICHNET" else "Entwurf"),
+        ("Status", _STATUS_TEXT.get(report.status, report.status)),
     ]
 
     # Kontext links (statt Anschriftfeld — der Bericht ist kein Brief),

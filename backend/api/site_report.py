@@ -592,12 +592,41 @@ def update_site_report(request, report_id: UUID, payload: SiteReportUpdateIn):
     return _out(report)
 
 
+@router.post(
+    "/site_reports/{report_id}/abschliessen", response=SiteReportOut, auth=django_auth
+)
+def abschliessen_site_report(request, report_id: UUID):
+    """Bericht ohne Unterschrift für fertig erklären (ENTWURF → ABGESCHLOSSEN).
+
+    Der Normalfall dieses Betriebs: Rund 80 % der Berichte unterschreibt niemand
+    (Sascha, 2026-08-02) — fertig und abrechenbar sind sie trotzdem. Vor
+    Migration 0144 fehlte dieser Zustand, und solche Berichte blieben als Entwurf
+    liegen, wo die Abrechnung sie nicht erreichte.
+
+    Danach ist der Bericht inhaltlich unveränderlich; offen bleibt allein die
+    nachgereichte Unterschrift. Dieselbe Zuständigkeitsgrenze wie beim
+    Unterzeichnen: Der Monteur (Scope 'EIGENE') schließt nur eigene Berichte ab.
+    """
+    actor, scope = require_scoped(request, "workflow", "AENDERN")
+    report = report_service.get_report(report_id)
+    if report is None:
+        raise HttpError(404, "Bericht nicht gefunden.")
+    _guard_own_report(report, actor, scope)
+    try:
+        report = report_service.abschliessen(actor, report_id=report_id)
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _out(report)
+
+
 @router.post("/site_reports/{report_id}/sign", response=SiteReportOut, auth=django_auth)
 def sign_site_report(request, report_id: UUID, payload: SiteReportSignIn):
-    """Bericht mit der Kundenunterschrift besiegeln (ENTWURF → UNTERZEICHNET).
+    """Bericht mit der Kundenunterschrift besiegeln.
 
-    Die Abnahme geschieht **vor Ort** — der Monteur (Scope 'EIGENE') lässt sie am
-    eigenen Einsatz unterschreiben; ein fremder Bericht ist mit 404 abgeriegelt.
+    Zulässig aus ENTWURF (Unterschrift vor Ort) und aus ABGESCHLOSSEN
+    (nachgereicht, seit 0144). Die Abnahme geschieht **vor Ort** — der Monteur
+    (Scope 'EIGENE') lässt sie am eigenen Einsatz unterschreiben; ein fremder
+    Bericht ist mit 404 abgeriegelt.
     """
     actor, scope = require_scoped(request, "workflow", "AENDERN")
     report = report_service.get_report(report_id)
