@@ -435,3 +435,39 @@ ein Statuswechsel plus die längst gebaute Bindungslösung.
 
 **Für Angebote bleibt es beim echten Löschen** (0146) — sie tragen keine
 Bindungen, dort gibt es nichts zu lösen.
+
+### Sammelrechnung: der Weg ohne Schemaeingriff (2026-08-02)
+
+Ursprünglich war geplant, das Freigabetor B-08 aufzumachen (eine Rechnung darf
+auf genau **einen** kaufmännisch geprüften Auftrag zeigen, Trigger aus 0019),
+damit eine Rechnung mehrere Aufträge tragen kann. **Das ist nicht nötig.**
+
+Mit dem Verwerfen (0147) existiert alles Erforderliche:
+
+1. Je Wohnung entsteht wie gewohnt ein **Rechnungsentwurf** — mit eigenem
+   Soll-Ist-Abgleich, eigener Wohnung, eigenem Eigentümer.
+2. Beim Zusammenfassen prüft der Dienst: **alle gewählten Entwürfe gehören
+   demselben Eigentümer** (Belegbezug aus `services/belegbezug.py`), sonst
+   Abbruch mit Begründung. Damit gilt die Regel „nie zwei Eigentümer auf einer
+   Rechnung" durch den Ablauf, nicht durch eine nachträgliche Prüfung.
+3. Die Quellentwürfe werden **verworfen** — dabei werden ihre
+   Abrechnungsbindungen gelöst und die Quellen (Stunden, Material,
+   Berichts-/Angebotszeilen) wieder frei.
+4. Die **Sammelrechnung** entsteht als neue Rechnung an **einem** Auftrag —
+   B-08 bleibt damit unangetastet — und bindet die freigewordenen Quellen neu.
+   Je Quellentwurf eine **Rubrik** (`invoicing.beleg_rubrik`, existiert) mit dem
+   Wohnungsbezug als Titel; die Zwischensumme je Abschnitt kann das PDF bereits.
+
+**Warum das die bessere Bauweise ist:** Kein Freigabetor wird angefasst, keine
+Migration, keine neue Statuslogik. Es ist eine Verkettung vorhandener,
+getesteter Bausteine — und jeder Schritt ist für sich rückverfolgbar.
+
+**Der eine Punkt, der beim Bauen zu klären ist:** Schritt 3 und 4 müssen in
+**einer** Transaktion laufen. Bricht es dazwischen ab, sind die Entwürfe
+verworfen, aber die Sammelrechnung existiert nicht — die Arbeit wäre dann zwar
+nicht verloren (die Quellen sind wieder frei), aber die Entwürfe müssten neu
+erzeugt werden.
+
+**Weiterhin gilt:** kein Auftrag über mehrere Wohnungen. Der Soll-Ist-Abgleich
+rechnet je Auftrag; ein Mehrverbrauch in Wohnung 1 höbe sonst einen
+Minderverbrauch in Wohnung 3 auf, und beide verschwänden aus der Ansicht.
