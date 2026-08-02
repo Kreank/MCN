@@ -2114,3 +2114,19 @@ def send_invoice_email(request, invoice_id: UUID, payload: InvoiceEmailIn):
         # Passwortfreie, klare Meldung an das UI statt eines 500-Leaks.
         raise HttpError(422, str(exc))
     return InvoiceEmailOut(sent=True, to_address=communication.counterpart_raw)
+
+@router.delete("/quotes/{quote_id}", response={204: None}, auth=django_auth)
+def delete_quote(request, quote_id: UUID):
+    """Ein **noch nicht versendetes** Angebot löschen.
+
+    Sascha, 2026-08-02: „Entwürfe alle löschbar … das müllt das System zu."
+    Maßgeblich ist die Belegnummer: Sie entsteht erst beim Versand, und solange
+    sie fehlt, war das Angebot nie beim Kunden. Danach antwortet der Dienst mit
+    422 — ein ausgestelltes Angebot wird abgelehnt oder ersetzt, nicht entfernt.
+    """
+    actor, _ = require(request, "invoicing", "AENDERN")
+    try:
+        beleg_service.delete_quote(actor, quote_id=quote_id)
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return 204, None

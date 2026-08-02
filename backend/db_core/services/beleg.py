@@ -2764,6 +2764,39 @@ def publish_invoice(actor_app_user_id, *, invoice_id):
     return invoice
 
 
+def delete_quote(actor_app_user_id, *, quote_id):
+    """Löscht ein Angebot, **solange es keine Belegnummer trägt**.
+
+    Sascha am 2026-08-02: *„Entwürfe alle löschbar. Sobald versendet oder
+    bestätigt fest und nicht mehr änderbar."* Bis dahin blieben verworfene
+    Angebote für immer liegen — wer eines dreimal ansetzt, hatte drei
+    Karteileichen.
+
+    Die Grenze ist die **Nummer**, nicht der Status: Ein Angebot bekommt sie erst
+    beim Versand (CHECK „P3-01" in Migration 0018). Solange sie fehlt, war das
+    Angebot nie beim Kunden — gleich ob ENTWURF, INTERN_GEPRUEFT oder
+    FREIGEGEBEN. Die letzte Instanz ist der Trigger aus 0146; er greift auch an
+    diesem Dienst vorbei.
+
+    Positionen zuerst, dann die Rubriken — die Positionen verweisen auf sie
+    (dieselbe Reihenfolge wie in `update_quote`).
+    """
+    quote = Quote.objects.filter(id=quote_id).first()
+    if quote is None:
+        raise ValueError("Angebot nicht gefunden.")
+    if quote.quote_number:
+        raise ValueError(
+            f"Angebot {quote.quote_number} ist versendet und lässt sich nicht "
+            "löschen. Ein ausgestelltes Angebot wird abgelehnt oder ersetzt."
+        )
+    with as_business_error():
+        with business_transaction(actor_app_user_id):
+            QuoteLine.objects.filter(quote_id=quote.id).delete()
+            BelegRubrik.objects.filter(quote_id=quote.id).delete()
+            Quote.objects.filter(id=quote.id).delete()
+    return True
+
+
 def send_quote(actor_app_user_id, *, quote_id):
     """Versendet ein Angebot (ENTWURF → … → VERSENDET).
 

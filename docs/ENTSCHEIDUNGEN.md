@@ -375,3 +375,27 @@ nur zu früh.
 
 **Nicht verhandelbar bleibt:** Ausgestelltes wird nie gelöscht, sondern storniert
 (B-21/B-30). Daran ändert diese Entscheidung nichts.
+
+### Nachtrag 2026-08-02: Rechnungsentwürfe bleiben vorerst unlöschbar
+
+Der erste Versuch ist **zurückgenommen** worden, und der Grund gehört
+festgehalten, damit ihn niemand ein zweites Mal macht.
+
+Der Ansatz war: Trigger auf `billing_link` lockern, sodass Bindungen einer
+Entwurfsrechnung löschbar sind. Das öffnet ein Loch — **jede einzelne Bindung**
+wäre damit löschbar, solange die Rechnung im Entwurf steht. Wer eine Bindung
+entfernt, gibt die Quelle wieder frei, und die Doppelabrechnungssperre ist
+spurlos ausgehebelt. Genau davor warnt `test_bindung_kann_nicht_geloescht_werden`
+seit Migration 0084 („Ein gelöschter Link machte die Sperre spurlos rückgängig") —
+der Test hat den Fehler gefangen.
+
+**Was stattdessen zu prüfen ist**, wenn der Slice wieder aufgenommen wird:
+* Fremdschlüssel `billing_link.invoice_id` auf `ON DELETE CASCADE` — dann
+  verschwinden die Bindungen mit der Rechnung, ohne dass ein einzelnes DELETE
+  je erlaubt wäre. Zu prüfen: ob der `BEFORE DELETE`-Trigger bei CASCADE feuert
+  (er tut es) und wie er den Unterschied erkennt.
+* Oder ein Verwerfen-Status statt echtem Löschen: Der Entwurf bleibt, ist aber
+  aus allen Listen verschwunden — dann bleibt auch die Bindung heil.
+
+**Angebote sind davon nicht betroffen** und seit `0146` löschbar: Sie tragen
+keine Bindungen, weil erst beim Fakturieren gebunden wird.
