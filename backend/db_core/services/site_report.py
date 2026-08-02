@@ -221,6 +221,74 @@ def get_report(report_id):
     )
 
 
+def gebuchte_zeiten(report):
+    """Die auf den Termin gebuchten Arbeitszeiten, je Lohngruppe zusammengefasst.
+
+    Sascha am 2026-08-02: *„Gebuchte Zeiten auf diesen Termin sollen dann als
+    Position unten mit angegeben werden, und zwar als Leistung."*
+
+    **Abgeleitet, nicht gespeichert.** Die Abrechnung liest die Zeitbuchungen
+    bereits direkt (`abrechnung._zeitbuchungen`). Würde derselbe Zeitraum
+    zusätzlich als Berichtsposition abgelegt, stünden die Stunden zweimal in der
+    Rechnung — einmal aus der Buchung, einmal aus der Position. Diese Funktion
+    rechnet deshalb bei jedem Aufruf frisch aus den Buchungen; es gibt keinen
+    zweiten Datenbestand, der abweichen könnte.
+
+    Gezählt wird wie in der Abrechnung, damit Bericht und Rechnung dieselbe Zahl
+    zeigen:
+
+    * nur **Arbeitszeit** (`category.is_work_time`) — Pausen sind keine Leistung,
+    * nur **beendete** Buchungen (`ended_at`) — eine laufende hat noch keine
+      Dauer, und sie zu schätzen hieße, eine Zahl zu erfinden.
+
+    Die Lohngruppe kommt vom Mitarbeiter. Fehlt sie, erscheint die Zeit unter
+    „Arbeitszeit" statt zu verschwinden: Eine ungepflegte Lohngruppe ist ein
+    Stammdatenproblem, kein Grund, geleistete Stunden zu unterschlagen.
+
+    Rückgabe: Liste von `{"bezeichnung", "stunden"}`, nach Bezeichnung sortiert.
+    Leer, wenn der Bericht an keinem Termin hängt.
+    """
+    from db_core.models import Employee, TimeEntry
+
+    if report is None or report.service_job_id is None:
+        return []
+
+    zeiten = list(
+        TimeEntry.objects.filter(
+            service_job_id=report.service_job_id,
+            category__is_work_time=True,
+            ended_at__isnull=False,
+        ).select_related("category")
+    )
+    if not zeiten:
+        return []
+
+    gruppen = {
+        e.app_user_id: (e.wage_group.name if e.wage_group_id else None)
+        for e in Employee.objects.filter(
+            app_user_id__in={t.user_id for t in zeiten}
+        ).select_related("wage_group")
+    }
+
+    summen = {}
+    for t in zeiten:
+        sekunden = (t.ended_at - t.started_at).total_seconds()
+        if sekunden <= 0:
+            continue
+        name = gruppen.get(t.user_id) or "Arbeitszeit"
+        summen[name] = summen.get(name, Decimal("0")) + Decimal(str(sekunden / 3600))
+
+    return [
+        {
+            "bezeichnung": name,
+            # Viertelstunden-genau: „2,75 h" ist ablesbar, 2,7333… ist es nicht.
+            "stunden": (summen[name] * 4).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+            / 4,
+        }
+        for name in sorted(summen)
+    ]
+
+
 def kopfdaten(report):
     """Briefkopf eines Baustellenberichts — Befund B3/B8 aus Runde 2.
 

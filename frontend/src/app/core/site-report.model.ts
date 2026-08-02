@@ -56,6 +56,18 @@ export interface SiteReport {
   signature_file_id: string | null;
   version: number;
   created_at: string;
+  /**
+   * Gebuchte Arbeitszeit des Termins, je Lohngruppe zusammengefasst.
+   *
+   * **Nur in der Detailantwort** — die Liste liefert sie nicht (sie wäre dort
+   * ein N+1). Deshalb optional.
+   *
+   * **Abgeleitet, nicht gespeichert:** Der Server rechnet sie bei jedem Abruf
+   * frisch aus den Zeitbuchungen. Als Berichtsposition abgelegt stünden
+   * dieselben Stunden zweimal in der Rechnung, weil die Abrechnung die
+   * Buchungen ohnehin liest.
+   */
+  gebuchte_zeiten?: GebuchteZeit[];
 }
 
 export interface SiteReportListe {
@@ -127,6 +139,12 @@ export interface SiteReportLine {
 }
 
 /** GET /api/workflow/site_reports/{id} — der Bericht mit seinen Positionen. */
+/** Eine Lohngruppe mit ihren Stunden auf dem Termin (abgeleitet, s. u.). */
+export interface GebuchteZeit {
+  bezeichnung: string;
+  stunden: number;
+}
+
 export interface SiteReportDetail extends SiteReport {
   lines: SiteReportLine[];
 }

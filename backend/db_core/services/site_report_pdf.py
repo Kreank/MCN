@@ -110,6 +110,41 @@ def _positionskopf(pdf):
     pdf.set_text_color(*_INK)
 
 
+def _render_zeiten(pdf, zeiten):
+    """Die auf den Termin gebuchten Stunden, je Lohngruppe.
+
+    Sascha am 2026-08-02: *„Gebuchte Zeiten auf diesen Termin sollen dann als
+    Position unten mit angegeben werden."* Sie stehen unter den Positionen, weil
+    sie eine andere Frage beantworten: nicht *was* verbaut wurde, sondern *wie
+    lange* gearbeitet.
+
+    Ohne Preise — wie die Positionen auch (Invariante 0080). Der Bericht ist ein
+    Nachweis, keine Rechnung; die Saetze stehen in der Lohngruppe und gehoeren
+    auf den Beleg, nicht auf das Protokoll.
+    """
+    zeiten = list(zeiten)
+    if not zeiten:
+        return
+    _platz_sichern(pdf, 20)
+    pdf.ln(4)
+    pdf.set_font("InterSB", "", 10)
+    pdf.set_text_color(*_NAVY)
+    pdf.cell(0, 6, "Gebuchte Arbeitszeit", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_text_color(*_INK)
+    pdf.set_font("Inter", "", 9.5)
+    gesamt = 0
+    for z in zeiten:
+        stunden = z["stunden"]
+        gesamt += stunden
+        pdf.cell(90, 5.5, _txt(z["bezeichnung"]))
+        pdf.cell(0, 5.5, _txt(f"{_num(stunden)} h"), new_x="LMARGIN", new_y="NEXT")
+    if len(zeiten) > 1:
+        pdf.set_font("InterSB", "", 9.5)
+        pdf.cell(90, 5.5, "Gesamt")
+        pdf.cell(0, 5.5, _txt(f"{_num(gesamt)} h"), new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(1)
+
+
 def _render_positionen(pdf, lines):
     """Berichtspositionen mit Soll/Ist-Mengen — ohne Preise (Invariante 0080)."""
     lines = list(lines)
@@ -374,6 +409,7 @@ def render_site_report_pdf(report_id):
     _abschnitt(pdf, "Material", report.materials_note)
     _abschnitt(pdf, "Bemerkungen", report.remarks)
     _render_positionen(pdf, report_service.list_report_lines(report.id))
+    _render_zeiten(pdf, report_service.gebuchte_zeiten(report))
     _render_fotos(pdf, report.id)
     _render_unterschrift(pdf, report)
 

@@ -163,6 +163,24 @@
                 />
               </div>
 
+              <!-- Gebuchte Arbeitszeit: steht unter den Positionen, weil sie
+                   eine andere Frage beantwortet — nicht WAS verbaut wurde,
+                   sondern WIE LANGE gearbeitet. Ohne Preise wie die Positionen
+                   auch; der Bericht ist ein Nachweis, keine Rechnung. -->
+              @if (r.gebuchte_zeiten?.length) {
+                <div class="bericht__block">
+                  <h3 class="bericht__h">Gebuchte Arbeitszeit</h3>
+                  <dl class="bericht__zeiten">
+                    @for (z of r.gebuchte_zeiten; track z.bezeichnung) {
+                      <div>
+                        <dt>{{ z.bezeichnung }}</dt>
+                        <dd>{{ z.stunden }} h</dd>
+                      </div>
+                    }
+                  </dl>
+                </div>
+              }
+
               <dl class="bericht__nebenfelder">
                 <div>
                   <dt>Erfasst von</dt>

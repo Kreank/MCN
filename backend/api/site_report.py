@@ -138,8 +138,20 @@ class SiteReportLineOut(Schema):
     note: str | None = None
 
 
+class GebuchteZeitOut(Schema):
+    """Eine Lohngruppe mit ihren Stunden auf diesem Termin."""
+
+    bezeichnung: str
+    stunden: Decimal
+
+
 class SiteReportDetailOut(SiteReportOut):
     lines: list[SiteReportLineOut] = []
+    # Aus den Zeitbuchungen des Termins ABGELEITET, nicht gespeichert: Die
+    # Abrechnung liest dieselben Buchungen: Eine zweite Ablage koennte abweichen
+    # — und als Position gespeichert stuenden die Stunden zweimal in der
+    # Rechnung. Leer, wenn der Bericht an keinem Termin haengt.
+    gebuchte_zeiten: list[GebuchteZeitOut] = []
 
 
 class SiteReportLineIn(Schema):
@@ -305,6 +317,7 @@ def _detail_out(report):
     return SiteReportDetailOut(
         **_out(report, mit_kopf=True).dict(),
         lines=[_line_out(l) for l in report_service.list_report_lines(report.id)],
+        gebuchte_zeiten=report_service.gebuchte_zeiten(report),
     )
 
 
