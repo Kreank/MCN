@@ -54,6 +54,18 @@
   max-width: 64rem;
 }
 
+// Arbeitsmaske statt Formular: Protokoll, Positionen — alles, was man ausfuellt
+// statt nur bestaetigt. Sascha am 2026-08-02: „mach die Maske bitte groesser!
+// Wir haben doch Platz auf dem View." Auf 64rem blieb der halbe Bildschirm leer,
+// waehrend die Felder in einer Spalte untereinander standen.
+//
+// 92rem und nicht „so breit wie moeglich": Jenseits davon liest sich eine
+// Textzeile schlecht — das Auge verliert beim Ruecksprung die Zeile —, und der
+// Dialog soll ein Blatt bleiben, kein zweiter Bildschirm.
+.dialog__panel--arbeitsflaeche {
+  max-width: 92rem;
+}
+
 .dialog__kopf {
   display: flex;
   align-items: flex-start;

@@ -179,3 +179,38 @@
   color: var(--ink-muted);
   font-size: var(--step--1);
 }
+
+/*
+  Protokoll-Maske (Sascha, 2026-08-02: „mach die Maske bitte größer! Wir haben
+  doch Platz auf dem View.")
+
+  Die ausgeführten Arbeiten SIND der Bericht — sie bekommen die Hauptspalte und
+  wachsen mit dem Fenster. Datum, Wetter, Stunden und die Materialnotiz sind
+  Beiwerk und stehen in einer festen, schmalen Spalte daneben: Ein Datumsfeld
+  wird nicht besser, wenn es 40rem breit ist.
+
+  `minmax(0, 1fr)` in der Hauptspalte ist kein Zierrat — ohne die Null als
+  Minimum sprengt ein langes Wort im Textfeld das Raster, statt umzubrechen.
+*/
+.protokoll-raster {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(16rem, 22rem);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.protokoll-raster__haupt,
+.protokoll-raster__neben {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+/* Darunter bringt Nebeneinander nichts mehr — dann wird gestapelt, in der
+   Reihenfolge des Markups (Arbeiten zuerst). */
+@media (max-width: 64rem) {
+  .protokoll-raster {
+    grid-template-columns: 1fr;
+  }
+}

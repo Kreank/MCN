@@ -11,6 +11,7 @@
     class="dialog__panel"
     [class.dialog__panel--schmal]="weite() === 'schmal'"
     [class.dialog__panel--breit]="weite() === 'breit'"
+    [class.dialog__panel--arbeitsflaeche]="weite() === 'arbeitsflaeche'"
   >
     @if (titel()) {
       <header class="dialog__kopf">

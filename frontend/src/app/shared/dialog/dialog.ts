@@ -115,11 +115,14 @@ export class Dialog implements OnDestroy {
    *   Scrollen, wo Platz war.
    * * `breit` (64rem) — Formulare mit Zeilen (Beteiligte, Positionen), bei
    *   denen mehrere Felder nebeneinander gehoeren.
+   * * `arbeitsflaeche` (92rem) — keine Abfrage, sondern ein Arbeitsplatz:
+   *   Protokoll erfassen, Positionen pflegen. Sascha am 2026-08-02: *„mach die
+   *   Maske bitte groesser! Wir haben doch Platz auf dem View."*
    *
    * Auf schmalen Schirmen greift ohnehin `width: 100%` — die Stufen wirken nur
    * dort, wo Platz da ist.
    */
-  readonly weite = input<'schmal' | 'normal' | 'breit'>('normal');
+  readonly weite = input<'schmal' | 'normal' | 'breit' | 'arbeitsflaeche'>('normal');
   /** Escape schliesst (fuer irreversible Dialoge abschaltbar). */
   readonly escapeSchliesst = input(true);
   /** Klick auf den Hintergrund schliesst (abschaltbar). */

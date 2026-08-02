@@ -197,6 +197,7 @@
 
 <!-- ------------------------------ Neu/Bearbeiten-Dialog ------------------- -->
 <app-dialog
+  weite="arbeitsflaeche"
   [offen]="dialogOffen() === 'neu' || dialogOffen() === 'bearbeiten'"
   [titel]="
     dialogOffen() === 'bearbeiten'
@@ -217,31 +218,54 @@
         <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
       </div>
     }
-    <app-feld [control]="berichtForm.controls.report_date" label="Berichtsdatum" typ="datum" [pflicht]="true" />
-    @if (!amEinsatz()) {
-      <app-referenz-wahl
-        [control]="berichtForm.controls.service_job_id"
-        label="Termin (optional)"
-        platzhalter="Termin suchen"
-        [suche]="einsatzSuche"
-      />
-    }
-    <app-feld
-      [control]="berichtForm.controls.activity_text"
-      label="Tätigkeiten"
-      typ="textarea"
-      [zeilen]="4"
-      [pflicht]="true"
-      [hinweis]="amEinsatz() ? 'Was wurde vor Ort festgestellt oder ausgeführt?' : 'Was wurde vor Ort ausgeführt?'"
-    />
-    <app-feld [control]="berichtForm.controls.weather" label="Wetter" hinweis="Optional, z. B. „sonnig, 18 °C“" />
-    <app-feld
-      [control]="berichtForm.controls.hours_worked"
-      label="Arbeitsstunden"
-      typ="zahl"
-      hinweis="Optional, z. B. 6,5"
-    />
-    <app-feld [control]="berichtForm.controls.materials_note" label="Material" typ="textarea" />
+    <!--
+      Zuschnitt nach Saschas Rückmeldung (2026-08-02): „mach die Maske bitte
+      größer! Wir haben doch Platz auf dem View." Vorher stand alles in EINER
+      Spalte auf 46rem — die ausgeführten Arbeiten also in einem schmalen
+      Schlitz, obwohl sie der eigentliche Bericht sind.
+
+      Jetzt bekommen sie die Hauptspalte und acht Zeilen; alles Beiwerk (Datum,
+      Wetter, Stunden, Materialnotiz) steht daneben. Auf schmalen Schirmen fällt
+      das Raster auf einspaltig zurück — die Reihenfolge im Markup ist deshalb
+      schon die richtige Lesereihenfolge.
+    -->
+    <div class="protokoll-raster">
+      <div class="protokoll-raster__haupt">
+        <app-feld
+          [control]="berichtForm.controls.activity_text"
+          label="Ausgeführte Arbeiten"
+          typ="textarea"
+          [zeilen]="8"
+          [pflicht]="true"
+          [hinweis]="amEinsatz() ? 'Was wurde vor Ort festgestellt oder ausgeführt?' : 'Was wurde vor Ort ausgeführt?'"
+        />
+      </div>
+      <div class="protokoll-raster__neben">
+        <app-feld [control]="berichtForm.controls.report_date" label="Berichtsdatum" typ="datum" [pflicht]="true" />
+        @if (!amEinsatz()) {
+          <app-referenz-wahl
+            [control]="berichtForm.controls.service_job_id"
+            label="Termin (optional)"
+            platzhalter="Termin suchen"
+            [suche]="einsatzSuche"
+          />
+        }
+        <app-feld [control]="berichtForm.controls.weather" label="Wetter" hinweis="Optional, z. B. „sonnig, 18 °C“" />
+        <app-feld
+          [control]="berichtForm.controls.hours_worked"
+          label="Arbeitsstunden"
+          typ="zahl"
+          hinweis="Optional, z. B. 6,5"
+        />
+        <app-feld
+          [control]="berichtForm.controls.materials_note"
+          label="Material (Notiz)"
+          typ="textarea"
+          [zeilen]="3"
+          hinweis="Gedächtnisstütze. Abgerechnet wird über die Positionen im Entwurf."
+        />
+      </div>
+    </div>
     <app-feld [control]="berichtForm.controls.remarks" label="Bemerkungen" typ="textarea" />
   </form>
   <div dialog-aktionen class="dialog__aktionen">
