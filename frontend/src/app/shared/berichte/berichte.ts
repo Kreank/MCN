@@ -487,6 +487,10 @@ export class Berichte {
     return {
       aussteller: kopf.aussteller ?? [],
       empfaenger: kopf.empfaenger ?? [],
+      // Kein Objektbezug: Der Bericht dokumentiert einen Einsatz, er stellt
+      // nichts in Rechnung. Wohneinheit/Eigentümer/Mieter gehören auf Angebot
+      // und Rechnung — hier wären sie Beiwerk.
+      bezug: [],
       // Der Bericht friert seinen Kopf ab der Unterschrift ein (Migration
       // 0132) — für die Anzeige ist das aber ohne Belang: Das Blatt zeigt
       // schlicht, was im Kopf steht.

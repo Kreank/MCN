@@ -49,6 +49,23 @@
       <p class="blatt__unterzeile">{{ unterzeile() }}</p>
     }
 
+    <!--
+      Objektbezug — dieselben Zeilen wie im PDF, fertig beschriftet vom Server
+      (services/belegbezug.py). Steht direkt unter dem Betreff, weil es die
+      erste Frage einer Verwaltung ist: Welche der 24 Wohnungen ist das?
+      Ist nichts ableitbar, kommt eine leere Liste und der Block entfällt.
+    -->
+    @if (kopf()?.bezug?.length) {
+      <dl class="blatt__bezug">
+        @for (zeile of kopf()!.bezug; track $index) {
+          <div class="blatt__bezug-zeile">
+            <dt>{{ zeile.label }}</dt>
+            <dd>{{ zeile.wert }}</dd>
+          </div>
+        }
+      </dl>
+    }
+
     @if (anschreiben()) {
       <p class="blatt__anschreiben">{{ anschreiben() }}</p>
     }

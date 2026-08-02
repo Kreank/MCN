@@ -27,6 +27,10 @@ from django.utils import timezone as dj_timezone
 from db_core.betriebszeit import betriebs_datum
 from db_core.db_context import business_transaction
 from db_core.gate_errors import as_business_error
+# Achtung, zwei ähnliche Namen: Das private `_beleg_bezug_aufloesen` weiter
+# unten gleicht Vorgang/Auftrag/Projekt gegeneinander ab. Diese beiden hier
+# beschreiben den OBJEKTbezug (Wohnung, Eigentümer, Mieter, Verwaltung).
+from db_core.services.belegbezug import bezug_aufloesen, bezug_felder
 from db_core.models import (
     Article,
     Assembly,
@@ -2369,6 +2373,12 @@ def beleg_stammdaten(invoice):
         "aus_snapshot": bool(header.get("issuer")),
         "issuer": header.get("issuer") or issuer_stammdaten(),
         "delivery": header.get("delivery") or delivery_stammdaten(invoice.property),
+        # Live-Fallback JE FELD (wie oben): Entwürfe haben noch keinen Snapshot,
+        # und Belege aus der Zeit vor diesem Slice tragen keinen `bezug`. Beides
+        # ist eine Lücke, keine eingefrorene Aussage — sie darf nachgezogen
+        # werden. Was der Snapshot WIRKLICH trägt, gewinnt dagegen immer.
+        "bezug": header.get("bezug")
+        or bezug_aufloesen(invoice.work_order, invoice.property),
         "parties": [
             _partei(p)
             for p in sorted(
@@ -2442,6 +2452,7 @@ def dokumentkopf(beleg):
             return {
                 "aussteller": ausstellerzeilen(stamm.get("issuer")),
                 "empfaenger": empfaenger_zeilen((recipient or {}).get("snapshot")),
+                "bezug": bezug_felder(stamm.get("bezug")),
                 "aus_snapshot": True,
             }
 
@@ -2474,6 +2485,11 @@ def dokumentkopf(beleg):
                 if empfaenger_partei is not None
                 else []
             ),
+            # Kostet beim Entwurf ein paar Abfragen (Eigentumsstand, Belegung,
+            # Mandat) — bewusst in Kauf genommen: Wer den Entwurf prüft, will
+            # genau sehen, was später auf dem Beleg steht. Bei veröffentlichten
+            # Belegen ist es kostenlos, da kommt es aus dem Snapshot.
+            "bezug": bezug_felder(bezug_aufloesen(beleg.work_order, beleg.property)),
             "aus_snapshot": False,
         }
 
@@ -2485,6 +2501,10 @@ def dokumentkopf(beleg):
         return {
             "aussteller": ausstellerzeilen(issuer_stammdaten()),
             "empfaenger": empfaenger_zeilen(party_stammdaten(party)) if party else [],
+            "bezug": bezug_felder(
+                (beleg.billing_snapshot or {}).get("header", {}).get("bezug")
+                or bezug_aufloesen(beleg.work_order, beleg.property)
+            ),
             "aus_snapshot": False,
         }
 
@@ -2700,6 +2720,11 @@ def publish_invoice(actor_app_user_id, *, invoice_id):
         # Liegenschaft darf einen gestellten Beleg nicht rückwirkend umschreiben.
         "issuer": issuer_stammdaten(),
         "delivery": delivery_stammdaten(invoice.property),
+        # Der Bezug (Einheit/Eigentümer/Mieter/Verwaltung) friert mit ein — aus
+        # demselben Grund wie Aussteller und Leistungsort: Nach einem
+        # Eigentümerwechsel zeigte eine zwei Jahre alte Rechnung sonst den NEUEN
+        # Eigentümer. Siehe services/belegbezug.py.
+        "bezug": bezug_aufloesen(invoice.work_order, invoice.property),
     }
     parties = [
         {
@@ -2764,6 +2789,9 @@ def send_quote(actor_app_user_id, *, quote_id):
         "net_total": str(quote.net_total),
         "tax_total": str(quote.tax_total),
         "gross_total": str(quote.gross_total),
+        # Wie bei der Rechnung: Der Bezug gehört auf das versendete Angebot und
+        # wird deshalb mit eingefroren (services/belegbezug.py).
+        "bezug": bezug_aufloesen(quote.work_order, quote.property),
     }
     lines = sorted(quote.lines.all(), key=lambda l: l.position_number)
     snapshot, digest = _snapshot_and_hash(

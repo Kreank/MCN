@@ -314,9 +314,24 @@ export interface QuoteDetail extends Quote {
  * aufgebaut ist (Zusatz vor der Straße, PLZ und Ort in einer Zeile, Land nur
  * bei Auslandsbelegen), gehört an eine Stelle und nicht zusätzlich hierher.
  */
+/** Eine beschriftete Zeile des Objektbezugs („Eigentümer: Klaus Meier"). */
+export interface BezugZeile {
+  label: string;
+  wert: string;
+}
+
 export interface Dokumentkopf {
   aussteller: string[];
   empfaenger: string[];
+  /**
+   * Objektbezug: Wohneinheit, Eigentümer, Mieter, „Vertreten durch".
+   *
+   * Kommt fertig beschriftet vom Server — aus derselben Quelle wie der Block
+   * im PDF. Die Kaskade dahinter (Eigentümer der Wohnung → Eigentümer des
+   * Objekts → Eigentümergemeinschaft) gehört auf den Server, nicht hierher.
+   * Leer, wenn nichts ableitbar war; dann zeigt die Ansicht keinen Block.
+   */
+  bezug: BezugZeile[];
   /** Stammt der Kopf aus dem eingefrorenen Beleg (veröffentlichte Rechnung)? */
   aus_snapshot: boolean;
 }

@@ -142,6 +142,13 @@ class WorkOrderRefOut(Schema):
     title: str
 
 
+class BezugZeileOut(Schema):
+    """Eine beschriftete Zeile des Objektbezugs („Eigentümer: Klaus Meier")."""
+
+    label: str
+    wert: str
+
+
 class DokumentkopfOut(Schema):
     """Briefkopf für die Bildschirmdarstellung (Befund G1).
 
@@ -149,10 +156,16 @@ class DokumentkopfOut(Schema):
     einer Anschrift (Zusatz vor Straße, PLZ und Ort in einer Zeile, Land nur bei
     Auslandsbelegen) gehört an EINE Stelle und nicht ins Frontend. Es ist
     dieselbe Funktion, aus der das PDF sein Anschriftfeld baut.
+
+    `bezug` folgt derselben Regel: Wohneinheit, Eigentümer, Mieter und
+    „Vertreten durch" kommen fertig beschriftet aus `services/belegbezug.py` —
+    dieselbe Quelle, aus der die PDFs ihren Block bauen. Leer, wenn nichts
+    ableitbar war; dann zeigt die Ansicht keinen Block.
     """
 
     aussteller: list[str] = []
     empfaenger: list[str] = []
+    bezug: list[BezugZeileOut] = []
     # Stammt der Kopf aus dem eingefrorenen Beleg (veröffentlichte Rechnung) oder
     # aus den Live-Daten (Angebot, Entwurf)? Die Ansicht kann das kennzeichnen.
     aus_snapshot: bool = False

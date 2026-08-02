@@ -62,6 +62,7 @@ from fpdf import FPDF
 from db_core import storage as storage_module
 from db_core.db_context import business_transaction
 from db_core.models import CompanyProfile, File, Invoice, Quote
+from db_core.services.belegbezug import bezug_aufloesen, bezug_zeilen
 from db_core.services.beleg import (
     FINAL_TYPE,
     anzeige_menge_preis,
@@ -722,6 +723,32 @@ def _render_titel(pdf, titel, untertitel=None):
     pdf.ln(3)
 
 
+def _render_bezug(pdf, bezug):
+    """Um wessen Wohnung geht es — Einheit, Eigentümer, Mieter, Verwaltung.
+
+    Steht direkt unter dem Titel, weil es die erste Frage ist, die eine
+    Verwaltung beim Öffnen des Umschlags hat: Welche der 24 Wohnungen ist das?
+    Das Label wird in Navy gesetzt, der Wert in Fließfarbe — dieselbe Trennung
+    wie im Infoblock, damit die Zeilen scanbar bleiben.
+
+    Fehlt der Bezug (z. B. Beleg ohne Auftrag), passiert nichts: Der Beleg sieht
+    dann aus wie vorher. Siehe services/belegbezug.py.
+    """
+    zeilen = bezug_zeilen(bezug)
+    if not zeilen:
+        return
+    breite = max(pdf.get_string_width(f"{label}:") for label, _ in zeilen) + 3
+    for label, wert in zeilen:
+        pdf.set_font("Inter", "B", 9.5)
+        pdf.set_text_color(*_NAVY)
+        pdf.cell(breite, 5.5, _txt(f"{label}:"))
+        pdf.set_font("Inter", "", 9.5)
+        pdf.set_text_color(*_INK)
+        pdf.cell(0, 5.5, _txt(wert), new_x="LMARGIN", new_y="NEXT")
+    pdf.set_text_color(*_INK)
+    pdf.ln(3)
+
+
 def _epc_qr_png(issuer, betrag, zweck):
     """PNG-Bytes eines Giro-Codes (EPC-QR, Version 002) oder None.
 
@@ -846,6 +873,10 @@ def render_invoice_document(invoice, *, compliance=None, entwurf=False):
     if entwurf:
         titel_text += " — Entwurf"
     _render_titel(pdf, titel_text, objekt and f"Objekt: {objekt}")
+
+    # Aus demselben Snapshot wie die übrigen Stammdaten (mit Live-Fallback für
+    # Entwürfe und Altbelege) — nicht live nachgeschlagen.
+    _render_bezug(pdf, stamm.get("bezug"))
 
     if debtor_name and debtor is not recipient:
         pdf.set_font(FONT_FAMILY, "", 10)
@@ -989,6 +1020,15 @@ def render_quote_document(quote, *, entwurf=False):
     if entwurf:
         titel_text += " — Entwurf"
     _render_titel(pdf, titel_text, quote.title)
+
+    # Wie bei der Rechnung: eingefrorener Bezug, sonst live abgeleitet. Ein
+    # Angebot ist oft das erste Blatt, das die Verwaltung sieht — es muss
+    # dieselbe Frage beantworten wie die spätere Rechnung.
+    _render_bezug(
+        pdf,
+        (quote.billing_snapshot or {}).get("header", {}).get("bezug")
+        or bezug_aufloesen(quote.work_order, quote.property),
+    )
 
     # Positionstabelle + Summen (gemeinsame Bausteine)
     _render_lines(pdf, quote.lines.all())

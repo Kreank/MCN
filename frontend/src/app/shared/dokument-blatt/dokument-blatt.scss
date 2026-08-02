@@ -185,6 +185,44 @@
   margin: 0 0 var(--space-5);
   color: #555;
 }
+/*
+  Objektbezug — dieselbe Reihenfolge und Beschriftung wie im PDF. Als
+  Definitionsliste, weil es genau das ist: Begriff und Wert. Das Raster hält
+  die Werte auf einer Kante, damit die Zeilen scanbar bleiben; auf schmalen
+  Schirmen fällt es auf einspaltig zurück, statt den Wert zu quetschen.
+*/
+.blatt__bezug {
+  margin: 0 0 var(--space-5);
+  display: grid;
+  gap: 0.15em 0;
+}
+.blatt__bezug-zeile {
+  display: grid;
+  grid-template-columns: minmax(8rem, max-content) 1fr;
+  gap: 0 var(--space-3);
+
+  dt {
+    color: var(--c-primary, #1c3244);
+    font-weight: 600;
+
+    &::after {
+      content: ':';
+    }
+  }
+
+  dd {
+    margin: 0;
+  }
+
+  @media (max-width: 30rem) {
+    grid-template-columns: 1fr;
+    gap: 0;
+
+    dd {
+      margin-bottom: 0.35em;
+    }
+  }
+}
 .blatt__anschreiben {
   margin: 0 0 var(--space-5);
   line-height: 1.6;
