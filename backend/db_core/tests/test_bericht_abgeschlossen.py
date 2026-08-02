@@ -245,3 +245,69 @@ def test_abgeschlossener_bericht_gilt_nicht_mehr_als_entwurf(app_user):
     report_service.abschliessen(app_user.id, report_id=bericht.id)
 
     assert abrechnung_service._entwurfsberichte(auftrag.id) == []
+
+
+# --- Entwürfe dürfen weg, Fertiges nicht -----------------------------------
+
+@pytest.mark.django_db
+def test_entwurf_laesst_sich_loeschen(app_user):
+    """Sascha: „Entwürfe alle löschbar … das müllt das System zu."""
+    from db_core.models import SiteReport
+
+    bericht = _bericht(app_user, _auftrag(app_user))
+
+    report_service.delete_report(app_user.id, report_id=bericht.id)
+
+    assert not SiteReport.objects.filter(id=bericht.id).exists()
+
+
+@pytest.mark.django_db
+def test_abgeschlossener_bericht_laesst_sich_nicht_loeschen(app_user):
+    """Ab hier ist er Abrechnungsgrundlage — er bleibt."""
+    bericht = _bericht(app_user, _auftrag(app_user))
+    report_service.abschliessen(app_user.id, report_id=bericht.id)
+
+    with pytest.raises(SiteReportError, match="nicht mehr löschen"):
+        report_service.delete_report(app_user.id, report_id=bericht.id)
+
+
+@pytest.mark.django_db
+def test_die_datenbank_verbietet_das_loeschen_am_dienst_vorbei(app_user):
+    """Nicht der Dienst hält das dicht, sondern der Trigger aus 0145."""
+    from django.db import Error
+
+    from db_core.db_context import business_transaction
+    from db_core.models import SiteReport
+
+    bericht = _bericht(app_user, _auftrag(app_user))
+    report_service.abschliessen(app_user.id, report_id=bericht.id)
+
+    with pytest.raises(Error, match="nur ein Entwurf"):
+        with business_transaction(app_user.id):
+            SiteReport.objects.filter(id=bericht.id).delete()
+
+
+@pytest.mark.django_db
+def test_loeschen_nimmt_die_positionen_mit(app_user):
+    """Eine zurückbleibende Position verwiese auf einen Bericht, den es nicht
+    mehr gibt."""
+    from db_core.models import SiteReportLine
+
+    auftrag = _auftrag(app_user)
+    artikel = artikel_service.create_article(
+        app_user.id, article_number="WT-4714", description="Eckventil",
+        unit="Stk", line_type="MATERIAL", list_price=Decimal("9.90"),
+    )
+    bericht = _bericht(app_user, auftrag)
+    report_service.set_report_lines(
+        app_user.id, report_id=bericht.id,
+        lines=[{
+            "line_type": "MATERIAL", "article_id": artikel.id,
+            "description": "Eckventil", "quantity": "2", "unit": "Stk",
+        }],
+    )
+    assert SiteReportLine.objects.filter(site_report_id=bericht.id).count() == 1
+
+    report_service.delete_report(app_user.id, report_id=bericht.id)
+
+    assert SiteReportLine.objects.filter(site_report_id=bericht.id).count() == 0

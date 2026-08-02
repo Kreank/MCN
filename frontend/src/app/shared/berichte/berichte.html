@@ -91,6 +91,13 @@
                 <a class="btn" [href]="pdfUrl(r.id)" target="_blank" rel="noopener" aria-label="Bericht als PDF ansehen (öffnet in neuem Tab)">PDF ansehen ↗</a>
                 @if (r.status === 'ENTWURF' && darfAendern()) {
                   <button type="button" class="btn" (click)="bearbeitenOeffnen()">Bearbeiten</button>
+                  <!-- Loeschen steht bei den Entwurfs-Aktionen und verschwindet
+                       ab ABGESCHLOSSEN von selbst: Ab dort ist der Bericht
+                       Abrechnungsgrundlage. Zurueckhaltend gestaltet — es ist
+                       endgueltig, aber kein Alarm. -->
+                  <button type="button" class="btn" (click)="loeschenOeffnen()">
+                    Entwurf löschen
+                  </button>
                   <button type="button" class="btn btn--primary" (click)="unterschriftOeffnen()">
                     Unterschreiben
                   </button>
@@ -314,6 +321,43 @@
       [attr.aria-busy]="dialogLaedt()"
     >
       {{ dialogLaedt() ? 'Wird besiegelt …' : 'Unterzeichnen' }}
+    </button>
+  </div>
+</app-dialog>
+
+<!--
+  Loeschen fragt nach. Sascha wollte Entwuerfe loeschbar haben („das muellt das
+  System zu") — endgueltig ist es trotzdem, und ein Bericht laesst sich nicht
+  wiederherstellen. Deshalb `schmal`: eine Frage, zwei Knoepfe.
+-->
+<app-dialog
+  weite="schmal"
+  [offen]="dialogOffen() === 'loeschen'"
+  titel="Entwurf löschen?"
+  (schliessen)="dialogSchliessen()"
+>
+  @if (formularMeldung(); as fm) {
+    <div class="melde melde--fehler" role="alert">
+      <span class="melde__mark" aria-hidden="true">!</span>
+      <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+    </div>
+  }
+  <p class="dialog-hinweis">
+    Der Entwurf wird mit allen erfassten Positionen entfernt. Das lässt sich nicht
+    rückgängig machen.
+  </p>
+  <div dialog-aktionen class="dialog__aktionen">
+    <button type="button" class="btn" [disabled]="dialogLaedt()" (click)="dialogSchliessen()">
+      Abbrechen
+    </button>
+    <button
+      type="button"
+      class="btn btn--gefahr"
+      [disabled]="dialogLaedt()"
+      [attr.aria-busy]="dialogLaedt()"
+      (click)="loeschenBestaetigen()"
+    >
+      {{ dialogLaedt() ? 'Wird gelöscht …' : 'Endgültig löschen' }}
     </button>
   </div>
 </app-dialog>

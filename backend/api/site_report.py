@@ -592,6 +592,27 @@ def update_site_report(request, report_id: UUID, payload: SiteReportUpdateIn):
     return _out(report)
 
 
+@router.delete("/site_reports/{report_id}", response={204: None}, auth=django_auth)
+def delete_site_report(request, report_id: UUID):
+    """Einen Berichts**entwurf** löschen (Sascha, 2026-08-02: „das müllt das System zu").
+
+    Nur im Entwurf. Ab `ABGESCHLOSSEN` ist der Bericht Abrechnungsgrundlage bzw.
+    abgenommener Nachweis und bleibt — dann antwortet der Dienst mit 422 und
+    nennt den Grund. Dieselbe Zuständigkeitsgrenze wie beim Ändern: Der Monteur
+    (Scope 'EIGENE') löscht nur eigene Berichte.
+    """
+    actor, scope = require_scoped(request, "workflow", "AENDERN")
+    report = report_service.get_report(report_id)
+    if report is None:
+        raise HttpError(404, "Bericht nicht gefunden.")
+    _guard_own_report(report, actor, scope)
+    try:
+        report_service.delete_report(actor, report_id=report_id)
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return 204, None
+
+
 @router.post(
     "/site_reports/{report_id}/abschliessen", response=SiteReportOut, auth=django_auth
 )

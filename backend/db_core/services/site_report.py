@@ -500,6 +500,37 @@ def update_report(actor_app_user_id, *, report_id, **fields):
     return report
 
 
+def delete_report(actor_app_user_id, *, report_id):
+    """Löscht einen Berichts**entwurf** samt seiner Positionen.
+
+    Sascha am 2026-08-02: *„Entwürfe alle löschbar. Sobald versendet oder
+    bestätigt fest und nicht mehr änderbar."* Ein Entwurf trägt keine Nummer, war
+    nie beim Kunden und begründet keine Forderung — ihn aufzubewahren
+    dokumentiert nichts, es sammelt nur Müll an, in dem später niemand den
+    echten Nachweis findet.
+
+    Ab `ABGESCHLOSSEN` ist Schluss: Dann ist der Bericht Abrechnungsgrundlage
+    (0144) bzw. abgenommener Nachweis. Der Dienst prüft es, die letzte Instanz
+    ist der Trigger aus 0145 — der greift auch an diesem Weg vorbei.
+
+    Die Positionen gehen in **derselben** Transaktion mit; bliebe eine zurück,
+    verwiese sie auf einen Bericht, den es nicht mehr gibt.
+    """
+    report = SiteReport.objects.filter(id=report_id).first()
+    if report is None:
+        raise SiteReportError("Bericht nicht gefunden.")
+    if report.status != "ENTWURF":
+        raise SiteReportError(
+            f"Der Bericht ist {_STATUS_TEXT.get(report.status, report.status)} und "
+            "lässt sich nicht mehr löschen. Nur Entwürfe können entfernt werden."
+        )
+    with as_business_error():
+        with business_transaction(actor_app_user_id):
+            SiteReportLine.objects.filter(site_report_id=report.id).delete()
+            SiteReport.objects.filter(id=report.id).delete()
+    return True
+
+
 def abschliessen(actor_app_user_id, *, report_id):
     """Erklärt den Bericht für fertig — ohne Unterschrift (ENTWURF → ABGESCHLOSSEN).
 

@@ -55,6 +55,24 @@ export class SiteReportService {
     return this.http.post<SiteReport>(`${this.base}/${id}/sign`, payload);
   }
 
+  /**
+   * Bericht ohne Unterschrift für fertig erklären (ENTWURF → ABGESCHLOSSEN).
+   *
+   * Der Normalfall: Rund 80 % der Berichte unterschreibt niemand — abrechenbar
+   * sind sie ab hier trotzdem (Migration 0144).
+   */
+  abschliessen(id: string): Observable<SiteReport> {
+    return this.http.post<SiteReport>(`${this.base}/${id}/abschliessen`, {});
+  }
+
+  /**
+   * Einen Berichts**entwurf** löschen. Ab ABGESCHLOSSEN antwortet der Server
+   * mit 422 — dann ist der Bericht Abrechnungsgrundlage und bleibt.
+   */
+  loeschen(id: string): Observable<void> {
+    return this.http.delete<void>(`${this.base}/${id}`);
+  }
+
   // --- Positionen ----------------------------------------------------------
 
   /**

@@ -48,7 +48,7 @@ type Zustand =
   | { kind: 'error' };
 
 type Meldung = { art: 'erfolg' | 'fehler'; text: string };
-type DialogArt = 'neu' | 'bearbeiten' | 'unterschrift';
+type DialogArt = 'neu' | 'bearbeiten' | 'unterschrift' | 'loeschen';
 
 /** Der Bezug, an dem die Berichte hängen — genau einer von beiden. */
 type Anker = { art: 'auftrag' | 'einsatz'; id: string };
@@ -320,6 +320,40 @@ export class Berichte {
       remarks: '',
     });
     this.dialogOffen.set('neu');
+  }
+
+  /** Abfrage vor dem Loeschen — ein Klick weniger waere einer zu wenig. */
+  loeschenOeffnen(): void {
+    const r = this.ausgewaehlt();
+    if (!r || r.status !== 'ENTWURF') return;
+    this.formularMeldung.set(null);
+    this.dialogOffen.set('loeschen');
+  }
+
+  /**
+   * Loescht den Entwurf endgueltig.
+   *
+   * Sascha, 2026-08-02: „Entwuerfe alle loeschbar … das muellt das System zu."
+   * Ab ABGESCHLOSSEN weist der Server es ab (422) — der Knopf steht dann ohnehin
+   * nicht mehr da, aber die Regel gehoert auf den Server, nicht in die Ansicht.
+   */
+  loeschenBestaetigen(): void {
+    const r = this.ausgewaehlt();
+    if (!r) return;
+    this.dialogLaedt.set(true);
+    this.svc.loeschen(r.id).subscribe({
+      next: () => {
+        this.dialogLaedt.set(false);
+        this.dialogOffen.set(null);
+        this.ausgewaehltId.set(null);
+        this.meldung.set({ art: 'erfolg', text: 'Entwurf geloescht.' });
+        this.neuLaden();
+      },
+      error: (e) => {
+        this.dialogLaedt.set(false);
+        this.formularMeldung.set(apiFehlerZuweisen(e, this.berichtForm).formular);
+      },
+    });
   }
 
   bearbeitenOeffnen(): void {
