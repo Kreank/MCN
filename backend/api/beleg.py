@@ -1197,6 +1197,12 @@ def list_invoices(
     """Rechnungen auflisten: Suche (Nummer), Status-/Typ-/Objekt-/Projektfilter."""
     require(request, "invoicing", "LESEN")
     qs = Invoice.objects.select_related("property__address")
+    # Verworfene Entwuerfe sind aus der Liste draussen (0147) — genau dafuer gibt
+    # es den Zustand: „das muellt das System zu". Sichtbar bleiben sie ueber den
+    # ausdruecklichen Statusfilter, sonst waeren sie unauffindbar statt nur
+    # unauffaellig.
+    if filters.status != "VERWORFEN":
+        qs = qs.exclude(status="VERWORFEN")
     if filters.q:
         qs = qs.filter(invoice_number__icontains=filters.q.strip())
     if filters.status:
@@ -2130,3 +2136,22 @@ def delete_quote(request, quote_id: UUID):
     except ValueError as exc:
         raise HttpError(422, str(exc))
     return 204, None
+
+
+@router.post("/invoices/{invoice_id}/verwerfen", response=InvoiceDetailOut, auth=django_auth)
+def verwirf_rechnung(request, invoice_id: UUID):
+    """Einen Rechnungs**entwurf** zurückziehen (ENTWURF → VERWORFEN).
+
+    Sascha, 2026-08-02: „Nur mit Entwürfen. Erstellte Rechnungen können nur wie
+    gehabt über Storno berichtigt werden." Ab VEROEFFENTLICHT antwortet der
+    Dienst deshalb mit 422.
+
+    Die Abrechnungsbindungen werden dabei **gelöst** — Stunden und Material sind
+    danach wieder abrechenbar, die gelöste Bindung bleibt als Nachweis stehen.
+    """
+    actor, _ = require(request, "invoicing", "AENDERN")
+    try:
+        beleg_service.verwirf_rechnung(actor, invoice_id=invoice_id)
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _invoice_detail(invoice_id)

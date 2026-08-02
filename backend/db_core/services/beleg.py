@@ -2764,6 +2764,46 @@ def publish_invoice(actor_app_user_id, *, invoice_id):
     return invoice
 
 
+def verwirf_rechnung(actor_app_user_id, *, invoice_id, grund=None):
+    """Zieht einen Rechnungs**entwurf** zurück (ENTWURF → VERWORFEN).
+
+    Sascha am 2026-08-02: *„Es soll auch nur mit Entwürfen gehen. Erstellte
+    Rechnungen können nur wie gehabt über Storno berichtigt werden."*
+
+    **Warum verwerfen und nicht löschen:** Der Löschweg hätte den Schutz auf
+    `invoicing.billing_link` lockern müssen — womit jede einzelne Bindung
+    angreifbar geworden wäre und die Doppelabrechnungssperre spurlos aushebelbar
+    (siehe `docs/ENTSCHEIDUNGEN.md`). Das Verwerfen fasst keinen Schutz an.
+
+    **Die Bindungen werden gelöst, nicht entfernt** — dieselbe Mechanik wie beim
+    Storno: `released_at` plus Grund. Damit sind Stunden, Material und
+    Angebotszeilen wieder abrechenbar, und die gelöste Bindung bleibt als
+    Nachweis stehen. Bliebe sie aktiv, wären die Quellen für immer gesperrt.
+
+    Die Positionen bleiben stehen. Der Entwurf ist vollständig lesbar, nur
+    nirgends mehr im Weg.
+    """
+    invoice = Invoice.objects.filter(id=invoice_id).first()
+    if invoice is None:
+        raise ValueError("Rechnung nicht gefunden.")
+    if invoice.status == "VERWORFEN":
+        raise ValueError("Dieser Entwurf ist bereits verworfen.")
+    if invoice.status != "ENTWURF":
+        raise ValueError(
+            f"Beleg {invoice.invoice_number or ''} ist veröffentlicht und lässt "
+            "sich nicht verwerfen. Ein gestellter Beleg wird storniert."
+        )
+    text = (grund or "").strip() or "Entwurf verworfen"
+    with as_business_error():
+        with business_transaction(actor_app_user_id):
+            BillingLink.objects.filter(
+                invoice_id=invoice.id, released_at__isnull=True
+            ).update(released_at=dj_timezone.now(), released_reason=text)
+            Invoice.objects.filter(id=invoice.id).update(status="VERWORFEN")
+    invoice.refresh_from_db()
+    return invoice
+
+
 def delete_quote(actor_app_user_id, *, quote_id):
     """Löscht ein Angebot, **solange es keine Belegnummer trägt**.
 
