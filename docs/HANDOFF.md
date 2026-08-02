@@ -10,12 +10,12 @@ eigenen Dateien (unten).
 
 | | |
 |---|---|
-| **Live** | `mitra.tech-artist.de`, deployt **2026-08-02** aus `main` @ `d78caf0` — verifiziert: HTTP 200, `/api/docs` 200, alle Container healthy, `bezug` im ausgelieferten OpenAPI |
-| **Migrationskopf live** | **0143** (`0143_merge_azubi_und_material`) — vollständig ausgerollt |
-| **Branches** | `develop` = `main` = `origin` = `d78caf0` — alles deckungsgleich |
+| **Live** | `mitra.tech-artist.de`, deployt **2026-08-02** aus `main` @ `e66b36e` — verifiziert: HTTP 200, `/api/docs` 200, alle Container healthy, `bezug` im ausgelieferten OpenAPI |
+| **Migrationskopf live** | **0144** (`0144_bericht_abgeschlossen`) — vollständig ausgerollt |
+| **Branches** | `develop` = `main` = `origin` = `e66b36e` — alles deckungsgleich |
 | **Nutzung** | **Testbetrieb** — der Server dient dem Probelauf durch Chef/Kollegen. Echte Kundendaten und ~2 Mio Artikel liegen drauf, aber es hängt kein Tagesgeschäft daran. `MCN_SEED=0`. |
 | **Backup** | Dienst läuft (nächtlich 02:30 + `MCN_BACKUP_RUN_ON_START=1`); manuelle Dumps in `backups-manuell/` |
-| **Testsuite** | **grün** (2026-08-02): `4463 passed, 21 skipped`, gegen frisch gebaute Test-DB |
+| **Testsuite** | **grün** (2026-08-02): `4475 passed, 21 skipped`, gegen frisch gebaute Test-DB |
 
 > **⚠️ Zwei volle Suiten gleichzeitig zerstören sich gegenseitig.** Beide bauen
 > `test_mitra_crm_test` mit `--create-db` neu — der eine Lauf zieht dem anderen die
@@ -77,12 +77,39 @@ eigenen Dateien (unten).
    jeder sollte sich einmal anmelden und im Produkt sein eigenes setzen; ab jetzt
    bleibt es erhalten. Der Reset-per-Mail-Weg funktioniert dafür **nicht**, solange
    `MCN_EMAIL_BACKEND` auf Konsole steht.
-3. **`CLAUDE.md` behauptet Echtbetrieb** („Jeder Deploy trifft Produktivdaten"),
-   tatsächlich ist es **Testbetrieb** (Stand 2026-08-01, Aussage des Users). Die
-   Formulierung bremst jede neue Session unnötig aus — beim nächsten Anfassen
-   angleichen.
+3. **Sammelrechnung** — entschieden, noch nicht gebaut. Der Weg: aus mehreren
+   Rechnungs**entwürfen** desselben Eigentümers eine Rechnung, je Quellentwurf eine
+   Rubrik (Zwischensumme je Wohnung), die Entwürfe gehen darin auf. Kein Auftrag über
+   mehrere Wohnungen — der Soll-Ist-Abgleich rechnet je Auftrag, und ein Mehrverbrauch
+   in Wohnung 1 höbe sonst einen Minderverbrauch in Wohnung 3 auf.
+
+**Als Nächstes: die Protokoll-Maske** (Sascha, 2026-08-02, beim Testen)
+> „Das Zusammenklicken geht mir tatsächlich bisschen auf die Nerven. Als ich dann
+> fertig war, hab ich den Entwurf gesehen. Können wir das nicht so machen, dass wenn
+> ich auf den Button Protokoll klicke, genau dieses Entwurffenster auftaucht?"
+
+Gewünscht ist: „Neues Protokoll" führt **direkt** in die Entwurfsansicht, statt erst
+durch einen Formular-Dialog. Beim Öffnen die Wahl, **hinterlegte Angebote zu
+übernehmen** oder leer zu starten. „Ausgeführte Arbeiten" oben als Freitext, der Rest
+bleibt bzw. wird aus dem Angebot vorbelegt. **Material entfällt bei „Zeiten &
+Material"** — es wird künftig im Entwurf erfasst. **Gebuchte Zeiten des Termins**
+erscheinen unten automatisch als Position, und zwar als **Leistung**.
+Offen beim Bauen (am fertigen Bildschirm zu entscheiden): Zeitpositionen je
+Mitarbeiter einzeln oder je Lohngruppe zusammengefasst — zunächst zusammengefasst.
 
 **Erledigt am 2026-08-02**
+- **Dritter Berichtszustand `ABGESCHLOSSEN`** (`e66b36e`, live, Migration 0144):
+  fertig ohne Unterschrift = **voll abrechenbar**. Hintergrund: 80 % der Berichte
+  werden nie unterschrieben, die alte Regel sperrte damit den Normalfall aus.
+  `ENTWURF` bleibt draußen. Dabei zwei Löcher geschlossen — Positionen eines
+  abgeschlossenen Berichts waren noch änderbar (0080 prüfte nur `UNTERZEICHNET`),
+  und das Ersetzen von `protect_site_report()` hätte fast den Briefkopf-Schutz aus
+  0132 mitentfernt.
+- **Lohngruppen angelegt** (live, über den Dienst): Meister/Techniker 85 €/h,
+  Monteur 65, Helfer 45, Azubi 25. **Keine dieser Zahlen steht im Code** — Pflege
+  unter *Einstellungen → Lohngruppen*, Endpunkte `/pricing/wage-groups` waren
+  bereits vorhanden. `cost_rate` (Kostensatz für die Deckungsbeitrags-Auswertung)
+  ist bewusst leer gelassen; den kennt nur der Betrieb.
 - **Der Belegbezug steht** (`d78caf0`, live): Angebot, Rechnung und Bildschirm nennen
   Wohneinheit, Eigentümer, Mieter und „Vertreten durch". Eigentümer-Kaskade
   Wohnung → Liegenschaft → Gemeinschaft, damit WEG, Mietshaus und Eigenheim ohne
