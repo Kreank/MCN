@@ -46,6 +46,24 @@ Ausführliche Herleitungen: `docs/archiv/chronik-2026-07.md`.
 
 ## 2. Abrechnung, Belege & Storno
 
+- **Die WEG-Eigentumsgrenze bestimmt, wer auf dem Beleg steht** (Sascha, 2026-08-01):
+  **Ab Strang-/Wohnungsabsperrung ist es Sondereigentum — Sache des Eigentümers. Alles
+  davor (Schacht, Keller, Steigleitung) ist Gemeinschaftseigentum und läuft über die WEG.**
+  Das ist die übliche WEG-Abgrenzung, und die Datenbank setzt sie bereits durch:
+  `COMMON_AREA`/`TECHNICAL_ROOM` dürfen weder Eigentumsstand noch Belegung tragen
+  (A-08/F-12) — dort folgt das Eigentum der Gemeinschaft.
+  Daraus folgen **zwei** Belegköpfe: bei Sondereigentum *Einheit · Eigentümer · Mieter*,
+  bei Gemeinschaftseigentum *die WEG als Eigentümerin* — in **beiden** Fällen gefolgt von
+  „vertreten durch «Verwaltung»".
+  **Schaden ohne die Regel:** Bei einer WEG mit 24 Einheiten und 24 verschiedenen
+  Eigentümern (16 davon vermietet) trägt der Beleg heute nur „Objekt: «Liegenschaft» · «Ort»".
+  Man sieht nicht, um wessen Wohnung es geht — die Zuordnung von Angebot und Rechnung
+  wird zur Ratearbeit.
+  **Nicht verwechseln — es sind drei Rollen, nicht eine:** `PRINCIPAL` (wer beauftragt: die
+  Verwaltung), `INVOICE_DEBTOR` (wer zahlt: WEG **oder** einzelner Eigentümer),
+  `INVOICE_RECIPIENT` (wer die Post bekommt). Die Verwaltung ist **kein** Beteiligter an der
+  Liegenschaft, sondern ausschließlich über ein Mandat verbunden.
+  *Stand 2026-08-02: Regel gilt fachlich und im Schema; die Umsetzung im Belegkopf ist offen.*
 - **Belegposition ist eine Kopie, kein Verweis.** Werte sind eingefroren; ein neuer
   Listenpreis verfälscht kein geschriebenes Angebot. Umgekehrt schreibt das Speichern einer
   Position **niemals** in `pricing.article`.
