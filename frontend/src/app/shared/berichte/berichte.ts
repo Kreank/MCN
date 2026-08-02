@@ -287,12 +287,33 @@ export class Berichte {
   }
 
   // --- Dialog öffnen/schließen ---------------------------------------------
+  /**
+   * „Neues Protokoll" — ein Klick, und die Maske steht offen.
+   *
+   * Sascha beim Testen (2026-08-02): *„Das Zusammenklicken geht mir tatsächlich
+   * bisschen auf die Nerven. Als ich dann fertig war, hab ich den Entwurf
+   * gesehen. Können wir das nicht so machen, dass wenn ich auf den Button
+   * Protokoll klicke, genau dieses Entwurffenster auftaucht?"*
+   *
+   * **Die ausgeführten Arbeiten werden vorbelegt** statt leer zu bleiben. Das
+   * ist keine Bequemlichkeit: `activity_text` ist in der Datenbank Pflicht und
+   * darf nicht leer sein (CHECK aus 0054) — ein völlig leerer Bericht liesse
+   * sich gar nicht anlegen. Der Vorschlag ist bewusst nichtssagend („Protokoll
+   * vom …"), damit niemand versehentlich einen Platzhalter stehen lässt, der
+   * wie eine Aussage aussieht.
+   *
+   * Der Bericht entsteht dabei noch NICHT — er wird erst beim Speichern
+   * angelegt. Das ist Absicht: Berichte sind Nachweise und lassen sich nicht
+   * löschen (Trigger `no_delete`). Würde der Klick sofort einen anlegen, bliebe
+   * nach jedem Fehlklick ein Entwurf zurück, den niemand mehr wegbekommt.
+   */
   neuOeffnen(): void {
     this.formularMeldung.set(null);
+    const heute = this.heute();
     this.berichtForm.reset({
-      report_date: this.heute(),
+      report_date: heute,
       service_job_id: '',
-      activity_text: '',
+      activity_text: `Protokoll vom ${this.datum(heute)}`,
       weather: '',
       hours_worked: '',
       materials_note: '',
