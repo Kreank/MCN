@@ -10,12 +10,12 @@ eigenen Dateien (unten).
 
 | | |
 |---|---|
-| **Live** | `mitra.tech-artist.de`, deployt **2026-08-02** aus `main` @ `e66b36e` — verifiziert: HTTP 200, `/api/docs` 200, alle Container healthy, `bezug` im ausgelieferten OpenAPI |
-| **Migrationskopf live** | **0144** (`0144_bericht_abgeschlossen`) — vollständig ausgerollt |
-| **Branches** | `develop` = `main` = `origin` = `e66b36e` — alles deckungsgleich |
+| **Live** | `mitra.tech-artist.de`, deployt **2026-08-02** aus `main` @ `712f93c` — verifiziert: HTTP 200, `/api/docs` 200, alle Container healthy, `bezug` im ausgelieferten OpenAPI |
+| **Migrationskopf live** | **0146** (`0146_angebotsentwurf_loeschbar`) — vollständig ausgerollt |
+| **Branches** | `develop` = `main` = `origin` = `b57985c` — alles deckungsgleich |
 | **Nutzung** | **Testbetrieb** — der Server dient dem Probelauf durch Chef/Kollegen. Echte Kundendaten und ~2 Mio Artikel liegen drauf, aber es hängt kein Tagesgeschäft daran. `MCN_SEED=0`. |
 | **Backup** | Dienst läuft (nächtlich 02:30 + `MCN_BACKUP_RUN_ON_START=1`); manuelle Dumps in `backups-manuell/` |
-| **Testsuite** | **grün** (2026-08-02): `4475 passed, 21 skipped`, gegen frisch gebaute Test-DB |
+| **Testsuite** | **grün** (2026-08-02): `4486 passed, 21 skipped`, gegen frisch gebaute Test-DB |
 
 > **⚠️ Zwei volle Suiten gleichzeitig zerstören sich gegenseitig.** Beide bauen
 > `test_mitra_crm_test` mit `--create-db` neu — der eine Lauf zieht dem anderen die
@@ -83,7 +83,14 @@ eigenen Dateien (unten).
    mehrere Wohnungen — der Soll-Ist-Abgleich rechnet je Auftrag, und ein Mehrverbrauch
    in Wohnung 1 höbe sonst einen Minderverbrauch in Wohnung 3 auf.
 
-**Als Nächstes: die Protokoll-Maske** (Sascha, 2026-08-02, beim Testen)
+**Als Nächstes: Rechnungsentwurf verwerfen** — entschieden, Bauplan steht
+Vier Schritte in `ENTSCHEIDUNGEN.md` („Rechnungsentwürfe werden VERWORFEN"):
+Status `VERWORFEN` in den CHECK, Dienst der ihn setzt **und die
+Abrechnungsbindungen löst** (`released_at`, wie beim Storno), Listen filtern ihn
+heraus, Knopf im Cockpit. **Fasst keinen Schutztrigger an** — das ist der Grund,
+warum dieser Weg gewählt wurde und der Löschweg nicht.
+
+**Danach: die Protokoll-Maske** (Sascha, 2026-08-02, beim Testen)
 > „Das Zusammenklicken geht mir tatsächlich bisschen auf die Nerven. Als ich dann
 > fertig war, hab ich den Entwurf gesehen. Können wir das nicht so machen, dass wenn
 > ich auf den Button Protokoll klicke, genau dieses Entwurffenster auftaucht?"
@@ -98,6 +105,16 @@ Offen beim Bauen (am fertigen Bildschirm zu entscheiden): Zeitpositionen je
 Mitarbeiter einzeln oder je Lohngruppe zusammengefasst — zunächst zusammengefasst.
 
 **Erledigt am 2026-08-02**
+- **Entwürfe löschbar** — Bericht (`0145`) und Angebot (`0146`), beide live. Die
+  pauschale Sperre `util.forbid_mutation()` wich statusabhängigen Triggern; beim
+  Angebot entscheidet die **Belegnummer** (entsteht erst beim Versand), nicht der
+  Status. **Rechnung bewusst NICHT** — siehe Nachtrag in `ENTSCHEIDUNGEN.md`: Der
+  Löschweg hätte den Schutz auf `billing_link` gelockert und damit die
+  Doppelabrechnungssperre aushebelbar gemacht.
+- **Protokoll-Maske verbreitert**: neue Dialogstufe `arbeitsflaeche` (92rem),
+  zweispaltig — ausgeführte Arbeiten links mit 8 Zeilen, Beiwerk rechts.
+  Ausgeführte Arbeiten werden vorbelegt („Protokoll vom …"), weil `activity_text`
+  in der DB nicht leer sein darf.
 - **Dritter Berichtszustand `ABGESCHLOSSEN`** (`e66b36e`, live, Migration 0144):
   fertig ohne Unterschrift = **voll abrechenbar**. Hintergrund: 80 % der Berichte
   werden nie unterschrieben, die alte Regel sperrte damit den Normalfall aus.
