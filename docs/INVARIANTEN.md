@@ -46,6 +46,20 @@ Ausführliche Herleitungen: `docs/archiv/chronik-2026-07.md`.
 
 ## 2. Abrechnung, Belege & Storno
 
+- **NIEMALS zwei verschiedene Eigentümer auf einer Rechnung** (Sascha, 2026-08-02).
+  Ausnahmslos. Mehrere Wohnungen auf **einem** Beleg sind erlaubt — aber nur, wenn sie
+  **demselben** Eigentümer gehören (Sammelrechnung: „drei Bäder, alle drei Wohnungen
+  gehören Herrn Meier"). Bei Gemeinschaftseigentum ist die **WEG selbst** der eine
+  Eigentümer und Ansprechpartner.
+  **Warum das keine Kosmetik ist:** Der Eigentümer ist der wirtschaftlich Verpflichtete.
+  Zwei davon auf einem Beleg heißt, dass niemand die volle Summe schuldet — die
+  Forderung wäre nicht durchsetzbar und die Rechnung müsste storniert und geteilt
+  werden. Auftraggeber bleibt in allen Fällen die Verwaltung; das ist eine **andere**
+  Rolle (`PRINCIPAL`) als der Schuldner (`INVOICE_DEBTOR`).
+  *Stand 2026-08-02: physisch unverletzbar, weil eine Rechnung an genau einem Auftrag
+  hängt (B-08, Trigger) und ein Auftrag höchstens eine `unit` trägt. **Wer das ändert,
+  um Sammelrechnungen zu ermöglichen, muss diese Regel ausdrücklich durchsetzen** —
+  sonst fällt die einzige Sicherung weg, die es dafür gibt.*
 - **Die WEG-Eigentumsgrenze bestimmt, wer auf dem Beleg steht** (Sascha, 2026-08-01):
   **Ab Strang-/Wohnungsabsperrung ist es Sondereigentum — Sache des Eigentümers. Alles
   davor (Schacht, Keller, Steigleitung) ist Gemeinschaftseigentum und läuft über die WEG.**
