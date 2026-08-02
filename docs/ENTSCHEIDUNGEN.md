@@ -399,3 +399,39 @@ der Test hat den Fehler gefangen.
 
 **Angebote sind davon nicht betroffen** und seit `0146` löschbar: Sie tragen
 keine Bindungen, weil erst beim Fakturieren gebunden wird.
+
+### Entschieden 2026-08-02: Rechnungsentwürfe werden VERWORFEN, nicht gelöscht
+
+**Sascha:** *„Ja wir nehmen das zweite. Aber es soll auch nur mit Entwürfen
+gehen. Erstellte Rechnungen können nur wie gehabt über Storno berichtigt werden
+(müssen dann neu erstellt werden)."*
+
+**Der Weg.** Ein Rechnungsentwurf bekommt den Status `VERWORFEN`:
+
+* Er verschwindet aus allen Listen und Auswahlen — das löst „das müllt das
+  System zu", ohne dass eine Zeile Daten verlorengeht.
+* Die **Abrechnungsbindungen werden gelöst**, nicht entfernt: `released_at` plus
+  `released_reason = 'Entwurf verworfen'`. Damit sind Stunden, Material und
+  Angebotszeilen wieder abrechenbar, und die gelöste Bindung bleibt als Nachweis
+  stehen. Es ist derselbe Mechanismus wie beim Storno
+  (`abrechnung.storniere_*`), nur mit anderem Grund.
+* **Nur aus `ENTWURF`.** Ab `VEROEFFENTLICHT` bleibt es beim Storno mit
+  Folgebeleg (B-21/B-30) — daran ändert sich nichts.
+
+**Warum das besser ist als Löschen.** Der Löschweg hätte verlangt, den
+Löschschutz auf `billing_link` zu lockern; damit wäre jede einzelne Bindung
+angreifbar geworden und die Doppelabrechnungssperre spurlos aushebelbar (siehe
+Nachtrag oben). Das Verwerfen fasst **keinen einzigen Schutztrigger an** — es ist
+ein Statuswechsel plus die längst gebaute Bindungslösung.
+
+**Zu bauen:**
+1. Migration: `VERWORFEN` in den Status-CHECK von `invoicing.invoice`;
+   Statusautomat erlaubt `ENTWURF → VERWORFEN` und sonst nichts von dort weg.
+2. Dienst `verwirf_rechnung`: Status setzen + Bindungen lösen, in **einer**
+   Transaktion.
+3. Listen und Auswahlen filtern `VERWORFEN` heraus (Default), mit Schalter zum
+   Einblenden — sonst wundert sich jemand, wo sein Entwurf geblieben ist.
+4. Cockpit: Knopf „Entwurf verwerfen" mit Rückfrage, nur im Entwurf sichtbar.
+
+**Für Angebote bleibt es beim echten Löschen** (0146) — sie tragen keine
+Bindungen, dort gibt es nichts zu lösen.
