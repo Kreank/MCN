@@ -101,12 +101,20 @@ class Command(BaseCommand):
         if not schreiben:
             self.stdout.write(self.style.WARNING("  TROCKENLAUF — es wird nichts geschrieben.\n"))
 
-        self._anbindungsarten_setzen(actor, opts["anbindungsart"], schreiben)
+        gewuenscht = self._anbindungsarten_setzen(actor, opts["anbindungsart"], schreiben)
 
         kataloge = _kataloge()
         if not kataloge:
             self.stdout.write("  Keine DATANORM-Kataloge gefunden — nichts zu tun.")
             return
+        # Auch im TROCKENLAUF mit der gewünschten Katalogart rechnen: Sonst zeigt
+        # die Vorschau die alte Bedeutung, während der scharfe Lauf die neue
+        # anwendet — man liest dann etwas gegen, das so nie passiert.
+        if gewuenscht:
+            kataloge = [
+                (i, ns, gewuenscht.get(ns, kind), label, n)
+                for i, ns, kind, label, n in kataloge
+            ]
 
         for _id, ns, kind, _label, anzahl in kataloge:
             leit = " (Leitkatalog)" if ns == datanorm_katalog.LEITKATALOG else ""
@@ -132,6 +140,8 @@ class Command(BaseCommand):
     # -- Schritte ------------------------------------------------------------
 
     def _anbindungsarten_setzen(self, actor, angaben, schreiben):
+        """Setzt die Katalogarten und liefert sie als {namensraum: art} zurück."""
+        gewuenscht = {}
         for angabe in angaben:
             if "=" not in angabe:
                 raise CommandError(f"--anbindungsart erwartet NS=ART, bekam {angabe!r}")
@@ -139,6 +149,7 @@ class Command(BaseCommand):
             if art not in ("GROSSHAENDLER", "HERSTELLER"):
                 raise CommandError(f"Unbekannte Katalogart {art!r}")
             self.stdout.write(f"  Anbindung {ns} → {art}")
+            gewuenscht[ns] = art
             if schreiben:
                 with business_transaction(actor.id), db_connection.cursor() as cur:
                     cur.execute(
@@ -146,6 +157,7 @@ class Command(BaseCommand):
                         "WHERE source_namespace = %s AND source_system = 'DATANORM'",
                         [art, ns],
                     )
+        return gewuenscht
 
     def _vorschau(self, kataloge):
         """Zeigt je Katalog drei Artikel im Vorher/Nachher."""

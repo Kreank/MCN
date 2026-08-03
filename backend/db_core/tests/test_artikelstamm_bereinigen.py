@@ -127,6 +127,24 @@ def test_audit_trigger_ist_hinterher_wieder_aktiv(bestand):
 
 
 @pytest.mark.django_db
+def test_trockenlauf_rechnet_mit_der_gewuenschten_katalogart(capsys):
+    """Die Vorschau muss zeigen, was der scharfe Lauf TUN WIRD.
+
+    Ohne diese Regel zeigte der Trockenlauf die Herstellernummer als „→ None"
+    (alte Art GROSSHAENDLER), während `--ja` sie gesetzt hätte — man liest dann
+    etwas gegen, das so nie passiert.
+    """
+    _akteur()
+    party = _anbindung("junkers", "Bosch/Junkers", "GROSSHAENDLER")
+    _altbestand("junkers", party, "10000946",
+                matchcode="EINLEGEBLENDE", katalog_nr="1-000-094-6")
+    call_command("artikelstamm_bereinigen", "--anbindungsart", "junkers=HERSTELLER")
+    ausgabe = capsys.readouterr().out
+    assert "Hersteller-Nr.: '1-000-094-6' → '10000946'" in ausgabe
+    assert "'Bosch/Junkers'" in ausgabe
+
+
+@pytest.mark.django_db
 def test_anbindungsart_wird_vor_der_bereinigung_gesetzt():
     """Erst die Katalogart, dann die Felder — die Art bestimmt die Bedeutung."""
     _akteur()
