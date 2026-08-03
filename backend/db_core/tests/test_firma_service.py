@@ -6,6 +6,7 @@ Trigger verboten), Niederlassungs-/Gewerk-Pflege inkl. Deaktivieren, sowie die
 bewusste Mahnstufen-Lücken-Entscheidung (aktive Stufen = lückenloser Präfix).
 """
 import uuid
+from datetime import time
 from hashlib import sha256
 
 import pytest
@@ -100,6 +101,56 @@ def test_profile_ungueltiges_land_422(app_user):
     firma_service.update_company_profile(app_user.id, company_name="X GmbH")
     with pytest.raises(ValueError, match="ISO-Kürzel"):
         firma_service.update_company_profile(app_user.id, country="Deutschland")
+
+
+@pytest.mark.django_db
+def test_arbeitszeitfenster_vorgabe_ist_der_regeltag(app_user):
+    """07:00–16:00 mit 60 Minuten Pause = 8 h Arbeit, 40 h in der Woche."""
+    p, _ = firma_service.update_company_profile(app_user.id, company_name="Zeit GmbH")
+    assert (p.work_start, p.work_end, p.break_minutes) == (time(7, 0), time(16, 0), 60)
+
+
+@pytest.mark.django_db
+def test_arbeitszeit_pause_laenger_als_der_tag_422(app_user):
+    """Eine Pause, die den Arbeitstag auffrisst, ergäbe 0 h Arbeit — und damit
+    dauerhaft 0 % Auslastung für den ganzen Betrieb. Der DB-CHECK fängt das ab;
+    der Service muss es VORHER als klare Meldung liefern, nicht als 500."""
+    firma_service.update_company_profile(app_user.id, company_name="Pause GmbH")
+    with pytest.raises(ValueError, match="kürzer sein als der Arbeitstag"):
+        firma_service.update_company_profile(app_user.id, break_minutes=600)
+
+
+@pytest.mark.django_db
+def test_arbeitszeit_feierabend_vor_beginn_422(app_user):
+    """Geprüft wird der ERGEBNISZUSTAND: Wer allein den Feierabend vorzieht,
+    schöbe ihn sonst vor den gespeicherten Arbeitsbeginn."""
+    firma_service.update_company_profile(app_user.id, company_name="Dreh GmbH")
+    with pytest.raises(ValueError, match="vor dem Feierabend"):
+        firma_service.update_company_profile(app_user.id, work_end=time(6, 0))
+
+
+@pytest.mark.django_db
+def test_arbeitszeit_leeres_feld_heisst_unveraendert(app_user):
+    """Die Spalten sind NOT NULL mit Default. Ein `None` im Payload bedeutet
+    deshalb „nicht mitgeschickt", nie „auf NULL setzen" — sonst schlüge es als
+    500 aus der Spalte zurück (dieselbe Regel wie bei `datev_advance_mode`)."""
+    firma_service.update_company_profile(
+        app_user.id, company_name="Leer GmbH", work_start=time(8, 0)
+    )
+    p, _ = firma_service.update_company_profile(
+        app_user.id, work_start=None, work_end=None, break_minutes=None
+    )
+    assert p.work_start == time(8, 0)
+    assert p.work_end == time(16, 0)
+
+
+@pytest.mark.django_db
+def test_arbeitszeit_wird_uebernommen(app_user):
+    firma_service.update_company_profile(app_user.id, company_name="Schicht GmbH")
+    p, _ = firma_service.update_company_profile(
+        app_user.id, work_start=time(6, 0), work_end=time(15, 30), break_minutes=45
+    )
+    assert (p.work_start, p.work_end, p.break_minutes) == (time(6, 0), time(15, 30), 45)
 
 
 @pytest.mark.django_db

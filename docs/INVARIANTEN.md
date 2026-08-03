@@ -398,6 +398,32 @@ Ausführliche Herleitungen: `docs/archiv/chronik-2026-07.md`.
 - **Konflikt- und Statusmarke bleiben in JEDER Kachelbreite sichtbar** — sonst hinge beides nur
   noch an der Farbe.
 - **Gestaucht wird die Zeit nie** — reicht der Platz nicht, scrollt das Board.
+- **Die Auslastung zählt ARBEITSZEIT, nicht die Wanduhr**
+  (`planung._plan_minuten_je_tag` + `_plan_stunden`). Ein Einsatz über vier Tage
+  belegt vier Arbeitstage — nicht 81 Stunden am Stück. **Schaden ohne die Regel:**
+  Ein normal verplanter Monteur stand mit *185 % ausgelastet* auf der Tafel; die
+  Disposition hätte ihn für überlastet gehalten und Termine umverteilt, die
+  niemand hätte umverteilen müssen. Jede Auswertung, die später auf Plan-Stunden
+  aufsetzt, erbte den Fehler. Vier Regeln, jede gegen einen eigenen Rückfall:
+  1. **Nachtlücken** (Feierabend → Arbeitsbeginn des Folgetags) fallen weg — aber
+     nur die **vollständig** enthaltenen. Was am Rand tatsächlich über den
+     Feierabend hinausgeht, bleibt stehen, sonst verschwände Überlast aus der Sicht.
+  2. **Erst rechnen, dann aufs Fenster schneiden** (ein Tag Vorlauf). Andersherum
+     wäre die Nachtlücke am Fensterrand unvollständig und bliebe stehen — derselbe
+     Einsatz ergäbe je nach Lage des Fensters 31 h oder 24 h.
+  3. **Die Pause fällt je MITARBEITERTAG an, nicht je Einsatz** (ArbZG § 4: mehr
+     als sechs Stunden). Sonst hinge die Zahl daran, wie fein der Disponent den
+     Tag zerschneidet: 07–12 plus 12–16 ergäbe 9 h statt 8 h.
+  4. **Tage ohne Soll zählen auch im Zähler nicht** — Wochenende, Feiertag,
+     genehmigte Abwesenheit. Der Nenner streicht sie bereits; sonst ergäbe ein
+     Einsatz Do–Di 48 h gegen 40 h Soll. Gestrichen wird nur, wenn ein
+     **deckender** Vertrag null Stunden sagt: Bei einem ausgelaufenen Vertrag
+     fehlt der Maßstab, und die Bahn läse sich sonst als „0,0 h geplant" neben
+     ihren eigenen sichtbaren Kacheln.
+
+  Arbeitsbeginn, Feierabend und Pausenlänge stehen im **Firmenprofil**
+  (Migration 0148, Vorgabe 07:00–16:00 / 60 min). Die **Schwelle** von sechs
+  Stunden ist bewusst kein Feld — sie steht im Gesetz, nicht im Betrieb.
 - **Auslastung ohne Vertrag ist `null` = unbekannt, nie 0.**
 - **Der Qualifikations-Abgleich WARNT, er BLOCKIERT NICHT** (wie die Doppelbelegung). Stichtag
   ist der **Terminbeginn in Ortszeit**. Das Board zeigt die FOLGE („kein Nachweis für X"), nicht

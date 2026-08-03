@@ -15,7 +15,8 @@ eigenen Dateien (unten).
 | **Branches** | `develop` = `main` = `origin` = `b57985c` — alles deckungsgleich |
 | **Nutzung** | **Testbetrieb** — der Server dient dem Probelauf durch Chef/Kollegen. Echte Kundendaten und ~2 Mio Artikel liegen drauf, aber es hängt kein Tagesgeschäft daran. `MCN_SEED=0`. |
 | **Backup** | Dienst läuft (nächtlich 02:30 + `MCN_BACKUP_RUN_ON_START=1`); manuelle Dumps in `backups-manuell/` |
-| **Testsuite** | **grün** (2026-08-02): `4486 passed, 21 skipped`, gegen frisch gebaute Test-DB |
+| **Testsuite** | **grün** (2026-08-03): `4534 passed, 21 skipped` Backend + `322` Frontend, gegen frisch gebaute Test-DB |
+| **Migrationskopf lokal** | **0148** (`0148_arbeitszeitfenster`) — noch **nicht** ausgerollt |
 
 > **⚠️ Zwei volle Suiten gleichzeitig zerstören sich gegenseitig.** Beide bauen
 > `test_mitra_crm_test` mit `--create-db` neu — der eine Lauf zieht dem anderen die
@@ -83,6 +84,26 @@ eigenen Dateien (unten).
 nächsten Bereiche.
 
 **Erledigt am 2026-08-03**
+- **Plantafel: Auslastung rechnete die Wanduhr.** Ein Einsatz über vier Tage
+  stellte den Monteur mit **185 % ausgelastet** auf die Tafel — Nächte und Pausen
+  zählten als Arbeitszeit. Aus Saschas Praxisblick heraus gefunden, in zwei
+  Review-Runden fanden sich **vier weitere Fehler derselben Klasse**: Wochenenden
+  zählten im Zähler, aber nicht im Nenner (Do–Di = 120 %); die Pause fiel je
+  *Einsatz* statt je *Arbeitstag* an (07–12 plus 12–16 = 9 h statt 8 h); die
+  Nachtlücke am Fensterrand blieb stehen (derselbe Einsatz = 31 h oder 24 h, je
+  nach Lage der Woche); ein ausgelaufener Vertrag leerte den Zähler ganz. Die
+  ganze Regel steht jetzt in `INVARIANTEN.md` Abschnitt 11 samt Schadensbild.
+  **Arbeitsbeginn/Feierabend/Pause sind Firmenprofil-Felder** (Migration 0148,
+  Vorgabe 07:00–16:00 / 60 min); die Pausen*schwelle* bleibt Gesetz (§ 4 ArbZG).
+  **Offen:** Der **Notdienst** braucht eine eigene Behandlung (vertagt, Sascha).
+- **Plantafel-Bedienung nach Saschas HERO-Vergleich.** Steuerleiste von drei
+  Bändern auf **eine Zeile** (~92 → ~40 px); der Rückstand klappt zur **Seite**
+  wie die Navigation statt nach oben (Board gewinnt gut 16 rem — daran hängt, ob
+  eine Woche ohne Scrollen in den Schirm passt) und bleibt eingeklappt
+  Ablageziel; die Kachel-Aktionen hängen nicht mehr an einem 31 px hohen
+  Hover-Streifen, sondern an einem festen **⋯-Griff** (Klick oder Rechtsklick,
+  bleibt offen, 24 px nach WCAG 2.5.8). Nebengewinn: Vorher lagen je Kachel drei
+  unsichtbare Tabstopps im DOM — bei 200 Kacheln 600 Stück.
 - **Protokoll-Maske: der Entwurf IST die Maske.** „Neues Protokoll" legt den
   Bericht sofort an und zeigt ihn als bearbeitbares Blatt — der vorgeschaltete
   Formular-Dialog ist ersatzlos weg, „Bearbeiten" ebenfalls. Direkt danach die

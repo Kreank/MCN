@@ -9,18 +9,17 @@
 // `.plantafel { width: 100% }` und `.board { width: max-content }` liegen in
 // styles.scss — Stil-Budget dieser Datei (8 kB). Auslagern, nicht lockern.
 
-// ======================= Disposition: Pool + Board ==========================
-.disposition {
-  display: grid;
-  grid-template-columns: minmax(15rem, 19rem) minmax(0, 1fr);
-  gap: var(--space-4);
-  align-items: start;
-}
-// Auf schmalen Bildschirmen wandert der Rückstand über das Board.
-@media (max-width: 78rem) {
-  .disposition {
-    grid-template-columns: minmax(0, 1fr);
-  }
+// Die Aufteilung Pool | Board (.disposition samt eingeklapptem Zustand) liegt
+// in styles.scss — Stil-Budget dieser Datei (8 kB). Auslagern, nicht lockern.
+// Die aufklappbare Anleitung (.pool__anleitung) und die eingeklappte Leiste
+// (.poolrand) liegen in styles.scss — Stil-Budget dieser Datei (8 kB).
+// Der Knopf trug früher das Wort „Einklappen" und war dadurch breit genug. Als
+// blosses „«" auf `.minibtn` misst er rund 18 px — unter den 24 px aus WCAG 2.5.8,
+// die im selben Zug für den Kachelgriff durchgesetzt wurden.
+.pool__zu {
+  flex: 0 0 auto;
+  min-width: 1.5rem;
+  min-height: 1.5rem;
 }
 
 // ================================ Board =====================================
@@ -424,6 +423,9 @@
    Zwei-Stunden-Termin waere so breit wie ein Ganztagestermin, obwohl die
    Zeitskala ihn schmal setzen will. Sie erscheinen bei Hover/Fokus, bleiben aber
    IM DOM und damit tastaturerreichbar (focus-within haelt sie offen). */
+// Der Kachelgriff (.tile__menugriff) und die Menueform des Panels
+// (.tile__aktionen--menue) liegen in styles.scss — Stil-Budget dieser Datei
+// (8 kB). Auslagern, nicht lockern.
 .tile__aktionen {
   position: absolute;
   z-index: 3;

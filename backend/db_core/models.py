@@ -9,6 +9,8 @@ Neue Fachtabellen: SQL-Migration schreiben (siehe README), dann hier das
 Model nachziehen. `python manage.py inspectdb --database default <tabelle>`
 liefert einen Startpunkt.
 """
+from datetime import time as dt_time
+
 from django.contrib.postgres.fields import ArrayField
 from django.db import models
 from django.db.models import Func
@@ -3302,6 +3304,13 @@ class CompanyProfile(models.Model):
     # Aufforderungsobliegenheit des Arbeitgebers.
     vacation_carryover_expiry_month = models.SmallIntegerField(null=True, blank=True)
     vacation_carryover_expiry_day = models.SmallIntegerField(null=True, blank=True)
+    # Arbeitszeitfenster (Migration 0148): Grundlage der Auslastungsrechnung auf
+    # der Plantafel. Regeltag 07:00–16:00 mit 60 Minuten Pause = 8 h Arbeit.
+    # Die Pausen-SCHWELLE (mehr als sechs Stunden) steht in § 4 ArbZG und ist
+    # deshalb bewusst KEIN Feld, sondern eine Konstante im Service.
+    work_start = models.TimeField(db_default=models.Value(dt_time(7, 0)))
+    work_end = models.TimeField(db_default=models.Value(dt_time(16, 0)))
+    break_minutes = models.IntegerField(db_default=models.Value(60))
     version = models.IntegerField(db_default=models.Value(1))
     created_at = models.DateTimeField(db_default=Now())
     updated_at = models.DateTimeField(db_default=Now())

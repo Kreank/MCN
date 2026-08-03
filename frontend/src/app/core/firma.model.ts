@@ -61,6 +61,21 @@ export interface CompanyProfile {
    */
   vacation_carryover_expiry_month: number | null;
   vacation_carryover_expiry_day: number | null;
+
+  /**
+   * Betrieblicher Arbeitstag („07:00", „16:00", 60 Minuten Pause). Grundlage der
+   * AUSLASTUNG auf der Plantafel: Was zwischen Feierabend und Arbeitsbeginn des
+   * Folgetags liegt, ist keine Arbeitszeit, und je Tag mit mehr als sechs
+   * Stunden geht die Pause ab. Ohne diese Rechnung stand ein Monteur mit einem
+   * viertaegigen Einsatz bei 185 % Auslastung.
+   *
+   * Die SCHWELLE, ab der eine Pause faellig wird, ist bewusst kein Feld — sie
+   * steht in § 4 ArbZG (mehr als sechs Stunden) und gehoert dem Gesetzgeber,
+   * nicht dem Betrieb.
+   */
+  work_start: string | null;
+  work_end: string | null;
+  break_minutes: number | null;
 }
 
 /** Änderungs-Payload des Firmenprofils (nur gesetzte Felder werden gesendet). */

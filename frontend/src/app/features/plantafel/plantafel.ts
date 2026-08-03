@@ -92,6 +92,9 @@ export const ANSICHTEN: { wert: Ansicht; label: string }[] = [
 /** Grenzen der Einstellung (die Skala braucht mindestens vier Stunden Breite). */
 const BAND_MIN_STUNDEN = 4;
 
+/** Ob die Rückstandsleiste offen steht — eine reine Anzeigevorliebe, im Browser. */
+const POOL_SPEICHER = 'mcn.plantafel.rueckstand-offen';
+
 /**
  * Die Stundenspalte der Tagesansicht.
  *
@@ -343,7 +346,40 @@ export class Plantafel {
   protected readonly gewerkFilter = signal('');
   protected readonly backlogSuche = signal('');
   /** Rückstandsleiste ein-/ausklappbar (auf schmalen Bildschirmen Platz). */
-  protected readonly poolOffen = signal(true);
+  protected readonly poolOffen = signal(this.poolOffenLaden());
+
+  /**
+   * Welche KACHEL gerade ihr Aktionsmenü offen hat — höchstens eine.
+   * Das Menü existiert nur, solange es offen ist: Bei zweihundert Kacheln lägen
+   * sonst sechshundert unsichtbare Knöpfe im DOM und in der Tab-Reihenfolge.
+   *
+   * Der Schlüssel ist **Bahn + Einsatz**, nicht der Einsatz allein. Ein Einsatz
+   * mit zwei Zuweisungen (zwei Monteure, oder Monteur + Fahrzeug) erscheint auf
+   * ZWEI Bahnen und damit als zwei Kacheln. Nach Einsatz geschlüsselt öffneten
+   * beide gleichzeitig ihr Panel — und weil ein `popover=auto` beim Öffnen alle
+   * anderen schließt, feuerte das zweite sofort das `beforetoggle` des ersten,
+   * dessen Rückmeldung den Zustand leerte und **beide** Panels wieder abbaute.
+   * Das Menü blitzte auf und war weg: bei Mehrmann-Einsätzen unbenutzbar.
+   */
+  protected readonly menuFuer = signal<string | null>(null);
+  /**
+   * War beim `pointerdown` auf dem Griff dessen Menü offen? Ein `popover=auto`
+   * schließt sich beim `pointerdown` DANEBEN — auch wenn dieses Daneben der
+   * eigene Griff ist. Der `click` käme erst danach an und fände den Zustand
+   * schon geleert vor; er würde das Menü sofort wieder aufreißen, und der Griff
+   * wäre nicht mehr zum Schließen zu gebrauchen.
+   *
+   * Deshalb wird der Zustand im `pointerdown` festgehalten, VOR dem
+   * Light-Dismiss. Eine Zeitschranke tut es nicht: Sie müsste raten, wie lange
+   * ein Klick dauert, und verschluckt jeden Tap, der länger gedrückt wird —
+   * auf dem Finger die Regel, nicht die Ausnahme.
+   *
+   * `undefined` heißt **kein Zeiger im Spiel**: Enter und Leertaste an einem
+   * Knopf erzeugen nur `click`, nie `pointerdown`. Dann ist der gelebte Zustand
+   * unverfälscht und wird direkt gelesen — sonst versprächen `aria-expanded`
+   * und der Griff ein Umschalten, das per Tastatur nie zumachte.
+   */
+  private beimDruecken: string | null | undefined = undefined;
 
   /** Stammdaten für Dialog und Filter. */
   protected readonly kategorien = signal<AppointmentCategory[]>([]);
@@ -506,6 +542,12 @@ export class Plantafel {
   }
 
   protected readonly stundenOptionen = Array.from({ length: 25 }, (_, i) => i);
+
+  /** Kurzform fürs Ausklappen der Rastereinstellung („07–17“). */
+  protected readonly bandText = computed(() => {
+    const b = this.bandEinstellung();
+    return `${`${b.von}`.padStart(2, '0')}–${`${b.bis}`.padStart(2, '0')}`;
+  });
 
   /**
    * Weitet ein Termin das Raster über die Einstellung hinaus? Dann wird es
@@ -1326,7 +1368,14 @@ export class Plantafel {
   // --- Tastatur & Touch ----------------------------------------------------
   aufnehmen(q: Aufnahme, laneIdx: number, slotIdx: number, ev?: Event): void {
     if (!this.darfUmplanen() || this.busy()) return;
-    this.griffAusloeser = (ev?.currentTarget as HTMLElement) ?? null;
+    const ausloeser = (ev?.currentTarget as HTMLElement) ?? null;
+    // Beim Abbrechen soll der Fokus dorthin zurueck, wo er hergekommen ist. Sitzt
+    // der Auslöser im Kachelmenü, ist er gleich weg (das Menü schließt sich beim
+    // Aufnehmen) — dann ist der Griff der bleibende Anker.
+    this.griffAusloeser =
+      ausloeser?.closest('.tile')?.querySelector<HTMLElement>('[data-menugriff]') ?? ausloeser;
+    this.griffFokussieren();
+    this.menuFuer.set(null);
     this.hinweiseSchliessen();
     this.griff.set(q);
     const bahnen = this.zielBahnen();
@@ -1337,6 +1386,110 @@ export class Plantafel {
         'Pfeiltasten bewegen das Ziel, Enter legt ab, Escape bricht ab.',
     );
     this.zielFokussieren();
+  }
+
+  // --- Rückstandsleiste ----------------------------------------------------
+  /**
+   * Zur SEITE eingeklappt, nicht nach oben. Nach oben zusammenzuklappen half
+   * nicht: Der Rückstand behielt seine Spalte und damit die Breite, die das
+   * Raster braucht — eingespart wurde nur Höhe, die ohnehin nicht knapp war.
+   * Zur Seite gibt er dem Board rund 17 rem zurück; genau daran hängt, ob eine
+   * ganze Woche in den Schirm passt. Dieselbe Bewegung wie bei der Navigation.
+   */
+  poolUmschalten(): void {
+    const offen = !this.poolOffen();
+    this.poolOffen.set(offen);
+    try {
+      localStorage.setItem(POOL_SPEICHER, offen ? '1' : '0');
+    } catch {
+      /* Privater Modus: dann gilt die Wahl eben nur für diese Sitzung. */
+    }
+    // Ein- und Ausklappknopf liegen in zwei Zweigen desselben `@if`: Das
+    // Umschalten zerstört GENAU den Knopf, den man gerade gedrückt hat, und der
+    // Fokus fiele in den <body> (WCAG 2.4.3). Also auf den Gegenpart setzen —
+    // erst im nächsten Durchlauf, wenn er im DOM steht.
+    setTimeout(() =>
+      document
+        .querySelector<HTMLElement>(offen ? '.pool__zu' : '.poolrand__knopf')
+        ?.focus(),
+    );
+  }
+
+  private poolOffenLaden(): boolean {
+    try {
+      return localStorage.getItem(POOL_SPEICHER) !== '0';
+    } catch {
+      return true;
+    }
+  }
+
+  /**
+   * Eine Kachel über die eingeklappte Leiste zu ziehen klappt sie auf. Sonst
+   * wäre der Rückweg (Termin zurück in den Rückstand) mit der Maus versperrt,
+   * sobald jemand die Leiste einmal zugeklappt hat.
+   */
+  poolDragUeberSchmal(ev: DragEvent): void {
+    if (!this.zieht()) return;
+    ev.preventDefault();
+    if (!this.poolOffen()) this.poolUmschalten();
+  }
+
+  // --- Kachelmenü ----------------------------------------------------------
+  /** Der Schlüssel einer KACHEL: Bahn + Einsatz (siehe `menuFuer`). */
+  menuSchluessel(lane: BoardLane, job: BoardJob): string {
+    return `${lane.kind}|${lane.id}|${job.id}`;
+  }
+
+  /**
+   * Zustand festhalten, BEVOR der Light-Dismiss ihn wegräumt. Läuft am
+   * `pointerdown` des Griffs — siehe `beimDruecken`.
+   */
+  menuDruck(key: string): void {
+    this.beimDruecken = this.menuFuer() === key ? key : null;
+  }
+
+  /** Griff gedrückt: Menü auf — oder zu, wenn es schon offen war. */
+  menuUmschalten(key: string, ev: Event): void {
+    ev.preventDefault();
+    ev.stopPropagation();
+    const gemerkt = this.beimDruecken;
+    this.beimDruecken = undefined;
+    // Ohne Zeiger (Tastatur) gilt der gelebte Zustand — siehe `beimDruecken`.
+    const warOffen = gemerkt === undefined ? this.menuFuer() === key : gemerkt === key;
+    if (!this.darfUmplanen() || this.busy()) return;
+    this.menuFuer.set(warOffen ? null : key);
+  }
+
+  /**
+   * Rechtsklick auf die Kachel öffnet dasselbe Menü. Für den Disponenten ist das
+   * der schnellste Weg — er trifft die ganze Kachel statt eines kleinen Griffs.
+   * Das Browsermenü tritt dafür zurück (auch „Link in neuem Tab öffnen“, das der
+   * Kachel-Link sonst böte); der Griff bleibt als sichtbarer, unveränderter Weg.
+   */
+  menuAusKachel(key: string, ev: MouseEvent): void {
+    if (!this.darfUmplanen() || this.busy()) return;
+    ev.preventDefault();
+    this.beimDruecken = undefined;
+    this.menuFuer.set(key);
+  }
+
+  /** Der Browser hat das Menü geschlossen (Escape, Klick daneben, Ziehen). */
+  menuGeschlossen(key: string): void {
+    if (this.menuFuer() !== key) return;
+    this.menuFuer.set(null);
+  }
+
+  /**
+   * Fokus auf den Griff DIESER Kachel zurückgeben, bevor das Menü verschwindet.
+   *
+   * Ohne diesen Schritt merkt sich der Dialog `document.activeElement` — und das
+   * ist der Knopf, der im selben Durchlauf mit dem Menü abgebaut wird. Der
+   * Dialog käme mit `<body>` als Auslöser zurück und ließe den Fokus nach dem
+   * Schließen am Seitenanfang stehen, statt an der Kachel (WCAG 2.4.3).
+   */
+  private griffFokussieren(): void {
+    const aktiv = document.activeElement as HTMLElement | null;
+    aktiv?.closest('.tile')?.querySelector<HTMLElement>('[data-menugriff]')?.focus();
   }
 
   /** Aus dem Rückstand aufnehmen: Ziel ist zunächst die erste Bahn, erste Spalte. */
@@ -2038,6 +2191,9 @@ export class Plantafel {
   /** Kachel bearbeiten (Hero: Doppelklick/Bearbeiten in der Detailansicht). */
   bearbeiten(job: BoardJob): void {
     if (!this.darfUmplanen()) return;
+    // Reihenfolge zählt: erst den Fokus retten, dann das Menü abbauen.
+    this.griffFokussieren();
+    this.menuFuer.set(null);
     const start = new Date(job.scheduled_start);
     const end = job.scheduled_end ? new Date(job.scheduled_end) : null;
     this.dialogOeffnen(job, {

@@ -152,6 +152,11 @@ export class Firmenprofil {
     // Verfallstag ist in der Praxis der 31.03. oder das Jahresende — freie
     // Tag/Monat-Eingabe lädt nur zu unmöglichen Daten (30.02.) ein.
     vacation_carryover_expiry: this.fb.control('', { nonNullable: true }),
+    // Arbeitszeitfenster (0148). Die Spalten sind NOT NULL mit Default — ein
+    // leeres Feld heißt deshalb „unverändert", nicht „löschen".
+    work_start: this.fb.control('', { nonNullable: true }),
+    work_end: this.fb.control('', { nonNullable: true }),
+    break_minutes: this.fb.control('', { nonNullable: true }),
   });
 
   /**
@@ -181,8 +186,53 @@ export class Firmenprofil {
   /** Anzahlungskonten sind nur im Modus ANZAHLUNG wirksam. */
   protected readonly anzahlungAktiv = signal(false);
 
+  /**
+   * Was aus den drei Feldern tatsächlich folgt — ausgerechnet, nicht behauptet.
+   * „07:00–16:00 abzüglich 60 Minuten Pause = 8,0 Stunden Arbeit" ist die Zahl,
+   * mit der die Plantafel rechnet; wer sie hier sofort sieht, merkt einen
+   * Vertipper, bevor er die Auslastung des ganzen Betriebs verschiebt.
+   */
+  protected readonly arbeitstagText = signal('');
+
+  private arbeitstagRechnen(): void {
+    const min = (s: string) => {
+      const [h, m] = (s || '').split(':').map(Number);
+      return Number.isFinite(h) && Number.isFinite(m) ? h * 60 + m : null;
+    };
+    const von = min(this.form.controls.work_start.value);
+    const bis = min(this.form.controls.work_end.value);
+    // `Number('')` ist 0 und käme durch jede Plausibilitätsprüfung — der eine
+    // Satz, der einen Vertipper abfangen soll, meldete dann „9 Stunden Arbeit".
+    const roh = (this.form.controls.break_minutes.value ?? '').trim();
+    const pause = roh === '' ? NaN : Number(roh);
+    if (von === null || bis === null || bis <= von || !Number.isFinite(pause) || pause < 0) {
+      this.arbeitstagText.set('Mindestens 30 Minuten (§ 4 ArbZG ab mehr als sechs Stunden).');
+      return;
+    }
+    const netto = bis - von - pause;
+    if (netto <= 0) {
+      this.arbeitstagText.set('Die Pause ist so lang wie der Arbeitstag — es bliebe keine Arbeitszeit.');
+      return;
+    }
+    const stunden = (netto / 60).toLocaleString('de-DE', { maximumFractionDigits: 2 });
+    const woche = ((netto * 5) / 60).toLocaleString('de-DE', { maximumFractionDigits: 2 });
+    this.arbeitstagText.set(
+      `Ergibt ${stunden} Stunden Arbeit am Tag, ${woche} Stunden in der Fünftagewoche.`,
+    );
+  }
+
   constructor() {
     this.laden();
+    for (const c of [
+      this.form.controls.work_start,
+      this.form.controls.work_end,
+      this.form.controls.break_minutes,
+    ]) {
+      c.valueChanges
+        .pipe(takeUntilDestroyed(this.destroyRef))
+        .subscribe(() => this.arbeitstagRechnen());
+    }
+    this.arbeitstagRechnen();
     this.form.controls.datev_advance_mode.valueChanges
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((m) => this.anzahlungAktiv.set(m === 'ANZAHLUNG'));
@@ -330,6 +380,10 @@ export class Firmenprofil {
         p.vacation_carryover_expiry_month && p.vacation_carryover_expiry_day
           ? `${p.vacation_carryover_expiry_month}-${p.vacation_carryover_expiry_day}`
           : '',
+      // Der Server liefert „07:00:00"; das Zeitfeld will „07:00".
+      work_start: (p.work_start ?? '').slice(0, 5),
+      work_end: (p.work_end ?? '').slice(0, 5),
+      break_minutes: p.break_minutes == null ? '' : String(p.break_minutes),
     });
     this.anzahlungAktiv.set((p.datev_advance_mode ?? 'ERLOES') === 'ANZAHLUNG');
   }
@@ -360,6 +414,11 @@ export class Firmenprofil {
       ),
       vacation_carryover_expiry_month: monat,
       vacation_carryover_expiry_day: tag,
+      // NOT NULL mit Default: ein geleertes Feld heißt „unverändert". Würde hier
+      // null gesendet, schlüge es als 500 aus der Spalte zurück statt als 422.
+      work_start: roh.work_start || undefined,
+      work_end: roh.work_end || undefined,
+      break_minutes: ganzzahlOderNull(roh.break_minutes) ?? undefined,
     };
     this.laedt.set(true);
     this.svc.updateProfile(payload).subscribe({

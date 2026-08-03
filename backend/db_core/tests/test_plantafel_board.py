@@ -16,6 +16,7 @@ Die vier Lücken, die dieses Modul absichert:
 import uuid
 from datetime import date, datetime, timedelta
 from datetime import timezone as dt_timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -43,6 +44,11 @@ VOLLZEIT = {
 
 def _t(tag, stunde):
     return datetime(2026, 7, tag, stunde, 0, tzinfo=dt_timezone.utc)
+
+
+def _berlin(tag, stunde):
+    """Betriebszeit — die Auslastung rechnet in Ortszeit, nicht in UTC."""
+    return datetime(2026, 7, tag, stunde, 0, tzinfo=ZoneInfo("Europe/Berlin"))
 
 
 def _order(app_user, title="Auftrag"):
@@ -254,7 +260,202 @@ def test_auslastung_plan_stunden_werden_aufs_fenster_beschnitten(app_user):
         lane for lane in _board().lanes
         if lane["kind"] == "USER" and lane["id"] == monteur.id
     )
+    # Ins Fenster ragt Mo 00:00–08:00 Berlin — aber davon ist nur 07:00–08:00
+    # Arbeitszeit. Die Nachtlücke (So 16:00 → Mo 07:00) liegt vollständig im
+    # Einsatz und fällt weg, auch wenn sie den Fensterrand überschreitet: Sonst
+    # brächte der Montag 00:00–08:00 mit, und dieselbe Kachel ergäbe je nach
+    # Lage des Fensters eine andere Auslastung.
+    assert float(lane["plan_hours"]) == pytest.approx(1.0)
+
+
+def _vertrag(app_user, konto, hours=None):
+    """Vollzeitvertrag Mo–Fr für eine Bahn — gibt ihr ein Tagessoll."""
+    person = identity_service.create_person(app_user.id, "Mon", "Teur")
+    emp = hr_service.create_employee(
+        app_user.id, app_user_id=konto.id, party_id=person.id,
+        hired_on=date(2024, 1, 1),
+    )
+    return hr_service.create_contract(
+        app_user.id, employee_id=emp.id, valid_from=date(2024, 1, 1),
+        hours=hours or VOLLZEIT, vacation_days_per_year=30,
+    )
+
+
+def _plan_h(app_user, *spannen, vertrag=None):
+    """Geplante Stunden auf der Bahn eines frischen Monteurs.
+
+    Mehrere `(von, bis)`-Paare landen auf DEMSELBEN Monteur — nur so lässt sich
+    prüfen, dass die Pause je Arbeitstag anfällt und nicht je Einsatz.
+    """
+    order = _order(app_user)
+    monteur = _user(f"Monteur {uuid.uuid4().hex[:6]}")
+    if vertrag is not None:
+        _vertrag(app_user, monteur, **vertrag)
+    for von, bis in spannen:
+        job = einsatz_service.create_service_job(
+            app_user.id, work_order_id=order.id, scheduled_start=von, scheduled_end=bis
+        )
+        einsatz_service.assign_user(
+            app_user.id, service_job_id=job.id, assignee_user_id=monteur.id
+        )
+    lane = next(
+        lane for lane in _board().lanes
+        if lane["kind"] == "USER" and lane["id"] == monteur.id
+    )
+    return float(lane["plan_hours"])
+
+
+@pytest.mark.django_db
+def test_auslastung_mehrtaegig_zaehlt_arbeitstage_nicht_die_wanduhr(app_user):
+    """Der Kern des Ganzen: Ein Einsatz über vier Tage belegt vier ARBEITSTAGE.
+
+    Di 07:00 bis Fr 16:00 sind 81 Stunden Wanduhr. Gezählt gehören 4 × 8 h =
+    32 h: Feierabend und Nacht sind keine Arbeitszeit, und je Tag geht eine
+    Stunde Pause ab (07:00–16:00 Anwesenheit = 8 h Arbeit). Die Wanduhr ergäbe
+    185 % Auslastung — ein Monteur, der überlastet aussieht, obwohl er normal
+    verplant ist, und ein Fehler, den jede spätere Auswertung erbte.
+    """
+    assert _plan_h(app_user, (_berlin(14, 7), _berlin(17, 16))) == pytest.approx(32.0)
+
+
+@pytest.mark.django_db
+def test_auslastung_voller_tag_ist_acht_stunden_nicht_neun(app_user):
+    """07:00–16:00 ist die Anwesenheit; eine Stunde davon ist Pause."""
+    assert _plan_h(app_user, (_berlin(14, 7), _berlin(14, 16))) == pytest.approx(8.0)
+
+
+@pytest.mark.django_db
+def test_auslastung_kurzeinsatz_bekommt_keine_pause(app_user):
+    """Bis sechs Stunden fällt keine Pause an (ArbZG § 4) — 5 h bleiben 5 h."""
+    assert _plan_h(app_user, (_berlin(14, 7), _berlin(14, 12))) == pytest.approx(5.0)
+
+
+@pytest.mark.django_db
+def test_auslastung_sechs_stunden_bleiben_sechs(app_user):
+    """Die Grenze ist MEHR als sechs Stunden. Genau sechs bleiben ungekürzt —
+    sonst stünde ein Sechs-Stunden-Einsatz schlechter da als ein Fünf-Stunden-."""
+    assert _plan_h(app_user, (_berlin(14, 7), _berlin(14, 13))) == pytest.approx(6.0)
+
+
+@pytest.mark.django_db
+def test_auslastung_abendarbeit_bleibt_stehen(app_user):
+    """Was am Rand tatsächlich über den Feierabend hinausgeht, verschwindet
+    NICHT: 07:00–20:00 sind 13 h Anwesenheit, 12 h Arbeit. Nur die vollständige
+    Nachtlücke zwischen zwei Tagen wird herausgeschnitten — Überlast bleibt
+    sichtbar. (Der Notdienst bekommt später eine eigene Behandlung.)"""
+    assert _plan_h(app_user, (_berlin(14, 7), _berlin(14, 20))) == pytest.approx(12.0)
+
+
+@pytest.mark.django_db
+def test_auslastung_pause_faellt_je_TAG_an_nicht_je_einsatz(app_user):
+    """Zwei Termine an einem Tag sind derselbe Arbeitstag — eine Pause, nicht null.
+
+    07:00–12:00 (5 h) und 12:00–16:00 (4 h) sind zusammen 9 h Anwesenheit = 8 h
+    Arbeit. Zöge man die Pause je EINSATZ ab, bliebe jeder unter der
+    Sechs-Stunden-Schwelle und der Tag stünde mit 9 h da — die Auslastung hinge
+    dann daran, wie fein der Disponent den Tag zerschneidet.
+    """
+    stunden = _plan_h(
+        app_user,
+        (_berlin(14, 7), _berlin(14, 12)),
+        (_berlin(14, 12), _berlin(14, 16)),
+        vertrag={},
+    )
+    assert stunden == pytest.approx(8.0)
+
+
+@pytest.mark.django_db
+def test_auslastung_zaehlt_keine_tage_ohne_soll(app_user):
+    """Das Wochenende zählt nicht mit — sonst liefe die Quote auseinander.
+
+    Ein Einsatz von Donnerstag bis Dienstag berührt sechs Kalendertage. Das Soll
+    (`_soll_stunden`) kennt aber nur die fünf Werktage, und Sa/So stehen im
+    Vollzeitraster auf 0 h. Zählte der Zähler sie trotzdem, ergäbe das 48 h
+    gegen 40 h Soll = 120 % — dieselbe Fehlerklasse wie die 185 % aus der
+    Wanduhr-Rechnung, nur eine Ebene gröber.
+
+    Im Fenster Mo–So (13.–19.07.2026) liegen vom Einsatz Do–Di die Tage Do, Fr,
+    Sa, So: gezählt gehören nur Do und Fr = 16 h.
+    """
+    stunden = _plan_h(app_user, (_berlin(16, 7), _berlin(21, 16)), vertrag={})
+    assert stunden == pytest.approx(16.0)
+
+
+@pytest.mark.django_db
+def test_auslastung_ist_unabhaengig_von_der_lage_des_fensters(app_user):
+    """Dieselbe Kachel muss dieselbe Zahl ergeben, egal wo das Fenster liegt.
+
+    Ein Einsatz Sa 07:00 → Mi 16:00 belegt im Fenster Mo–So die Arbeitstage Mo,
+    Di, Mi = 24 h. Würde erst geschnitten und dann gerechnet, wäre die
+    Nachtlücke So 16:00 → Mo 07:00 nicht mehr vollständig enthalten, bliebe
+    stehen, und der Montag brächte 00:00–16:00 mit — 31 h statt 24 h.
+    """
+    order = _order(app_user)
+    monteur = _user(f"Randlage {uuid.uuid4().hex[:6]}")
+    _vertrag(app_user, monteur)
+    job = einsatz_service.create_service_job(
+        app_user.id, work_order_id=order.id,
+        scheduled_start=_berlin(11, 7),   # Samstag VOR dem Fenster
+        scheduled_end=_berlin(15, 16),    # Mittwoch IM Fenster
+    )
+    einsatz_service.assign_user(
+        app_user.id, service_job_id=job.id, assignee_user_id=monteur.id
+    )
+    lane = next(
+        lane for lane in _board().lanes
+        if lane["kind"] == "USER" and lane["id"] == monteur.id
+    )
+    assert float(lane["plan_hours"]) == pytest.approx(24.0)
+
+
+@pytest.mark.django_db
+def test_auslastung_bei_ausgelaufenem_vertrag_verschwindet_nicht(app_user):
+    """Ein Vertrag, der den Tag nicht deckt, darf den Zähler nicht leeren.
+
+    Vorher fragte die Rechnung nur, OB Vertragszeilen existieren. Bei einem
+    ausgelaufenen Vertrag fiel damit jeder Tag weg, und die Bahn las sich als
+    „0,0 h geplant · Sollstunden unbekannt" — direkt neben den Kacheln, die
+    sichtbar auf ihr lagen.
+    """
+    monteur = _user("Ausgelaufen")
+    person = identity_service.create_person(app_user.id, "Alt", "Vertrag")
+    emp = hr_service.create_employee(
+        app_user.id, app_user_id=monteur.id, party_id=person.id,
+        hired_on=date(2024, 1, 1),
+    )
+    hr_service.create_contract(
+        app_user.id, employee_id=emp.id, valid_from=date(2024, 1, 1),
+        valid_to=date(2024, 12, 31),  # längst vorbei
+        hours=VOLLZEIT, vacation_days_per_year=30,
+    )
+    order = _order(app_user)
+    job = einsatz_service.create_service_job(
+        app_user.id, work_order_id=order.id,
+        scheduled_start=_berlin(14, 7), scheduled_end=_berlin(14, 16),
+    )
+    einsatz_service.assign_user(
+        app_user.id, service_job_id=job.id, assignee_user_id=monteur.id
+    )
+    lane = next(
+        lane for lane in _board().lanes
+        if lane["kind"] == "USER" and lane["id"] == monteur.id
+    )
     assert float(lane["plan_hours"]) == pytest.approx(8.0)
+    assert lane["target_hours"] is None  # kein deckender Vertrag → unbekannt
+
+
+@pytest.mark.django_db
+def test_auslastung_ohne_vertrag_streicht_keine_tage(app_user):
+    """Ohne Vertrag gibt es kein Tagessoll — dann fehlt der Maßstab, welcher Tag
+    ein Arbeitstag ist. Gestrichen wird deshalb nichts, nur die Pause geht ab.
+    Der Nenner steht in diesem Fall ohnehin auf „unbekannt"."""
+    # Sa 18.07. + So 19.07., je 07:00–16:00 → 2 × 8 h, obwohl beides Wochenende ist.
+    stunden = _plan_h(
+        app_user,
+        (_berlin(18, 7), _berlin(18, 16)),
+        (_berlin(19, 7), _berlin(19, 16)),
+    )
+    assert stunden == pytest.approx(16.0)
 
 
 @pytest.mark.django_db

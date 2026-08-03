@@ -9,9 +9,14 @@
   </header>
 
   <!-- ============================ Steuerleiste ============================ -->
-  <div class="leiste">
+  <!-- EINE Zeile. Die Leiste trug ihre Beschriftungen früher über den Feldern
+       und stapelte sich damit auf drei Bänder — Höhe, die unten an Bahnen
+       fehlte. Die Beschriftungen sind nicht weg, sondern nur nicht mehr
+       gezeichnet (`feldchen--knapp`): Für Screenreader ändert sich nichts, und
+       was ein Feld bedeutet, sagen Titel und Auswahl. -->
+  <div class="leiste leiste--eine-zeile">
     <div class="leiste__zeit">
-      <label class="feldchen">
+      <label class="feldchen feldchen--knapp" title="Ansicht">
         <span class="feldchen__label">Ansicht</span>
         <!-- `[selected]` je Option, NICHT `[value]` am <select>: die Optionen
              entstehen erst durch @for, ein vorab gesetztes value fiele auf die
@@ -29,7 +34,7 @@
         <button type="button" class="btn" (click)="next()" aria-label="Nächster Zeitraum">›</button>
       </div>
 
-      <label class="feldchen">
+      <label class="feldchen feldchen--knapp" title="Datum — springt zu dieser Woche">
         <span class="feldchen__label">Datum</span>
         <input
           type="date"
@@ -44,8 +49,23 @@
       <!-- GRUNDRASTER: Welche Stunden des Tages zeigt das Board normalerweise?
            Das ist eine ANZEIGE-Vorliebe, KEIN Filter — liegt ein Termin außerhalb
            (Notdienst), weitet sich das Raster automatisch und sagt es dazu. Ein
-           Termin kann dadurch nie unsichtbar werden. -->
-      <fieldset class="raster">
+           Termin kann dadurch nie unsichtbar werden.
+           Weil man es einmal einstellt und dann jahrelang nicht mehr anfasst,
+           steht es hinter einem Ausklapper statt dauerhaft in der Leiste. Der
+           eingestellte Zeitraum bleibt am Knopf ablesbar. -->
+      <details class="rasterwahl">
+        <!-- `title` allein trägt den zugänglichen Namen NICHT: Er wird nur
+             herangezogen, wenn das Element keinen Inhalt hat. Ohne aria-label
+             hörte man „07–17“ — was das bedeutet, stünde nur in der <legend>
+             INNERHALB des zugeklappten Bereichs. -->
+        <summary
+          class="rasterwahl__knopf"
+          [title]="'Arbeitszeit im Raster: ' + bandText()"
+          [attr.aria-label]="'Arbeitszeit im Raster, ' + bandText()"
+        >
+          <span aria-hidden="true">◷</span> {{ bandText() }}
+        </summary>
+        <fieldset class="raster">
         <legend class="raster__legend">Arbeitszeit im Raster</legend>
         <label class="feldchen feldchen--eng">
           <span class="feldchen__label">von</span>
@@ -77,11 +97,12 @@
             }
           </select>
         </label>
-      </fieldset>
+        </fieldset>
+      </details>
     </div>
 
     <div class="leiste__filter">
-      <label class="feldchen feldchen--weit">
+      <label class="feldchen feldchen--weit feldchen--knapp" title="Suche im Raster">
         <span class="feldchen__label">Suche im Raster</span>
         <input
           type="search"
@@ -91,7 +112,7 @@
           (change)="sucheSetzen($any($event.target).value)"
         />
       </label>
-      <label class="feldchen">
+      <label class="feldchen feldchen--knapp" title="Kategorie">
         <span class="feldchen__label">Kategorie</span>
         <select class="feldchen__select" (change)="katFilterSetzen($any($event.target).value)">
           <option value="" [selected]="!katFilter()">Alle Kategorien</option>
@@ -103,7 +124,7 @@
       <!-- Gewerkfilter (0120). Er greift auf Raster UND Rückstand — anders als der
            Kategoriefilter, der nur das Raster betrifft. Begründung steht im
            Service (`board_daten`): Der Rückstand ist die Quelle des Ziehens. -->
-      <label class="feldchen">
+      <label class="feldchen feldchen--knapp" title="Gewerk">
         <span class="feldchen__label">Gewerk</span>
         <select class="feldchen__select" (change)="gewerkFilterSetzen($any($event.target).value)">
           <option value="" [selected]="!gewerkFilter()">Alle Gewerke</option>
@@ -149,23 +170,25 @@
     </div>
   }
 
-  <!-- Das Raster hat sich über die eingestellte Arbeitszeit hinaus geweitet.
-       Das MUSS ausgesprochen werden: Sonst wundert sich der Disponent, warum sein
-       07–17-Raster plötzlich bis 23 Uhr reicht — und schlimmer: Er müsste
-       befürchten, dass umgekehrt Termine fehlen. Sie fehlen nie. -->
-  @if (bandErweitert(); as be) {
-    <p class="raster-hinweis" role="status">
-      <span aria-hidden="true">↔</span> {{ be }}
-    </p>
-  }
-
-  <!-- Der Gewerkfilter blendet Termine aus — auch im Rückstand. Das MUSS
-       dastehen: Ein Termin, den der Disponent nicht sieht, ist der gefährlichste
-       Fehler einer Plantafel. Text, nicht nur ein gesetztes Dropdown. -->
-  @if (gewerkHinweis(); as gh) {
-    <p class="raster-hinweis" role="status">
-      <span aria-hidden="true">⚒</span> {{ gh }}
-    </p>
+  <!-- Beide Hinweise stehen in EINER Zeile nebeneinander statt als zwei eigene
+       Bänder untereinander. Der Text bleibt vollständig — er ist in beiden
+       Fällen die einzige Absicherung gegen den gefährlichsten Fehler einer
+       Plantafel, den Termin, den man nicht sieht. Nur der Platz wird geteilt. -->
+  @if (bandErweitert() || gewerkHinweis()) {
+    <div class="hinweiszeile" role="status">
+      <!-- Das Raster hat sich über die eingestellte Arbeitszeit hinaus geweitet.
+           Sonst wunderte sich der Disponent, warum sein 07–17-Raster plötzlich
+           bis 23 Uhr reicht — und schlimmer: Er müsste befürchten, dass
+           umgekehrt Termine fehlen. Sie fehlen nie. -->
+      @if (bandErweitert(); as be) {
+        <p class="raster-hinweis"><span aria-hidden="true">↔</span> {{ be }}</p>
+      }
+      <!-- Der Gewerkfilter blendet Termine aus — auch im Rückstand. Text, nicht
+           nur ein gesetztes Dropdown. -->
+      @if (gewerkHinweis(); as gh) {
+        <p class="raster-hinweis"><span aria-hidden="true">⚒</span> {{ gh }}</p>
+      }
+    </div>
   }
 
   @if (warnungen().length) {
@@ -203,13 +226,38 @@
     }
 
     @case ('ready') {
-      <div class="disposition">
+      <div class="disposition" [class.disposition--pool-zu]="!poolOffen()">
         <!-- ========================= Rückstand (Pool) ===================== -->
         <!-- Das eigentliche Herz einer Plantafel: die UNGEPLANTEN Einsätze.
              Ohne sie gäbe es nichts, was man ins Raster ziehen könnte. -->
         <!-- Der Rückstand ist AUCH ein Ablageziel: eine Kachel hierher zu ziehen
              ist die Gegenbewegung zum Ziehen ins Raster. Sie öffnet den Dialog,
              denn der Statuswechsel GEPLANT → UNGEPLANT ist begründungspflichtig. -->
+        @if (!poolOffen()) {
+          <!-- Eingeklappt bleibt eine schmale Leiste stehen — wie bei der
+               Navigation zur SEITE, nicht nach oben: Nach oben behielt der
+               Rückstand seine Spalte, und genau die Breite braucht das Raster.
+               Die Leiste bleibt Ablageziel; wer eine Kachel darüberzieht,
+               klappt sie auf. -->
+          <aside
+            class="poolrand"
+            aria-label="Rückstand (eingeklappt)"
+            (dragover)="poolDragUeberSchmal($event)"
+            (drop)="poolDrop($event)"
+          >
+            <button
+              type="button"
+              class="poolrand__knopf"
+              aria-expanded="false"
+              [attr.aria-label]="'Rückstand ausklappen — ' + backlogTotal() + ' ungeplante Termine'"
+              (click)="poolUmschalten()"
+            >
+              <span class="poolrand__glyph" aria-hidden="true">»</span>
+              <span class="poolrand__zahl" aria-hidden="true">{{ backlogTotal() }}</span>
+              <span class="poolrand__text" aria-hidden="true">Rückstand</span>
+            </button>
+          </aside>
+        } @else {
         <aside
           class="pool"
           [class.pool--dropziel]="poolDropZiel()"
@@ -225,22 +273,29 @@
             </h2>
             <button
               type="button"
-              class="minibtn"
-              [attr.aria-expanded]="poolOffen()"
-              (click)="poolOffen.set(!poolOffen())"
+              class="minibtn pool__zu"
+              aria-expanded="true"
+              aria-label="Rückstand einklappen"
+              title="Rückstand einklappen"
+              (click)="poolUmschalten()"
             >
-              {{ poolOffen() ? 'Einklappen' : 'Ausklappen' }}
+              <span aria-hidden="true">«</span>
             </button>
           </div>
 
-          @if (poolOffen()) {
-            <p class="pool__hinweis">
-              Ungeplante Termine. Mit der Maus ins Raster <strong>ziehen</strong> — oder ohne
-              Maus: <strong>„Aufnehmen“</strong>, mit den <strong>Pfeiltasten</strong> die Zelle
-              wählen, <strong>Enter</strong> legt ab. Umgekehrt geht es auch: eine Kachel
-              <strong>hierher ziehen</strong> (oder „In den Rückstand“ an der Kachel) nimmt
-              den Termin wieder heraus.
-            </p>
+            <!-- Die Anleitung stand früher als fünfzeiliger Absatz über der
+                 Liste — jeden Tag gelesen wird sie nicht, Platz kostete sie
+                 immer. Aufgeklappt bleibt sie vollständig erhalten. -->
+            <details class="pool__anleitung">
+              <summary>So wird disponiert</summary>
+              <p>
+                Ungeplante Termine. Mit der Maus ins Raster <strong>ziehen</strong> — oder ohne
+                Maus: <strong>„Aufnehmen“</strong>, mit den <strong>Pfeiltasten</strong> die Zelle
+                wählen, <strong>Enter</strong> legt ab. Umgekehrt geht es auch: eine Kachel
+                <strong>hierher ziehen</strong> (oder „In den Rückstand“ im Kachelmenü) nimmt
+                den Termin wieder heraus.
+              </p>
+            </details>
             <label class="feldchen feldchen--weit pool__suche">
               <span class="feldchen__label">Im Rückstand suchen</span>
               <input
@@ -341,8 +396,8 @@
                 </p>
               }
             }
-          }
         </aside>
+        }
 
         <!-- ============================== Board =========================== -->
         <div class="board-spalte">
@@ -355,9 +410,8 @@
             </p>
             @if (darfUmplanen()) {
               <p class="board-kopf__hinweis">
-                Kacheln mit der Maus <strong>ziehen</strong> — oder Knopf
-                <strong>„Verschieben“</strong>, <strong>Pfeiltasten</strong>,
-                <strong>Enter</strong>.
+                Kachel <strong>ziehen</strong> — oder <strong>⋯</strong> an der Kachel
+                (auch Rechtsklick) für Bearbeiten, Verschieben, Rückstand.
               </p>
             }
           </div>
@@ -540,6 +594,7 @@
                         [attr.draggable]="darfUmplanen() && !busy() ? 'true' : null"
                         (dragstart)="dragStart($event, { art: 'board', job: b.job, lane })"
                         (dragend)="dragEnde()"
+                        (contextmenu)="menuAusKachel(menuSchluessel(lane, b.job), $event)"
                       >
                         <!-- DAUERBALKEN: Ein kurzer Termin wird auf eine LESBARE
                              Breite gestreckt (sonst wäre eine Stunde ein Strich,
@@ -692,7 +747,38 @@
                         }
 
                         @if (darfUmplanen()) {
-                          <div class="tile__aktionen" appSchwebendesPanel>
+                          <!-- Der Griff ist die EINE feste Anlaufstelle an der
+                               Kachel. Er ersetzt das frühere Hover-Panel: Das
+                               hing als schmaler Streifen unter der Kachel, und
+                               wer die Maus dorthin führte, streifte
+                               Nachbarkacheln — das Panel klappte unter dem
+                               Zeiger weg. Der Griff bleibt stehen, ist mit
+                               Finger und Tastatur zu treffen und öffnet ein
+                               Menü, das offen bleibt, bis man es schließt. -->
+                          <button
+                            type="button"
+                            class="tile__menugriff"
+                            data-menugriff
+                            draggable="false"
+                            [disabled]="busy()"
+                            [attr.aria-expanded]="menuFuer() === menuSchluessel(lane, b.job)"
+                            [attr.aria-label]="
+                              'Aktionen zu Termin ' + b.job.job_number + ', ' + b.job.title
+                            "
+                            (pointerdown)="menuDruck(menuSchluessel(lane, b.job))"
+                            (click)="menuUmschalten(menuSchluessel(lane, b.job), $event)"
+                          >
+                            <span aria-hidden="true">⋯</span>
+                          </button>
+                        }
+                        @if (darfUmplanen() && menuFuer() === menuSchluessel(lane, b.job)) {
+                          <div
+                            class="tile__aktionen tile__aktionen--menue"
+                            role="group"
+                            [attr.aria-label]="'Aktionen zu Termin ' + b.job.job_number"
+                            appSchwebendesPanel="klick"
+                            (geschlossen)="menuGeschlossen(menuSchluessel(lane, b.job))"
+                          >
                             <button
                               type="button"
                               class="minibtn tile__griff"

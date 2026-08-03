@@ -16,6 +16,7 @@ import calendar
 import hashlib
 import re
 import uuid
+from datetime import time
 from pathlib import PurePosixPath
 
 from db_core import storage as storage_module
@@ -56,6 +57,8 @@ _PROFILE_FIELDS = (
     "datev_advance_account_reverse",
     # Resturlaubs-Verfall (0072). NULL/NULL = kein Verfall (Default).
     "vacation_carryover_expiry_month", "vacation_carryover_expiry_day",
+    # Arbeitszeitfenster (0148). Grundlage der Auslastung auf der Plantafel.
+    "work_start", "work_end", "break_minutes",
 )
 
 # Konto-Override-Felder: reine Ziffernfolgen (Sach-/Personenkonten). NULL = der
@@ -185,6 +188,56 @@ def _validate_urlaubsverfall(values, profile):
     values[tag_key] = tag
 
 
+def _validate_arbeitszeit(values, profile):
+    """Arbeitszeitfenster: Beginn vor Feierabend, Pause passt hinein (DB-CHECKs).
+
+    Wie beim Urlaubsverfall wird der **Ergebniszustand** geprüft, nicht nur das
+    Gesendete: Wer allein den Feierabend vorzieht, könnte ihn sonst vor den
+    bestehenden Arbeitsbeginn schieben, und der CHECK schlüge als 500 durch.
+
+    Die Felder sind NOT NULL mit Default — ein geleertes Feld heißt hier also
+    „unverändert", nie NULL (dieselbe Regel wie bei `datev_advance_mode`).
+    """
+    keys = ("work_start", "work_end", "break_minutes")
+    if not any(k in values for k in keys):
+        return
+    for k in keys:
+        if k in values and values[k] is None:
+            del values[k]
+    if not any(k in values for k in keys):
+        return
+    # Pydantic nimmt „08:00:00+02:00" klaglos als *aware* time entgegen. Der
+    # Vergleich gegen den naiven Bestandswert wuerfe dann TypeError — und der
+    # kaeme als 500 heraus, in einem Endpunkt, dessen ganzer Zweck 422 ist.
+    # Der Betrieb hat EINE Ortszeit; ein Zeitzonenversatz an der Stechuhr wäre
+    # ohnehin bedeutungslos.
+    for k in ("work_start", "work_end"):
+        if k in values and getattr(values[k], "tzinfo", None) is not None:
+            raise ValueError(
+                "Arbeitsbeginn und Feierabend sind Ortszeiten — ohne Zeitzonenangabe."
+            )
+
+    def jetzt(k, vorgabe):
+        if k in values:
+            return values[k]
+        return getattr(profile, k, vorgabe) if profile else vorgabe
+
+    von, bis = jetzt("work_start", time(7, 0)), jetzt("work_end", time(16, 0))
+    if von >= bis:
+        raise ValueError("Der Arbeitsbeginn muss vor dem Feierabend liegen.")
+    pause = int(jetzt("break_minutes", 60))
+    spanne = (bis.hour * 60 + bis.minute) - (von.hour * 60 + von.minute)
+    if pause < 0:
+        raise ValueError("Die Pause kann nicht negativ sein.")
+    if pause >= spanne:
+        raise ValueError(
+            f"Die Pause ({pause} Min.) muss kürzer sein als der Arbeitstag "
+            f"({spanne} Min.) — sonst bliebe keine Arbeitszeit übrig."
+        )
+    if "break_minutes" in values:
+        values["break_minutes"] = pause
+
+
 def _abschlagsmodus_wechsel_pruefen(profile, neuer_modus):
     """Der DATEV-Abschlagsmodus darf nur an einem SAUBEREN SCHNITT wechseln.
 
@@ -259,6 +312,7 @@ def update_company_profile(actor_app_user_id, **fields):
 
     profile = get_company_profile()
     _validate_urlaubsverfall(values, profile)
+    _validate_arbeitszeit(values, profile)
     if profile is None:
         if not values.get("company_name"):
             raise ValueError("Firmenname ist erforderlich.")

@@ -5,6 +5,7 @@ Rollen (das Firmenprofil steht auf jedem Beleg), Ändern/Anlegen nur
 ADMINISTRATION/GESCHAEFTSFUEHRUNG. Schreibende Endpunkte laufen über den
 firma-Service (business_transaction); Fachfehler → 422.
 """
+from datetime import time
 from uuid import UUID
 
 from django.http import HttpResponse
@@ -65,6 +66,11 @@ class CompanyProfileOut(Schema):
     # Resturlaubs-Verfall (0072). NULL/NULL = kein Verfall — der Default.
     vacation_carryover_expiry_month: int | None = None
     vacation_carryover_expiry_day: int | None = None
+    # Arbeitszeitfenster (0148): Grundlage der Auslastung auf der Plantafel.
+    # NOT NULL mit Default (07:00/16:00/60) — nie leer.
+    work_start: time | None = None
+    work_end: time | None = None
+    break_minutes: int | None = None
     # Additiv: OB ein Firmenlogo hinterlegt ist (die Bytes holt GET /profile/logo).
     has_logo: bool = False
     # Gesetzt, wenn eine Bankdaten-Änderung einen Vier-Augen-Antrag ausgelöst hat
@@ -112,6 +118,12 @@ class CompanyProfileIn(Schema):
     # Verfall", Default). Der Service prueft den Ergebniszustand (422 statt 500).
     vacation_carryover_expiry_month: int | None = None
     vacation_carryover_expiry_day: int | None = None
+    # Arbeitszeitfenster (0148). Leer = unveraendert (die Spalten sind NOT NULL);
+    # der Service prueft den Ergebniszustand, damit ein halb gesetztes Fenster
+    # als 422 zurueckkommt und nicht als 500 aus dem DB-CHECK.
+    work_start: time | None = None
+    work_end: time | None = None
+    break_minutes: int | None = None
 
 
 class BranchOut(Schema):
@@ -230,6 +242,9 @@ def _profile_out(p, pending_bank_approval=None):
         datev_advance_account_reverse=p.datev_advance_account_reverse,
         vacation_carryover_expiry_month=p.vacation_carryover_expiry_month,
         vacation_carryover_expiry_day=p.vacation_carryover_expiry_day,
+        work_start=p.work_start,
+        work_end=p.work_end,
+        break_minutes=p.break_minutes,
         has_logo=p.logo_file_id is not None,
         pending_bank_approval=pending_bank_approval,
     )

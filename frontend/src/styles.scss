@@ -1278,6 +1278,99 @@ button {
   color: var(--ink-muted);
 }
 
+/* ---- Eine Zeile statt drei Bänder (Plantafel) -----------------------------
+   Die Leiste stapelte Beschriftung über Feld und brauchte damit gut 90 px Höhe.
+   Auf der Plantafel ist Höhe das knappe Gut: Jede Zeile Kopf fehlt unten an
+   Bahnen. Hier wird deshalb mittig ausgerichtet statt an der Grundlinie, und
+   die Beschriftungen werden weggeschnitten — NICHT entfernt. */
+.leiste--eine-zeile {
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+}
+.leiste--eine-zeile .leiste__zeit,
+.leiste--eine-zeile .leiste__filter {
+  align-items: center;
+  gap: var(--space-2);
+}
+.leiste--eine-zeile .zeitraum {
+  margin: 0;
+  padding-inline: var(--space-2);
+  color: var(--ink);
+  white-space: nowrap;
+}
+/* Der Name bleibt im Vorlesebaum — ein Feld ohne zugänglichen Namen wäre für
+   Screenreader ein „Auswahlfeld" ohne Aussage. Sehende lesen ihn im `title`
+   und an der gewählten Option. */
+.feldchen--knapp {
+  align-items: center;
+}
+.feldchen--knapp > .feldchen__label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Rastereinstellung als Ausklapper: einmal gesetzt, dann jahrelang unberührt —
+   sie muss nicht dauerhaft Platz in der Leiste belegen. */
+.rasterwahl {
+  position: relative;
+}
+.rasterwahl__knopf {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.3rem var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+  white-space: nowrap;
+  list-style: none;
+  cursor: pointer;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+}
+.rasterwahl__knopf::-webkit-details-marker {
+  display: none;
+}
+.rasterwahl__knopf:hover,
+.rasterwahl[open] .rasterwahl__knopf {
+  color: var(--ink);
+  border-color: var(--line-strong);
+}
+.rasterwahl__knopf:focus-visible {
+  outline: 2.5px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.rasterwahl[open] .raster {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 0.25rem);
+  left: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-2, var(--shadow-1));
+}
+
+/* Beide Rasterhinweise teilen sich eine Zeile, statt zwei Bänder zu bilden. */
+.hinweiszeile {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  margin-bottom: var(--space-2);
+}
+.hinweiszeile .raster-hinweis {
+  flex: 1 1 20rem;
+  margin: 0;
+}
+
 // ============================== Rückstand ===================================
 .pool {
   display: flex;
@@ -1306,6 +1399,98 @@ button {
   align-items: baseline;
   justify-content: space-between;
   gap: var(--space-2);
+}
+
+/* ---- Aufteilung Rückstand | Board ----------------------------------------- */
+.disposition {
+  display: grid;
+  grid-template-columns: minmax(15rem, 19rem) minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+/* Eingeklappt bleibt nur die Handbreit-Leiste stehen — die restlichen gut
+   16 rem bekommt das Board. Genau daran hängt, ob eine ganze Woche in den
+   Schirm passt, ohne zu scrollen. */
+.disposition--pool-zu {
+  grid-template-columns: 2.75rem minmax(0, 1fr);
+}
+/* Auf schmalen Bildschirmen wandert der Rückstand über das Board. */
+@media (max-width: 78rem) {
+  .disposition,
+  .disposition--pool-zu {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Die Anleitung ist aufklappbar statt dauerhaft sichtbar (fünf Zeilen Prosa, die
+   man einmal liest, aber jeden Tag bezahlt). Der Text bleibt vollständig. */
+.pool__anleitung > summary {
+  cursor: pointer;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+.pool__anleitung > summary:focus-visible {
+  outline: 2.5px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.pool__anleitung > p {
+  margin: var(--space-2) 0 0;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+/* ---- Eingeklappter Rückstand ---------------------------------------------
+   Zur SEITE, wie die Navigation — nicht nach oben. Nach oben eingeklappt behielt
+   der Rückstand seine Spalte; eingespart wurde Höhe, die nicht knapp ist, und
+   das Raster blieb genauso schmal. Hier bleibt eine Handbreit stehen: Zahl und
+   Name senkrecht, dazu ein Ablageziel, das beim Darüberziehen aufklappt. */
+.poolrand {
+  position: sticky;
+  top: 0;
+  align-self: start;
+}
+.poolrand__knopf {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) 0.2rem;
+  cursor: pointer;
+  color: var(--ink-muted);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+}
+.poolrand__knopf:hover {
+  color: var(--ink);
+  border-color: var(--line-strong);
+  border-left-color: var(--accent);
+}
+.poolrand__knopf:focus-visible {
+  outline: 2.5px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.poolrand__glyph {
+  font-weight: 700;
+}
+.poolrand__zahl {
+  padding: 0.05rem 0.4rem;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--accent-ink);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border-radius: 999px;
+}
+/* Senkrecht gesetzt — quer passt „Rückstand" in 2,5 rem nicht. */
+.poolrand__text {
+  writing-mode: vertical-rl;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }
 .pool__titel {
   display: flex;
@@ -1702,6 +1887,90 @@ button {
    Komponentenstile zur Laufzeit NACH dem globalen Stylesheet einhaengt. Die
    Komponentenregel gewaenne. Mit `.tile` davor sind es 0,3,0 und die Frage
    stellt sich nicht. */
+/* Der Griff: die eine feste Anlaufstelle an der Kachel. Er liegt AUSSERHALB des
+   Flusses (oben rechts), damit er die Kachelbreite nicht mitbestimmt — sonst
+   waere ein Zwei-Stunden-Termin so breit wie sein Knopf. Immer sichtbar, nur
+   gedaempft: Ein Griff, den erst Hover hervorholt, waere auf einer Tafel mit
+   zweihundert Kacheln wieder ein Suchspiel. */
+.tile__menugriff {
+  position: absolute;
+  z-index: 3;
+  top: 1px;
+  right: 1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 24 px = die Untergrenze aus WCAG 2.2 (2.5.8, Zielgroesse minimum). Die
+     Ausnahme fuer eng benachbarte Ziele traegt hier nicht: Der Griff sitzt
+     unmittelbar auf dem Kachel-Link, gehoert also zu dessen Cluster. Dieselbe
+     Rechnung steht schon hinter `.tile { min-width: 2.9rem }`. */
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  line-height: 1;
+  cursor: pointer;
+  /* KEIN `opacity` zum Daempfen: Die Deckkraft zieht Vorder- UND Hintergrund
+     zugleich zur getoenten Kachelflaeche und drueckte den Kontrast des Glyphs
+     auf ~3,8:1 (hell). Gedaempft wird deshalb ueber die Farbe selbst, die
+     gegen die Kachel durchgerechnet ist. */
+  color: var(--ink-muted);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
+}
+.tile:hover .tile__menugriff,
+.tile__menugriff:focus-visible,
+.tile__menugriff[aria-expanded='true'] {
+  color: var(--ink);
+  border-color: var(--line-strong);
+  background: var(--surface);
+}
+.tile__menugriff:focus-visible {
+  outline: 2.5px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+.tile__menugriff:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+/* Der Griff darf die MARKEN nicht verdecken. Auf einer schmalen Kachel (die
+   Mindestbreite ist 2,9 rem) bliebe neben 24 px Knopf nichts uebrig, und
+   Invariante 11 ist eindeutig: „Konflikt- und Statusmarke bleiben in JEDER
+   Kachelbreite sichtbar" — sonst haengt beides wieder nur an der Farbe.
+   Waagerecht ist kein Platz, senkrecht schon: Eine Bahn ist mindestens
+   4,5 rem hoch. Der Inhalt rueckt deshalb unter den Griff, statt sich mit ihm
+   um dieselben Pixel zu streiten. */
+@container plantafel-kachel (max-width: 8rem) {
+  .tile__link {
+    padding-top: 1.45rem;
+  }
+}
+/* Das Menue ist da, weil es geoeffnet wurde — es blendet sich nicht mehr ein.
+   `.tile` davor: Die Basisregel steht in der Komponenten-SCSS und traegt durch
+   Angulars Emulation ein Attribut-Suffix; ohne Praefix waere es gleich
+   spezifisch und die Reihenfolge im <head> entschiede (siehe unten). */
+/* Zwei Klassen am selben Element (0,3,0), nicht nur `.tile` davor: Mit
+   `.tile .tile__aktionen--menue` (0,2,0) stuende es gleichauf mit der
+   Komponentenregel `.tile__aktionen[_ngcontent-…]` — und die haengt Angular zur
+   Laufzeit NACH diesem Blatt ein, gewaenne den Gleichstand also. `opacity: 0`
+   bliebe stehen, und in einem Browser ohne Popover-API (dort greift kein
+   `:popover-open`) waere das Menue unsichtbar und klicktot. */
+.tile .tile__aktionen.tile__aktionen--menue {
+  flex-direction: column;
+  align-items: stretch;
+  opacity: 1;
+  pointer-events: auto;
+}
+/* Zeilen statt Streifen: Das alte Panel war 31 px hoch und 320 px breit — ein
+   Ziel, das man mit der Maus streift statt trifft. Untereinander bekommt jede
+   Aktion die volle Breite und eine anstaendige Hoehe. */
+.tile .tile__aktionen.tile__aktionen--menue .tile__griff {
+  justify-content: flex-start;
+  flex: 0 0 auto;
+  min-height: 1.9rem;
+  padding-inline: var(--space-3);
+}
+
 .tile .tile__aktionen[popover] {
   /* GESCHLOSSEN bleibt das Panel bewusst im Fluss und damit im Fokus- und
      Vorlesebaum — `opacity: 0` aus der Basisregel macht es unsichtbar, ohne es

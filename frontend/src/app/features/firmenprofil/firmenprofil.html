@@ -295,6 +295,29 @@
         </div>
       </fieldset>
 
+      <fieldset class="profil-abschnitt">
+        <legend class="legende">Arbeitszeit</legend>
+        <p class="profil-hinweis">
+          Der betriebliche Regeltag. Danach rechnet die <strong>Plantafel die
+          Auslastung</strong>: Was zwischen Feierabend und dem Arbeitsbeginn des
+          nächsten Tages liegt, ist keine Arbeitszeit — ein Einsatz über vier
+          Tage belegt vier Arbeitstage, nicht 81 Stunden am Stück.
+        </p>
+        <p class="note profil-warnung" role="note">
+          Ab <strong>wann</strong> eine Pause fällig wird, steht in § 4 ArbZG
+          (mehr als sechs Stunden) und ist deshalb nicht einstellbar. Einstellbar
+          ist nur ihre <strong>Länge</strong> — das Gesetz verlangt mindestens
+          30 Minuten, viele Betriebe geben 60.
+        </p>
+        <div class="profil-grid">
+          <app-feld [control]="form.controls.work_start" label="Arbeitsbeginn" typ="zeit" />
+          <app-feld [control]="form.controls.work_end" label="Feierabend" typ="zeit" />
+          <app-feld [control]="form.controls.break_minutes" label="Pause (Minuten)"
+                    typ="zahl"
+                    [hinweis]="arbeitstagText()" />
+        </div>
+      </fieldset>
+
       @if (darfAendern()) {
         <div class="profil-aktionen">
           <button type="submit" class="btn btn--primary" [disabled]="laedt()">

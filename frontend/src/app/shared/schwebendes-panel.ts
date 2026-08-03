@@ -1,4 +1,4 @@
-import { Directive, ElementRef, OnDestroy, OnInit, inject } from '@angular/core';
+import { Directive, ElementRef, OnDestroy, OnInit, inject, input, output } from '@angular/core';
 
 /**
  * Oeffnet ein Panel, das ein Popover-faehiger Browser in den Top Layer hebt.
@@ -56,6 +56,27 @@ export function panelOeffnen(el: HTMLElement | null | undefined): void {
   standalone: true,
 })
 export class SchwebendesPanel implements OnInit, OnDestroy {
+  /**
+   * `klick` = das Panel gehoert zu einem Menueknopf: Es existiert nur, solange
+   * es offen ist (die Komponente rendert es per `@if`), oeffnet sich beim
+   * Einhaengen selbst und meldet sein Schliessen zurueck.
+   *
+   * Warum ueberhaupt zwei Betriebsarten: Auf der Plantafel war das
+   * Hover-Verhalten der eigentliche Mangel. Das Panel ist ein 31 px hoher
+   * Streifen unter einer teils nur 100 px breiten Kachel — wer die Maus dorthin
+   * fuehrt, streift Nachbarkacheln, und das Panel klappt unter dem Zeiger weg.
+   * Mit einem festen Griff an der Kachel ist das Ziel gross, bleibt offen und
+   * funktioniert auch mit Finger und Tastatur.
+   *
+   * Der Nebengewinn ist die Tab-Reihenfolge: Im Hover-Betrieb bleiben die
+   * Knoepfe JEDER Kachel dauerhaft fokussierbar (sonst waeren sie ohne Maus
+   * unerreichbar) — bei zweihundert Kacheln sechshundert unsichtbare
+   * Tabstopps. Im Klick-Betrieb traegt der Griff diese Rolle allein.
+   */
+  readonly modus = input<'hover' | 'klick' | ''>('hover', { alias: 'appSchwebendesPanel' });
+  /** Der Browser schliesst `auto`-Popover selbst (Escape, Klick daneben). */
+  readonly geschlossen = output<void>();
+
   private readonly el = inject(ElementRef<HTMLElement>).nativeElement as HTMLElement;
   /** Der Anker — die Kachel, unter der das Panel haengt. Erst ab `ngOnInit`. */
   private anker: HTMLElement | null = null;
@@ -165,6 +186,17 @@ export class SchwebendesPanel implements OnInit, OnDestroy {
    */
   private readonly beiBeforeToggle = (e: Event) => {
     if ((e as ToggleEvent).newState !== 'closed') return;
+    if (this.modus() === 'klick') {
+      // Der Fokus MUSS vor dem Ausbauen zurueckgegeben werden: Die Komponente
+      // entfernt das Panel, sobald sie das Schliessen erfaehrt — laege der
+      // Fokus dann noch drin, fiele er in den <body>, und der Tastaturweg
+      // begaenne wieder ganz vorn.
+      if (this.el.contains(document.activeElement)) {
+        this.anker?.querySelector<HTMLElement>('[data-menugriff]')?.focus();
+      }
+      this.geschlossen.emit();
+      return;
+    }
     // Die Viewport-Koordinaten MUESSEN weg: Geschlossen haengt das Panel wieder
     // absolut in der Kachel, wo dieselben Zahlen als Offsets INNERHALB der
     // Kachel wirken wuerden — der Browser scrollte beim Hintabben an eine
@@ -195,13 +227,21 @@ export class SchwebendesPanel implements OnInit, OnDestroy {
     this.el.setAttribute('popover', 'auto');
     this.el.addEventListener('toggle', this.beiToggle);
     this.el.addEventListener('beforetoggle', this.beiBeforeToggle);
+    this.anker.addEventListener('dragstart', this.beiDragStart);
+    if (this.modus() === 'klick') {
+      // Kein Hover, kein Fokus-Oeffnen: Das Panel ist schon da, weil der Griff
+      // gedrueckt wurde. Der Fokus wandert hinein, damit die Tastatur ankommt
+      // — und beim Schliessen zurueck auf den Griff (WCAG 2.4.3).
+      this.oeffnen();
+      (this.el.querySelector<HTMLElement>('button:not(:disabled)'))?.focus();
+      return;
+    }
     this.anker.addEventListener('mouseenter', this.auf);
     this.anker.addEventListener('mouseleave', this.zu);
     // `focusin`/`focusout` statt `focus`/`blur`: nur die bubbeln, und der Fokus
     // landet auf einem NACHFAHREN (Link/Knopf), nie auf der Kachel selbst.
     this.anker.addEventListener('focusin', this.auf);
     this.anker.addEventListener('focusout', this.zu);
-    this.anker.addEventListener('dragstart', this.beiDragStart);
   }
 
   ngOnDestroy(): void {
@@ -280,8 +320,14 @@ export class SchwebendesPanel implements OnInit, OnDestroy {
 
     // Linksbuendig am Anker, aber nie ueber den rechten Rand hinaus. Das Panel
     // ist `nowrap` und damit breiter als eine schmale Kachel.
+    //
+    // Im Klick-Betrieb dagegen RECHTSbuendig: Dort sitzt der Griff, und dort hat
+    // der Nutzer gerade geklickt. Ein Menue, das an der linken Kante einer
+    // 650 px breiten Kachel aufklappt, laesst ihn quer ueber die Kachel fahren —
+    // genau die Strecke, die hier abgeschafft werden sollte.
+    const wunsch = this.modus() === 'klick' ? a.right - p.width : a.left;
     const maxLinks = window.innerWidth - p.width - RAND;
-    const left = Math.max(RAND, Math.min(a.left, maxLinks));
+    const left = Math.max(RAND, Math.min(wunsch, maxLinks));
 
     this.el.style.left = `${Math.round(left)}px`;
     this.el.style.top = `${Math.round(top)}px`;

@@ -27,6 +27,7 @@ from db_core.models import (
     Absence,
     AppointmentCategory,
     AppUser,
+    CompanyProfile,
     EmploymentContract,
     Holiday,
     JobAssignment,
@@ -693,6 +694,164 @@ def _fenster(von, bis):
     return start, ende
 
 
+# --- Arbeitszeitfenster für die Auslastung ---------------------------------
+# Die Uhrzeiten und die Pausenlänge kommen aus dem Firmenprofil (Migration 0148).
+# Sie gehören dorthin und nicht an den Arbeitsvertrag: Der kennt nur Sollstunden
+# je Wochentag, keine Uhrzeiten, und ist nach dem INSERT unveränderlich — eine
+# Änderung der Betriebszeiten erzwänge sonst für jeden Mitarbeiter einen
+# Folgevertrag.
+#
+# Die SCHWELLE dagegen steht im Gesetz und ist deshalb hier festgenagelt:
+# § 4 ArbZG verlangt die Pause bei MEHR als sechs Stunden. Wäre sie einstellbar,
+# ließe sich der Betrieb so konfigurieren, dass die Rechnung eine gesetzwidrige
+# Lage als normal ausweist. Ein Sechs-Stunden-Einsatz behält seine sechs Stunden.
+PAUSE_AB_MINUTEN = 6 * 60
+
+# Fallback, wenn (noch) kein Firmenprofil angelegt ist: der Regeltag der Firma.
+STANDARD_ARBEITSZEIT = (time(7, 0), time(16, 0), 60)
+
+
+def _arbeitszeitfenster():
+    """(Arbeitsbeginn, Feierabend, Pausenminuten) aus dem Firmenprofil.
+
+    Das Profil ist ein Singleton; fehlt es, wird der Regeltag angenommen statt
+    zu raten oder zu scheitern — eine Plantafel ohne Auslastung wäre schlechter
+    als eine mit der betriebsüblichen Annahme.
+    """
+    p = CompanyProfile.objects.values("work_start", "work_end", "break_minutes").first()
+    if not p:
+        return STANDARD_ARBEITSZEIT
+    return p["work_start"], p["work_end"], p["break_minutes"]
+
+
+def _ohne_nachtluecken(a, b, arbeitsbeginn, feierabend):
+    """Zerlegt [a, b) in die Stücke, die als Arbeitszeit zählen.
+
+    Herausgeschnitten wird jede **Nachtlücke** (Feierabend → Arbeitsbeginn des
+    Folgetags), die VOLLSTÄNDIG in [a, b) liegt. Alles andere bleibt stehen.
+
+    Warum nur die vollständigen: Ein Einsatz, der über vier Tage gesetzt ist,
+    belegt den Monteur an vier Arbeitstagen — nicht 81 Stunden am Stück. Zählte
+    man die Wanduhr, stünde er mit 185 % Auslastung da, und jede spätere
+    Auswertung erbte den Fehler.
+
+    Warum nicht einfach jeden Tag auf 07:00–16:00 beschneiden: Dann verschwände
+    Arbeit, die tatsächlich am Rand liegt (ein Einsatz, der um 18:00 endet).
+    Ein Stück, das nur an einer Seite in die Nacht ragt, bleibt deshalb ganz
+    erhalten. Der Notdienst braucht ohnehin eine eigene Behandlung; bis dahin
+    ist „lieber vollständig zählen" die Richtung, die niemanden verschwinden
+    lässt.
+    """
+    if arbeitsbeginn >= feierabend:  # unsinnig konfiguriert → nichts schneiden
+        return [(a, b)] if b > a else []
+    stuecke = []
+    cursor = a
+    tag = a.astimezone(BOARD_TZ).date()
+    letzter = b.astimezone(BOARD_TZ).date()
+    while tag <= letzter:
+        luecke_von = datetime.combine(tag, feierabend, tzinfo=BOARD_TZ)
+        luecke_bis = datetime.combine(
+            tag + timedelta(days=1), arbeitsbeginn, tzinfo=BOARD_TZ
+        )
+        if luecke_von >= cursor and luecke_bis <= b:
+            stuecke.append((cursor, luecke_von))
+            cursor = luecke_bis
+        tag += timedelta(days=1)
+    stuecke.append((cursor, b))
+    return [(v, z) for v, z in stuecke if z > v]
+
+
+def _plan_minuten_je_tag(a, b, arbeitsbeginn, feierabend):
+    """Geplante Anwesenheit in [a, b), aufgeteilt auf Kalendertage — OHNE Pause.
+
+    Gibt `{tag: minuten}` zurück und nicht die Summe. Das ist keine Kosmetik:
+    Die Pause fällt je **Mitarbeitertag** an, nicht je Einsatz. Summierte man
+    hier schon, bekäme ein Dienstag mit zwei Terminen (07:00–12:00 und
+    12:00–16:00) zweimal „unter sechs Stunden, keine Pause" und stünde mit 9 h
+    da — derselbe Tag als EIN Termin ergäbe 8 h. Die angezeigte Auslastung
+    hinge dann daran, wie der Disponent den Tag zerschneidet.
+
+    Aus demselben Grund braucht der Aufrufer die Tage einzeln: Nur er weiß, ob
+    der Mitarbeiter an diesem Tag überhaupt ein Soll hat (Wochenende, Feiertag,
+    genehmigte Abwesenheit).
+    """
+    je_tag: dict = {}
+    if b <= a:
+        return je_tag
+    for v, z in _ohne_nachtluecken(a, b, arbeitsbeginn, feierabend):
+        tag = v.astimezone(BOARD_TZ).date()
+        while True:
+            tagesende = datetime.combine(tag + timedelta(days=1), time(0, 0), tzinfo=BOARD_TZ)
+            bis = min(z, tagesende)
+            je_tag[tag] = je_tag.get(tag, 0) + int((bis - v).total_seconds() // 60)
+            if bis >= z:
+                break
+            v, tag = tagesende, tag + timedelta(days=1)
+    return je_tag
+
+
+def _minus_pause(minuten, pause_minuten):
+    """Pause abziehen — nie unter die Schwelle, sonst wäre die Rechnung unstetig.
+
+    Ohne die Klemme stünde ein Tag mit 6 h 10 min (370 → 310) schlechter da als
+    einer mit glatten 6 h (360). Wer zehn Minuten länger plant, dürfte nicht
+    plötzlich fünfzig Minuten weniger gezählt bekommen.
+    """
+    if minuten <= PAUSE_AB_MINUTEN:
+        return minuten
+    return max(minuten - pause_minuten, PAUSE_AB_MINUTEN)
+
+
+def _tagessoll(vertraege, tag):
+    """Sollstunden dieses Mitarbeiters an diesem Tag — None ohne gültigen Vertrag."""
+    felder = (
+        "hours_monday", "hours_tuesday", "hours_wednesday", "hours_thursday",
+        "hours_friday", "hours_saturday", "hours_sunday",
+    )
+    for v in vertraege or ():
+        if v.valid_from <= tag and (v.valid_to is None or tag <= v.valid_to):
+            return getattr(v, felder[tag.weekday()])
+    return None
+
+
+def _plan_stunden(je_tag, vertraege, freie_tage, pause_minuten):
+    """Geplante ARBEITSZEIT eines Mitarbeiters im Fenster, in Stunden.
+
+    Zwei Abzüge, beide je **Tag**:
+
+    1. **Tage ohne Soll fallen weg** — Wochenende, Feiertag, genehmigte
+       Abwesenheit. `_soll_stunden` streicht sie bereits aus dem Nenner; zählte
+       der Zähler sie weiter mit, liefe die Quote auseinander. Ein Einsatz von
+       Donnerstag bis Dienstag ergäbe sechs Tage à 8 h = 48 h gegen 40 h Soll
+       und damit **120 %** — obwohl der Monteur an vier Arbeitstagen verplant
+       ist. Das ist dieselbe Fehlerklasse wie die 185 % aus der Wanduhr-Rechnung,
+       nur eine Ebene gröber.
+    2. **Die Pause** je Tag mit mehr als sechs Stunden (§ 4 ArbZG).
+
+    Ohne gültigen Vertrag gibt es kein Tagessoll und damit auch keinen Maßstab,
+    welcher Tag ein Arbeitstag ist — dann wird nichts gestrichen und nur die
+    Pause abgezogen. Der Nenner ist in diesem Fall ohnehin `None`
+    („Sollstunden unbekannt"), die Zahl steht also allein für sich.
+    """
+    minuten = 0
+    for tag, roh in je_tag.items():
+        if tag in freie_tage:
+            continue
+        soll = _tagessoll(vertraege, tag)
+        # Gestrichen wird nur, wenn ein DECKENDER Vertrag sagt „an diesem Tag
+        # null Stunden" (Wochenende). `None` heißt „kein Vertrag deckt den Tag" —
+        # dann fehlt der Maßstab, und gestrichen wird nichts.
+        #
+        # Der Unterschied ist nicht theoretisch: Wer nur fragt, OB Verträge
+        # existieren, streicht bei einem ausgelaufenen Vertrag jeden Tag. Die
+        # Bahn läse sich als „0,0 h geplant · Sollstunden unbekannt" — direkt
+        # neben den sichtbaren Kacheln, die dort liegen.
+        if soll is not None and not soll:
+            continue
+        minuten += _minus_pause(roh, pause_minuten)
+    return (Decimal(minuten) / Decimal(60)).quantize(Decimal("0.01"))
+
+
 def _soll_stunden(vertraege, tage, freie_tage=()):
     """Sollstunden aus dem Wochenraster des gültigen Vertrags, über die Tage summiert.
 
@@ -818,20 +977,47 @@ def board_daten(
     konflikte = _board_konflikte(jobs, abwesend_an, feiertage)
 
     # --- Auslastung je Mitarbeiter-Bahn --------------------------------------
-    plan_minuten = {uid: 0 for uid in user_lanes}
+    # In ZWEI Schritten, und die Reihenfolge ist der ganze Punkt:
+    #   1. je Mitarbeiter und TAG die geplante Anwesenheit sammeln (über alle
+    #      seine Einsätze hinweg),
+    #   2. erst danach je Tag die Pause abziehen und die Tage streichen, an denen
+    #      er gar kein Soll hat.
+    # Andersherum — Pause je Einsatz — bekäme ein Dienstag mit zwei Terminen
+    # (07–12 und 12–16) zweimal „unter sechs Stunden, keine Pause" und stünde
+    # mit 9 h statt 8 h da: Die Auslastung hinge daran, wie fein der Disponent
+    # den Tag zerschneidet.
+    arbeitsbeginn, feierabend, pause_minuten = _arbeitszeitfenster()
+    plan_je_tag: dict = {uid: {} for uid in user_lanes}
     for j in jobs:
         if j.scheduled_start is None or j.scheduled_end is None:
             continue
-        # Auf das Fenster beschneiden: ein Einsatz, der über den Rand ragt, zählt
-        # nur mit seinem sichtbaren Anteil — sonst stimmt die Wochensumme nicht.
-        a = max(j.scheduled_start, fenster_start)
-        b = min(j.scheduled_end, fenster_ende)
+        # Gerechnet wird über EINEN TAG HINAUS, beschnitten wird erst danach.
+        #
+        # Andersherum — erst auf das Fenster schneiden, dann rechnen — wäre die
+        # Nachtlücke am Fensterrand nicht mehr vollständig enthalten und bliebe
+        # deshalb stehen: Ein Einsatz, der am Samstag begann, brächte dem Montag
+        # 00:00–16:00 statt 07:00–16:00 mit. Die angezeigte Auslastung hinge dann
+        # daran, WO das Fenster liegt — derselbe Einsatz ergäbe in der einen
+        # Woche 31 h und in der anderen 24 h.
+        #
+        # Ein Tag Vorlauf genügt: Mehr als eine Nachtlücke ragt nie über den
+        # Rand. Der Puffer begrenzt zugleich die Schleife — ohne ihn liefe ein
+        # jahrelanger Einsatz Tag für Tag durch.
+        a = max(j.scheduled_start, fenster_start - timedelta(days=1))
+        b = min(j.scheduled_end, fenster_ende + timedelta(days=1))
         if b <= a:
             continue
-        minuten = int((b - a).total_seconds() // 60)
+        # NICHT die Wanduhr: der Feierabend zwischen zwei Tagen ist keine Arbeit.
+        tage_des_einsatzes = _plan_minuten_je_tag(a, b, arbeitsbeginn, feierabend)
         for asg in j.assignments.all():
-            if asg.assignee_id in plan_minuten:
-                plan_minuten[asg.assignee_id] += minuten
+            konto = plan_je_tag.get(asg.assignee_id)
+            if konto is None:
+                continue
+            for tag, minuten in tage_des_einsatzes.items():
+                # Jetzt erst der Schnitt: Der Vorlauftag hat seinen Zweck erfüllt.
+                if tag < date_from or tag > date_to:
+                    continue
+                konto[tag] = konto.get(tag, 0) + minuten
 
     vertraege: dict = {}
     for v in EmploymentContract.objects.filter(
@@ -849,8 +1035,8 @@ def board_daten(
                 "id": uid,
                 "display_name": name,
                 "sub": None,
-                "plan_hours": (Decimal(plan_minuten.get(uid, 0)) / Decimal(60)).quantize(
-                    Decimal("0.01")
+                "plan_hours": _plan_stunden(
+                    plan_je_tag.get(uid, {}), vertraege.get(uid), frei, pause_minuten
                 ),
                 "target_hours": _soll_stunden(vertraege.get(uid), tage, frei),
             }

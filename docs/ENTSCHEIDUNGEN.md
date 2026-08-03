@@ -564,3 +564,35 @@ fest.
 **Kein Backend-Eingriff.** Die gebuchten Zeiten (je Lohngruppe zusammengefasst,
 **abgeleitet** statt abgelegt — sonst stünden dieselben Stunden zweimal in der
 Rechnung) und die Angebotsübernahme gab es bereits.
+
+---
+
+## Arbeitszeitfenster: wo die Uhrzeiten wohnen (2026-08-03)
+
+**Festlegung:** Arbeitsbeginn, Feierabend und Pausenlänge stehen im
+**Firmenprofil** (`company.company_profile`, Migration 0148), Vorgabe
+**07:00–16:00 mit 60 Minuten Pause = 8 h Arbeit, 40 h in der Woche**.
+
+**Warum nicht am Arbeitsvertrag.** `hr.employment_contract` trägt zwar das
+Sollstunden-Raster je Wochentag, aber keine Uhrzeiten — und ist nach dem INSERT
+unveränderlich (Trigger `hr.enforce_contract_immutable`). Eine Änderung der
+Betriebszeiten erzwänge dort für **jeden** Mitarbeiter einen Folgevertrag. Die
+Zeiten sind aber keine Vertragsänderung, sondern eine betriebliche Einstellung —
+sie gehören neben die Gewährleistungsvorgabe und die Urlaubsverfallsregel.
+
+**Warum nicht als Konstante im Code.** Erste Fassung war genau das. Der Preis:
+Jede Abweichung (Schichtbetrieb, Winterdienst) bräuchte einen Deploy. Der Umzug
+ins Profil kostete eine Migration und drei Felder in der Maske; die Rechnung
+darunter blieb unberührt.
+
+**Warum die Pausen-SCHWELLE bewusst KEIN Feld ist.** Ab wann eine Pause fällig
+wird, bestimmt § 4 ArbZG (mehr als sechs Stunden), nicht der Betrieb. Wäre sie
+einstellbar, ließe sich MCN so konfigurieren, dass es eine gesetzwidrige Lage
+als normal ausweist. Einstellbar ist nur die **Länge** der Pause. Die Schwelle
+steht als `PAUSE_AB_MINUTEN` im Service.
+
+**Was noch offen ist:** Der **Notdienst** braucht eine eigene Behandlung
+(entschieden vertagt, Sascha 2026-08-03). Bis dahin gilt die konservative
+Richtung: Nur **vollständige** Nachtlücken werden herausgerechnet, was am Rand
+eines Einsatzes tatsächlich über den Feierabend hinausgeht, bleibt stehen. Es
+verschwindet also lieber Überlast in die Sichtbarkeit als aus ihr heraus.
