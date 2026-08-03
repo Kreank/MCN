@@ -51,7 +51,7 @@ from django.db import connection as db_connection
 
 from db_core.db_context import business_transaction
 from db_core.models import AppUser, Article, ArticleSupplierReference, Party
-from db_core.services import datanorm
+from db_core.services import datanorm, datanorm_katalog
 
 
 def _ist_rab(name):
@@ -178,12 +178,18 @@ def _artikel_bloecke(zip_pfad):
         yield fertig()
 
 
-def _lieferant_und_anbindung(actor_id, *, name, namespace):
+def _lieferant_und_anbindung(actor_id, *, name, namespace, art="GROSSHAENDLER"):
     """Legt Lieferant (identity.party) und Anbindung an, oder findet sie.
 
-    `connection_kind = GROSSHAENDLER` trennt den Bestellkatalog von den
-    Herstellerdaten des Gerätefinders (Migration 0040). Wer hier HERSTELLER
-    einträgt, mischt Ersatzteile in die Artikelsuche des Angebots.
+    `connection_kind` trennt den Bestellkatalog (GROSSHAENDLER) von den
+    Herstellerdaten des Gerätefinders (HERSTELLER, Migration 0040) — und
+    entscheidet zugleich über die FELDBEDEUTUNG beim Import: Nur wenn der
+    Lieferant der Hersteller ist, darf aus der Artikelnummer eine
+    Herstellernummer werden (siehe `services/datanorm_katalog`).
+
+    Eine BESTEHENDE Anbindung behält ihre Art — sie wird hier nie überschrieben,
+    sonst kippt ein Folgeimport mit vergessenem `--art` die Bedeutung des ganzen
+    Katalogs. Liefert `(party, connection_kind)`.
     """
     party = Party.objects.filter(display_name=name, status="ACTIVE").first()
     if party is None:
@@ -194,26 +200,27 @@ def _lieferant_und_anbindung(actor_id, *, name, namespace):
             )
     with db_connection.cursor() as cur:
         cur.execute(
-            "SELECT id FROM pricing.supplier_connection "
+            "SELECT id, connection_kind FROM pricing.supplier_connection "
             "WHERE source_namespace = %s AND source_system = 'DATANORM'",
             [namespace],
         )
         row = cur.fetchone()
-        if row is None:
-            with business_transaction(actor_id):
-                cur.execute(
-                    """
-                    -- status ist hier englisch (ACTIVE/INACTIVE), anders als bei
-                    -- den Fachtabellen mit deutschem Statusautomaten.
-                    INSERT INTO pricing.supplier_connection
-                        (id, supplier_party_id, source_system, source_namespace,
-                         label, status, connection_kind, version)
-                    VALUES (gen_random_uuid(), %s, 'DATANORM', %s, %s, 'ACTIVE',
-                            'GROSSHAENDLER', 1)
-                    """,
-                    [party.id, namespace, name],
-                )
-    return party
+        if row is not None:
+            return party, row[1]
+        with business_transaction(actor_id):
+            cur.execute(
+                """
+                -- status ist hier englisch (ACTIVE/INACTIVE), anders als bei
+                -- den Fachtabellen mit deutschem Statusautomaten.
+                INSERT INTO pricing.supplier_connection
+                    (id, supplier_party_id, source_system, source_namespace,
+                     label, status, connection_kind, version)
+                VALUES (gen_random_uuid(), %s, 'DATANORM', %s, %s, 'ACTIVE',
+                        %s, 1)
+                """,
+                [party.id, namespace, name, art],
+            )
+    return party, art
 
 
 class Command(BaseCommand):
@@ -236,6 +243,14 @@ class Command(BaseCommand):
         )
         parser.add_argument("--namespace", required=True, help="z. B. 'bo'")
         parser.add_argument("--lieferant", help="Anzeigename des Lieferanten")
+        parser.add_argument(
+            "--art", choices=["GROSSHAENDLER", "HERSTELLER"], default="GROSSHAENDLER",
+            help="Art der NEU angelegten Anbindung. HERSTELLER für "
+            "Ersatzteilkataloge (Bosch, Vaillant, Buderus …): dort ist die "
+            "Artikelnummer zugleich die Herstellernummer. Beim Großhändler wird "
+            "KEINE Herstellernummer abgeleitet — dessen B-Satz-Feld 4 trägt eine "
+            "hauseigene Katalognummer. Eine bestehende Anbindung behält ihre Art.",
+        )
         parser.add_argument("--dry-run", action="store_true", help="nichts schreiben")
         parser.add_argument("--limit", type=int, default=10, help="Artikel im Trockenlauf")
         parser.add_argument(
@@ -341,7 +356,11 @@ class Command(BaseCommand):
                 f"    Einheit      : {a.mengeneinheit}    "
                 f"Preiseinheit: {a.preiseinheit} (je {datanorm.PREISEINHEIT_DIVISOR[a.preiseinheit]})"
             )
-            self.stdout.write(f"    Fabrikat     : {(b.matchcode if b else None) or '—'}")
+            # „Matchcode", nicht „Fabrikat": Das Feld trägt je nach Katalog das
+            # Fabrikat (GEBERIT), einen Suchcode (CUSSH01510) oder die
+            # Kurzbezeichnung (EINLEGEBLENDE) — als Hersteller taugt es nie.
+            self.stdout.write(f"    Matchcode    : {(b.matchcode if b else None) or '—'}")
+            self.stdout.write(f"    Katalog-Nr.  : {(b.alt_artikelnummer if b else None) or '—'}")
             self.stdout.write(f"    Rabattgruppe : {a.rabattgruppe or '—'}")
             self.stdout.write(
                 f"    Stammpreis   : {a.listenpreis_cent} Cent "
@@ -378,7 +397,13 @@ class Command(BaseCommand):
         v = datanorm.parse_vorlauf(next(iter(_zeilen(opts["stamm"]))))
         self.stdout.write(f"  Version {v.version}, Währung {v.waehrung}, Stand {v.datum}")
 
-        if Article.objects.filter(article_number__startswith=f"DN-{namespace}-").exists():
+        # Geprüft wird an der LIEFERANTENREFERENZ, nicht an der Artikelnummer:
+        # Die Nummer trägt kein Namensraum-Präfix mehr (sie soll die nackte
+        # Bestellnummer sein), also ist die Referenz der einzige verlässliche
+        # Beleg dafür, dass dieser Katalog schon einmal gelaufen ist.
+        if ArticleSupplierReference.objects.filter(
+            source_system="DATANORM", source_namespace=namespace
+        ).exists():
             raise CommandError(
                 f"Es existieren bereits Artikel im Namensraum '{namespace}'. "
                 "Der Erstimport bricht ab, statt Dubletten anzulegen."
@@ -392,10 +417,53 @@ class Command(BaseCommand):
             [opts.get("rabatt"), opts["stamm"]], stdout=self.stdout.write
         )
 
-        party = _lieferant_und_anbindung(actor.id, name=name, namespace=namespace)
+        party, kind = _lieferant_und_anbindung(
+            actor.id, name=name, namespace=namespace, art=opts["art"]
+        )
+        profil = datanorm_katalog.profil(kind, hersteller_name=name)
         self.stdout.write(f"  Lieferant : {party.display_name} ({party.id})")
-        self.stdout.write(f"  Namensraum: {namespace}  (GROSSHAENDLER)")
+        self.stdout.write(f"  Namensraum: {namespace}  ({kind})")
+        self.stdout.write(
+            "  Hersteller-Nr.: "
+            + ("aus der Artikelnummer" if profil.hersteller_name
+               else "keine (Großhandelskatalog liefert keine)")
+        )
         self.stdout.write("")
+
+        # Bereits vergebene Artikelnummern — die Nummer ist jetzt die NACKTE
+        # Lieferantennummer, die mit einem anderen Katalog kollidieren kann
+        # (`509010` ist bei B&O ein Kupferwinkel und bei Vaillant ein Seitenteil).
+        # Das Set wächst während des Laufs mit, damit auch eine Dublette INNERHALB
+        # der Datei nicht am UNIQUE-Index scheitert.
+        belegte = set(Article.objects.values_list("article_number", flat=True))
+        verdraengt = []
+
+        def nummer_fuer(art_nr):
+            if art_nr not in belegte:
+                belegte.add(art_nr)
+                return art_nr
+            if namespace == datanorm_katalog.LEITKATALOG:
+                # Der Bestellkatalog behält die nackte Nummer; der bisherige
+                # Inhaber weicht aus. Seine Identität hängt an der Referenz, nicht
+                # am Namen — Umbenennen ist deshalb gefahrlos.
+                alt = Article.objects.filter(article_number=art_nr).first()
+                if alt is not None:
+                    fremd_ns = (
+                        ArticleSupplierReference.objects
+                        .filter(article_id=alt.id)
+                        .values_list("source_namespace", flat=True).first() or "fremd"
+                    )
+                    neu = datanorm_katalog.ausweichnummer(
+                        art_nr, fremd_ns, belegt=lambda k: k in belegte
+                    )
+                    belegte.add(neu)
+                    verdraengt.append((alt.id, neu))
+                    return art_nr
+            neu = datanorm_katalog.ausweichnummer(
+                art_nr, namespace, belegt=lambda k: k in belegte
+            )
+            belegte.add(neu)
+            return neu
 
         heute = date.today()
         batch = opts["batch"]
@@ -404,9 +472,14 @@ class Command(BaseCommand):
         limit = opts["limit_import"]
 
         def flush():
-            if not artikel_puffer:
+            if not artikel_puffer and not verdraengt:
                 return
             with business_transaction(actor.id):
+                # Erst weichen die Fremdartikel, dann darf der Leitkatalog seine
+                # nackte Nummer einsetzen — andersherum bricht der UNIQUE-Index.
+                for alt_id, neue_nummer in verdraengt:
+                    Article.objects.filter(id=alt_id).update(article_number=neue_nummer)
+                verdraengt.clear()
                 Article.objects.bulk_create(artikel_puffer, batch_size=1000)
                 ArticleSupplierReference.objects.bulk_create(ref_puffer, batch_size=1000)
             artikel_puffer.clear()
@@ -433,18 +506,17 @@ class Command(BaseCommand):
             artikel_puffer.append(
                 Article(
                     id=artikel_id,
-                    article_number=f"DN-{namespace}-{a.artikelnummer}",
+                    article_number=nummer_fuer(a.artikelnummer),
                     description=(a.bezeichnung or a.artikelnummer)[:2000],
                     long_description=langtext,
                     unit=(a.mengeneinheit or "Stk"),
                     line_type="MATERIAL",
                     list_price=lp,
                     gtin=(b.ean if b else None),
-                    manufacturer_name=(b.matchcode if b else None),
-                    manufacturer_number=(b.alt_artikelnummer if b else None),
                     product_group=(b.warengruppe if b else None),
                     status="AKTIV",
                     version=1,
+                    **datanorm_katalog.identitaetsfelder(profil, a, b),
                 )
             )
             ref_puffer.append(
@@ -461,6 +533,7 @@ class Command(BaseCommand):
                     currency="EUR" if ek is not None else None,
                     discount_group=a.rabattgruppe,
                     price_unit_code=a.preiseinheit,
+                    supplier_catalog_id=datanorm_katalog.katalog_id(profil, b),
                     valid_from=heute,
                 )
             )

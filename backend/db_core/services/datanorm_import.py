@@ -13,8 +13,12 @@ Ablauf je Artikel (A-Satz + optional B/D):
 * **Verarbeitungskennzeichen L (Löschung):** der Artikel wird auf INAKTIV gesetzt
   und die offene Lieferantenreferenz beendet (`valid_until = heute`). Kein echtes
   Löschen (No-Delete-Trigger).
-* **N/A (neu/Änderung):** existiert der Artikel (`DN-{namespace}-{nummer}`) noch
-  nicht, wird er samt Referenz angelegt; existiert er, werden Stammfelder und der
+* **N/A (neu/Änderung):** wiedererkannt wird über die Lieferantenreferenz
+  (`source_namespace` + `supplier_article_number`), nicht über die Artikelnummer —
+  die ist ein Anzeigename und darf bei Kollisionen zwischen Katalogen ausweichen.
+  Ist der Artikel unbekannt, wird er samt Referenz angelegt (unter der NACKTEN
+  Lieferantennummer, wie sie auf dessen Rechnung steht); sonst werden Stammfelder
+  und der
   Preis der offenen Referenz aktualisiert (EK/Listenpreis/Rabattgruppe/
   Preiseinheit/`last_imported_at`). Die Identitätsfelder der Referenz sind per
   Trigger eingefroren — nur Preis/Gültigkeit sind veränderlich.
@@ -37,7 +41,7 @@ from db_core.models import (
     ArticleSupplierReference,
     SupplierConnection,
 )
-from db_core.services import datanorm
+from db_core.services import datanorm, datanorm_katalog
 
 # Obergrenzen für den Frontend-Weg: sehr große Vollkataloge gehören ins CLI-
 # Command (Streaming aus Datei), nicht durch einen Upload in den Speicher.
@@ -152,18 +156,76 @@ def _preis_aus_artikel(a):
     return None, a.listenpreis
 
 
-def _stammfelder(a, b, langtext, lp):
-    """Gemeinsame Artikel-Stammfelder für Anlegen/Ändern."""
+def _stammfelder(a, b, langtext, lp, profil):
+    """Gemeinsame Artikel-Stammfelder für Anlegen/Ändern.
+
+    Matchcode und die Hersteller-Angaben kommen aus dem Katalogprofil — welches
+    B-Satz-Feld was bedeutet, unterscheidet sich je Absender (siehe
+    `datanorm_katalog`). Früher wurde hier für alle Kataloge gleich gemappt; das
+    hat 2 Mio Artikeln eine Herstellernummer angedichtet, die es nicht gibt.
+    """
     return {
         "description": (a.bezeichnung or a.artikelnummer)[:2000],
         "long_description": langtext,
         "unit": (a.mengeneinheit or "Stk"),
         "list_price": lp,
         "gtin": (b.ean if b else None),
-        "manufacturer_name": (b.matchcode if b else None),
-        "manufacturer_number": (b.alt_artikelnummer if b else None),
         "product_group": (b.warengruppe if b else None),
+        **datanorm_katalog.identitaetsfelder(profil, a, b),
     }
+
+
+def _artikel_zu_referenz(namespace, nummer):
+    """Der Artikel hinter (Namensraum, Lieferanten-Artikelnummer).
+
+    Die Identität eines importierten Artikels hängt an seiner LIEFERANTEN-
+    REFERENZ, nicht an der Artikelnummer. Die Artikelnummer ist ein Anzeigename:
+    Sie soll die nackte Nummer des Lieferanten sein (`CUS15H`, wie auf dessen
+    Rechnung und im Shop), muss aber ausweichen können, wenn ein zweiter Katalog
+    dieselbe Nummer für etwas anderes vergibt. Hinge die Wiedererkennung daran,
+    würde ein ausgewichener Artikel beim nächsten Import doppelt angelegt.
+    """
+    ref = (
+        ArticleSupplierReference.objects.filter(
+            source_system="DATANORM",
+            source_namespace=namespace,
+            supplier_article_number=nummer,
+        )
+        .order_by("-valid_from")
+        .first()
+    )
+    if ref is None:
+        return None
+    return Article.objects.filter(id=ref.article_id).first()
+
+
+def _freie_artikelnummer(nummer, namespace, dry_run):
+    """Artikelnummer für einen NEU anzulegenden Artikel — kollisionsfrei.
+
+    Der Leitkatalog (B&O) behält die nackte Nummer immer: Dort wird bestellt, und
+    eine Bestellnummer, die je nach Importreihenfolge mal so und mal anders
+    heißt, ist wertlos. Belegt ein Fremdkatalog die Nummer bereits, weicht DIESER
+    aus — sein Artikel wird umbenannt, seine Identität hängt ohnehin an der
+    Referenz, nicht am Namen.
+    """
+    def belegt(kandidat):
+        return Article.objects.filter(article_number=kandidat).exists()
+
+    if namespace == datanorm_katalog.LEITKATALOG and belegt(nummer):
+        weichender = Article.objects.filter(article_number=nummer).first()
+        fremd_ns = (
+            ArticleSupplierReference.objects.filter(article_id=weichender.id)
+            .values_list("source_namespace", flat=True)
+            .first()
+            or "fremd"
+        )
+        if not dry_run:
+            Article.objects.filter(id=weichender.id).update(
+                article_number=datanorm_katalog.ausweichnummer(
+                    nummer, fremd_ns, belegt=belegt
+                )
+            )
+    return datanorm_katalog.artikelnummer(nummer, namespace, belegt=belegt)
 
 
 def import_datanorm(actor_app_user_id, *, connection_id, stamm_bytes,
@@ -179,15 +241,16 @@ def import_datanorm(actor_app_user_id, *, connection_id, stamm_bytes,
     conn = SupplierConnection.objects.filter(id=connection_id).first()
     if conn is None:
         raise DatanormImportFehler("Anbindung nicht gefunden.")
-    # DATANORM ist ein Großhändler-Katalog; ein Import in eine Hersteller-Anbindung
-    # würde Katalogartikel in den Herstellerdaten-Namensraum mischen (0040).
-    if conn.connection_kind == "HERSTELLER":
-        raise DatanormImportFehler(
-            "DATANORM-Import ist nur für Großhändler-Anbindungen vorgesehen, "
-            "nicht für Hersteller."
-        )
+    # Hersteller liefern ihre Ersatzteilkataloge ebenfalls als DATANORM (Bosch,
+    # Vaillant, Buderus …) — der Import steht deshalb beiden Anbindungsarten
+    # offen. Was sich unterscheidet, ist die FELDBEDEUTUNG, und die kommt aus
+    # `connection_kind`: nur wo der Lieferant der Hersteller ist, darf aus der
+    # Artikelnummer eine Herstellernummer werden (siehe datanorm_katalog).
     namespace = conn.source_namespace
     supplier_id = conn.supplier_party_id
+    profil = datanorm_katalog.profil(
+        conn.connection_kind, hersteller_name=conn.label
+    )
     if not stamm_bytes:
         raise DatanormImportFehler("Die Datei ist leer.")
 
@@ -227,7 +290,7 @@ def import_datanorm(actor_app_user_id, *, connection_id, stamm_bytes,
             with business_transaction(actor_app_user_id):
                 for block in puffer:
                     _verarbeite(block, namespace, supplier_id, preis_liste,
-                                preis_netto, heute, dry_run, ergebnis)
+                                preis_netto, heute, dry_run, ergebnis, profil)
         puffer.clear()
 
     for a, b, langtext in _artikel_bloecke(stamm_bytes):
@@ -253,7 +316,7 @@ def import_datanorm(actor_app_user_id, *, connection_id, stamm_bytes,
 
 
 def _verarbeite(block, namespace, supplier_id, preis_liste, preis_netto,
-                heute, dry_run, ergebnis):
+                heute, dry_run, ergebnis, profil):
     a, b, langtext = block
     ergebnis["verarbeitet"] += 1
     try:
@@ -264,11 +327,9 @@ def _verarbeite(block, namespace, supplier_id, preis_liste, preis_netto,
             raise datanorm.DatanormFehler(
                 f"ungültige Preiseinheit {a.preiseinheit!r} (erlaubt: 0–3)."
             )
-        vollnummer = f"DN-{namespace}-{a.artikelnummer}"
-
         # Löschung: Artikel deaktivieren, offene Referenz beenden.
         if a.vkz == datanorm.VKZ_LOESCHUNG:
-            artikel = Article.objects.filter(article_number=vollnummer).first()
+            artikel = _artikel_zu_referenz(namespace, a.artikelnummer)
             if artikel is not None:
                 if not dry_run:
                     # INAKTIV ist das eigentliche Löschsignal (kein echtes Löschen).
@@ -301,17 +362,19 @@ def _verarbeite(block, namespace, supplier_id, preis_liste, preis_netto,
             ergebnis["ohne_einkaufspreis"] += 1
         waehrung = "EUR" if ek is not None else None
 
-        artikel = Article.objects.filter(article_number=vollnummer).first()
-        felder = _stammfelder(a, b, langtext, lp)
+        artikel = _artikel_zu_referenz(namespace, a.artikelnummer)
+        felder = _stammfelder(a, b, langtext, lp, profil)
+        katalog_id = datanorm_katalog.katalog_id(profil, b)
 
         if artikel is None:
-            _anlegen(namespace, supplier_id, a, vollnummer, felder, ek, lp,
-                     waehrung, heute, dry_run)
+            nummer = _freie_artikelnummer(a.artikelnummer, namespace, dry_run)
+            _anlegen(namespace, supplier_id, a, nummer, felder, ek, lp,
+                     waehrung, heute, dry_run, katalog_id)
             ergebnis["angelegt"] += 1
             _beispiel(ergebnis, a, "angelegt", ek)
         else:
             _aendern(artikel, namespace, supplier_id, a, felder, ek, lp,
-                     waehrung, heute, dry_run)
+                     waehrung, heute, dry_run, katalog_id)
             ergebnis["aktualisiert"] += 1
             _beispiel(ergebnis, a, "aktualisiert", ek)
     except datanorm.DatanormFehler as exc:
@@ -319,13 +382,13 @@ def _verarbeite(block, namespace, supplier_id, preis_liste, preis_netto,
             ergebnis["fehler"].append(f"Artikel {a.artikelnummer}: {exc}")
 
 
-def _anlegen(namespace, supplier_id, a, vollnummer, felder, ek, lp, waehrung,
-             heute, dry_run):
+def _anlegen(namespace, supplier_id, a, nummer, felder, ek, lp, waehrung,
+             heute, dry_run, katalog_id=None):
     if dry_run:
         return
     artikel_id = uuid.uuid4()
     Article.objects.create(
-        id=artikel_id, article_number=vollnummer, line_type="MATERIAL",
+        id=artikel_id, article_number=nummer, line_type="MATERIAL",
         status="AKTIV", version=1, **felder,
     )
     ArticleSupplierReference.objects.create(
@@ -334,12 +397,13 @@ def _anlegen(namespace, supplier_id, a, vollnummer, felder, ek, lp, waehrung,
         supplier_article_number=a.artikelnummer,
         last_purchase_price=ek, list_price=lp, currency=waehrung,
         discount_group=a.rabattgruppe, price_unit_code=a.preiseinheit,
+        supplier_catalog_id=katalog_id,
         last_imported_at=_now(), valid_from=heute,
     )
 
 
 def _aendern(artikel, namespace, supplier_id, a, felder, ek, lp, waehrung,
-             heute, dry_run):
+             heute, dry_run, katalog_id=None):
     if dry_run:
         return
     Article.objects.filter(id=artikel.id).update(status="AKTIV", **felder)
@@ -349,9 +413,12 @@ def _aendern(artikel, namespace, supplier_id, a, felder, ek, lp, waehrung,
     ).first()
     if open_ref is not None:
         # Nur Preis-/Gültigkeitsfelder ändern — Identität ist per Trigger fix.
+        # Die Katalog-ID gehört nicht zur Identität: Ein neuer Katalogstand darf
+        # sie korrigieren, ohne die Referenz beenden zu müssen.
         ArticleSupplierReference.objects.filter(id=open_ref.id).update(
             last_purchase_price=ek, list_price=lp, currency=waehrung,
             discount_group=a.rabattgruppe, price_unit_code=a.preiseinheit,
+            supplier_catalog_id=katalog_id,
             last_imported_at=_now(),
         )
     else:
@@ -361,6 +428,7 @@ def _aendern(artikel, namespace, supplier_id, a, felder, ek, lp, waehrung,
             supplier_article_number=a.artikelnummer,
             last_purchase_price=ek, list_price=lp, currency=waehrung,
             discount_group=a.rabattgruppe, price_unit_code=a.preiseinheit,
+            supplier_catalog_id=katalog_id,
             last_imported_at=_now(), valid_from=heute,
         )
 

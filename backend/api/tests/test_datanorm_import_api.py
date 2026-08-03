@@ -95,7 +95,7 @@ def test_dry_run_schreibt_nichts(admin_client):
     assert body["dry_run"] is True
     assert body["verarbeitet"] == 3 and body["angelegt"] == 3
     # Nichts geschrieben:
-    assert not Article.objects.filter(article_number__startswith="DN-testns-").exists()
+    assert not Article.objects.filter(article_number__in=["ART1", "ART2", "ART3"]).exists()
 
 
 @pytest.mark.django_db
@@ -105,7 +105,7 @@ def test_erstimport_legt_artikel_und_ek_an(admin_client):
     assert r.status_code == 200, r.content
     body = r.json()
     assert body["angelegt"] == 3 and body["aktualisiert"] == 0
-    art1 = Article.objects.get(article_number="DN-testns-ART1")
+    art1 = Article.objects.get(article_number="ART1")
     assert art1.description == "Erster Artikel Zweite Zeile"
     ref1 = ArticleSupplierReference.objects.get(
         article_id=art1.id, source_system="DATANORM", valid_until__isnull=True
@@ -114,7 +114,7 @@ def test_erstimport_legt_artikel_und_ek_an(admin_client):
     assert ref1.last_purchase_price == Decimal("6.7000")
     assert ref1.currency == "EUR"
     # ART3: Nettopreis 4,50, kein Listenpreis → EK bekannt, list_price None-ish
-    art3 = Article.objects.get(article_number="DN-testns-ART3")
+    art3 = Article.objects.get(article_number="ART3")
     ref3 = ArticleSupplierReference.objects.get(
         article_id=art3.id, valid_until__isnull=True
     )
@@ -132,11 +132,11 @@ def test_ohne_preisdatei_ek_aus_a_satz(admin_client):
     body = r.json()
     assert body["angelegt"] == 3 and body["ohne_einkaufspreis"] == 2
     ref1 = ArticleSupplierReference.objects.get(
-        article__article_number="DN-testns-ART1", valid_until__isnull=True
+        article__article_number="ART1", valid_until__isnull=True
     )
     assert ref1.last_purchase_price is None and ref1.currency is None
     ref3 = ArticleSupplierReference.objects.get(
-        article__article_number="DN-testns-ART3", valid_until__isnull=True
+        article__article_number="ART3", valid_until__isnull=True
     )
     assert ref3.last_purchase_price == Decimal("5.0000") and ref3.currency == "EUR"
 
@@ -153,7 +153,7 @@ def test_reimport_aktualisiert_und_loescht(admin_client):
     assert body["aktualisiert"] == 1      # ART1
     assert body["deaktiviert"] == 1       # ART3 (VKZ L)
 
-    art1 = Article.objects.get(article_number="DN-testns-ART1")
+    art1 = Article.objects.get(article_number="ART1")
     assert art1.description == "Erster Artikel neu"
     ref1 = ArticleSupplierReference.objects.get(
         article_id=art1.id, valid_until__isnull=True
@@ -165,7 +165,7 @@ def test_reimport_aktualisiert_und_loescht(admin_client):
     # angelegte Referenz bleibt offen (der DB-CHECK valid_until > valid_from
     # verhindert das Schließen am selben Tag; real liegen Import und Löschung
     # Tage auseinander) — die EK-Historie bleibt erhalten.
-    art3 = Article.objects.get(article_number="DN-testns-ART3")
+    art3 = Article.objects.get(article_number="ART3")
     assert art3.status == "INAKTIV"
 
 
@@ -197,7 +197,14 @@ def test_unbekannte_anbindung_404(admin_client):
 
 
 @pytest.mark.django_db
-def test_hersteller_anbindung_422(admin_client):
+def test_herstellerkatalog_setzt_herstellernummer(admin_client):
+    """Hersteller liefern ihre Ersatzteilkataloge ebenfalls als DATANORM.
+
+    Früher lehnte der Import Hersteller-Anbindungen rundweg ab. Er nimmt sie
+    jetzt an — und leitet aus der Anbindungsart die Feldbedeutung ab: Beim
+    Hersteller IST die Artikelnummer die Herstellernummer, und der Anbindungsname
+    ist der Hersteller. Aus dem Matchcode wird NIE ein Herstellername.
+    """
     actor = _seed_actor()
     supplier = identity_service.create_person(actor.id, first_name="Herst", last_name="Eller")
     conn = anbindung_service.create_connection(
@@ -205,7 +212,31 @@ def test_hersteller_anbindung_422(admin_client):
         label="Hersteller", source_system="DATANORM", connection_kind="HERSTELLER",
     )
     r = _import(admin_client, conn.id, preise=_preis_datei())
-    assert r.status_code == 422
+    assert r.status_code == 200, r.content
+    art1 = Article.objects.get(article_number="ART1")
+    assert art1.manufacturer_number == "ART1"
+    assert art1.manufacturer_name == "Hersteller"
+
+
+@pytest.mark.django_db
+def test_grosshandel_erfindet_keine_herstellernummer(admin_client):
+    """Der Großhändler liefert keine Herstellernummer — also steht dort nichts.
+
+    B&Os B-Satz-Feld 4 trägt eine hauseigene Katalognummer (`ZRB2071510`,
+    `ARESRT10018217`). Sie landete früher als „Hersteller-Nr." im Stamm und war
+    damit eine Nummer, die außerhalb von B&O nirgends existiert. Sie gehört an
+    die Lieferantenreferenz, der Matchcode ins Matchcode-Feld.
+    """
+    conn = _connection()
+    r = _import(admin_client, conn.id, preise=_preis_datei())
+    assert r.status_code == 200, r.content
+    art1 = Article.objects.get(article_number="ART1")
+    assert art1.manufacturer_number is None
+    assert art1.manufacturer_name is None
+    ref1 = ArticleSupplierReference.objects.get(
+        article_id=art1.id, valid_until__isnull=True
+    )
+    assert ref1.supplier_article_number == "ART1"
 
 
 @pytest.mark.django_db

@@ -515,8 +515,32 @@ Ausführliche Herleitungen: `docs/archiv/chronik-2026-07.md`.
   genau den Fehler, den die Automatik abschaffen soll.
 - **Eine mitgegebene Nummer gewinnt immer.** Der Leerstring zählt dabei wie NULL als „nicht
   gesetzt" (die ORM schickt für ein unbelegtes TextField `''`). Ohne diese Regel verlören
-  DATANORM (`DN-<Namespace>-<Nr>`) und IDS ihre Händlernummern — und mit ihnen die
-  Wiedererkennbarkeit beim nächsten Import.
+  DATANORM und IDS ihre Händlernummern — und mit ihnen die Wiedererkennbarkeit beim
+  nächsten Import.
+- **Die Artikelnummer eines Katalogartikels ist die NACKTE Lieferantennummer** (`CUS15H`,
+  nicht `DN-bo-CUS15H`). Sie steht auf der Lieferantenrechnung, im Shop und im Angebot; ein
+  technisches Präfix macht sie an genau den Stellen unbrauchbar, an denen sie gebraucht wird.
+  Wiedererkannt wird ein Artikel deshalb an seiner **Lieferantenreferenz**
+  (`source_namespace` + `supplier_article_number`), nie an der Artikelnummer.
+- **Bei Nummernkollision zwischen Katalogen gewinnt der Leitkatalog** (`bo`, der
+  Bestellkatalog); der andere weicht auf `<Nr>-<Namensraum>` aus. Die Kollisionen sind echt:
+  `509010` ist bei B&O ein Kupferwinkel und bei Vaillant ein Seitenteil (9 Fälle bei 2,07 Mio
+  Artikeln). Wer stattdessen zusammenführt, verkauft das falsche Teil.
+- **Was ein DATANORM-Feld bedeutet, entscheidet die KATALOGART, nicht die Norm**
+  (`supplier_connection.connection_kind` → `services/datanorm_katalog.py`). B-Satz Feld 3 ist
+  der Matchcode — beim Großhändler mal ein Fabrikat (`GEBERIT`), mal ein Suchcode
+  (`CUSSH01510`), im Bosch-Katalog die Kurzbezeichnung (`EINLEGEBLENDE`). Als Herstellername
+  taugt er **nie**. Feld 4 ist beim Großhändler eine hauseigene Katalognummer und gehört an
+  die Referenz (`supplier_catalog_id`), nicht ins Herstellerfeld.
+  **Schaden:** Ein einheitliches Mapping für alle Kataloge gab 2.043.336 B&O-Artikeln eine
+  „Hersteller-Nr.", die es außerhalb von B&O nirgends gibt (`ZRB2071510`, `ARESRT10018217` —
+  über alle Artikel ist jeder Wert genau einmal vergeben, also eine laufende Nummer). Wer
+  damit nachbestellte, suchte ins Leere. Das Alt-System HERO lässt das Feld bei B&O-Ware
+  korrekt leer. **Im Zweifel leer statt falsch** — ein unbekannter Katalog behauptet keine
+  Herstellernummer.
+- **Nur wo der Lieferant der Hersteller IST, wird aus der Artikelnummer eine Herstellernummer**
+  (Bosch: TTNR `10000946`; Vaillant: `0010027751`). Herstellerkataloge kommen ebenfalls als
+  DATANORM — der Import lehnt Hersteller-Anbindungen deshalb nicht mehr ab.
 - **`lpad` schneidet RECHTS ab.** Aus `lpad('100000', 5, '0')` wird `'10000'` — eine bereits
   vergebene Nummer. Oberhalb der Polsterbreite wird ungepolstert weitergezählt (WF-03). Die
   älteren Sequenzen `OBJ-`/`MA-`/`RES-`/`EB-` tragen diese Falle noch.

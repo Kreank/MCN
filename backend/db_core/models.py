@@ -2805,6 +2805,10 @@ class ArticleSupplierReference(models.Model):
     # Der gespeicherte Preis gilt IMMER je einer Mengeneinheit; dieses Feld hält
     # nur fest, wie er aus der Quelldatei hergeleitet wurde.
     price_unit_code = models.SmallIntegerField(null=True, blank=True)
+    # Katalog-interne Nummer des Lieferanten (B-Satz Feld 4, Migration 0149).
+    # B&O führt hier eine eigene laufende Nummer — Rückkanal zum Lieferanten,
+    # ausdrücklich KEINE Herstellernummer (siehe services/datanorm_katalog.py).
+    supplier_catalog_id = models.TextField(null=True, blank=True)
     created_at = models.DateTimeField(db_default=Now())
     updated_at = models.DateTimeField(db_default=Now())
 
