@@ -356,30 +356,35 @@
       }
 
       @if (tab() === 'erfassung') {
-        <!-- Es gibt an diesem Termin ZWEI Wege, Material zu erfassen. Beide sind
-             richtig, aber sie führen an verschiedene Orte — und wer das nicht
-             weiß, erfasst am falschen. Der Unterschied steht deshalb als TEXT
-             da, nicht als Farbe (WCAG 1.4.1). -->
+        <!-- Es gab an diesem Termin ZWEI Wege, Material zu erfassen — hier und
+             in den Positionen des Baustellenberichts. Beide führten in die
+             Abrechnung, aber an verschiedene Orte, und wer das nicht wusste,
+             erfasste am falschen. Sascha am 2026-08-02: Material wird künftig im
+             Berichtsentwurf erfasst.
+
+             **Der Erfassungsweg ist deshalb hier geschlossen** (der Knopf
+             „Material buchen" ist weg), die BESTEHENDEN Buchungen bleiben unten
+             vollständig sichtbar: Sie sind abrechenbar (Migration 0139), und was
+             abgerechnet wird, muss auffindbar bleiben. Der Endpunkt selbst bleibt
+             ebenfalls bestehen — die Monteur-App bucht darüber. -->
         <p class="erfassung__hinweis">
-          <strong>Hier steht, was am Termin verbraucht und gearbeitet wurde.</strong>
-          Beides geht in die Abrechnung des Auftrags und in die Nachkalkulation.
+          <strong>Hier steht, was am Termin gearbeitet wurde.</strong>
+          Die Zeiten gehen in die Abrechnung des Auftrags und in die
+          Nachkalkulation.
           <br />
-          Was der Kunde <strong>unterschreibt</strong>, gehört dagegen in den
-          Baustellenbericht (Reiter „Berichte“) — er ist der Leistungsnachweis und
-          führt bewusst keine Preise.
+          <strong>Material gehört in den Baustellenbericht</strong> (Reiter
+          „Berichte“): dort steht es als Position mit Menge und Einheit, und der
+          Kunde unterschreibt es mit. Der Bericht führt bewusst keine Preise.
         </p>
         @if (darfErfassen()) {
           <div class="tab-toolbar">
             <button type="button" class="btn btn--primary" (click)="dialogOeffnen('zeit')">
               <span aria-hidden="true">＋</span> Zeit buchen
             </button>
-            <button type="button" class="btn btn--primary" (click)="dialogOeffnen('material')">
-              <span aria-hidden="true">＋</span> Material buchen
-            </button>
           </div>
         }
         @if (daten()!.time_entries.length === 0 && daten()!.material_entries.length === 0) {
-          <div class="tab-platzhalter"><p>Für diesen Termin sind noch keine Zeiten oder Materialien erfasst.</p></div>
+          <div class="tab-platzhalter"><p>Für diesen Termin sind noch keine Zeiten erfasst.</p></div>
         } @else {
           @if (daten()!.time_entries.length > 0) {
             <h3 class="erfassung__titel">Zeiten</h3>
@@ -405,6 +410,11 @@
           }
           @if (daten()!.material_entries.length > 0) {
             <h3 class="erfassung__titel">Material (Verbrauch am Termin)</h3>
+            <p class="erfassung__hinweis">
+              Am Termin gebucht — <strong>weiterhin abrechenbar</strong>. Neues
+              Material wird im Baustellenbericht erfasst; diese Buchungen stehen
+              hier, damit nachvollziehbar bleibt, was in die Rechnung geht.
+            </p>
             <ul class="erfassung-liste">
               @for (m of daten()!.material_entries; track $index) {
                 <li class="erfassung-zeile">
@@ -617,6 +627,17 @@
     </app-dialog>
 
     <!-- ---------------------------- Material-Dialog ----------------------- -->
+    <!--
+      STILLGELEGT am 2026-08-03: Es führt kein Knopf mehr hierher — Material wird
+      im Baustellenbericht erfasst (Sascha, 2026-08-02). Der Dialog bleibt
+      absichtlich stehen und nicht als Ruine, sondern weil der Endpunkt
+      weiterlebt: Die Monteur-App bucht Material weiterhin am Einsatz, und die
+      Buchungen sind abrechenbar (Migration 0139). Sollte sich der Weg im
+      Cockpit als doch nötig erweisen, ist er einen Knopf entfernt.
+
+      Wer hier aufräumt, entfernt auch `materialForm`, den Zweig 'material' in
+      `dialogOeffnen` und `materialAbsenden` in der Komponente.
+    -->
     <app-dialog [offen]="dialogOffen() === 'material'" titel="Material buchen" (schliessen)="dialogSchliessen()">
       <form id="material-form" class="dialog-form" (submit)="$event.preventDefault(); materialAbsenden()" novalidate>
         @if (formularMeldung(); as fm) {

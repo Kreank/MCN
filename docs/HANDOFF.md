@@ -78,21 +78,24 @@ eigenen Dateien (unten).
    bleibt es erhalten. Der Reset-per-Mail-Weg funktioniert dafür **nicht**, solange
    `MCN_EMAIL_BACKEND` auf Konsole steht.
 
-**Als Nächstes: die Protokoll-Maske** (Sascha, 2026-08-02, beim Testen)
-> „Das Zusammenklicken geht mir tatsächlich bisschen auf die Nerven. Als ich dann
-> fertig war, hab ich den Entwurf gesehen. Können wir das nicht so machen, dass wenn
-> ich auf den Button Protokoll klicke, genau dieses Entwurffenster auftaucht?"
-
-Gewünscht ist: „Neues Protokoll" führt **direkt** in die Entwurfsansicht, statt erst
-durch einen Formular-Dialog. Beim Öffnen die Wahl, **hinterlegte Angebote zu
-übernehmen** oder leer zu starten. „Ausgeführte Arbeiten" oben als Freitext, der Rest
-bleibt bzw. wird aus dem Angebot vorbelegt. **Material entfällt bei „Zeiten &
-Material"** — es wird künftig im Entwurf erfasst. **Gebuchte Zeiten des Termins**
-erscheinen unten automatisch als Position, und zwar als **Leistung**.
-Offen beim Bauen (am fertigen Bildschirm zu entscheiden): Zeitpositionen je
-Mitarbeiter einzeln oder je Lohngruppe zusammengefasst — zunächst zusammengefasst.
+**Als Nächstes: offen — der Backlog entscheidet.** Die zuletzt benannten Punkte
+(Sammelrechnung, Protokoll-Maske) sind erledigt; siehe `docs/BACKLOG.md` für die
+nächsten Bereiche.
 
 **Erledigt am 2026-08-03**
+- **Protokoll-Maske: der Entwurf IST die Maske.** „Neues Protokoll" legt den
+  Bericht sofort an und zeigt ihn als bearbeitbares Blatt — der vorgeschaltete
+  Formular-Dialog ist ersatzlos weg, „Bearbeiten" ebenfalls. Direkt danach die
+  Startwahl **„aus welchem Angebot — oder leer?"**, aber nur, wenn es etwas zu
+  übernehmen gibt (am freien Termin also nie). Das Feld *Material (Notiz)* ist aus
+  der Maske raus (Material gehört in die Positionen); alte Notizen bleiben
+  sichtbar und gehen beim Speichern nicht verloren. Im Reiter *Zeiten & Material*
+  ist der Erfassungsweg für Material geschlossen — **bestehende Buchungen bleiben
+  sichtbar und abrechenbar**, und der Endpunkt lebt weiter (die App bucht darüber).
+  **Warum das erst jetzt ging:** Ein Klick, der sofort anlegt, setzt voraus, dass
+  der Fehlklick folgenlos ist — Berichtsentwürfe sind erst seit `0145` löschbar.
+  **Kein Backend-Eingriff**: `gebuchte_zeiten` (je Lohngruppe, abgeleitet) und
+  `vorbelegen_aus_angebot` gab es bereits. 8 neue Frontend-Tests (322 gesamt grün).
 - **Sammelrechnung gebaut und live** — „drei Bäder, alle drei Wohnungen gehören
   Herrn Meier": mehrere Rechnungs**entwürfe** werden zu **einem** Beleg, je
   Quellentwurf eine Rubrik mit dem Wohnungsbezug als Titel. Dienst

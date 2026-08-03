@@ -500,3 +500,67 @@ deren Quelle keinen eigenen Auftragsbezug trägt.
 **Die allgemeine Lehre:** Wo eine Sperre über eine Klammer fragt, muss sie die
 Klammer der **Sache** nehmen, nicht die des Dokuments. Dokumente lassen sich
 umgruppieren; die Herkunft einer Leistung nicht.
+
+### Die Protokoll-Maske: der Entwurf IST die Maske (2026-08-03)
+
+Sascha beim Testen (2026-08-02): *„Das Zusammenklicken geht mir tatsächlich
+bisschen auf die Nerven. Als ich dann fertig war, hab ich den Entwurf gesehen.
+Können wir das nicht so machen, dass wenn ich auf den Button Protokoll klicke,
+genau dieses Entwurffenster auftaucht?"*
+
+Vorher standen zwischen dem Klick und dem Bericht **zwei** Masken: erst ein
+Formular-Dialog (Datum, Termin, Wetter, Stunden, Materialnotiz, ausgeführte
+Arbeiten), danach das Blatt mit denselben Angaben. Der Dialog fragte Dinge ab,
+die entweder feststehen (der Termin, an dem man gerade steht) oder genauso gut im
+Dokument selbst stehen können.
+
+**Jetzt:** Ein Klick legt den Entwurf an und zeigt ihn als bearbeitbares Blatt.
+„Bearbeiten" ist damit ebenfalls entfallen — es öffnete denselben Dialog um das
+Dokument herum, das man ohnehin vor sich hat.
+
+**Warum das vorher nicht baubar war — und was es jetzt trägt:** Ein Klick, der
+sofort anlegt, ist nur vertretbar, wenn der Fehlklick folgenlos bleibt. Bis
+Migration `0145` war ein Bericht unlöschbar (`no_delete`); jeder Fehlgriff hätte
+eine Karteileiche hinterlassen. Seit `0145` ist der **Entwurf** löschbar (ab
+ABGESCHLOSSEN nicht mehr — dann ist er Abrechnungsgrundlage), und „Entwurf
+löschen" steht direkt neben dem Blatt. Die eine Migration hat die andere
+Entscheidung erst möglich gemacht.
+
+**Die Startwahl statt eines Formulars.** Direkt nach dem Anlegen wird die einzige
+Frage gestellt, die vor dem Schreiben wirklich zu klären ist: aus einem Angebot
+heraus (dann ist Ist = Soll und nur die Abweichung wird korrigiert) oder auf
+leerem Blatt? Sie erscheint **nur, wenn es etwas zu übernehmen gibt** — am freien
+Termin gibt es keinen Auftrag und damit kein Angebot, dort wird nicht gefragt.
+Schlägt der Abruf fehl, wird ebenfalls nicht gefragt: Der Entwurf steht bereits,
+und die Vorbelegung lässt sich bei den Positionen nachholen. Ein Fehlerbalken für
+eine optionale Bequemlichkeit wäre Lärm.
+
+**Material hat jetzt EINEN Ort.** Das Feld *Material (Notiz)* ist aus der Maske
+raus, und im Reiter *Zeiten & Material* ist der Erfassungsweg für Material
+geschlossen. Es gab drei Stellen für dieselbe Sache — Notiz am Bericht,
+Materialbuchung am Termin, Position im Bericht — und nur die letzte trug Menge
+und Einheit. Geblieben ist sie.
+
+*Was dabei NICHT angefasst wurde, und warum:* Bestehende Materialbuchungen
+bleiben vollständig sichtbar und **abrechenbar** (Migration 0139) — was
+abgerechnet wird, muss auffindbar bleiben. Der Endpunkt lebt ebenfalls weiter:
+Die Monteur-App bucht Material weiterhin am Einsatz. Geschlossen ist der
+**Cockpit-Weg**, nicht die Fähigkeit.
+
+**Zwei Speichern-Knöpfe auf einem Blatt sind Absicht.** Kopf und Positionen sind
+zwei Endpunkte mit zwei Regelwerken (`PUT …/positionen` ersetzt den ganzen Satz).
+Ein gemeinsamer Knopf müsste beide Aufrufe verketten und bei einem halben
+Fehlschlag raten, was nun gilt. Deshalb tragen sie ausgeschriebene
+Beschriftungen: „Bericht speichern" und „Positionen speichern".
+
+**Die Falle, die dabei entsteht — und der Schutz dagegen:** Das Blatt ist jetzt
+ein Formular, und das Detail wird nach jedem Speichern und bei jedem
+Auswahlwechsel nachgeladen. Ohne Vorkehrung würfe jede dieser Antworten die
+laufende Eingabe weg — mitten im Satz, für den, der gerade die ausgeführten
+Arbeiten schreibt. Der Merker `formularFuer` bindet das Formular an **einen**
+Bericht; gehört es ihm schon, rührt das Nachladen nichts an. Ein Test hält das
+fest.
+
+**Kein Backend-Eingriff.** Die gebuchten Zeiten (je Lohngruppe zusammengefasst,
+**abgeleitet** statt abgelegt — sonst stünden dieselben Stunden zweimal in der
+Rechnung) und die Angebotsübernahme gab es bereits.

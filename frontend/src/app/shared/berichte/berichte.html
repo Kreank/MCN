@@ -39,10 +39,24 @@
     }
 
     @if (darfAnlegen()) {
+      <!-- Ein Klick, und der Entwurf steht da (Sascha, 2026-08-02: „Können wir
+           das nicht so machen, dass wenn ich auf den Button Protokoll klicke,
+           genau dieses Entwurffenster auftaucht?"). Der Fehlklick ist folgenlos:
+           Entwürfe sind seit 0145 löschbar. -->
       <div class="tab-toolbar">
-        <button type="button" class="btn btn--primary" (click)="neuOeffnen()">
+        <button
+          type="button"
+          class="btn btn--primary"
+          [disabled]="neuLaeuft()"
+          [attr.aria-busy]="neuLaeuft()"
+          (click)="neuAnlegen()"
+        >
           <span aria-hidden="true">＋</span>
-          {{ amEinsatz() ? 'Neues Protokoll' : 'Neuer Bericht' }}
+          @if (neuLaeuft()) {
+            Wird angelegt …
+          } @else {
+            {{ amEinsatz() ? 'Neues Protokoll' : 'Neuer Bericht' }}
+          }
         </button>
       </div>
     }
@@ -90,7 +104,10 @@
               <div class="bericht__aktionen">
                 <a class="btn" [href]="pdfUrl(r.id)" target="_blank" rel="noopener" aria-label="Bericht als PDF ansehen (öffnet in neuem Tab)">PDF ansehen ↗</a>
                 @if (r.status === 'ENTWURF' && darfAendern()) {
-                  <button type="button" class="btn" (click)="bearbeitenOeffnen()">Bearbeiten</button>
+                  <!-- „Bearbeiten" ist entfallen: Der Entwurf IST die Maske.
+                       Der Knopf öffnete einen Dialog mit denselben Feldern, die
+                       jetzt im Blatt stehen — ein Umweg um das Dokument herum,
+                       das man ohnehin vor sich hat. -->
                   <!-- Loeschen steht bei den Entwurfs-Aktionen und verschwindet
                        ab ABGESCHLOSSEN von selbst: Ab dort ist der Bericht
                        Abrechnungsgrundlage. Zurueckhaltend gestaltet — es ist
@@ -133,21 +150,124 @@
               <!-- Ausgeführte Arbeiten: der Freitext, aus dem später die KI den
                    Bericht formt („Monteur gibt Notizen ein, KI macht sinnvollen
                    Bericht daraus"). Steht VOR den Positionen und trägt mehr
-                   Gewicht als die Nebenfelder. -->
-              <div class="bericht__block bericht__block--haupt">
-                <h3 class="bericht__h">Ausgeführte Arbeiten</h3>
-                <p class="bericht__text">{{ r.activity_text }}</p>
-              </div>
+                   Gewicht als die Nebenfelder.
+
+                   Im ENTWURF wird hier GESCHRIEBEN, nicht gelesen: das Blatt ist
+                   die Maske. Ab ABGESCHLOSSEN steht derselbe Text als Fließtext
+                   da — dann ist der Bericht Nachweis, und die DB-Trigger lassen
+                   ohnehin keine Änderung mehr zu. -->
+              @if (blattBearbeitbar()) {
+                @if (formularMeldung(); as fm) {
+                  <div class="melde melde--fehler" role="alert">
+                    <span class="melde__mark" aria-hidden="true">!</span>
+                    <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+                  </div>
+                }
+                <form
+                  class="bericht__blattform"
+                  (submit)="$event.preventDefault(); kopfSpeichern()"
+                  (input)="onKopfEingabe()"
+                  novalidate
+                >
+                  <div class="protokoll-raster">
+                    <div class="protokoll-raster__haupt">
+                      <app-feld
+                        [control]="berichtForm.controls.activity_text"
+                        label="Ausgeführte Arbeiten"
+                        typ="textarea"
+                        [zeilen]="8"
+                        [pflicht]="true"
+                        [hinweis]="
+                          amEinsatz()
+                            ? 'Was wurde vor Ort festgestellt oder ausgeführt?'
+                            : 'Was wurde vor Ort ausgeführt?'
+                        "
+                      />
+                      <app-feld
+                        [control]="berichtForm.controls.remarks"
+                        label="Bemerkungen"
+                        typ="textarea"
+                        [zeilen]="3"
+                      />
+                    </div>
+                    <div class="protokoll-raster__neben">
+                      <app-feld
+                        [control]="berichtForm.controls.report_date"
+                        label="Berichtsdatum"
+                        typ="datum"
+                        [pflicht]="true"
+                      />
+                      @if (!amEinsatz()) {
+                        <app-referenz-wahl
+                          [control]="berichtForm.controls.service_job_id"
+                          label="Termin (optional)"
+                          platzhalter="Termin suchen"
+                          [suche]="einsatzSuche"
+                        />
+                      }
+                      <app-feld
+                        [control]="berichtForm.controls.weather"
+                        label="Wetter"
+                        hinweis="Optional, z. B. „sonnig, 18 °C“"
+                      />
+                      <app-feld
+                        [control]="berichtForm.controls.hours_worked"
+                        label="Arbeitsstunden"
+                        typ="zahl"
+                        hinweis="Optional. Gebuchte Zeiten stehen unten von selbst."
+                      />
+                      <!-- Das Feld „Material (Notiz)" ist entfallen (Sascha,
+                           2026-08-02): Material gehört in die Positionen, wo es
+                           mit Menge und Einheit steht und abrechenbar ist. Eine
+                           Notiz daneben war ein zweiter Ort für dieselbe Sache —
+                           und der, aus dem nie eine Rechnung wurde. Alte Notizen
+                           bleiben sichtbar (siehe unten) und gehen beim Speichern
+                           nicht verloren. -->
+                    </div>
+                  </div>
+
+                  <div class="bericht__blattaktionen">
+                    <button
+                      type="submit"
+                      class="btn btn--primary"
+                      [disabled]="!kopfGeaendert() || kopfSpeichert()"
+                      [attr.aria-busy]="kopfSpeichert()"
+                    >
+                      {{ kopfSpeichert() ? 'Wird gespeichert …' : 'Bericht speichern' }}
+                    </button>
+                    <button
+                      type="button"
+                      class="btn"
+                      [disabled]="!kopfGeaendert() || kopfSpeichert()"
+                      (click)="kopfVerwerfen()"
+                    >
+                      Änderungen verwerfen
+                    </button>
+                    @if (kopfGeaendert()) {
+                      <span class="bericht__dirty" role="status">Nicht gespeicherte Änderungen</span>
+                    }
+                  </div>
+                </form>
+              } @else {
+                <div class="bericht__block bericht__block--haupt">
+                  <h3 class="bericht__h">Ausgeführte Arbeiten</h3>
+                  <p class="bericht__text">{{ r.activity_text }}</p>
+                </div>
+                @if (r.remarks) {
+                  <div class="bericht__block">
+                    <h3 class="bericht__h">Bemerkungen</h3>
+                    <p class="bericht__text">{{ r.remarks }}</p>
+                  </div>
+                }
+              }
+
+              <!-- Altbestand: Material stand früher als Notiz am Bericht. Das
+                   Feld ist aus der Maske raus, der Inhalt bleibt lesbar — sonst
+                   verschwände eine Angabe, auf die sich jemand berufen könnte. -->
               @if (r.materials_note) {
                 <div class="bericht__block">
-                  <h3 class="bericht__h">Material</h3>
+                  <h3 class="bericht__h">Material (Notiz)</h3>
                   <p class="bericht__text">{{ r.materials_note }}</p>
-                </div>
-              }
-              @if (r.remarks) {
-                <div class="bericht__block">
-                  <h3 class="bericht__h">Bemerkungen</h3>
-                  <p class="bericht__text">{{ r.remarks }}</p>
                 </div>
               }
 
@@ -156,6 +276,7 @@
                    erzwingt es ohnehin. -->
               <div class="bericht__block">
                 <app-bericht-positionen
+                  #positionen
                   [berichtId]="r.id"
                   [status]="r.status"
                   [hatAuftrag]="!!r.work_order_id"
@@ -181,19 +302,26 @@
                 </div>
               }
 
+              <!-- Wetter und Stunden stehen im Bearbeitungsmodus schon als
+                   Eingabefelder oben — sie hier ein zweites Mal zu zeigen, wäre
+                   derselbe Wert an zwei Stellen, von denen nur eine stimmt,
+                   solange nicht gespeichert wurde. Der Verfasser bleibt: den
+                   setzt der Server, er ist kein Eingabefeld. -->
               <dl class="bericht__nebenfelder">
                 <div>
                   <dt>Erfasst von</dt>
                   <dd>{{ r.author_name || '—' }}</dd>
                 </div>
-                <div>
-                  <dt>Wetter</dt>
-                  <dd>{{ r.weather || '—' }}</dd>
-                </div>
-                <div>
-                  <dt>Arbeitsstunden</dt>
-                  <dd>{{ stunden(r.hours_worked) }}</dd>
-                </div>
+                @if (!blattBearbeitbar()) {
+                  <div>
+                    <dt>Wetter</dt>
+                    <dd>{{ r.weather || '—' }}</dd>
+                  </div>
+                  <div>
+                    <dt>Arbeitsstunden</dt>
+                    <dd>{{ stunden(r.hours_worked) }}</dd>
+                  </div>
+                }
               </dl>
 
               @if (r.status === 'UNTERZEICHNET') {
@@ -220,83 +348,72 @@
   }
 }
 
-<!-- ------------------------------ Neu/Bearbeiten-Dialog ------------------- -->
+<!-- ------------------------------ Startwahl ------------------------------- -->
+<!--
+  Die einzige Frage, die vor dem Schreiben wirklich zu klären ist: Wird aus dem
+  Angebot heraus gearbeitet (dann ist Ist = Soll und nur die Abweichung wird
+  korrigiert) oder auf leerem Blatt? Sie erscheint nur, wenn es tatsächlich
+  etwas zu übernehmen gibt — sonst gäbe es nichts zu entscheiden.
+-->
 <app-dialog
-  weite="arbeitsflaeche"
-  [offen]="dialogOffen() === 'neu' || dialogOffen() === 'bearbeiten'"
-  [titel]="
-    dialogOffen() === 'bearbeiten'
-      ? 'Bericht bearbeiten'
-      : (amEinsatz() ? 'Neues Protokoll zum Termin' : 'Neuer Baustellenbericht')
-  "
-  (schliessen)="dialogSchliessen()"
+  [offen]="dialogOffen() === 'startwahl'"
+  titel="Womit möchten Sie beginnen?"
+  (schliessen)="startLeer()"
 >
-  <form
-    id="bericht-form"
-    class="dialog-form"
-    (submit)="$event.preventDefault(); dialogOffen() === 'bearbeiten' ? bearbeitenAbsenden() : neuAbsenden()"
-    novalidate
-  >
+  <div class="dialog-form">
     @if (formularMeldung(); as fm) {
       <div class="melde melde--fehler" role="alert">
         <span class="melde__mark" aria-hidden="true">!</span>
         <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
       </div>
     }
-    <!--
-      Zuschnitt nach Saschas Rückmeldung (2026-08-02): „mach die Maske bitte
-      größer! Wir haben doch Platz auf dem View." Vorher stand alles in EINER
-      Spalte auf 46rem — die ausgeführten Arbeiten also in einem schmalen
-      Schlitz, obwohl sie der eigentliche Bericht sind.
 
-      Jetzt bekommen sie die Hauptspalte und acht Zeilen; alles Beiwerk (Datum,
-      Wetter, Stunden, Materialnotiz) steht daneben. Auf schmalen Schirmen fällt
-      das Raster auf einspaltig zurück — die Reihenfolge im Markup ist deshalb
-      schon die richtige Lesereihenfolge.
-    -->
-    <div class="protokoll-raster">
-      <div class="protokoll-raster__haupt">
-        <app-feld
-          [control]="berichtForm.controls.activity_text"
-          label="Ausgeführte Arbeiten"
-          typ="textarea"
-          [zeilen]="8"
-          [pflicht]="true"
-          [hinweis]="amEinsatz() ? 'Was wurde vor Ort festgestellt oder ausgeführt?' : 'Was wurde vor Ort ausgeführt?'"
-        />
-      </div>
-      <div class="protokoll-raster__neben">
-        <app-feld [control]="berichtForm.controls.report_date" label="Berichtsdatum" typ="datum" [pflicht]="true" />
-        @if (!amEinsatz()) {
-          <app-referenz-wahl
-            [control]="berichtForm.controls.service_job_id"
-            label="Termin (optional)"
-            platzhalter="Termin suchen"
-            [suche]="einsatzSuche"
+    <p class="dialog-hinweis">
+      Der Entwurf ist angelegt. Aus einem Angebot übernommen, starten die
+      Positionen mit der <strong>angebotenen Menge als Soll</strong> — vor Ort
+      wird dann nur noch korrigiert, was abweicht.
+    </p>
+
+    <fieldset class="startwahl">
+      <legend class="sr-only">Angebot zur Übernahme</legend>
+      @for (a of startAngebote(); track a.id) {
+        <label class="startwahl__zeile">
+          <input
+            type="radio"
+            name="startangebot"
+            [value]="a.id"
+            [checked]="startAngebotWahl() === a.id"
+            (change)="onStartAngebotWahl(a.id)"
           />
-        }
-        <app-feld [control]="berichtForm.controls.weather" label="Wetter" hinweis="Optional, z. B. „sonnig, 18 °C“" />
-        <app-feld
-          [control]="berichtForm.controls.hours_worked"
-          label="Arbeitsstunden"
-          typ="zahl"
-          hinweis="Optional, z. B. 6,5"
-        />
-        <app-feld
-          [control]="berichtForm.controls.materials_note"
-          label="Material (Notiz)"
-          typ="textarea"
-          [zeilen]="3"
-          hinweis="Gedächtnisstütze. Abgerechnet wird über die Positionen im Entwurf."
-        />
-      </div>
-    </div>
-    <app-feld [control]="berichtForm.controls.remarks" label="Bemerkungen" typ="textarea" />
-  </form>
+          <span class="startwahl__text">
+            <span class="startwahl__titel">{{ a.title }}</span>
+            <span class="startwahl__meta">
+              {{ a.quote_number || 'ohne Nummer' }}
+              <span class="stamp">{{ a.status }}</span>
+            </span>
+          </span>
+        </label>
+      }
+    </fieldset>
+
+    <p class="dialog-hinweis">
+      Später lässt sich die Übernahme bei den Positionen nachholen — solange der
+      Bericht noch keine eigenen trägt.
+    </p>
+  </div>
+
   <div dialog-aktionen class="dialog__aktionen">
-    <button type="button" class="btn" [disabled]="dialogLaedt()" (click)="dialogSchliessen()">Abbrechen</button>
-    <button type="submit" form="bericht-form" class="btn btn--primary" [disabled]="dialogLaedt()" [attr.aria-busy]="dialogLaedt()">
-      {{ dialogLaedt() ? 'Wird gespeichert …' : (dialogOffen() === 'bearbeiten' ? 'Speichern' : 'Anlegen') }}
+    <button type="button" class="btn" [disabled]="startLaeuft()" (click)="startLeer()">
+      Leer beginnen
+    </button>
+    <button
+      type="button"
+      class="btn btn--primary"
+      [disabled]="startLaeuft()"
+      [attr.aria-busy]="startLaeuft()"
+      (click)="startUebernehmen()"
+    >
+      {{ startLaeuft() ? 'Wird übernommen …' : 'Angebot übernehmen' }}
     </button>
   </div>
 </app-dialog>

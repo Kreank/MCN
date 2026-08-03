@@ -192,6 +192,72 @@
   `minmax(0, 1fr)` in der Hauptspalte ist kein Zierrat — ohne die Null als
   Minimum sprengt ein langes Wort im Textfeld das Raster, statt umzubrechen.
 */
+/* Das Blatt als Maske: Speicherleiste unter den Feldern, in der Flucht des
+   Positions-Editors darunter — beide tragen ausgeschriebene Beschriftungen
+   („Bericht speichern" / „Positionen speichern"), weil sie zwei Endpunkte
+   bedienen. */
+.bericht__blattform {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.bericht__blattaktionen {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+.bericht__dirty {
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+/* Startwahl: die Angebote als Auswahlliste — Zeilen zum Anklicken, nicht ein
+   Dropdown, weil Titel, Nummer und Status zusammen gelesen werden. */
+.startwahl {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+
+  &__zeile {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-3);
+    padding: var(--space-3);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    cursor: pointer;
+
+    &:hover {
+      border-color: var(--accent);
+    }
+    &:focus-within {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+  }
+  &__text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    min-width: 0;
+  }
+  &__titel {
+    font-weight: 600;
+  }
+  &__meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--step--1);
+    color: var(--ink-muted);
+  }
+}
+
 .protokoll-raster {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(16rem, 22rem);

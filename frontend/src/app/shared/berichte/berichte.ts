@@ -19,6 +19,7 @@ import {
   SiteReportCreate,
   SiteReportKopf,
   SiteReportUpdate,
+  VorbelegbaresAngebot,
   siteReportStatusClass,
   siteReportStatusLabel,
 } from '../../core/site-report.model';
@@ -48,7 +49,13 @@ type Zustand =
   | { kind: 'error' };
 
 type Meldung = { art: 'erfolg' | 'fehler'; text: string };
-type DialogArt = 'neu' | 'bearbeiten' | 'unterschrift' | 'loeschen';
+/**
+ * `neu` und `bearbeiten` gibt es nicht mehr: Der Bericht entsteht mit einem Klick
+ * und wird **im Blatt** bearbeitet, nicht in einem vorgeschalteten Formular
+ * (Sascha, 2026-08-02 — siehe `neuAnlegen`). Geblieben sind die drei Dialoge,
+ * die echte Weggabelungen sind: womit beginnen, unterschreiben, verwerfen.
+ */
+type DialogArt = 'startwahl' | 'unterschrift' | 'loeschen';
 
 /** Der Bezug, an dem die Berichte hängen — genau einer von beiden. */
 type Anker = { art: 'auftrag' | 'einsatz'; id: string };
@@ -180,6 +187,27 @@ export class Berichte {
     signed_by_name: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
   });
 
+  // --- Blatt-Bearbeitung ---------------------------------------------------
+  //
+  // Das Formular gehört **einem** Bericht: `formularFuer` merkt sich, welchem.
+  // Ohne diesen Merker setzte jedes Nachladen des Details (es passiert nach
+  // jedem Speichern und bei jedem Auswahlwechsel) die Eingaben zurück — wer
+  // gerade tippt, verlöre seinen Satz mitten im Wort.
+  private formularFuer: string | null = null;
+  protected readonly neuLaeuft = signal(false);
+  protected readonly kopfGeaendert = signal(false);
+  protected readonly kopfSpeichert = signal(false);
+
+  /** Startwahl nach dem Anlegen: aus welchem Angebot — oder auf leerem Blatt? */
+  protected readonly startAngebote = signal<VorbelegbaresAngebot[]>([]);
+  protected readonly startAngebotWahl = signal('');
+  protected readonly startLaeuft = signal(false);
+
+  /** Nur der ENTWURF ist ein Blatt zum Schreiben; danach ist er Nachweis. */
+  protected readonly blattBearbeitbar = computed(
+    () => this.ausgewaehlt()?.status === 'ENTWURF' && this.darfAendern(),
+  );
+
   /** Einsätze dieses Auftrags als optionale Zuordnung (nur in der Auftragssicht). */
   protected readonly einsatzSuche: RefSuche = (q) =>
     this.einsatzSvc
@@ -256,7 +284,12 @@ export class Berichte {
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: (r) => {
-          if (rid === this.detailReqId) this.detail.set(r);
+          if (rid !== this.detailReqId) return;
+          this.detail.set(r);
+          // Das Blatt ist bearbeitbar — es braucht die Werte im Formular.
+          // `kopfUebernehmen` schützt dabei die laufende Eingabe: Gehört das
+          // Formular diesem Bericht schon, rührt es nichts an.
+          this.kopfUebernehmen(r);
         },
         error: () => {
           if (rid === this.detailReqId) this.detail.set(null);
@@ -286,40 +319,73 @@ export class Berichte {
     this.detailLaden(report.id);
   }
 
-  // --- Dialog öffnen/schließen ---------------------------------------------
+  // --- Neues Protokoll -----------------------------------------------------
   /**
-   * „Neues Protokoll" — ein Klick, und die Maske steht offen.
+   * „Neues Protokoll" — ein Klick, und der Entwurf **steht da**.
    *
    * Sascha beim Testen (2026-08-02): *„Das Zusammenklicken geht mir tatsächlich
    * bisschen auf die Nerven. Als ich dann fertig war, hab ich den Entwurf
    * gesehen. Können wir das nicht so machen, dass wenn ich auf den Button
    * Protokoll klicke, genau dieses Entwurffenster auftaucht?"*
    *
-   * **Die ausgeführten Arbeiten werden vorbelegt** statt leer zu bleiben. Das
-   * ist keine Bequemlichkeit: `activity_text` ist in der Datenbank Pflicht und
-   * darf nicht leer sein (CHECK aus 0054) — ein völlig leerer Bericht liesse
-   * sich gar nicht anlegen. Der Vorschlag ist bewusst nichtssagend („Protokoll
-   * vom …"), damit niemand versehentlich einen Platzhalter stehen lässt, der
-   * wie eine Aussage aussieht.
+   * Genau das passiert jetzt: Der Bericht wird **sofort angelegt**, ausgewählt
+   * und als bearbeitbares Blatt gezeigt. Der vorgeschaltete Formular-Dialog ist
+   * ersatzlos entfallen — er fragte Dinge ab, die entweder feststehen (Termin,
+   * Datum) oder genauso gut im Entwurf selbst stehen können.
    *
-   * Der Bericht entsteht dabei noch NICHT — er wird erst beim Speichern
-   * angelegt. Das ist Absicht: Berichte sind Nachweise und lassen sich nicht
-   * löschen (Trigger `no_delete`). Würde der Klick sofort einen anlegen, bliebe
-   * nach jedem Fehlklick ein Entwurf zurück, den niemand mehr wegbekommt.
+   * **Warum das vorher nicht ging — und jetzt schon:** Bis Migration 0145 war
+   * ein Bericht unlöschbar (Trigger `no_delete`). Ein Klick, der sofort anlegt,
+   * hätte nach jedem Fehlgriff eine Karteileiche hinterlassen, die niemand mehr
+   * wegbekommt. Seit 0145 ist der **Entwurf** löschbar (ab ABGESCHLOSSEN nicht
+   * mehr — dann ist er Abrechnungsgrundlage), und damit ist der Fehlklick
+   * folgenlos: „Entwurf löschen" steht direkt daneben.
+   *
+   * **Die ausgeführten Arbeiten werden vorbelegt** statt leer zu bleiben:
+   * `activity_text` ist in der Datenbank Pflicht und darf nicht leer sein
+   * (CHECK aus 0054) — ohne Vorbelegung ließe sich der Entwurf gar nicht
+   * anlegen. Der Text ist bewusst nichtssagend („Protokoll vom …"), damit
+   * niemand versehentlich einen Platzhalter stehen lässt, der wie eine Aussage
+   * aussieht.
    */
-  neuOeffnen(): void {
-    this.formularMeldung.set(null);
+  neuAnlegen(): void {
+    const a = this.anker();
+    if (!a || this.neuLaeuft()) return;
+    this.meldung.set(null);
+    this.neuLaeuft.set(true);
     const heute = this.heute();
-    this.berichtForm.reset({
+    const payload: SiteReportCreate = {
       report_date: heute,
-      service_job_id: '',
       activity_text: `Protokoll vom ${this.datum(heute)}`,
-      weather: '',
-      hours_worked: '',
-      materials_note: '',
-      remarks: '',
+      weather: null,
+      hours_worked: null,
+      materials_note: null,
+      remarks: null,
+    };
+    if (a.art === 'einsatz') payload.service_job_id = a.id;
+    else payload.work_order_id = a.id;
+
+    this.svc.create(payload).subscribe({
+      next: (r) => {
+        this.neuLaeuft.set(false);
+        this.uebernehmen(r);
+        // Das Formular gehört ab jetzt diesem Bericht — ohne das Umsetzen
+        // stünden im Blatt die Werte des vorher gewählten.
+        this.kopfUebernehmen(r);
+        // Und direkt die Frage, mit der jedes Protokoll beginnt: aus dem
+        // Angebot heraus oder auf leerem Blatt? Nur wenn es überhaupt etwas
+        // zu übernehmen gibt (kein Auftrag ⇒ kein Angebot ⇒ keine Frage).
+        this.startwahlPruefen(r);
+      },
+      error: (err) => {
+        this.neuLaeuft.set(false);
+        this.meldung.set({
+          art: 'fehler',
+          text:
+            fehlerDetail(err) ??
+            'Der Entwurf konnte nicht angelegt werden. Bitte erneut versuchen.',
+        });
+      },
     });
-    this.dialogOffen.set('neu');
   }
 
   /** Abfrage vor dem Loeschen — ein Klick weniger waere einer zu wenig. */
@@ -356,9 +422,20 @@ export class Berichte {
     });
   }
 
-  bearbeitenOeffnen(): void {
-    const r = this.ausgewaehlt();
-    if (!r || r.status !== 'ENTWURF') return;
+  // --- Das Blatt füllen und speichern --------------------------------------
+  /**
+   * Setzt das Formular auf **diesen** Bericht — aber nur, wenn es ihm noch nicht
+   * gehört.
+   *
+   * Der Vorbehalt ist der eigentliche Inhalt der Methode: `detailLaden` läuft
+   * nach jedem Speichern und bei jedem Auswahlwechsel. Ohne den Merker
+   * `formularFuer` würfe jede dieser Antworten die laufende Eingabe weg — und
+   * zwar genau dann, wenn jemand längere Zeit an den ausgeführten Arbeiten
+   * schreibt und nebenher gespeichert wird.
+   */
+  private kopfUebernehmen(r: SiteReport, erzwingen = false): void {
+    if (!erzwingen && this.formularFuer === r.id) return;
+    this.formularFuer = r.id;
     this.formularMeldung.set(null);
     this.berichtForm.reset({
       report_date: r.report_date,
@@ -369,7 +446,151 @@ export class Berichte {
       materials_note: r.materials_note ?? '',
       remarks: r.remarks ?? '',
     });
-    this.dialogOffen.set('bearbeiten');
+    this.kopfGeaendert.set(false);
+  }
+
+  /** Jede Eingabe im Blatt macht den Speichern-Knopf scharf. */
+  onKopfEingabe(): void {
+    if (!this.kopfGeaendert()) this.kopfGeaendert.set(true);
+  }
+
+  /** Zurück auf den zuletzt gespeicherten Stand — ohne Server-Runde. */
+  kopfVerwerfen(): void {
+    const r = this.ausgewaehlt();
+    if (r) this.kopfUebernehmen(r, true);
+  }
+
+  /**
+   * Speichert den Berichtskopf (der Rest des Blattes hat eigene Knöpfe).
+   *
+   * **Zwei Speichern-Knöpfe auf einem Blatt sind Absicht, kein Versehen:** Kopf
+   * und Positionen sind zwei Endpunkte mit zwei Regelwerken — die Positionen
+   * ersetzt `PUT …/positionen` immer vollständig. Ein gemeinsamer Knopf müsste
+   * beide Aufrufe verketten und bei einem halben Fehlschlag raten, was nun gilt.
+   * Deshalb tragen die Knöpfe ausgeschriebene Beschriftungen („Bericht
+   * speichern" / „Positionen speichern") statt eines nackten „Speichern".
+   */
+  kopfSpeichern(): void {
+    const r = this.ausgewaehlt();
+    if (!r || this.kopfSpeichert() || this.nichtBereit(this.berichtForm)) return;
+    const v = this.berichtForm.getRawValue();
+    const payload: SiteReportUpdate = {
+      report_date: v.report_date,
+      activity_text: v.activity_text.trim(),
+      weather: v.weather.trim() || null,
+      hours_worked: deZuApiDezimal(v.hours_worked) || null,
+      // Die Materialnotiz steht nicht mehr in der Maske (Material gehört in die
+      // Positionen), aber sie wird mitgeschickt: `update_report` schreibt jedes
+      // übergebene Feld. Ließe man sie weg und der Endpunkt setzte fehlende
+      // Felder auf null, verschwände eine Altnotiz beim ersten Speichern.
+      materials_note: v.materials_note.trim() || null,
+      remarks: v.remarks.trim() || null,
+    };
+    // Der Einsatzbezug ist in der Einsatzsicht nicht verhandelbar (und beim
+    // freien Termin ohnehin unveränderlich): dort gar nicht erst mitschicken.
+    if (!this.amEinsatz()) payload.service_job_id = v.service_job_id || null;
+    this.kopfSpeichert.set(true);
+    this.svc.update(r.id, payload).subscribe({
+      next: (res) => {
+        this.kopfSpeichert.set(false);
+        this.kopfGeaendert.set(false);
+        this.uebernehmen(res);
+        this.meldung.set({ art: 'erfolg', text: 'Bericht gespeichert.' });
+      },
+      error: (err) => {
+        this.kopfSpeichert.set(false);
+        this.formularMeldung.set(apiFehlerZuweisen(err, this.berichtForm).formular);
+      },
+    });
+  }
+
+  // --- Startwahl: aus dem Angebot heraus oder auf leerem Blatt? -------------
+  /**
+   * Fragt direkt nach dem Anlegen, womit begonnen wird.
+   *
+   * Die Frage stellt sich **nur**, wenn es etwas zu übernehmen gibt: Am freien
+   * Termin (kein Auftrag) und bei einem Auftrag ohne hinausgegangenes Angebot
+   * hat sie keine Antwortmöglichkeit — dann bleibt das Blatt einfach leer, statt
+   * einen Dialog zu zeigen, dessen einzige Option „Weiter" heißt.
+   *
+   * Schlägt der Abruf fehl, wird ebenfalls nicht gefragt: Der Entwurf steht
+   * bereits, und die Vorbelegung lässt sich jederzeit über die Positionen
+   * nachholen. Ein Fehlerbalken für eine *optionale* Bequemlichkeit wäre Lärm.
+   */
+  private startwahlPruefen(r: SiteReport): void {
+    if (!r.work_order_id) return;
+    this.svc
+      .vorbelegbareAngebote(r.id)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (angebote) => {
+          if (!angebote.length) return;
+          this.startAngebote.set(angebote);
+          this.startAngebotWahl.set(angebote.length === 1 ? angebote[0].id : '');
+          this.formularMeldung.set(null);
+          this.dialogOffen.set('startwahl');
+        },
+        error: () => {
+          /* Optionale Bequemlichkeit — der Entwurf steht ja bereits. */
+        },
+      });
+  }
+
+  onStartAngebotWahl(wert: string): void {
+    this.startAngebotWahl.set(wert);
+  }
+
+  /** „Leer beginnen" — der Dialog schließt, der Entwurf bleibt, wie er ist. */
+  startLeer(): void {
+    if (this.startLaeuft()) return;
+    this.dialogOffen.set(null);
+  }
+
+  startUebernehmen(): void {
+    const r = this.ausgewaehlt();
+    const quote = this.startAngebotWahl();
+    if (!r || this.startLaeuft()) return;
+    if (!quote) {
+      this.formularMeldung.set('Bitte wählen Sie ein Angebot — oder beginnen Sie leer.');
+      return;
+    }
+    this.startLaeuft.set(true);
+    this.formularMeldung.set(null);
+    this.svc.vorbelegen(r.id, quote).subscribe({
+      next: (res) => {
+        this.startLaeuft.set(false);
+        this.dialogOffen.set(null);
+        // Die Positionsliste lebt in einer eigenen Komponente und hat gerade
+        // geladen, als es noch nichts gab — sie muss ihren Stand neu holen.
+        this.positionenNeuLaden();
+        this.meldung.set({
+          art: 'erfolg',
+          text:
+            `${res.total} Positionen aus dem Angebot übernommen. Ist entspricht dem ` +
+            'Soll — bitte die Abweichungen korrigieren.',
+        });
+      },
+      error: (err) => {
+        this.startLaeuft.set(false);
+        this.formularMeldung.set(
+          fehlerDetail(err) ?? 'Die Vorbelegung ist fehlgeschlagen.',
+        );
+      },
+    });
+  }
+
+  /**
+   * Die Positionsliste holt ihren Stand neu.
+   *
+   * Sie lädt beim Aufbau anhand der `berichtId` — zu diesem Zeitpunkt war der
+   * Bericht noch leer. Wird danach von hier aus vorbelegt, merkt sie davon
+   * nichts und zeigte weiter „noch keine Positionen", obwohl der Server sie
+   * längst hat. Deshalb der direkte Anstoß über die Kindkomponente.
+   */
+  private readonly positionen = viewChild<BerichtPositionen>('positionen');
+
+  private positionenNeuLaden(): void {
+    this.positionen()?.neuLaden();
   }
 
   unterschriftOeffnen(): void {
@@ -403,71 +624,6 @@ export class Berichte {
     this.formularMeldung.set(null);
     felderAlsBeruehrtMarkieren(form);
     return form.invalid;
-  }
-
-  neuAbsenden(): void {
-    const a = this.anker();
-    if (!a || this.nichtBereit(this.berichtForm)) return;
-    const v = this.berichtForm.getRawValue();
-    const payload: SiteReportCreate = {
-      report_date: v.report_date,
-      activity_text: v.activity_text.trim(),
-      weather: v.weather.trim() || null,
-      hours_worked: deZuApiDezimal(v.hours_worked) || null,
-      materials_note: v.materials_note.trim() || null,
-      remarks: v.remarks.trim() || null,
-    };
-    if (a.art === 'einsatz') {
-      // Der Auftrag (falls es einen gibt) wird vom Server aus dem Einsatz
-      // abgeleitet — beim freien Termin gibt es keinen.
-      payload.service_job_id = a.id;
-    } else {
-      payload.work_order_id = a.id;
-      payload.service_job_id = v.service_job_id || null;
-    }
-    this.dialogLaedt.set(true);
-    this.svc.create(payload).subscribe({
-      next: (r) => {
-        this.dialogLaedt.set(false);
-        this.dialogOffen.set(null);
-        this.uebernehmen(r);
-        this.meldung.set({ art: 'erfolg', text: 'Baustellenbericht angelegt.' });
-      },
-      error: (err) => {
-        this.dialogLaedt.set(false);
-        this.formularMeldung.set(apiFehlerZuweisen(err, this.berichtForm).formular);
-      },
-    });
-  }
-
-  bearbeitenAbsenden(): void {
-    const r = this.ausgewaehlt();
-    if (!r || this.nichtBereit(this.berichtForm)) return;
-    const v = this.berichtForm.getRawValue();
-    const payload: SiteReportUpdate = {
-      report_date: v.report_date,
-      activity_text: v.activity_text.trim(),
-      weather: v.weather.trim() || null,
-      hours_worked: deZuApiDezimal(v.hours_worked) || null,
-      materials_note: v.materials_note.trim() || null,
-      remarks: v.remarks.trim() || null,
-    };
-    // Der Einsatzbezug ist in der Einsatzsicht nicht verhandelbar (und beim
-    // freien Termin ohnehin unveränderlich): dort gar nicht erst mitschicken.
-    if (!this.amEinsatz()) payload.service_job_id = v.service_job_id || null;
-    this.dialogLaedt.set(true);
-    this.svc.update(r.id, payload).subscribe({
-      next: (res) => {
-        this.dialogLaedt.set(false);
-        this.dialogOffen.set(null);
-        this.uebernehmen(res);
-        this.meldung.set({ art: 'erfolg', text: 'Bericht geändert.' });
-      },
-      error: (err) => {
-        this.dialogLaedt.set(false);
-        this.formularMeldung.set(apiFehlerZuweisen(err, this.berichtForm).formular);
-      },
-    });
   }
 
   unterschriftAbsenden(): void {
