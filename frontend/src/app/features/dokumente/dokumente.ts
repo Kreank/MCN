@@ -1,7 +1,7 @@
 import { DatePipe } from '@angular/common';
 import { Component, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { RouterLink } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 import {
   FormArray,
   FormBuilder,
@@ -17,6 +17,7 @@ import { AuftragService } from '../../core/auftrag.service';
 import { AuthService } from '../../core/auth.service';
 import {
   AnrechenbarerAbschlag,
+  Invoice,
   InvoiceCreate,
   InvoicePage,
   InvoiceStatus,
@@ -73,6 +74,7 @@ export class Dokumente {
   private readonly projektSvc = inject(ProjektService);
   private readonly auftragSvc = inject(AuftragService);
   private readonly auth = inject(AuthService);
+  private readonly router = inject(Router);
   private readonly fb = inject(FormBuilder);
 
   protected readonly pageSize = 20;
@@ -296,6 +298,9 @@ export class Dokumente {
   private fetch(): void {
     const id = ++this.reqId;
     const modus = this.modus();
+    // Jede neue Liste beginnt ohne Auswahl: Sonst führe man Belege zusammen, die
+    // man gerade gar nicht mehr vor sich hat.
+    this.auswahl.set([]);
     this.state.set({ kind: 'loading' });
     const query = { page: this.page(), page_size: this.pageSize, q: this.query() };
     if (modus === 'angebote') {
@@ -497,6 +502,100 @@ export class Dokumente {
     this.meldung.set(null);
   }
 
+  // ---- Sammelrechnung -----------------------------------------------------
+  //
+  // „Drei Bäder, alle drei Wohnungen gehören Herrn Meier" — statt drei Rechnungen
+  // ein Beleg mit einer Rubrik je Wohnung. Ausgewählt werden ausschließlich
+  // **Entwürfe vom Typ Rechnung**: Ein gestellter Beleg wird storniert, nicht
+  // zusammengefasst, und Abschlags-/Schlussrechnungen tragen eine Anrechnungs-
+  // kette, die sich nicht mit umhängen lässt (der Server lehnt beides mit 422 ab
+  // — die Auswahl bietet es erst gar nicht an).
+
+  /** IDs der für die Sammelrechnung gewählten Entwürfe, in Auswahlreihenfolge. */
+  protected readonly auswahl = signal<string[]>([]);
+  protected readonly sammelBestaetigung = signal(false);
+  protected readonly sammelLaeuft = signal(false);
+
+  /** Nur Entwürfe vom Typ RECHNUNG lassen sich zusammenfassen. */
+  istSammelbar(inv: Invoice): boolean {
+    return inv.status === 'ENTWURF' && inv.invoice_type === 'RECHNUNG';
+  }
+
+  istGewaehlt(id: string): boolean {
+    return this.auswahl().includes(id);
+  }
+
+  /**
+   * An-/Abwählen. Die **Reihenfolge der Auswahl ist die Reihenfolge der Rubriken**
+   * auf dem Beleg — deshalb ein Array und kein Set: Wer zuerst Wohnung 3 anklickt,
+   * bekommt sie auch als ersten Abschnitt.
+   */
+  auswahlUmschalten(id: string): void {
+    this.auswahl.update((ids) =>
+      ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]
+    );
+  }
+
+  auswahlLeeren(): void {
+    this.auswahl.set([]);
+  }
+
+  /** Die gewählten Entwürfe der aktuellen Seite, in Auswahlreihenfolge. */
+  protected readonly gewaehlte = computed<Invoice[]>(() => {
+    const s = this.state();
+    if (s.kind !== 'ready' || s.modus !== 'rechnungen') return [];
+    const nach_id = new Map(s.data.items.map((inv) => [inv.id, inv]));
+    return this.auswahl()
+      .map((id) => nach_id.get(id))
+      .filter((inv): inv is Invoice => inv !== undefined);
+  });
+
+  /** Brutto-Summe der Auswahl — als Erwartung, nicht als Zusage: rechnen tut der Server. */
+  protected readonly auswahlBrutto = computed(() =>
+    this.gewaehlte().reduce((summe, inv) => summe + Number(inv.gross_total ?? 0), 0)
+  );
+
+  sammelDialogOeffnen(): void {
+    if (this.auswahl().length < 2) return;
+    this.sammelBestaetigung.set(true);
+  }
+
+  sammelDialogSchliessen(): void {
+    if (this.sammelLaeuft()) return;
+    this.sammelBestaetigung.set(false);
+  }
+
+  sammelAbsenden(): void {
+    const ids = this.auswahl();
+    if (ids.length < 2 || this.sammelLaeuft()) return;
+    this.sammelLaeuft.set(true);
+    this.svc.sammelrechnung({ invoice_ids: ids }).subscribe({
+      next: (inv) => {
+        this.sammelLaeuft.set(false);
+        this.sammelBestaetigung.set(false);
+        this.auswahlLeeren();
+        this.meldung.set({
+          art: 'erfolg',
+          text:
+            `${ids.length} Entwürfe zusammengefasst (brutto ${this.euro(inv.gross_total)}, ` +
+            'vom Server berechnet). Die Quellentwürfe sind verworfen.',
+        });
+        // Direkt zum neuen Beleg: Er ist zu prüfen, bevor er hinausgeht.
+        this.router.navigate(['/rechnungen', inv.id]);
+      },
+      error: (err) => {
+        this.sammelLaeuft.set(false);
+        this.sammelBestaetigung.set(false);
+        this.meldung.set({
+          art: 'fehler',
+          text:
+            err?.error?.detail ??
+            'Die Entwürfe ließen sich nicht zusammenfassen. Bitte die Auswahl prüfen.',
+        });
+      },
+    });
+  }
+
   // ---- Darstellungshelfer -------------------------------------------------
   /**
    * Belegnummer. Frueher stand hier bei fehlender Nummer „Entwurf" — dieselbe
@@ -537,10 +636,12 @@ export class Dokumente {
   }
 
   invoiceStatusLabel(s: InvoiceStatus): string {
-    return s === 'VEROEFFENTLICHT' ? 'Veröffentlicht' : 'Entwurf';
+    if (s === 'VEROEFFENTLICHT') return 'Veröffentlicht';
+    return s === 'VERWORFEN' ? 'Verworfen' : 'Entwurf';
   }
   invoiceStatusClass(s: InvoiceStatus): string {
-    return s === 'VEROEFFENTLICHT' ? 'stamp--positive' : '';
+    if (s === 'VEROEFFENTLICHT') return 'stamp--positive';
+    return s === 'VERWORFEN' ? 'stamp--warn' : '';
   }
 
   invoiceTypeLabel(t: InvoiceType): string {

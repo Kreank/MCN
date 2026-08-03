@@ -471,3 +471,32 @@ erzeugt werden.
 **Weiterhin gilt:** kein Auftrag über mehrere Wohnungen. Der Soll-Ist-Abgleich
 rechnet je Auftrag; ein Mehrverbrauch in Wohnung 1 höbe sonst einen
 Minderverbrauch in Wohnung 3 auf, und beide verschwänden aus der Ansicht.
+
+#### Nachtrag beim Bauen (2026-08-03): die Klammer ist die Quelle, nicht der Beleg
+
+Umgesetzt wie oben beschrieben (`abrechnung.sammelrechnung`,
+`POST /invoicing/invoices/sammelrechnung`, Auswahl im Belegregister) — **ohne
+Migration**. Ein Punkt kam beim Bauen dazu, der vorher nicht sichtbar war:
+
+Die **quellenübergreifende** Doppelabrechnungssperre (Review-Befund H-2, siehe
+`_bindungen_am_auftrag`) fragte über den **Beleg**: `invoice.work_order_id`. Das
+war korrekt, solange jede Rechnung genau die Quellen *ihres* Auftrags band. Die
+Sammelrechnung bricht genau diese Deckungsgleichheit: Sie hängt an **einem**
+Auftrag und bindet die Quellen **mehrerer**.
+
+Ohne Anpassung verlöre jeder andere beteiligte Auftrag seine Klammer:
+`_bindungen_am_auftrag` fände für ihn nichts mehr, `set_billing_mode` ließe die
+Abrechnungsart wieder umstellen, und `_billed_je_identitaet` zählte seine
+fakturierten Mengen nicht mit. Dieselbe Leistung wäre ein zweites Mal
+abrechenbar — und die vier UNIQUE-Indizes sähen es nicht, weil die Quellen
+verschieden sind.
+
+**Die Sperre fragt deshalb jetzt über die Herkunft der Quelle**
+(`_bindungen_des_auftrags`): Angebotsposition → Angebot → Auftrag,
+Berichtsposition → Bericht → Auftrag, Zeit-/Materialbuchung → Einsatz → Auftrag.
+Der Belegbezug bleibt als zusätzlicher Zweig stehen — er greift für Bindungen,
+deren Quelle keinen eigenen Auftragsbezug trägt.
+
+**Die allgemeine Lehre:** Wo eine Sperre über eine Klammer fragt, muss sie die
+Klammer der **Sache** nehmen, nicht die des Dokuments. Dokumente lassen sich
+umgruppieren; die Herkunft einer Leistung nicht.

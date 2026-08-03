@@ -101,6 +101,7 @@ import uuid
 from collections import OrderedDict
 from decimal import InvalidOperation, ROUND_HALF_UP, Decimal
 
+from django.db.models import Q
 from django.utils import timezone as dj_timezone
 
 from db_core.db_context import business_transaction
@@ -126,6 +127,7 @@ from db_core.models import (
 )
 from db_core.services import aufschlagsmatrix as matrix_service
 from db_core.services import beleg as beleg_service
+from db_core.services import belegbezug as bezug_service
 from db_core.services import site_report as report_service
 
 # Quellarten der Bindung (Codeliste aus Migration 0084, erweitert um 0139).
@@ -322,6 +324,33 @@ def _aktive_bindungen(*, quote_line_ids=None, site_report_line_ids=None,
     )
 
 
+def _bindungen_des_auftrags(work_order_id):
+    """Alle **aktiven** Bindungen, die Leistungen DIESES Auftrags abrechnen —
+    gleich, an welchem Beleg sie hängen.
+
+    **Warum nicht einfach `invoice__work_order_id`** (so war es bis zur
+    Sammelrechnung): Die Zuordnung Rechnung↔Auftrag ist seit der Sammelrechnung
+    nicht mehr deckungsgleich mit „wessen Leistung wird hier abgerechnet". Eine
+    Sammelrechnung hängt an **einem** Auftrag, bindet aber die Quellen mehrerer.
+    Fragte man weiter über den Beleg, verlöre jeder andere beteiligte Auftrag
+    seine Klammer: Die quellenübergreifende Doppelabrechnungssperre (Angebot vs.
+    Ist) fände nichts mehr, und dieselbe Leistung ließe sich ein zweites Mal
+    fakturieren — die vier UNIQUE-Indizes sähen es nicht, weil die Quellen
+    verschieden sind.
+
+    Deshalb wird über die **Herkunft der Quelle** gefragt. Der Belegbezug bleibt
+    als zusätzlicher Zweig stehen: Er greift für Bindungen, deren Quelle keinen
+    eigenen Auftragsbezug trägt (Angebot ohne Auftrag, Einsatz ohne Auftrag).
+    """
+    return BillingLink.objects.filter(released_at__isnull=True).filter(
+        Q(invoice__work_order_id=work_order_id)
+        | Q(quote_line__quote__work_order_id=work_order_id)
+        | Q(site_report_line__site_report__work_order_id=work_order_id)
+        | Q(time_entry__service_job__work_order_id=work_order_id)
+        | Q(material_entry__service_job__work_order_id=work_order_id)
+    )
+
+
 def _bindungen_am_auftrag(work_order_id, *, source_kinds):
     """Belegnummern der Rechnungen, die den Auftrag über die genannten Quellarten
     **aktiv** binden.
@@ -331,18 +360,17 @@ def _bindungen_am_auftrag(work_order_id, *, source_kinds):
     sie können per Konstruktion **nicht** sehen, dass die Angebotsposition „10 m
     Rohr" und die Berichtsposition „10 m Rohr" **dieselbe Leistung** sind. Die
     einzige Klammer, die beide Quellen zusammenhält, ist der **Auftrag**. Also
-    wird hier über ihn gefragt.
+    wird hier über ihn gefragt (siehe `_bindungen_des_auftrags` dazu, warum über
+    die Quelle und nicht über den Beleg).
     """
     if not work_order_id:
         return []
     return sorted(
         {
             (nr or "einem Rechnungsentwurf")
-            for nr in BillingLink.objects.filter(
-                invoice__work_order_id=work_order_id,
-                released_at__isnull=True,
-                source_kind__in=list(source_kinds),
-            ).values_list("invoice__invoice_number", flat=True)
+            for nr in _bindungen_des_auftrags(work_order_id)
+            .filter(source_kind__in=list(source_kinds))
+            .values_list("invoice__invoice_number", flat=True)
         }
     )
 
@@ -454,11 +482,11 @@ def _billed_je_identitaet(work_order_id):
     Quellmenge.
     """
     links = (
-        BillingLink.objects.filter(
-            invoice__work_order_id=work_order_id,
-            released_at__isnull=True,
-            invoice_line__isnull=False,
-        )
+        # Über die **Quelle**, nicht über den Beleg: Eine Sammelrechnung hängt an
+        # einem anderen Auftrag als dem, dessen Mengen hier zu zählen sind
+        # (siehe `_bindungen_des_auftrags`).
+        _bindungen_des_auftrags(work_order_id)
+        .filter(invoice_line__isnull=False)
         .exclude(source_kind=ZEITBUCHUNG)
         .select_related(
             "invoice_line", "quote_line", "material_entry",
@@ -2834,9 +2862,12 @@ def set_billing_mode(actor_app_user_id, *, work_order_id, billing_mode):
         )
     if order.billing_mode == billing_mode:
         return order
-    gebunden = BillingLink.objects.filter(
-        invoice__work_order_id=order.id, released_at__isnull=True
-    ).exists()
+    # Über die Quelle gefragt (siehe `_bindungen_des_auftrags`): Wäre die
+    # Leistung dieses Auftrags in eine Sammelrechnung eines anderen Auftrags
+    # gewandert, ließe sich die Abrechnungsart sonst wieder umstellen — und
+    # danach dieselbe Leistung über die jeweils andere Quelle ein zweites Mal
+    # fakturieren.
+    gebunden = _bindungen_des_auftrags(order.id).exists()
     rechnungen = _wirksame_rechnungen(order.id)
     if gebunden or rechnungen:
         woran = (
@@ -2866,3 +2897,476 @@ def set_billing_mode(actor_app_user_id, *, work_order_id, billing_mode):
             order.save(update_fields=["billing_mode", "updated_at"])
     order.refresh_from_db()
     return order
+
+
+# ---------------------------------------------------------------------------
+# Sammelrechnung
+# ---------------------------------------------------------------------------
+#
+# „Drei Bäder, alle drei Wohnungen gehören Herrn Meier" — eine Rechnung statt
+# drei. Der Weg ist bewusst eine **Verkettung vorhandener Bausteine** und kein
+# Schemaeingriff (Herleitung in `docs/ENTSCHEIDUNGEN.md`, Abschnitt
+# „Sammelrechnung: der Weg ohne Schemaeingriff"):
+#
+# 1. Je Wohnung entsteht wie gewohnt ein **Rechnungsentwurf** — mit eigenem
+#    Soll-Ist-Abgleich, eigener Wohnung, eigenem Auftrag.
+# 2. Beim Zusammenfassen prüft dieser Dienst, dass alle gewählten Entwürfe
+#    **demselben Eigentümer** gehören. Damit gilt die Invariante „nie zwei
+#    Eigentümer auf einer Rechnung" durch den Ablauf.
+# 3. Die Quellentwürfe werden **verworfen** (0147) — ihre Abrechnungsbindungen
+#    werden dabei gelöst, die Quellen sind wieder frei.
+# 4. Die Sammelrechnung entsteht als **eine** neue Rechnung an **einem** Auftrag
+#    (B-08 bleibt unangetastet) und bindet die freigewordenen Quellen neu. Je
+#    Quellentwurf eine Rubrik mit dem Wohnungsbezug als Titel; die Zwischensumme
+#    je Abschnitt kann das PDF bereits.
+#
+# **Schritt 3 und 4 laufen in EINER Transaktion.** Bräche es dazwischen ab,
+# wären die Entwürfe verworfen und die Sammelrechnung existierte nicht.
+
+#: Quellspalte je Bindungsart — zum Umhängen der Bindung auf die neue Position.
+_QUELLSPALTE = {
+    BERICHTSPOSITION: "site_report_line_id",
+    ZEITBUCHUNG: "time_entry_id",
+    ANGEBOTSPOSITION: "quote_line_id",
+    MATERIALBUCHUNG: "material_entry_id",
+}
+
+#: Der einzige Belegtyp, der sich zusammenfassen lässt. Abschlags-, Teil- und
+#: Schlussrechnungen tragen eine Anrechnungskette (`invoicing.invoice_advance`,
+#: Migration 0060); sie mit umzuhängen hieße, die Verrechnung der bereits
+#: gezahlten Abschläge neu zu erfinden — der teuerste Fehler der Domäne.
+_SAMMELBAR = "RECHNUNG"
+
+#: Grund, der an der gelösten Bindung stehen bleibt. Er ist der Rückweg: Wer
+#: später fragt, warum diese Stunde einmal frei wurde, liest ihn im Audit.
+_VERWERFEN_GRUND = "In Sammelrechnung zusammengefasst"
+
+
+def _sammel_eigentuemer(bezug):
+    """Vergleichsschlüssel der Eigentümer eines Belegbezugs.
+
+    Verglichen wird über die **Menge** der Namen (Groß-/Kleinschreibung und
+    Randleerzeichen normalisiert), nicht über die Reihenfolge: Bei
+    Bruchteilseigentum („Meier, Anna" + „Meier, Ben") ist die Reihenfolge der
+    Anteile keine Aussage.
+    """
+    namen = (bezug or {}).get("eigentuemer") or []
+    return frozenset(n.strip().casefold() for n in namen if (n or "").strip())
+
+
+def _sammel_rubrik(invoice, bezug):
+    """Titel und Beschreibung der Rubrik eines Quellentwurfs.
+
+    Der Titel ist der **Wohnungsbezug** — das, wonach der Empfänger die Position
+    sucht („Vorderhaus · WE 12"). Die Auftragsnummer steht in der Beschreibung:
+    Sie ist die interne Rückverfolgung, nicht die Überschrift für den Kunden.
+    """
+    order = invoice.work_order
+    nummer = (getattr(order, "order_number", "") or "").strip()
+
+    titel = None
+    if bezug:
+        if bezug.get("einheit"):
+            titel = bezug["einheit"]
+        elif (
+            bezug.get("gemeinschaftseigentum")
+            and bezug.get("eigentuemer_herkunft") == bezug_service.AUS_GEMEINSCHAFT
+        ):
+            titel = "Gemeinschaftseigentum"
+    if not titel:
+        # Kein Wohnungsbezug ableitbar (Auftrag ohne Einheit, Eigenheim): dann
+        # die Auftragsnummer als Überschrift — nichts wird erfunden.
+        titel = f"Auftrag {nummer}" if nummer else "Ohne Wohnungsbezug"
+
+    beschreibung = None
+    if nummer and not titel.endswith(nummer):
+        beschreibung = f"Auftrag {nummer}"
+    return {"title": titel, "description": beschreibung}
+
+
+#: Sentinel für „noch keine Rubrik gesehen" — `None` ist ein gültiger Wert
+#: (Position ohne Abschnitt) und taugt deshalb nicht als Startwert.
+_NICHT_GESETZT = object()
+
+
+def _sammel_positionen(entwuerfe, bezuege):
+    """Baut Positionen + Rubriken der Sammelrechnung aus den Quellentwürfen.
+
+    Je Quellentwurf **eine** Rubrik. Hatte ein Entwurf selbst schon Abschnitte,
+    wandern deren Titel als **Textzeile** in die Rubrik: Eine zweite Ebene gibt es
+    im Schema nicht, und eine verschluckte Gliederung machte aus zwei getrennten
+    Abschnitten eine ununterscheidbare Positionsliste.
+
+    Alle Positionen werden **wertgleich** kopiert (die Belegposition ist eine
+    eingefrorene Kopie, kein Verweis) — auch ALTERNATIV/BEDARF: Sie standen so im
+    Entwurf, und sie zählen hier wie dort nicht in die Summe.
+
+    Gibt `(lines, rubriken, quelle_je_position)` zurück; `quelle_je_position`
+    bildet die Positionsnummer der **neuen** Rechnung auf die ID der
+    Quellposition ab (dort hängen die umzuhängenden Bindungen).
+    """
+    lines, rubriken, quelle_je_position = [], [], {}
+    for idx, invoice in enumerate(entwuerfe, start=1):
+        rubriken.append(_sammel_rubrik(invoice, bezuege[invoice.id]))
+        titel_je_rubrik = {
+            r.id: r.title
+            for r in sorted(invoice.rubriken.all(), key=lambda r: r.position_number)
+        }
+        vorige_rubrik = _NICHT_GESETZT
+        for il in sorted(invoice.lines.all(), key=lambda l: l.position_number):
+            if il.rubrik_id != vorige_rubrik and il.rubrik_id in titel_je_rubrik:
+                lines.append(
+                    {
+                        "line_type": "TEXT",
+                        "line_kind": SUMMENWIRKSAM,
+                        "description": titel_je_rubrik[il.rubrik_id],
+                        "rubrik": idx,
+                    }
+                )
+            vorige_rubrik = il.rubrik_id
+
+            row = {
+                "line_type": il.line_type,
+                "line_kind": il.line_kind,
+                "description": il.description,
+                "rubrik": idx,
+            }
+            if il.line_type not in TEXT_TYPES:
+                row.update(
+                    quantity=il.quantity,
+                    unit=il.unit,
+                    unit_price=il.unit_price,
+                    discount_percent=il.discount_percent,
+                    tax_code=il.tax_code_id,
+                    # § 35a: der eingefrorene Arbeitskostenanteil wandert mit.
+                    # None bleibt None — eine Kopie erfindet keine Bestimmtheit.
+                    labour_net_amount=il.labour_net_amount,
+                    # Kalkulations-Snapshot: die Marge der Sammelrechnung ist die
+                    # der Entwürfe, nicht die von heute.
+                    unit_cost=il.unit_cost,
+                    markup_percent=il.markup_percent,
+                    sale_price_group_id=il.sale_price_group_id,
+                    source_article_id=il.source_article_id,
+                    source_assembly_id=il.source_assembly_id,
+                )
+            lines.append(row)
+            # `_prepare_lines` nummeriert die Positionen 1-basiert in genau dieser
+            # Reihenfolge — die Länge nach dem Anhängen IST die Positionsnummer.
+            quelle_je_position[len(lines)] = il.id
+    return lines, rubriken, quelle_je_position
+
+
+def _sammel_einheitlich(entwuerfe, feld, label):
+    """Ein Kopffeld, das über alle Quellentwürfe gleich sein muss.
+
+    Zahlungsziel, Skonto und der Ausweis der Arbeitskosten stehen **einmal** auf
+    dem Beleg. Wichen die Entwürfe darin ab, müsste dieser Dienst einen der Werte
+    auswählen — und die Sammelrechnung trüge stillschweigend ein anderes
+    Zahlungsziel als der Entwurf, den der Disponent gelesen hat. Also: nicht
+    raten, sondern fragen lassen (der Aufrufer kann den Wert explizit nennen).
+    """
+    werte = {getattr(inv, feld) for inv in entwuerfe}
+    if len(werte) > 1:
+        raise AbrechnungError(
+            f"Die gewählten Entwürfe haben unterschiedliche Werte für {label}. "
+            "Bitte den Wert für die Sammelrechnung ausdrücklich angeben oder die "
+            "Entwürfe angleichen — ein stillschweigend gewählter Wert stünde "
+            "anders auf dem Beleg als im Entwurf."
+        )
+    return werte.pop() if werte else None
+
+
+def _sammel_entwuerfe_laden(invoice_ids):
+    """Lädt die Quellentwürfe in der übergebenen Reihenfolge und prüft sie."""
+    ids = list(dict.fromkeys(invoice_ids or []))
+    if len(ids) < 2:
+        raise AbrechnungError(
+            "Eine Sammelrechnung fasst mindestens zwei Rechnungsentwürfe zusammen."
+        )
+    gefunden = {
+        inv.id: inv
+        for inv in Invoice.objects.filter(id__in=ids)
+        .select_related("work_order__unit__building", "property")
+        .prefetch_related("lines", "rubriken")
+    }
+    fehlend = [str(i) for i in ids if i not in gefunden]
+    if fehlend:
+        raise AbrechnungError(
+            f"Rechnungsentwurf nicht gefunden: {', '.join(fehlend)}."
+        )
+    entwuerfe = [gefunden[i] for i in ids]
+
+    for inv in entwuerfe:
+        if inv.status != "ENTWURF":
+            bezeichnung = inv.invoice_number or str(inv.id)
+            raise AbrechnungError(
+                f"Beleg {bezeichnung} steht im Status {inv.status.lower()} und "
+                "lässt sich nicht zusammenfassen. Zusammengefasst werden nur "
+                "Entwürfe — ein gestellter Beleg wird storniert."
+            )
+        if inv.invoice_type != _SAMMELBAR:
+            raise AbrechnungError(
+                f"Beleg {inv.invoice_number or inv.id} ist eine "
+                f"{inv.invoice_type.capitalize()}. Zusammengefasst werden nur "
+                "Rechnungen: Abschlags-, Teil- und Schlussrechnungen tragen eine "
+                "Anrechnungskette, die sich nicht mit umhängen lässt, ohne die "
+                "Verrechnung der bereits gezahlten Abschläge neu zu erfinden."
+            )
+
+    liegenschaften = {inv.property_id for inv in entwuerfe}
+    if len(liegenschaften) > 1:
+        raise AbrechnungError(
+            "Die gewählten Entwürfe gehören zu verschiedenen Liegenschaften. Eine "
+            "Rechnung trägt genau einen Leistungsort — er steht auf dem Beleg und "
+            "im eingefrorenen Snapshot."
+        )
+    return entwuerfe
+
+
+def _sammel_eigentuemer_pruefen(entwuerfe):
+    """Alle Entwürfe müssen demselben Eigentümer gehören (INVARIANTEN.md §2).
+
+    **Ausnahmslos.** Der Eigentümer ist der wirtschaftlich Verpflichtete; zwei
+    davon auf einem Beleg hieße, dass niemand die volle Summe schuldet — die
+    Forderung wäre nicht durchsetzbar, und der Beleg müsste storniert und geteilt
+    werden.
+
+    Bisher war die Regel *physisch* unverletzbar, weil eine Rechnung an genau
+    einem Auftrag hängt (B-08) und ein Auftrag höchstens eine Einheit trägt. Die
+    Sammelrechnung hebt genau diese Kopplung auf — **hier** ist deshalb die
+    Stelle, an der die Regel ausdrücklich durchgesetzt wird (so verlangt es die
+    Invariante wörtlich).
+
+    Lässt sich für einen Entwurf **kein** Eigentümer ermitteln, bricht der Vorgang
+    ab: Ohne Eigentümer ist die Gleichheit nicht prüfbar, und „nicht prüfbar" darf
+    hier nicht „durchgelassen" heißen.
+    """
+    bezuege, schluessel = {}, {}
+    for inv in entwuerfe:
+        bezug = bezug_service.bezug_aufloesen(inv.work_order, inv.property)
+        bezuege[inv.id] = bezug
+        eigentuemer = _sammel_eigentuemer(bezug)
+        if not eigentuemer:
+            raise AbrechnungError(
+                f"Für Entwurf {inv.invoice_number or inv.id} ist kein Eigentümer "
+                "hinterlegt. Ohne Eigentümer lässt sich nicht prüfen, ob alle "
+                "Entwürfe demselben gehören — und genau das ist die Bedingung für "
+                "eine Sammelrechnung. Bitte den Eigentumsstand der Wohnung bzw. "
+                "die Eigentümerrolle an der Liegenschaft pflegen."
+            )
+        schluessel[inv.id] = eigentuemer
+
+    verschieden = set(schluessel.values())
+    if len(verschieden) > 1:
+        namen = sorted(
+            ", ".join(sorted((bezuege[i] or {}).get("eigentuemer") or []))
+            for i in schluessel
+        )
+        raise AbrechnungError(
+            "Die gewählten Entwürfe gehören verschiedenen Eigentümern "
+            f"({' | '.join(dict.fromkeys(namen))}). Auf einer Rechnung darf nur "
+            "EIN Eigentümer stehen — er ist der wirtschaftlich Verpflichtete. "
+            "Stünden zwei darauf, schuldete niemand die volle Summe und die "
+            "Forderung wäre nicht durchsetzbar."
+        )
+    return bezuege
+
+
+def _sammel_zielauftrag(entwuerfe, work_order_id):
+    """Der eine Auftrag, an dem die Sammelrechnung hängt (B-08).
+
+    Die Rechnung zeigt weiterhin auf **genau einen** kaufmännisch geprüften
+    Auftrag — das Freigabetor wird nicht angefasst. Welcher es ist, darf der
+    Aufrufer sagen; er muss aber einer der Aufträge der zusammengefassten
+    Entwürfe sein, sonst führte die Rechnung an einem Vorgang, mit dem sie nichts
+    zu tun hat.
+    """
+    auftraege = [inv.work_order_id for inv in entwuerfe if inv.work_order_id]
+    if not auftraege:
+        raise AbrechnungError(
+            "Keiner der gewählten Entwürfe ist einem Auftrag zugeordnet. Eine "
+            "Rechnung lässt sich ohne Auftrag nicht veröffentlichen (B-08)."
+        )
+    if work_order_id is None:
+        return auftraege[0]
+    if work_order_id not in set(auftraege):
+        raise AbrechnungError(
+            "Der angegebene Auftrag gehört zu keinem der zusammengefassten "
+            "Entwürfe. Die Sammelrechnung hängt an einem der beteiligten "
+            "Aufträge — nicht an einem beliebigen."
+        )
+    return work_order_id
+
+
+def sammelrechnung(
+    actor_app_user_id,
+    *,
+    invoice_ids,
+    work_order_id=None,
+    invoice_date=None,
+    due_date=None,
+    payment_term_days=None,
+    discount_percent=None,
+    discount_days=None,
+    show_labour_costs=None,
+    grund=None,
+):
+    """Fasst mehrere Rechnungs**entwürfe** desselben Eigentümers zu einer Rechnung.
+
+    „Drei Bäder, alle drei Wohnungen gehören Herrn Meier" — der Kunde bekommt
+    **einen** Beleg, gegliedert in eine Rubrik je Wohnung, mit Zwischensumme je
+    Abschnitt.
+
+    Der Ablauf in **einer** Transaktion:
+
+    1. Die aktiven Abrechnungsbindungen der Quellentwürfe werden **gelöst**
+       (`released_at` + Grund — dieselbe Mechanik wie beim Storno).
+    2. Die Quellentwürfe gehen auf `VERWORFEN` (0147). Sie bleiben vollständig
+       lesbar, sind aber nirgends mehr im Weg.
+    3. Die Sammelrechnung entsteht als neue Rechnung an **einem** Auftrag und
+       bindet die freigewordenen Quellen neu — Stunde für Stunde, Position für
+       Position.
+
+    Bräche es zwischen 2 und 3 ab, wären die Entwürfe verworfen und die
+    Sammelrechnung existierte nicht; die Arbeit wäre zwar nicht verloren (die
+    Quellen sind wieder frei), aber die Entwürfe müssten neu erzeugt werden.
+    Genau deshalb ist es **eine** Transaktion.
+
+    **Kein Auftrag über mehrere Wohnungen** — der Soll-Ist-Abgleich rechnet je
+    Auftrag; ein Mehrverbrauch in Wohnung 1 höbe sonst einen Minderverbrauch in
+    Wohnung 3 auf, und beide verschwänden aus der Ansicht. Deshalb bleiben die
+    Aufträge getrennt und nur der **Beleg** wird zusammengefasst.
+    """
+    entwuerfe = _sammel_entwuerfe_laden(invoice_ids)
+    bezuege = _sammel_eigentuemer_pruefen(entwuerfe)
+    ziel_auftrag = _sammel_zielauftrag(entwuerfe, work_order_id)
+    ziel = next(inv for inv in entwuerfe if inv.work_order_id == ziel_auftrag)
+
+    # Kopffelder: explizit genannt gewinnt, sonst der (einheitliche) Wert der
+    # Entwürfe. Zahlungsbedingungen gelten als **ein** Satz — wer eines der drei
+    # Felder nennt, nennt sie alle (sonst stünde ein Skontosatz aus dem Entwurf
+    # neben einem frisch genannten Zahlungsziel).
+    bedingungen_genannt = any(
+        v is not None for v in (payment_term_days, discount_percent, discount_days)
+    )
+    if not bedingungen_genannt:
+        payment_term_days = _sammel_einheitlich(
+            entwuerfe, "payment_term_days", "das Zahlungsziel"
+        )
+        discount_percent = _sammel_einheitlich(
+            entwuerfe, "discount_percent", "den Skontosatz"
+        )
+        discount_days = _sammel_einheitlich(
+            entwuerfe, "discount_days", "die Skontofrist"
+        )
+    if show_labour_costs is None:
+        show_labour_costs = _sammel_einheitlich(
+            entwuerfe, "show_labour_costs", "den Ausweis der Arbeitskosten"
+        )
+        if show_labour_costs is None:
+            show_labour_costs = True
+
+    lines, rubriken, quelle_je_position = _sammel_positionen(entwuerfe, bezuege)
+    if not any(l["line_type"] not in TEXT_TYPES for l in lines):
+        raise AbrechnungError(
+            "Die gewählten Entwürfe enthalten keine Betragsposition — es gäbe "
+            "nichts zusammenzufassen."
+        )
+    text = (grund or "").strip() or _VERWERFEN_GRUND
+
+    with as_business_error():
+        with business_transaction(actor_app_user_id):
+            # Die beteiligten Aufträge zuerst sperren — nach ID sortiert, damit
+            # zwei gleichzeitige Sammelläufe über dieselben Aufträge nicht über
+            # Kreuz aufeinander warten. Dieselbe Klammer wie in
+            # `rechnung_aus_angebot`: Ab hier sieht dieser Lauf jede gleichzeitige
+            # Bindung der anderen Abrechnungswege.
+            for auftrag_id in sorted(
+                {inv.work_order_id for inv in entwuerfe if inv.work_order_id},
+                key=str,
+            ):
+                _auftrag_sperren(auftrag_id)
+            # Und die Entwürfe selbst: Ohne die Sperre könnte ein Nebenläufer
+            # zwischen Prüfung und Verwerfen denselben Entwurf veröffentlichen —
+            # seine Bindungen wären dann gelöst, obwohl der Beleg beim Kunden ist.
+            gesperrt = {
+                inv.id: inv
+                for inv in Invoice.objects.select_for_update().filter(
+                    id__in=[e.id for e in entwuerfe]
+                )
+            }
+            for inv in entwuerfe:
+                frisch = gesperrt.get(inv.id)
+                if frisch is None or frisch.status != "ENTWURF":
+                    raise AbrechnungError(
+                        f"Beleg {inv.invoice_number or inv.id} ist nicht mehr im "
+                        "Entwurf (zwischenzeitlich veröffentlicht oder verworfen). "
+                        "Bitte die Auswahl neu treffen."
+                    )
+
+            aktive = list(
+                BillingLink.objects.select_for_update().filter(
+                    invoice_id__in=[e.id for e in entwuerfe], released_at__isnull=True
+                )
+            )
+            # 1. Bindungen lösen — erst danach ist die Quelle für die neue
+            #    Rechnung frei (die vier UNIQUE-Indizes greifen auf
+            #    `released_at IS NULL`). Die gelöste Bindung bleibt als Nachweis
+            #    stehen; ihr `invoice_line_id` bleibt gesetzt, weil die Position
+            #    des verworfenen Entwurfs stehen bleibt.
+            if aktive:
+                BillingLink.objects.filter(id__in=[b.id for b in aktive]).update(
+                    released_at=dj_timezone.now(), released_reason=text
+                )
+            # 2. Die Quellentwürfe verwerfen (0147). Der Trigger lässt den
+            #    Übergang nur aus ENTWURF zu — und aus VERWORFEN führt kein Weg
+            #    zurück.
+            Invoice.objects.filter(id__in=[e.id for e in entwuerfe]).update(
+                status="VERWORFEN"
+            )
+            # 3. Die Sammelrechnung anlegen.
+            invoice = beleg_service.create_invoice(
+                actor_app_user_id,
+                property_id=ziel.property_id,
+                invoice_type=_SAMMELBAR,
+                project_id=ziel.project_id,
+                work_order_id=ziel_auftrag,
+                service_case_id=ziel.service_case_id,
+                invoice_date=invoice_date,
+                due_date=due_date,
+                payment_term_days=payment_term_days,
+                discount_percent=discount_percent,
+                discount_days=discount_days,
+                show_labour_costs=bool(show_labour_costs),
+                rubriken=rubriken,
+                lines=lines,
+            )
+            # 4. Die Bindungen neu setzen — je Quellposition alle ihre Bindungen.
+            #    Eine Zeitposition trägt so viele Bindungen wie Stempelungen
+            #    (`rechnung_aus_auftrag`); jede einzelne muss mitwandern, sonst
+            #    ließe sich eine Stunde später doch noch ein zweites Mal
+            #    abrechnen.
+            bindungen_je_quellzeile = {}
+            for bl in aktive:
+                bindungen_je_quellzeile.setdefault(bl.invoice_line_id, []).append(bl)
+            neue_zeilen = {
+                l.position_number: l
+                for l in InvoiceLine.objects.filter(invoice_id=invoice.id)
+            }
+            for pos, quell_line_id in quelle_je_position.items():
+                for bl in bindungen_je_quellzeile.get(quell_line_id, ()):
+                    spalte = _QUELLSPALTE.get(bl.source_kind)
+                    if spalte is None:  # pragma: no cover — Codeliste 0084/0139
+                        raise AbrechnungError(
+                            f"Unbekannte Bindungsart '{bl.source_kind}' — die "
+                            "Sammelrechnung kann sie nicht umhängen."
+                        )
+                    BillingLink.objects.create(
+                        id=uuid.uuid4(),
+                        invoice_id=invoice.id,
+                        invoice_line_id=neue_zeilen[pos].id,
+                        source_kind=bl.source_kind,
+                        **{spalte: getattr(bl, spalte)},
+                    )
+    invoice.refresh_from_db()
+    return invoice

@@ -183,10 +183,12 @@ export class Belege {
   }
 
   invoiceStatusLabel(s: InvoiceStatus): string {
-    return s === 'VEROEFFENTLICHT' ? 'Veröffentlicht' : 'Entwurf';
+    if (s === 'VEROEFFENTLICHT') return 'Veröffentlicht';
+    return s === 'VERWORFEN' ? 'Verworfen' : 'Entwurf';
   }
   invoiceStatusClass(s: InvoiceStatus): string {
-    return s === 'VEROEFFENTLICHT' ? 'stamp--positive' : '';
+    if (s === 'VEROEFFENTLICHT') return 'stamp--positive';
+    return s === 'VERWORFEN' ? 'stamp--warn' : '';
   }
 
   invoiceTypeLabel(t: InvoiceType): string {

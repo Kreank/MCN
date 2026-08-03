@@ -1507,6 +1507,32 @@ class RechnungAusAuftragIn(Schema):
     show_labour_costs: bool = True
 
 
+class SammelrechnungIn(Schema):
+    """Mehrere Rechnungs**entwürfe** desselben Eigentümers zu einer Rechnung.
+
+    Die Reihenfolge von `invoice_ids` ist die Reihenfolge der **Rubriken** auf dem
+    Beleg — der Aufrufer bestimmt, in welcher Folge die Wohnungen erscheinen.
+    """
+
+    invoice_ids: list[UUID]
+    # Der eine Auftrag, an dem die Sammelrechnung hängt (B-08). Ohne Angabe der
+    # Auftrag des ersten Entwurfs; angegeben muss er einer der beteiligten sein.
+    work_order_id: UUID | None = None
+    invoice_date: date | None = None
+    due_date: date | None = None
+    # Ohne Angabe werden die Zahlungsbedingungen aus den Entwürfen übernommen —
+    # aber nur, wenn sie dort einheitlich sind. Sonst 422 mit der Bitte, den Wert
+    # zu nennen: ein stillschweigend gewähltes Zahlungsziel stünde anders auf dem
+    # Beleg als im Entwurf, den der Disponent gelesen hat.
+    payment_term_days: int | None = None
+    discount_percent: Decimal | None = None
+    discount_days: int | None = None
+    show_labour_costs: bool | None = None
+    # Steht an der gelösten Bindung und im Audit — der Rückweg zu der Frage,
+    # warum diese Stunde einmal frei wurde.
+    grund: str | None = None
+
+
 @router.post(
     "/invoices/aus-angebot",
     response={201: InvoiceDetailOut, 422: EinheitUneindeutigFehlerOut},
@@ -1714,6 +1740,45 @@ def rechnung_aus_nachtrag(request, payload: RechnungAusNachtragIn):
                 detail=str(exc),
                 preis_unbekannt=[NachtragKlaerungOut(**p) for p in exc.positionen],
             ),
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return Status(201, _invoice_detail(invoice.id))
+
+
+@router.post(
+    "/invoices/sammelrechnung",
+    response={201: InvoiceDetailOut},
+    auth=django_auth,
+)
+def sammelrechnung(request, payload: SammelrechnungIn):
+    """Mehrere Rechnungs**entwürfe** zu **einer** Rechnung zusammenfassen.
+
+    „Drei Bäder, alle drei Wohnungen gehören Herrn Meier" — der Kunde bekommt
+    einen Beleg, gegliedert in eine Rubrik je Wohnung, mit Zwischensumme je
+    Abschnitt.
+
+    Die Quellentwürfe werden dabei **verworfen** und ihre Abrechnungsbindungen
+    auf die Sammelrechnung umgehängt — alles in einer Transaktion. Der Beleg
+    hängt weiterhin an **einem** Auftrag (B-08 unangetastet); die Aufträge selbst
+    bleiben getrennt, damit der Soll-Ist-Abgleich je Wohnung rechnet.
+
+    **422**, wenn die Entwürfe verschiedenen Eigentümern gehören — auf einer
+    Rechnung steht nur EIN wirtschaftlich Verpflichteter (INVARIANTEN.md §2).
+    """
+    actor, _ = require(request, "invoicing", "ANLEGEN")
+    try:
+        invoice = abrechnung_service.sammelrechnung(
+            actor,
+            invoice_ids=payload.invoice_ids,
+            work_order_id=payload.work_order_id,
+            invoice_date=payload.invoice_date,
+            due_date=payload.due_date,
+            payment_term_days=payload.payment_term_days,
+            discount_percent=payload.discount_percent,
+            discount_days=payload.discount_days,
+            show_labour_costs=payload.show_labour_costs,
+            grund=payload.grund,
         )
     except ValueError as exc:
         raise HttpError(422, str(exc))

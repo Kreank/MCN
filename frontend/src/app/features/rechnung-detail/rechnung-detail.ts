@@ -838,10 +838,12 @@ export class RechnungDetail {
   }
 
   statusLabel(s: InvoiceStatus): string {
-    return s === 'VEROEFFENTLICHT' ? 'Veröffentlicht' : 'Entwurf';
+    if (s === 'VEROEFFENTLICHT') return 'Veröffentlicht';
+    return s === 'VERWORFEN' ? 'Verworfen' : 'Entwurf';
   }
   statusClass(s: InvoiceStatus): string {
-    return s === 'VEROEFFENTLICHT' ? 'stamp--positive' : '';
+    if (s === 'VEROEFFENTLICHT') return 'stamp--positive';
+    return s === 'VERWORFEN' ? 'stamp--warn' : '';
   }
 
   lineTypeLabel(t: LineType): string {

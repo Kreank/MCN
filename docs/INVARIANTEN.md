@@ -56,10 +56,19 @@ Ausführliche Herleitungen: `docs/archiv/chronik-2026-07.md`.
   Forderung wäre nicht durchsetzbar und die Rechnung müsste storniert und geteilt
   werden. Auftraggeber bleibt in allen Fällen die Verwaltung; das ist eine **andere**
   Rolle (`PRINCIPAL`) als der Schuldner (`INVOICE_DEBTOR`).
-  *Stand 2026-08-02: physisch unverletzbar, weil eine Rechnung an genau einem Auftrag
-  hängt (B-08, Trigger) und ein Auftrag höchstens eine `unit` trägt. **Wer das ändert,
-  um Sammelrechnungen zu ermöglichen, muss diese Regel ausdrücklich durchsetzen** —
-  sonst fällt die einzige Sicherung weg, die es dafür gibt.*
+  *Stand 2026-08-03 — **die Regel wird jetzt von einem Dienst getragen, nicht mehr
+  von der Physik.** Bis zur Sammelrechnung war sie unverletzbar, weil eine Rechnung an
+  genau einem Auftrag hängt (B-08, Trigger) und ein Auftrag höchstens eine `unit`
+  trägt. Der Beleg hängt weiterhin an genau einem Auftrag — aber die Sammelrechnung
+  führt Positionen mehrerer Wohnungen zusammen, und damit greift die alte Physik nicht
+  mehr für alle davon.*
+  ***Die einzige verbliebene Sicherung ist `abrechnung._sammel_eigentuemer_pruefen`***
+  *(Test `test_verschiedene_eigentuemer_werden_abgelehnt`): Sie vergleicht die
+  Eigentümer aller Quellentwürfe über `belegbezug.bezug_aufloesen` und bricht ab,
+  sobald sie abweichen — oder sobald für einen Entwurf **kein** Eigentümer ermittelbar
+  ist („nicht prüfbar" heißt hier nicht „durchgelassen"). Wer einen **weiteren** Weg
+  baut, auf dem Positionen verschiedener Aufträge auf einen Beleg kommen, muss diese
+  Prüfung dort ausdrücklich wiederholen. Es gibt keinen Trigger, der ihn auffängt.*
 - **Die WEG-Eigentumsgrenze bestimmt, wer auf dem Beleg steht** (Sascha, 2026-08-01):
   **Ab Strang-/Wohnungsabsperrung ist es Sondereigentum — Sache des Eigentümers. Alles
   davor (Schacht, Keller, Steigleitung) ist Gemeinschaftseigentum und läuft über die WEG.**

@@ -350,7 +350,12 @@ export type InvoiceType =
   | 'SCHLUSSRECHNUNG'
   | 'GUTSCHRIFT'
   | 'STORNO';
-export type InvoiceStatus = 'ENTWURF' | 'VEROEFFENTLICHT';
+/**
+ * `VERWORFEN` (Migration 0147) ist ein zurückgezogener **Entwurf**: aus Listen
+ * ausgeblendet, Abrechnungsbindungen gelöst, aber vollständig lesbar. Eine
+ * gestellte Rechnung wird nie verworfen, sondern storniert.
+ */
+export type InvoiceStatus = 'ENTWURF' | 'VEROEFFENTLICHT' | 'VERWORFEN';
 
 export interface Invoice {
   id: string;
@@ -770,6 +775,31 @@ export interface RechnungAusNachtrag {
   discount_percent?: string | null;
   discount_days?: number | null;
   show_labour_costs?: boolean;
+}
+
+/**
+ * POST /api/invoicing/invoices/sammelrechnung — mehrere Rechnungs**entwürfe**
+ * desselben Eigentümers zu **einem** Beleg zusammenfassen.
+ *
+ * „Drei Bäder, alle drei Wohnungen gehören Herrn Meier": Die Reihenfolge von
+ * `invoice_ids` ist die Reihenfolge der **Rubriken** auf dem Beleg. Die
+ * Quellentwürfe werden dabei verworfen, ihre Abrechnungsbindungen wandern mit.
+ *
+ * Gehören die Entwürfe verschiedenen Eigentümern, antwortet der Server mit
+ * **422** — auf einer Rechnung steht nur EIN wirtschaftlich Verpflichteter.
+ */
+export interface Sammelrechnung {
+  invoice_ids: string[];
+  /** Der eine Auftrag, an dem der Beleg hängt. Ohne Angabe der des ersten Entwurfs. */
+  work_order_id?: string | null;
+  invoice_date?: string | null;
+  due_date?: string | null;
+  /** Ohne Angabe aus den Entwürfen übernommen — sofern sie dort einheitlich sind. */
+  payment_term_days?: number | null;
+  discount_percent?: string | null;
+  discount_days?: number | null;
+  show_labour_costs?: boolean | null;
+  grund?: string | null;
 }
 
 /**

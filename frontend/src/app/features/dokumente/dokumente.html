@@ -147,7 +147,25 @@
             }
           } @else {
             @for (inv of $any(state()).data.items; track inv.id) {
-              <li>
+              <li class="row-wahl" [class.is-gewaehlt]="istGewaehlt(inv.id)">
+                @if (darfAnlegen() && istSammelbar(inv)) {
+                  <!-- Bewusst NEBEN der Zeile, nicht darin: ein Bedienelement im
+                       Link wäre verschachtelt interaktiv und mit der Tastatur
+                       nicht sauber erreichbar. -->
+                  <input
+                    type="checkbox"
+                    class="row-wahl__box"
+                    [id]="'sammel-' + inv.id"
+                    [checked]="istGewaehlt(inv.id)"
+                    (change)="auswahlUmschalten(inv.id)"
+                  />
+                  <label class="sr-only" [attr.for]="'sammel-' + inv.id">
+                    Entwurf {{ belegNummer(inv.invoice_number) }} über
+                    {{ euro(inv.gross_total) }} für eine Sammelrechnung auswählen
+                  </label>
+                } @else {
+                  <span class="row-wahl__box row-wahl__box--leer" aria-hidden="true"></span>
+                }
                 <a class="row" [routerLink]="['/rechnungen', inv.id]">
                   <span class="row__badge row__badge--re" aria-hidden="true">RE</span>
                   <span class="row__body">
@@ -169,6 +187,34 @@
             }
           }
         </ul>
+
+        @if (modus() === 'rechnungen' && darfAnlegen() && auswahl().length > 0) {
+          <div class="sammelleiste" role="region" aria-label="Ausgewählte Entwürfe">
+            <p class="sammelleiste__text">
+              <strong>{{ auswahl().length }}</strong>
+              {{ auswahl().length === 1 ? 'Entwurf ausgewählt' : 'Entwürfe ausgewählt' }}
+              <span class="sammelleiste__summe">
+                · zusammen {{ euro(auswahlBrutto().toFixed(2)) }} brutto
+              </span>
+              @if (auswahl().length === 1) {
+                <span class="sammelleiste__hinweis">
+                  — ab zwei Entwürfen lässt sich zusammenfassen.
+                </span>
+              }
+            </p>
+            <div class="sammelleiste__aktionen">
+              <button type="button" class="btn" (click)="auswahlLeeren()">Auswahl aufheben</button>
+              <button
+                type="button"
+                class="btn btn--primary"
+                [disabled]="auswahl().length < 2"
+                (click)="sammelDialogOeffnen()"
+              >
+                Zu einer Rechnung zusammenfassen
+              </button>
+            </div>
+          </div>
+        }
 
         <nav class="pager" aria-label="Blättern">
           <button type="button" class="btn" (click)="prev()" [disabled]="page() <= 1">Zurück</button>
@@ -351,6 +397,68 @@
           Wird angelegt …
         } @else {
           {{ neuArt() === 'angebot' ? 'Angebot anlegen' : 'Rechnung anlegen' }}
+        }
+      </button>
+    </div>
+  </app-dialog>
+
+  <!-- ------------------------- Sammelrechnung --------------------------- -->
+  <app-dialog
+    [offen]="sammelBestaetigung()"
+    titel="Entwürfe zu einer Rechnung zusammenfassen?"
+    (schliessen)="sammelDialogSchliessen()"
+  >
+    <div class="dialog-form">
+      <p class="dialog-hinweis">
+        Aus {{ auswahl().length }} Entwürfen entsteht <strong>ein</strong> neuer
+        Rechnungsentwurf — je Quellentwurf ein Abschnitt mit dem Wohnungsbezug als
+        Überschrift und eigener Zwischensumme.
+      </p>
+
+      <ol class="sammelliste">
+        @for (inv of gewaehlte(); track inv.id) {
+          <li class="sammelliste__zeile">
+            <span class="sammelliste__nr">{{ $index + 1 }}.</span>
+            <span class="sammelliste__text">
+              {{ invoiceTypeLabel(inv.invoice_type) }} {{ belegNummer(inv.invoice_number) }}
+              <span class="sammelliste__ort">◧ {{ inv.property.city }}</span>
+            </span>
+            <span class="sammelliste__sum">{{ euro(inv.gross_total) }}</span>
+          </li>
+        }
+      </ol>
+
+      <p class="dialog-hinweis">
+        Die Reihenfolge oben ist die Reihenfolge der Abschnitte auf dem Beleg —
+        sie folgt der Reihenfolge, in der ausgewählt wurde.
+      </p>
+
+      <div class="melde melde--warten">
+        <span class="melde__mark" aria-hidden="true">!</span>
+        <span class="melde__text">
+          Die gewählten Entwürfe werden dabei <strong>verworfen</strong>. Sie
+          bleiben lesbar, stehen aber nicht mehr in den Listen. Alle Entwürfe
+          müssen demselben <strong>Eigentümer</strong> gehören — sonst lehnt der
+          Server ab: Auf einer Rechnung steht nur ein Verpflichteter.
+        </span>
+      </div>
+    </div>
+
+    <div dialog-aktionen class="dialog__aktionen">
+      <button type="button" class="btn" [disabled]="sammelLaeuft()" (click)="sammelDialogSchliessen()">
+        Abbrechen
+      </button>
+      <button
+        type="button"
+        class="btn btn--primary"
+        [disabled]="sammelLaeuft()"
+        [attr.aria-busy]="sammelLaeuft()"
+        (click)="sammelAbsenden()"
+      >
+        @if (sammelLaeuft()) {
+          Wird zusammengefasst …
+        } @else {
+          Zusammenfassen
         }
       </button>
     </div>

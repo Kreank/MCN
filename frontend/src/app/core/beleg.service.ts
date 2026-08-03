@@ -29,6 +29,7 @@ import {
   RechnungAusAngebot,
   RechnungAusAuftrag,
   RechnungAusNachtrag,
+  Sammelrechnung,
 } from './beleg.model';
 
 /** Typisierter Zugriff auf die Beleg-API (dev-Proxy: /api -> :8000). */
@@ -281,6 +282,19 @@ export class BelegService {
    */
   rechnungAusNachtrag(payload: RechnungAusNachtrag): Observable<InvoiceDetail> {
     return this.http.post<InvoiceDetail>('/api/invoicing/invoices/aus-nachtrag', payload);
+  }
+
+  /**
+   * Mehrere Rechnungs**entwürfe** desselben Eigentümers zu **einem** Beleg —
+   * eine Rubrik je Wohnung, mit Zwischensumme je Abschnitt.
+   *
+   * Die Quellentwürfe werden dabei **verworfen** und ihre Abrechnungsbindungen
+   * auf die neue Rechnung umgehängt; der Vorgang läuft serverseitig in einer
+   * Transaktion. Gehören die Entwürfe verschiedenen Eigentümern, antwortet der
+   * Server mit **422** — auf einer Rechnung steht nur EIN Verpflichteter.
+   */
+  sammelrechnung(payload: Sammelrechnung): Observable<InvoiceDetail> {
+    return this.http.post<InvoiceDetail>('/api/invoicing/invoices/sammelrechnung', payload);
   }
 
   /**

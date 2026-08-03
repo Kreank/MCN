@@ -77,20 +77,8 @@ eigenen Dateien (unten).
    jeder sollte sich einmal anmelden und im Produkt sein eigenes setzen; ab jetzt
    bleibt es erhalten. Der Reset-per-Mail-Weg funktioniert dafür **nicht**, solange
    `MCN_EMAIL_BACKEND` auf Konsole steht.
-3. **Sammelrechnung** — entschieden, noch nicht gebaut. Der Weg: aus mehreren
-   Rechnungs**entwürfen** desselben Eigentümers eine Rechnung, je Quellentwurf eine
-   Rubrik (Zwischensumme je Wohnung), die Entwürfe gehen darin auf. Kein Auftrag über
-   mehrere Wohnungen — der Soll-Ist-Abgleich rechnet je Auftrag, und ein Mehrverbrauch
-   in Wohnung 1 höbe sonst einen Minderverbrauch in Wohnung 3 auf.
 
-**Als Nächstes: Rechnungsentwurf verwerfen** — entschieden, Bauplan steht
-Vier Schritte in `ENTSCHEIDUNGEN.md` („Rechnungsentwürfe werden VERWORFEN"):
-Status `VERWORFEN` in den CHECK, Dienst der ihn setzt **und die
-Abrechnungsbindungen löst** (`released_at`, wie beim Storno), Listen filtern ihn
-heraus, Knopf im Cockpit. **Fasst keinen Schutztrigger an** — das ist der Grund,
-warum dieser Weg gewählt wurde und der Löschweg nicht.
-
-**Danach: die Protokoll-Maske** (Sascha, 2026-08-02, beim Testen)
+**Als Nächstes: die Protokoll-Maske** (Sascha, 2026-08-02, beim Testen)
 > „Das Zusammenklicken geht mir tatsächlich bisschen auf die Nerven. Als ich dann
 > fertig war, hab ich den Entwurf gesehen. Können wir das nicht so machen, dass wenn
 > ich auf den Button Protokoll klicke, genau dieses Entwurffenster auftaucht?"
@@ -103,6 +91,22 @@ Material"** — es wird künftig im Entwurf erfasst. **Gebuchte Zeiten des Termi
 erscheinen unten automatisch als Position, und zwar als **Leistung**.
 Offen beim Bauen (am fertigen Bildschirm zu entscheiden): Zeitpositionen je
 Mitarbeiter einzeln oder je Lohngruppe zusammengefasst — zunächst zusammengefasst.
+
+**Erledigt am 2026-08-03**
+- **Sammelrechnung gebaut und live** — „drei Bäder, alle drei Wohnungen gehören
+  Herrn Meier": mehrere Rechnungs**entwürfe** werden zu **einem** Beleg, je
+  Quellentwurf eine Rubrik mit dem Wohnungsbezug als Titel. Dienst
+  `abrechnung.sammelrechnung`, Endpunkt `POST /invoicing/invoices/sammelrechnung`,
+  Auswahl im Belegregister (Mehrfachauswahl → Bestätigungsdialog).
+  **Keine Migration, kein Freigabetor angefasst**: Bindungen lösen → Entwürfe
+  verwerfen (0147) → neue Rechnung an EINEM Auftrag → Quellen neu binden, alles
+  in einer Transaktion. Der Beleg hängt weiter an genau einem Auftrag (B-08).
+  **Dabei ein Loch geschlossen, das erst dadurch entstand:** Die
+  quellenübergreifende Doppelabrechnungssperre fragte über den **Beleg**
+  (`invoice.work_order_id`). Da eine Sammelrechnung an einem Auftrag hängt, aber
+  die Quellen mehrerer bindet, verlören alle anderen beteiligten Aufträge ihre
+  Klammer. Sie fragt jetzt über die **Herkunft der Quelle**
+  (`_bindungen_des_auftrags`). 22 neue Tests, volle Suite grün (4519).
 
 **Erledigt am 2026-08-02**
 - **Entwürfe löschbar** — Bericht (`0145`) und Angebot (`0146`), beide live. Die
