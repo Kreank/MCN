@@ -216,13 +216,16 @@ def test_add_building_happy(admin_client, seeded):
 
 
 @pytest.mark.django_db
-def test_add_building_leere_nummer_422(admin_client, seeded):
+def test_add_building_leere_nummer_wird_vergeben(admin_client, seeded):
+    """Seit Migration 0149 zählt die DB bei leerer Nummer den Bestand DIESER
+    Liegenschaft hoch — die leere Eingabe ist der Normalfall, kein Fehler."""
     r = admin_client.post(
         f"/api/property/properties/{seeded['weg'].id}/buildings",
         data={"building_number": "  "},
         content_type="application/json",
     )
-    assert r.status_code == 422
+    assert r.status_code == 201, r.content
+    assert r.json()["building_number"].isdigit()
 
 
 @pytest.mark.django_db

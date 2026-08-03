@@ -182,13 +182,16 @@ def add_building(
     actor_app_user_id,
     *,
     property_id,
-    building_number,
+    building_number=None,
     name=None,
     address_id=None,
 ):
-    """Legt ein property.building an einer bestehenden Liegenschaft an."""
-    if not building_number or not building_number.strip():
-        raise ValueError("building_number darf nicht leer sein.")
+    """Legt ein property.building an einer bestehenden Liegenschaft an.
+
+    `building_number` darf leer bleiben: dann zählt `trg_building_number` den
+    Bestand DIESER Liegenschaft hoch (Migration 0149). Eine eingetragene Nummer
+    — „Hinterhaus", „A" — bleibt unangetastet.
+    """
     ensure_exists(Property, property_id, "Liegenschaft")
     ensure_exists(Address, address_id, "Adresse")
     try:
@@ -196,7 +199,7 @@ def add_building(
             building = Building.objects.create(
                 id=uuid.uuid4(),
                 property_id=property_id,
-                building_number=building_number.strip(),
+                building_number=(building_number or "").strip(),
                 name=name,
                 address_id=address_id,
             )
@@ -204,9 +207,11 @@ def add_building(
         if "building_property_id_building_number_key" in str(exc):
             raise ValueError(
                 f"An dieser Liegenschaft existiert bereits ein Gebäude mit der "
-                f"Nummer '{building_number.strip()}'."
+                f"Nummer '{(building_number or '').strip()}'."
             ) from exc
         raise
+    # Die Nummer kann aus dem Trigger stammen — dann steht im Objekt noch ''.
+    building.refresh_from_db(fields=["building_number"])
     return building
 
 
@@ -216,21 +221,23 @@ def add_unit(
     building_id,
     property_id,
     unit_type,
-    unit_number,
+    unit_number=None,
     storey=None,
 ):
     """Legt eine property.unit in einem Gebäude an.
 
     property_id muss zum Gebäude passen (DB-seitig über den zusammengesetzten
     FK erzwungen); die Codeliste unit_type wird vorab geprüft.
+
+    `unit_number` darf leer bleiben: dann zählt `trg_unit_number` den Bestand
+    der Liegenschaft hoch (Migration 0149). Gezählt wird je Liegenschaft, nicht
+    je Gebäude — so verlangt es A-09 (`UNIQUE (property_id, unit_number)`).
     """
     if unit_type not in UNIT_TYPES:
         raise ValueError(
             f"Ungültiger unit_type '{unit_type}'. "
             f"Erlaubt: {', '.join(UNIT_TYPES)}."
         )
-    if not unit_number or not unit_number.strip():
-        raise ValueError("unit_number darf nicht leer sein.")
     ensure_exists(Property, property_id, "Liegenschaft")
     # Der zusammengesetzte FK (building_id, property_id) → building verlangt, dass
     # das Gebäude zur angegebenen Liegenschaft gehört; sonst IntegrityError (500).
@@ -249,11 +256,13 @@ def add_unit(
             building_id=building_id,
             property_id=property_id,
             unit_type=unit_type,
-            unit_number=unit_number.strip(),
+            unit_number=(unit_number or "").strip(),
             # Leerstring waere ein CHECK-Verstoss (unit_storey_nicht_leer) —
             # „nicht erfasst" ist NULL. Gleiche Normalisierung wie im PATCH.
             storey=_text_oder_none(storey),
         )
+    # Die Nummer kann aus dem Trigger stammen — dann steht im Objekt noch ''.
+    unit.refresh_from_db(fields=["unit_number"])
     return unit
 
 

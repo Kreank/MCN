@@ -199,6 +199,12 @@ class ComponentOut(Schema):
     quantity: Decimal | None = None
     unit: str | None = None  # Materialeinheit (aus dem Artikel)
     minutes: Decimal | None = None
+    # Die Fremdschlüssel gehören mit hinaus, sonst kann der Stücklisten-Editor
+    # eine gelesene Position nicht unverändert zurückschicken — er müsste den
+    # Artikel anhand seiner Bezeichnung raten.
+    article_id: UUID | None = None
+    wage_group_id: UUID | None = None
+    note: str | None = None
 
 
 class AssemblyDetailOut(AssemblyOut):
@@ -387,6 +393,8 @@ def _assembly_detail(assembly_id):
                     description=c.article.description,
                     quantity=c.quantity,
                     unit=c.article.unit,
+                    article_id=c.article_id,
+                    note=c.note,
                 )
             )
         else:
@@ -396,6 +404,8 @@ def _assembly_detail(assembly_id):
                     kind="LOHN",
                     description=c.wage_group.name,
                     minutes=c.minutes,
+                    wage_group_id=c.wage_group_id,
+                    note=c.note,
                 )
             )
     return AssemblyDetailOut(
@@ -440,12 +450,14 @@ class WageGroupIn(Schema):
 
 
 class ArticleIn(Schema):
-    article_number: str
+    # Leer/weggelassen: die DB vergibt ART-##### im INSERT (Migration 0149).
+    article_number: str | None = None
     description: str
     unit: str
     line_type: str = "MATERIAL"
     list_price: Decimal | None = None
     long_description: str | None = None
+    gtin: str | None = None
     manufacturer_name: str | None = None
     manufacturer_number: str | None = None
     manufacturer_type: str | None = None
@@ -467,11 +479,31 @@ class ComponentIn(Schema):
     note: str | None = None
 
 
+def _components_payload(components):
+    """Positionsliste aus dem Schema in Service-Dicts — mit der Skala der DB.
+
+    Eine Stelle für alle drei Wege in die Stückliste: Anlegen, Anhängen,
+    vollständiges Ersetzen.
+    """
+    return [
+        {
+            "article_id": c.article_id,
+            "quantity": _quantize(c.quantity, 3),
+            "wage_group_id": c.wage_group_id,
+            "minutes": _quantize(c.minutes, 2),
+            "note": c.note,
+        }
+        for c in components
+    ]
+
+
 class AssemblyIn(Schema):
-    assembly_number: str
+    # Leer/weggelassen: die DB vergibt LEI-##### im INSERT (Migration 0149).
+    assembly_number: str | None = None
     name: str
     unit: str
     description: str | None = None
+    internal_name: str | None = None
     components: list[ComponentIn] = []
 
 
@@ -524,8 +556,8 @@ class ArticleSalePriceIn(Schema):
 
 @router.post("/articles", response={201: ArticleDetailOut}, auth=django_auth)
 def create_article(request, payload: ArticleIn):
-    """Artikel anlegen (Status AKTIV). article_number ist nutzergesetzt (keine
-    DB-Automatik)."""
+    """Artikel anlegen (Status AKTIV). `article_number` ist optional — bleibt sie
+    leer, vergibt die DB die nächste freie Nummer (ART-#####)."""
     actor = require_create(request, "pricing", "ANLEGEN")
     try:
         article = artikel_service.create_article(
@@ -536,6 +568,7 @@ def create_article(request, payload: ArticleIn):
             line_type=payload.line_type,
             list_price=_quantize(payload.list_price, 4),   # numeric(15,4) seit Migration 0039
             long_description=payload.long_description,
+            gtin=payload.gtin,
             manufacturer_name=payload.manufacturer_name,
             manufacturer_number=payload.manufacturer_number,
             manufacturer_type=payload.manufacturer_type,
@@ -554,7 +587,8 @@ def create_article(request, payload: ArticleIn):
 
 
 class ArticleCopyIn(Schema):
-    article_number: str
+    # Leer/weggelassen: die DB vergibt die nächste freie Nummer.
+    article_number: str | None = None
 
 
 @router.post(
@@ -565,7 +599,8 @@ def copy_article(request, article_id: UUID, payload: ArticleCopyIn):
 
     Kopiert Stammfelder (ohne GTIN — eindeutiger Produktcode), alle VK-Varianten
     inkl. Standard und den primären Lieferantenbezug (als MANUELL). Recht
-    `pricing/ANLEGEN`. Leere/vergebene Nummer → 422, unbekannte Quelle → 404.
+    `pricing/ANLEGEN`. Ohne Nummer vergibt die DB die nächste freie; eine bereits
+    vergebene Nummer → 422, unbekannte Quelle → 404.
     """
     actor = require_create(request, "pricing", "ANLEGEN")
     if not Article.objects.filter(id=article_id).exists():
@@ -591,16 +626,7 @@ def create_assembly(request, payload: AssemblyIn):
     """Leistung mit Stückliste anlegen. Jede Position ist entweder Material
     (article_id + quantity) ODER Lohn (wage_group_id + minutes)."""
     actor = require_create(request, "pricing", "ANLEGEN")
-    components = [
-        {
-            "article_id": c.article_id,
-            "quantity": _quantize(c.quantity, 3),
-            "wage_group_id": c.wage_group_id,
-            "minutes": _quantize(c.minutes, 2),
-            "note": c.note,
-        }
-        for c in payload.components
-    ]
+    components = _components_payload(payload.components)
     try:
         assembly = artikel_service.create_assembly(
             actor,
@@ -608,6 +634,7 @@ def create_assembly(request, payload: AssemblyIn):
             name=payload.name,
             unit=payload.unit,
             description=payload.description,
+            internal_name=payload.internal_name,
             components=components,
         )
     except ValueError as exc:
@@ -762,16 +789,7 @@ def add_assembly_components(request, assembly_id: UUID, payload: AssemblyCompone
     actor, _ = require(request, "pricing", "AENDERN")
     if not Assembly.objects.filter(id=assembly_id).exists():
         raise HttpError(404, "Leistung nicht gefunden.")
-    components = [
-        {
-            "article_id": c.article_id,
-            "quantity": _quantize(c.quantity, 3),
-            "wage_group_id": c.wage_group_id,
-            "minutes": _quantize(c.minutes, 2),
-            "note": c.note,
-        }
-        for c in payload.components
-    ]
+    components = _components_payload(payload.components)
     try:
         artikel_service.add_assembly_components(
             actor, assembly_id=assembly_id, components=components
@@ -779,6 +797,129 @@ def add_assembly_components(request, assembly_id: UUID, payload: AssemblyCompone
     except ValueError as exc:
         raise HttpError(422, str(exc))
     return _assembly_detail(assembly_id)
+
+
+@router.put(
+    "/assemblies/{assembly_id}/components", response=AssemblyDetailOut, auth=django_auth
+)
+def replace_assembly_components(request, assembly_id: UUID, payload: AssemblyComponentsIn):
+    """Ersetzt die Stückliste **vollständig** (Recht `pricing`/AENDERN).
+
+    Ändern, Löschen und Umsortieren laufen über diesen einen Aufruf — der Editor
+    schickt immer die ganze Liste, die Positionsnummern ergeben sich aus ihrer
+    Reihenfolge. Ein Teil-Update einzelner Positionen wäre bei umsortierten
+    Nummern nicht eindeutig (dasselbe Muster wie beim Angebot). Eine leere Liste
+    leert die Stückliste; entfernte Positionen bleiben über den
+    Delete-Audit-Trigger nachweisbar.
+    """
+    actor, _ = require(request, "pricing", "AENDERN")
+    if not Assembly.objects.filter(id=assembly_id).exists():
+        raise HttpError(404, "Leistung nicht gefunden.")
+    try:
+        artikel_service.replace_assembly_components(
+            actor,
+            assembly_id=assembly_id,
+            components=_components_payload(payload.components),
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _assembly_detail(assembly_id)
+
+
+class AssemblyUpdateIn(Schema):
+    """Nur gesetzte Felder werden geändert (exclude_unset)."""
+    assembly_number: str | None = None
+    name: str | None = None
+    internal_name: str | None = None
+    unit: str | None = None
+    description: str | None = None
+
+
+@router.put("/assemblies/{assembly_id}", response=AssemblyDetailOut, auth=django_auth)
+def update_assembly(request, assembly_id: UUID, payload: AssemblyUpdateIn):
+    """Stammdaten einer Leistung ändern. Jede Änderung wird auditiert."""
+    actor, _ = require(request, "pricing", "AENDERN")
+    if not Assembly.objects.filter(id=assembly_id).exists():
+        raise HttpError(404, "Leistung nicht gefunden.")
+    felder = payload.model_dump(exclude_unset=True)
+    try:
+        artikel_service.update_assembly(actor, assembly_id=assembly_id, **felder)
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _assembly_detail(assembly_id)
+
+
+class AssemblyStatusIn(Schema):
+    status: str
+
+
+@router.post(
+    "/assemblies/{assembly_id}/status", response=AssemblyDetailOut, auth=django_auth
+)
+def set_assembly_status(request, assembly_id: UUID, payload: AssemblyStatusIn):
+    """Leistung aktivieren/deaktivieren. Es gibt kein Löschen (append-only):
+    Belegpositionen verweisen über `source_assembly_id` auf sie."""
+    actor, _ = require(request, "pricing", "AENDERN")
+    if not Assembly.objects.filter(id=assembly_id).exists():
+        raise HttpError(404, "Leistung nicht gefunden.")
+    try:
+        artikel_service.set_assembly_status(
+            actor, assembly_id=assembly_id, status=payload.status
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _assembly_detail(assembly_id)
+
+
+class AssemblyKalkPositionOut(Schema):
+    position: int
+    kind: str
+    description: str
+    reference: str | None = None
+    quantity: str | None = None
+    unit: str | None = None
+    minutes: str | None = None
+    ek_je_einheit: str | None = None
+    vk_je_einheit: str | None = None
+    ek_summe: str | None = None
+    vk_summe: str | None = None
+    hinweis: str | None = None
+
+
+class AssemblyKalkulationOut(Schema):
+    assembly_id: UUID
+    assembly_number: str
+    name: str
+    unit: str
+    positionen: list[AssemblyKalkPositionOut]
+    material_ek: str
+    material_vk: str
+    lohn_ek: str
+    lohn_vk: str
+    minuten_gesamt: str
+    ek_gesamt: str
+    vk_gesamt: str
+    lohnanteil_vk: str
+    marge_prozent: str | None = None
+    vollstaendig: bool
+    kosten_vollstaendig: bool
+
+
+@router.get("/assemblies/{assembly_id}/kalkulation", response=AssemblyKalkulationOut)
+def assembly_kalkulation(request, assembly_id: UUID):
+    """Preis einer Leistung aus ihrer Stückliste (Material + Lohn).
+
+    Rein lesend. Material wird über denselben VK-Vorschlag bepreist wie ein
+    einzeln ins Angebot gezogener Artikel — sonst hätte dieselbe Ware zwei
+    Preise. Fehlt einem Material der VK, bleibt `vollstaendig` false und die
+    Position fließt nicht in die Summe ein (eine fehlende Position als 0 zu
+    führen sähe aus wie ein Preis).
+    """
+    require(request, "pricing", "LESEN")
+    data = kalkulation_service.assembly_kalkulation(assembly_id)
+    if data is None:
+        raise HttpError(404, "Leistung nicht gefunden.")
+    return data
 
 
 # --- Artikel bearbeiten, Historie, Stammdaten-Übernahme ---------------------

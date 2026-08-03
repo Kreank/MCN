@@ -236,10 +236,9 @@ export class LiegenschaftDetail {
   // Gebäude
   protected readonly gebaeudeOffen = signal(false);
   protected readonly gebaeudeForm = this.fb.group({
-    building_number: this.fb.control('', {
-      nonNullable: true,
-      validators: [Validators.required],
-    }),
+    // Kein Validators.required: leer heisst „die DB zaehlt hoch" — je
+    // Liegenschaft, im Schreibmoment (Migration 0149).
+    building_number: this.fb.control('', { nonNullable: true }),
     name: this.fb.control('', { nonNullable: true }),
   });
 
@@ -251,10 +250,8 @@ export class LiegenschaftDetail {
       nonNullable: true,
       validators: [Validators.required],
     }),
-    unit_number: this.fb.control('', {
-      nonNullable: true,
-      validators: [Validators.required],
-    }),
+    // Siehe gebaeudeForm.building_number: leer heisst automatisch.
+    unit_number: this.fb.control('', { nonNullable: true }),
     storey: this.fb.control('', { nonNullable: true }),
   });
 
@@ -605,7 +602,7 @@ export class LiegenschaftDetail {
 
     const v = this.gebaeudeForm.getRawValue();
     const payload: BuildingIn = {
-      building_number: v.building_number.trim(),
+      building_number: v.building_number.trim() || null,
       name: v.name.trim() || null,
     };
     this.dialogLaedt.set(true);
@@ -667,7 +664,7 @@ export class LiegenschaftDetail {
     const v = this.einheitForm.getRawValue();
     const payload: UnitIn = {
       unit_type: v.unit_type as UnitTypeCode,
-      unit_number: v.unit_number.trim(),
+      unit_number: v.unit_number.trim() || null,
       storey: v.storey.trim() || null,
     };
     this.dialogLaedt.set(true);

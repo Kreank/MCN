@@ -18,6 +18,8 @@ from db_core.models import (
     Article,
     ArticleSalePrice,
     ArticleSupplierReference,
+    Assembly,
+    AssemblyComponent,
     SalePriceGroup,
 )
 
@@ -318,4 +320,192 @@ def verkaufspreise_uebersicht(article_id):
         ),
         "ek": str(ek) if ek is not None else None,
         "groups": gruppen,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Leistungen (Stücklisten): Material + Lohn ergeben Preis
+# ---------------------------------------------------------------------------
+def _stunden(minuten):
+    """Minuten → Stunden als exakter Decimal-Quotient (keine float-Näherung)."""
+    return Decimal(minuten) / Decimal(60)
+
+
+def assembly_kalkulation(assembly_id):
+    """Kalkuliert eine Leistung aus ihrer Stückliste — je EINER Leistungseinheit.
+
+    Bis hierher war eine Leistung eine Stückliste ohne Preis: Der Angebots-Editor
+    übernahm sie als Pauschalposition mit leerem Einzelpreis und der Bitte, den
+    Preis von Hand zu ergänzen. Genau das ist der Zweck einer Stückliste — sie
+    soll den Preis ERGEBEN, nicht ihn offenlassen.
+
+    Die Mengen der Stückliste gelten je EINER Leistungseinheit — das Ergebnis
+    ist deshalb ein Einzelpreis. Skaliert wird nicht hier, sondern über die
+    Menge der Belegposition, die diese Leistung übernimmt.
+
+    * **Material** — Verkaufspreis über `vk_vorschlag`, also über exakt denselben
+      Weg, den der Angebots-Editor für einen einzelnen Artikel geht. Sonst
+      bekäme dieselbe Ware zwei Preise, je nachdem ob sie einzeln oder als Teil
+      einer Leistung ins Angebot kommt. Die hinterlegte Menge geht dabei als
+      Staffelmenge mit ein: Wer zwölf Ziegel verbaut, kauft zwölf Ziegel.
+      Einkaufsseitig zählt der EK des primären Lieferantenbezugs — er kommt aus
+      derselben Abfrage wie der VK, damit beide Seiten denselben Bezug sehen.
+    * **Lohn** — `hourly_rate` der Lohngruppe für den Verkauf, `cost_rate` für
+      die Kosten. Ist `cost_rate` NULL (Kosten unbekannt, Migration 0034), wird
+      **konservativ mit dem Verrechnungssatz** gerechnet: Lieber eine zu kleine
+      als eine erfundene Marge.
+
+    **Unbekannte Preise werden nicht als 0 gerechnet.** Fehlt einem Material der
+    VK, fließt die Position nicht in die Summe ein und die Leistung ist als
+    `vollstaendig=False` markiert. Eine Summe, die eine fehlende Position
+    stillschweigend als kostenlos führt, wäre schlimmer als gar keine Summe —
+    sie sähe aus wie ein Preis.
+
+    `lohnanteil_vk` ist der Lohnanteil am Verkaufspreis (§ 35a EStG): Er wird
+    hier mitgeliefert, damit eine ins Angebot übernommene Leistung ihren
+    steuerlich absetzbaren Anteil kennt, statt ihn aus der Positionsart zu raten.
+
+    Rein lesend. Gibt None zurück, wenn die Leistung nicht existiert.
+    """
+    # Lokaler Import: aufschlagsmatrix importiert kalkulation nicht — der Zyklus
+    # entstünde erst durch einen Modul-Import auf dieser Ebene.
+    from db_core.services import aufschlagsmatrix as matrix_service
+
+    assembly = Assembly.objects.filter(id=assembly_id).first()
+    if assembly is None:
+        return None
+
+    komponenten = list(
+        AssemblyComponent.objects.filter(assembly_id=assembly_id)
+        .select_related("article", "wage_group")
+        .order_by("position")
+    )
+    # Das Regelwerk EINMAL laden und durchreichen: sonst zieht jede
+    # Materialposition die komplette Regeltabelle samt Staffeln erneut (N+1).
+    regelwerk = (
+        matrix_service.lade_regelwerk()
+        if any(k.article_id is not None for k in komponenten)
+        else None
+    )
+
+    positionen = []
+    material_ek = material_vk = Decimal(0)
+    lohn_ek = lohn_vk = Decimal(0)
+    minuten_gesamt = Decimal(0)
+    vollstaendig = True
+    # Getrennt gefuehrt: Ein fehlender EINKAUFSpreis laesst den Verkaufspreis
+    # unberuehrt, macht aber die Marge zu schoen — eine Position, deren Kosten
+    # unbekannt sind, saehe in der Summe wie eine kostenlose aus.
+    kosten_vollstaendig = True
+
+    for k in komponenten:
+        if k.article_id is not None:
+            artikel = k.article
+            vorschlag = matrix_service.vk_vorschlag(
+                k.article_id, menge=k.quantity, regelwerk=regelwerk
+            )
+            # Den EK aus derselben Antwort nehmen statt ihn erneut zu holen:
+            # `vk_vorschlag` hat den primaeren Lieferantenbezug ohnehin geladen,
+            # und beide Seiten muessen denselben Bezug sehen. Der Wert gilt je
+            # `price_unit` — wie im Stamm; die Umrechnung passiert hier.
+            ek_je = _je_stueck(
+                Decimal(vorschlag["ek"]) if vorschlag and vorschlag["ek"] else None,
+                artikel.price_unit,
+            )
+            vk_je = (
+                Decimal(vorschlag["sale_price"])
+                if vorschlag and vorschlag["sale_price"] is not None
+                else None
+            )
+            ek_summe = _round2(ek_je * k.quantity) if ek_je is not None else None
+            vk_summe = _round2(vk_je * k.quantity) if vk_je is not None else None
+            if ek_summe is not None:
+                material_ek += ek_summe
+            else:
+                kosten_vollstaendig = False
+            if vk_summe is not None:
+                material_vk += vk_summe
+            else:
+                vollstaendig = False
+            positionen.append(
+                {
+                    "position": k.position,
+                    "kind": "MATERIAL",
+                    "description": artikel.description,
+                    "reference": artikel.article_number,
+                    "quantity": str(k.quantity),
+                    "unit": artikel.unit,
+                    "minutes": None,
+                    "ek_je_einheit": str(ek_je) if ek_je is not None else None,
+                    "vk_je_einheit": str(vk_je) if vk_je is not None else None,
+                    "ek_summe": str(ek_summe) if ek_summe is not None else None,
+                    "vk_summe": str(vk_summe) if vk_summe is not None else None,
+                    "hinweis": (vorschlag or {}).get("hinweis"),
+                }
+            )
+            continue
+
+        gruppe = k.wage_group
+        stunden = _stunden(k.minutes)
+        minuten_gesamt += k.minutes
+        vk_je = gruppe.hourly_rate
+        # cost_rate NULL = Kosten unbekannt: konservativ mit dem Verrechnungssatz
+        # rechnen (Migration 0034), statt eine zu schoene Marge auszuweisen.
+        kosten_unbekannt = gruppe.cost_rate is None
+        if kosten_unbekannt:
+            kosten_vollstaendig = False
+        ek_je = gruppe.hourly_rate if kosten_unbekannt else gruppe.cost_rate
+        ek_summe = _round2(ek_je * stunden)
+        vk_summe = _round2(vk_je * stunden)
+        lohn_ek += ek_summe
+        lohn_vk += vk_summe
+        positionen.append(
+            {
+                "position": k.position,
+                "kind": "LOHN",
+                "description": gruppe.name,
+                "reference": None,
+                "quantity": None,
+                "unit": "h",
+                "minutes": str(k.minutes),
+                "ek_je_einheit": str(ek_je),
+                "vk_je_einheit": str(vk_je),
+                "ek_summe": str(ek_summe),
+                "vk_summe": str(vk_summe),
+                "hinweis": (
+                    "Kostensatz der Lohngruppe unbekannt — es wird konservativ "
+                    "mit dem Verrechnungssatz gerechnet."
+                    if kosten_unbekannt
+                    else None
+                ),
+            }
+        )
+
+    ek_gesamt = _round2(material_ek + lohn_ek)
+    vk_gesamt = _round2(material_vk + lohn_vk)
+    # Die Marge braucht BEIDE Seiten vollstaendig. Fehlt auch nur ein
+    # Einkaufspreis, waere sie zu hoch — und zwar genau in der Zahl, auf die
+    # jemand schaut, um zu entscheiden, ob sich der Auftrag lohnt.
+    marge = None
+    if vollstaendig and kosten_vollstaendig and vk_gesamt > 0:
+        marge = _round2((vk_gesamt - ek_gesamt) / vk_gesamt * Decimal(100))
+
+    return {
+        "assembly_id": str(assembly.id),
+        "assembly_number": assembly.assembly_number,
+        "name": assembly.name,
+        "unit": assembly.unit,
+        "positionen": positionen,
+        "material_ek": str(_round2(material_ek)),
+        "material_vk": str(_round2(material_vk)),
+        "lohn_ek": str(_round2(lohn_ek)),
+        "lohn_vk": str(_round2(lohn_vk)),
+        "minuten_gesamt": str(minuten_gesamt),
+        "ek_gesamt": str(ek_gesamt),
+        "vk_gesamt": str(vk_gesamt),
+        # § 35a: der Lohnanteil am Verkaufspreis EINER Leistungseinheit.
+        "lohnanteil_vk": str(_round2(lohn_vk)),
+        "marge_prozent": str(marge) if marge is not None else None,
+        "vollstaendig": vollstaendig,
+        "kosten_vollstaendig": kosten_vollstaendig,
     }

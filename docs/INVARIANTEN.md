@@ -43,6 +43,22 @@ Ausführliche Herleitungen: `docs/archiv/chronik-2026-07.md`.
 - **Massenpflege: Vorschau == Anwenden** (derselbe Code, `dry_run`), idempotent, Handpreise
   werden nie angefasst.
 - **Der IDS-Warenkorb rechnet den VK aus dem zurückgegebenen EK**, nicht aus dem Stamm-EK.
+- **Eine Leistung wird Position für Position bepreist, über denselben VK-Vorschlag wie ein
+  einzeln ins Angebot gezogener Artikel.** Sonst bekäme dieselbe Ware zwei Preise, je nachdem
+  ob sie einzeln oder als Teil einer Leistung ins Angebot kommt.
+- **Fehlt einer Position der VK, ist die Leistungssumme `vollstaendig = false`** und zieht
+  NICHT als Preis in den Angebots-Editor ein. Eine Summe, die eine preislose Position
+  stillschweigend als kostenlos führt, sieht aus wie ein fertiger Preis — und ist die
+  Rechnung, die um genau diese Position zu niedrig hinausgeht.
+- **Die Marge braucht BEIDE Seiten vollständig** (`kosten_vollstaendig`). Fehlt auch nur ein
+  Einkaufspreis oder ein Lohn-Kostensatz, wird keine Marge ausgewiesen: Sie wäre zu hoch —
+  und zwar in genau der Zahl, auf die jemand schaut, um zu entscheiden, ob sich ein Auftrag
+  lohnt. Ein fehlender Lohn-Kostensatz rechnet ersatzweise mit dem **Verrechnungssatz**
+  (konservativ), nie mit 0.
+- **Der § 35a-Anteil einer übernommenen Leistung bleibt offen.** Die Kalkulation kennt ihn je
+  Leistungseinheit, aber `labour_net_amount` ist ein Betrag für die GANZE Position und wird
+  beim Ändern der Menge nicht mitskaliert — ein automatisch eingesetzter Wert wäre ab der
+  zweiten Einheit falsch.
 
 ## 2. Abrechnung, Belege & Storno
 
@@ -492,6 +508,23 @@ Ausführliche Herleitungen: `docs/archiv/chronik-2026-07.md`.
 - **Die Shop-/Connector-URL ist Konfiguration, kein Code.**
 - **Der Warenkorb-Hook ist token-gesichert und nur einmal einlösbar** (Token nur als SHA-256-Hash).
 - **DATANORM-Import löscht nicht, sondern setzt INAKTIV** — mit Zip-Bomben-Schutz und Dry-run.
+- **Nummern werden im INSERT gezogen, nicht beim Öffnen der Maske** (Migration 0149:
+  `ART-#####`, `LEI-#####`, Gebäude/Einheit je Liegenschaft). Ein in der Maske vorbelegter
+  Vorschlag hätte das Rennen nur verschoben: Drei gleichzeitig geöffnete Masken zeigten
+  dieselbe Nummer, und der Zweite bekäme beim Speichern den UNIQUE-Verstoß ins Gesicht —
+  genau den Fehler, den die Automatik abschaffen soll.
+- **Eine mitgegebene Nummer gewinnt immer.** Der Leerstring zählt dabei wie NULL als „nicht
+  gesetzt" (die ORM schickt für ein unbelegtes TextField `''`). Ohne diese Regel verlören
+  DATANORM (`DN-<Namespace>-<Nr>`) und IDS ihre Händlernummern — und mit ihnen die
+  Wiedererkennbarkeit beim nächsten Import.
+- **`lpad` schneidet RECHTS ab.** Aus `lpad('100000', 5, '0')` wird `'10000'` — eine bereits
+  vergebene Nummer. Oberhalb der Polsterbreite wird ungepolstert weitergezählt (WF-03). Die
+  älteren Sequenzen `OBJ-`/`MA-`/`RES-`/`EB-` tragen diese Falle noch.
+- **Gebäude-/Einheitsnummern zählen je LIEGENSCHAFT, nicht je Gebäude** (A-09:
+  `UNIQUE (property_id, unit_number)`). Ein je Gebäude neu startender Zähler liefe im zweiten
+  Gebäude sofort in den Constraint. Gezählt wird mit einer Sperre auf genau diese Liegenschaft
+  (`pg_advisory_xact_lock`); nicht-numerische Bestandsnummern („Hinterhaus") zählen nicht mit
+  und bleiben unangetastet.
 - **Dossier-Aggregate müssen projektgefiltert rechnen** — sonst skaliert ein Einzel-Dossier mit
   der Firmengröße.
 - **Löschregel für Altdaten:** erst löschen, wenn der Import nachweislich steht.

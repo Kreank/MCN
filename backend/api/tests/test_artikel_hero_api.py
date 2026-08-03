@@ -238,13 +238,16 @@ def test_copy_article_uebernimmt_keine_gtin(setup):
 
 
 @pytest.mark.django_db
-def test_copy_article_leere_nummer_422(setup):
+def test_copy_article_leere_nummer_wird_vergeben(setup):
+    """Seit Migration 0149 ist die leere Nummer kein Fehler mehr, sondern der
+    Normalfall: die DB vergibt die nächste freie (ART-#####)."""
     src = _create_article(setup["client"]).json()
     r = setup["client"].post(
         f"/api/pricing/articles/{src['id']}/copy",
         data={"article_number": "  "}, content_type="application/json",
     )
-    assert r.status_code == 422
+    assert r.status_code == 201, r.content
+    assert r.json()["article_number"].startswith("ART-")
 
 
 @pytest.mark.django_db

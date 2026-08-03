@@ -143,7 +143,8 @@ export interface PropertyIn {
 }
 
 export interface BuildingIn {
-  building_number: string;
+  /** Leer lassen: die DB zählt den Bestand dieser Liegenschaft hoch. */
+  building_number?: string | null;
   name?: string | null;
 }
 
@@ -159,7 +160,8 @@ export type UnitTypeCode =
 
 export interface UnitIn {
   unit_type: UnitTypeCode;
-  unit_number: string;
+  /** Leer lassen: die DB zählt je Liegenschaft hoch (A-09). */
+  unit_number?: string | null;
   /** Etage gleich beim Anlegen — optional, `null` heißt „nicht erfasst". */
   storey?: string | null;
 }

@@ -570,13 +570,16 @@ def get_property(request, property_id: UUID):
 # Die Party-Rollen bleiben Dispositionsdatum (`require`, fail-closed → 403).
 
 class BuildingIn(Schema):
-    building_number: str
+    # Leer/weggelassen: die DB zählt den Bestand dieser Liegenschaft hoch
+    # (Migration 0149). Eine sprechende Nummer bleibt möglich.
+    building_number: str | None = None
     name: str | None = None
 
 
 class UnitIn(Schema):
     unit_type: str
-    unit_number: str
+    # Siehe BuildingIn: leer heißt automatisch (je Liegenschaft, A-09).
+    unit_number: str | None = None
     # Etage gleich beim Anlegen (Migration 0124): Wer die Wohnung erfasst, weiss
     # in dem Moment, in welchem Stock sie liegt — es waere ein zweiter Handgriff.
     storey: str | None = None

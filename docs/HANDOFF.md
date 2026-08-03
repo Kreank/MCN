@@ -15,8 +15,8 @@ eigenen Dateien (unten).
 | **Branches** | `develop` = `main` = `origin` = `b57985c` — alles deckungsgleich |
 | **Nutzung** | **Testbetrieb** — der Server dient dem Probelauf durch Chef/Kollegen. Echte Kundendaten und ~2 Mio Artikel liegen drauf, aber es hängt kein Tagesgeschäft daran. `MCN_SEED=0`. |
 | **Backup** | Dienst läuft (nächtlich 02:30 + `MCN_BACKUP_RUN_ON_START=1`); manuelle Dumps in `backups-manuell/` |
-| **Testsuite** | **grün** (2026-08-03): `4534 passed, 21 skipped` Backend + `322` Frontend, gegen frisch gebaute Test-DB |
-| **Migrationskopf lokal** | **0148** (`0148_arbeitszeitfenster`) — noch **nicht** ausgerollt |
+| **Testsuite** | **grün** (2026-08-03): `4571 passed, 21 skipped` Backend + `333` Frontend, gegen frisch gebaute Test-DB |
+| **Migrationskopf lokal** | **0149** (`0149_automatische_nummernvergabe`) — noch **nicht** ausgerollt |
 
 > **⚠️ Zwei volle Suiten gleichzeitig zerstören sich gegenseitig.** Beide bauen
 > `test_mitra_crm_test` mit `--create-db` neu — der eine Lauf zieht dem anderen die
@@ -58,6 +58,7 @@ eigenen Dateien (unten).
 | **`docs/BACKLOG.md`** | Priorisierte nächste Bereiche + Gotchas | bei der Frage „was als Nächstes" |
 | **`docs/roadmap/`** | Informationsarchitektur, Fachkonzept | für den fachlichen Rahmen |
 | **`docs/archiv/chronik-2026-07.md`** | Session- und Wellenberichte bis 2026-07-22 | nur zum Nachschlagen, **nicht** als Stand |
+| **`docs/archiv/chronik-2026-08.md`** | Erledigtes aus Anfang August 2026 | dito |
 
 > **Warnung zum Archiv:** Die Chronik widerspricht sich in Teilen selbst (mehrere
 > Migrationsköpfe, „Backup nicht gebaut" neben „Backup gebaut", erledigte TODOs als
@@ -84,97 +85,41 @@ eigenen Dateien (unten).
 nächsten Bereiche.
 
 **Erledigt am 2026-08-03**
-- **Plantafel: Auslastung rechnete die Wanduhr.** Ein Einsatz über vier Tage
-  stellte den Monteur mit **185 % ausgelastet** auf die Tafel — Nächte und Pausen
-  zählten als Arbeitszeit. Aus Saschas Praxisblick heraus gefunden, in zwei
-  Review-Runden fanden sich **vier weitere Fehler derselben Klasse**: Wochenenden
-  zählten im Zähler, aber nicht im Nenner (Do–Di = 120 %); die Pause fiel je
-  *Einsatz* statt je *Arbeitstag* an (07–12 plus 12–16 = 9 h statt 8 h); die
-  Nachtlücke am Fensterrand blieb stehen (derselbe Einsatz = 31 h oder 24 h, je
-  nach Lage der Woche); ein ausgelaufener Vertrag leerte den Zähler ganz. Die
-  ganze Regel steht jetzt in `INVARIANTEN.md` Abschnitt 11 samt Schadensbild.
-  **Arbeitsbeginn/Feierabend/Pause sind Firmenprofil-Felder** (Migration 0148,
-  Vorgabe 07:00–16:00 / 60 min); die Pausen*schwelle* bleibt Gesetz (§ 4 ArbZG).
-  **Offen:** Der **Notdienst** braucht eine eigene Behandlung (vertagt, Sascha).
-- **Plantafel-Bedienung nach Saschas HERO-Vergleich.** Steuerleiste von drei
-  Bändern auf **eine Zeile** (~92 → ~40 px); der Rückstand klappt zur **Seite**
-  wie die Navigation statt nach oben (Board gewinnt gut 16 rem — daran hängt, ob
-  eine Woche ohne Scrollen in den Schirm passt) und bleibt eingeklappt
-  Ablageziel; die Kachel-Aktionen hängen nicht mehr an einem 31 px hohen
-  Hover-Streifen, sondern an einem festen **⋯-Griff** (Klick oder Rechtsklick,
-  bleibt offen, 24 px nach WCAG 2.5.8). Nebengewinn: Vorher lagen je Kachel drei
-  unsichtbare Tabstopps im DOM — bei 200 Kacheln 600 Stück.
-- **Protokoll-Maske: der Entwurf IST die Maske.** „Neues Protokoll" legt den
-  Bericht sofort an und zeigt ihn als bearbeitbares Blatt — der vorgeschaltete
-  Formular-Dialog ist ersatzlos weg, „Bearbeiten" ebenfalls. Direkt danach die
-  Startwahl **„aus welchem Angebot — oder leer?"**, aber nur, wenn es etwas zu
-  übernehmen gibt (am freien Termin also nie). Das Feld *Material (Notiz)* ist aus
-  der Maske raus (Material gehört in die Positionen); alte Notizen bleiben
-  sichtbar und gehen beim Speichern nicht verloren. Im Reiter *Zeiten & Material*
-  ist der Erfassungsweg für Material geschlossen — **bestehende Buchungen bleiben
-  sichtbar und abrechenbar**, und der Endpunkt lebt weiter (die App bucht darüber).
-  **Warum das erst jetzt ging:** Ein Klick, der sofort anlegt, setzt voraus, dass
-  der Fehlklick folgenlos ist — Berichtsentwürfe sind erst seit `0145` löschbar.
-  **Kein Backend-Eingriff**: `gebuchte_zeiten` (je Lohngruppe, abgeleitet) und
-  `vorbelegen_aus_angebot` gab es bereits. 8 neue Frontend-Tests (322 gesamt grün).
-- **Sammelrechnung gebaut und live** — „drei Bäder, alle drei Wohnungen gehören
-  Herrn Meier": mehrere Rechnungs**entwürfe** werden zu **einem** Beleg, je
-  Quellentwurf eine Rubrik mit dem Wohnungsbezug als Titel. Dienst
-  `abrechnung.sammelrechnung`, Endpunkt `POST /invoicing/invoices/sammelrechnung`,
-  Auswahl im Belegregister (Mehrfachauswahl → Bestätigungsdialog).
-  **Keine Migration, kein Freigabetor angefasst**: Bindungen lösen → Entwürfe
-  verwerfen (0147) → neue Rechnung an EINEM Auftrag → Quellen neu binden, alles
-  in einer Transaktion. Der Beleg hängt weiter an genau einem Auftrag (B-08).
-  **Dabei ein Loch geschlossen, das erst dadurch entstand:** Die
-  quellenübergreifende Doppelabrechnungssperre fragte über den **Beleg**
-  (`invoice.work_order_id`). Da eine Sammelrechnung an einem Auftrag hängt, aber
-  die Quellen mehrerer bindet, verlören alle anderen beteiligten Aufträge ihre
-  Klammer. Sie fragt jetzt über die **Herkunft der Quelle**
-  (`_bindungen_des_auftrags`). 22 neue Tests, volle Suite grün (4519).
+- **Nummern vergibt jetzt die Datenbank** (Migration 0149). Vier Kreise waren
+  Handarbeit geblieben: Artikel-, Leistungs-, Gebäude- und Einheitsnummer. Bei
+  3–5 gleichzeitigen Erfassern hieß das: Der Zweite bekommt einen UNIQUE-Verstoß
+  ins Gesicht und tippt neu, mitten im Angebot. **Leer lassen genügt** → `ART-`/
+  `LEI-#####` bzw. je Liegenschaft `1,2,3` / `01,02,03`; eine eingetragene Nummer
+  bleibt unangetastet (jeder Import gibt seine eigene vor). Gezogen wird im
+  **BEFORE-INSERT-Trigger**, nicht beim Öffnen der Maske — ein vorbelegter
+  Vorschlag hätte das Rennen nur verschoben. Nebenläufigkeit mit zwei echten
+  Sitzungen nachgewiesen (die zweite wartete 3,2 s auf die Sperre).
+  **Nicht automatisiert:** Sachkonto und Kostenstelle (Kontenrahmen SKR03/04) —
+  da darf keine Software raten.
+- **Leistungen sind fertig bedienbar.** Vorher: Kopf anlegen, Positionen nur
+  *anhängen*, Stammdaten read-only, kein Preis. Jetzt: Stammdaten bearbeiten,
+  Aktiv/Inaktiv, Positionen ändern/entfernen/umsortieren (`PUT .../components`
+  ersetzt die ganze Liste — bei umsortierten Nummern ist ein Teil-Update nicht
+  eindeutig), und nach dem Anlegen geht es direkt in die Leistung statt zurück
+  in die Liste. Der Hinweis „folgt, sobald der Positions-Editor bereitsteht" war
+  seit Längerem schlicht falsch und ist weg.
+- **Die Leistung rechnet sich selbst** (`GET /assemblies/{id}/kalkulation`).
+  Material läuft über **denselben** VK-Vorschlag wie ein einzeln ins Angebot
+  gezogener Artikel — sonst hätte dieselbe Ware zwei Preise. Der Angebots-Editor
+  setzt den Preis jetzt ein, statt „Bitte Einzelpreis ergänzen" zu sagen.
+  **Zwei Ehrlichkeits-Flaggen:** `vollstaendig=false` (einem Material fehlt der
+  VK → die Teilsumme zieht NICHT als Preis in den Editor) und
+  `kosten_vollstaendig=false` (ein EK oder Lohn-Kostensatz fehlt → **keine
+  Marge**, sie wäre zu hoch). **Offen geblieben:** der § 35a-Anteil — die
+  Kalkulation kennt ihn je Einheit, aber `labour_net_amount` gilt für die ganze
+  Position und skaliert nicht mit der Menge; automatisch gesetzt wäre er ab der
+  zweiten Einheit falsch.
+- **Artikelmaske vervollständigt:** `gtin` fehlte beim **Anlegen** (nur nachträglich
+  setzbar) — jetzt in Maske, Schema und Service. Die GTIN-Prüfung sitzt in einer
+  Stelle (`_gtin`) statt zweimal.
 
-**Erledigt am 2026-08-02**
-- **Entwürfe löschbar** — Bericht (`0145`) und Angebot (`0146`), beide live. Die
-  pauschale Sperre `util.forbid_mutation()` wich statusabhängigen Triggern; beim
-  Angebot entscheidet die **Belegnummer** (entsteht erst beim Versand), nicht der
-  Status. **Rechnung bewusst NICHT** — siehe Nachtrag in `ENTSCHEIDUNGEN.md`: Der
-  Löschweg hätte den Schutz auf `billing_link` gelockert und damit die
-  Doppelabrechnungssperre aushebelbar gemacht.
-- **Protokoll-Maske verbreitert**: neue Dialogstufe `arbeitsflaeche` (92rem),
-  zweispaltig — ausgeführte Arbeiten links mit 8 Zeilen, Beiwerk rechts.
-  Ausgeführte Arbeiten werden vorbelegt („Protokoll vom …"), weil `activity_text`
-  in der DB nicht leer sein darf.
-- **Dritter Berichtszustand `ABGESCHLOSSEN`** (`e66b36e`, live, Migration 0144):
-  fertig ohne Unterschrift = **voll abrechenbar**. Hintergrund: 80 % der Berichte
-  werden nie unterschrieben, die alte Regel sperrte damit den Normalfall aus.
-  `ENTWURF` bleibt draußen. Dabei zwei Löcher geschlossen — Positionen eines
-  abgeschlossenen Berichts waren noch änderbar (0080 prüfte nur `UNTERZEICHNET`),
-  und das Ersetzen von `protect_site_report()` hätte fast den Briefkopf-Schutz aus
-  0132 mitentfernt.
-- **Lohngruppen angelegt** (live, über den Dienst): Meister/Techniker 85 €/h,
-  Monteur 65, Helfer 45, Azubi 25. **Keine dieser Zahlen steht im Code** — Pflege
-  unter *Einstellungen → Lohngruppen*, Endpunkte `/pricing/wage-groups` waren
-  bereits vorhanden. `cost_rate` (Kostensatz für die Deckungsbeitrags-Auswertung)
-  ist bewusst leer gelassen; den kennt nur der Betrieb.
-- **Der Belegbezug steht** (`d78caf0`, live): Angebot, Rechnung und Bildschirm nennen
-  Wohneinheit, Eigentümer, Mieter und „Vertreten durch". Eigentümer-Kaskade
-  Wohnung → Liegenschaft → Gemeinschaft, damit WEG, Mietshaus und Eigenheim ohne
-  Konfiguration bedient sind. Eingefroren in `billing_snapshot`, Live-Fallback je
-  Feld. Regel und Schaden in `INVARIANTEN.md` §2; Auflöser in
-  `services/belegbezug.py`. **Kein Schemaeingriff.**
-  *Nächster Schritt dort:* Ein Auftrag über **mehrere** Wohnungen (drei Bäder, eine
-  Rechnung) zeigt heute nur die Einheit am Auftrag. Nach der Eigentumsgrenze wäre
-  das dreimal Sondereigentum — also drei Eigentümer auf einem Beleg. Mit dem User
-  am fertigen Blatt klären, bevor gebaut wird.
-
-**Erledigt am 2026-08-01** *(hier nur als Beleg, dass es nicht vergessen wurde)*
-- `main`/`develop` sind auf `origin` — der Rückstand von 27 Commits ist Geschichte.
-- Die volle Backend-Suite läuft wieder. Sie war seit `0114_geraetetoken` im Teardown
-  kaputt: Djangos `flush` leert `public.accounts_user`, aber `security.device_token`
-  hält einen Fremdschlüssel darauf und ist als `managed = False` nie Teil des
-  TRUNCATE — Postgres verweigert das zu Recht. 19 Tests starben daran, ausgerechnet
-  die für Mahnungs-Schreibpfad, Abrechnung unter Nebenläufigkeit und Löschschutz.
-  Behoben in `backend/conftest.py` (Details siehe Kommentar dort); **kein Eingriff
-  ins Fachschema**. Gegenprobe gegen `main` bestätigt: vorbestehend, keine Regression.
+*Was davor an diesem Tag fertig wurde (Plantafel-Auslastung, Plantafel-Bedienung,
+Protokoll-Maske, Sammelrechnung) steht in `docs/archiv/chronik-2026-08.md`.*
 
 **Fachlich — bewusst vertagt (Zusage an den User, 2026-07-20)**
 4. **`building.address_id` ist über die API nicht befüllbar.** Spalte und

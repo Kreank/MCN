@@ -206,6 +206,12 @@
                     <span class="row__meta">
                       <span class="row__nr">{{ a.assembly_number }}</span>
                       <span>je {{ a.unit }}</span>
+                      <!-- Deaktivierte Leistungen bleiben in der Liste (sonst
+                           liessen sie sich nie wieder aktivieren) — dann muss
+                           man ihnen aber ansehen, dass sie stillgelegt sind. -->
+                      @if (a.status === 'INAKTIV') {
+                        <span class="stamp stamp--warn">Inaktiv</span>
+                      }
                     </span>
                   </span>
                 </a>
@@ -245,10 +251,16 @@
         <legend class="legende">Stammdaten</legend>
         <app-feld [control]="artikelForm.controls.description" label="Artikelname" [pflicht]="true" />
         <div class="dlg-grid">
-          <app-feld [control]="artikelForm.controls.article_number" label="Artikelnummer" [pflicht]="true" hinweis="Eindeutig; keine automatische Vergabe." />
+          <app-feld
+            [control]="artikelForm.controls.article_number"
+            label="Artikelnummer"
+            platzhalter="wird automatisch vergeben"
+            hinweis="Leer lassen genügt. Eine eigene Nummer bleibt möglich."
+          />
           <app-feld [control]="artikelForm.controls.product_group" label="Kategorie" hinweis="Warengruppe (optional)." />
           <app-feld [control]="artikelForm.controls.unit" label="Einheit" [pflicht]="true" hinweis="z. B. Stk, m, h." />
           <app-feld [control]="artikelForm.controls.matchcode" label="Matchcode" hinweis="Kurzsuchbegriff (optional)." />
+          <app-feld [control]="artikelForm.controls.gtin" label="EAN / GTIN" hinweis="8, 12, 13 oder 14 Ziffern (mit Prüfziffer)." inputmode="numeric" />
           <app-feld [control]="artikelForm.controls.line_type" label="Typ" typ="select" [optionen]="lineTypOptionen" />
           @if (darfKostenstellen()) {
             <app-feld [control]="artikelForm.controls.cost_center_id" label="Kostenstelle" typ="select" platzhalter="Bitte auswählen" [optionen]="costCenterOptionen()" hinweis="Optional." />
@@ -319,13 +331,21 @@
           <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
         </div>
       }
-      <app-feld [control]="leistungForm.controls.assembly_number" label="Leistungsnummer" [pflicht]="true" hinweis="Eindeutig; keine automatische Vergabe." />
-      <app-feld [control]="leistungForm.controls.name" label="Name" [pflicht]="true" />
-      <app-feld [control]="leistungForm.controls.unit" label="Einheit" [pflicht]="true" hinweis="z. B. Stk, m, Pauschal." />
+      <app-feld [control]="leistungForm.controls.name" label="Name" [pflicht]="true" hinweis="So steht sie später im Angebot." />
+      <div class="dlg-grid">
+        <app-feld [control]="leistungForm.controls.unit" label="Einheit" [pflicht]="true" hinweis="z. B. Stk, m, Pauschal." />
+        <app-feld
+          [control]="leistungForm.controls.assembly_number"
+          label="Leistungsnummer"
+          platzhalter="wird automatisch vergeben"
+          hinweis="Leer lassen genügt. Eine eigene Nummer bleibt möglich."
+        />
+      </div>
+      <app-feld [control]="leistungForm.controls.internal_name" label="Interne Bezeichnung" hinweis="Optional, nur intern sichtbar." />
       <app-feld [control]="leistungForm.controls.description" label="Beschreibung" typ="textarea" hinweis="Optional." />
       <p class="dialog-form__hinweis">
-        Die Leistung wird als Kopf angelegt. Die Stückliste (Material- und
-        Lohnpositionen) folgt, sobald der Positions-Editor bereitsteht.
+        Nach dem Anlegen geht es direkt in die Leistung — dort werden Material-
+        und Lohnpositionen eingetragen.
       </p>
     </form>
     <div dialog-aktionen class="dialog__aktionen">

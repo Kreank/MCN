@@ -110,6 +110,11 @@ export interface AssemblyComponent {
   quantity: string | null;
   unit: string | null;
   minutes: string | null;
+  /** Fremdschlüssel für den Stücklisten-Editor: ohne sie liesse sich eine
+   *  gelesene Position nicht unverändert zurückschicken. */
+  article_id: string | null;
+  wage_group_id: string | null;
+  note: string | null;
 }
 
 export interface AssemblyDetail extends Assembly {
@@ -129,12 +134,14 @@ export interface StammQuery {
 
 // --- Anlage / Preis (POST/PUT /api/pricing/...) ----------------------------
 export interface ArticleIn {
-  article_number: string;
+  /** Leer lassen: die DB vergibt die nächste freie Nummer (ART-#####). */
+  article_number?: string | null;
   description: string;
   unit: string;
   line_type?: ArticleLineType;
   list_price?: string | null;
   long_description?: string | null;
+  gtin?: string | null;
   manufacturer_name?: string | null;
   manufacturer_number?: string | null;
   manufacturer_type?: string | null;
@@ -149,17 +156,19 @@ export interface ArticleIn {
 }
 
 export interface AssemblyIn {
-  assembly_number: string;
+  /** Leer lassen: die DB vergibt die nächste freie Nummer (LEI-#####). */
+  assembly_number?: string | null;
   name: string;
   unit: string;
   description?: string | null;
+  internal_name?: string | null;
 }
 
-/** Artikel kopieren (POST /articles/{id}/copy). Nur die neue Artikelnummer ist
- *  nötig; der Server dupliziert Stammdaten, VK-Gruppen und Lieferantenbezug —
- *  die GTIN bewusst NICHT. Recht pricing/ANLEGEN. */
+/** Artikel kopieren (POST /articles/{id}/copy). Der Server dupliziert Stammdaten,
+ *  VK-Gruppen und Lieferantenbezug — die GTIN bewusst NICHT. Recht
+ *  pricing/ANLEGEN. Ohne Nummer vergibt die DB die nächste freie. */
 export interface ArticleCopyIn {
-  article_number: string;
+  article_number?: string | null;
 }
 
 export interface ArticleSalePriceIn {
@@ -211,6 +220,57 @@ export interface ComponentIn {
 
 export interface AssemblyComponentsInput {
   components: ComponentIn[];
+}
+
+/** Leistungsstammdaten ändern (PUT /assemblies/{id}). Nur gesetzte Felder
+ *  wirken (der Server nutzt exclude_unset). */
+export interface AssemblyUpdateIn {
+  assembly_number?: string;
+  name?: string;
+  internal_name?: string | null;
+  unit?: string;
+  description?: string | null;
+}
+
+/** Eine Zeile der Leistungskalkulation (GET /assemblies/{id}/kalkulation).
+ *  Beträge als Punkt-String; `null` heisst „unbekannt", nie „null Euro". */
+export interface AssemblyKalkPosition {
+  position: number;
+  kind: 'MATERIAL' | 'LOHN';
+  description: string;
+  reference: string | null;
+  quantity: string | null;
+  unit: string | null;
+  minutes: string | null;
+  ek_je_einheit: string | null;
+  vk_je_einheit: string | null;
+  ek_summe: string | null;
+  vk_summe: string | null;
+  hinweis: string | null;
+}
+
+export interface AssemblyKalkulation {
+  assembly_id: string;
+  assembly_number: string;
+  name: string;
+  unit: string;
+  positionen: AssemblyKalkPosition[];
+  material_ek: string;
+  material_vk: string;
+  lohn_ek: string;
+  lohn_vk: string;
+  minuten_gesamt: string;
+  ek_gesamt: string;
+  vk_gesamt: string;
+  /** Lohnanteil am VK (§ 35a EStG) — geht mit ins Angebot. */
+  lohnanteil_vk: string;
+  marge_prozent: string | null;
+  /** false, sobald einem Material der VK fehlt: dann ist vk_gesamt eine
+   *  Teilsumme und darf nicht als Preis gelesen werden. */
+  vollstaendig: boolean;
+  /** false, sobald ein Einkaufspreis oder Lohn-Kostensatz fehlt. Dann ist
+   *  `marge_prozent` null — eine zu hohe Marge wäre schlimmer als keine. */
+  kosten_vollstaendig: boolean;
 }
 
 // --- Artikel bearbeiten / Status / Historie / Stammdaten-Übernahme ----------

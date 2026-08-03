@@ -193,12 +193,13 @@ def create_wage_group(actor_app_user_id, *, name, hourly_rate, kind="LOHN", cost
 def create_article(
     actor_app_user_id,
     *,
-    article_number,
+    article_number=None,
     description,
     unit,
     line_type="MATERIAL",
     list_price=None,
     long_description=None,
+    gtin=None,
     manufacturer_name=None,
     manufacturer_number=None,
     manufacturer_type=None,
@@ -211,15 +212,21 @@ def create_article(
     cost_center_id=None,
     price_unit=None,
 ):
-    """Legt einen Artikel (Status AKTIV) an."""
+    """Legt einen Artikel (Status AKTIV) an.
+
+    `article_number` darf leer bleiben: dann vergibt `trg_article_number` die
+    nächste freie Nummer (ART-#####, Migration 0149). Erst im INSERT-Moment —
+    deshalb kollidieren gleichzeitige Erfasser nicht.
+    """
     if line_type not in ARTICLE_LINE_TYPES:
         raise ValueError(
             f"Ungültiger line_type '{line_type}'. "
             f"Erlaubt: {', '.join(ARTICLE_LINE_TYPES)}."
         )
-    for feld, wert in (("article_number", article_number), ("description", description), ("unit", unit)):
+    for feld, wert in (("description", description), ("unit", unit)):
         if not wert or not str(wert).strip():
             raise ValueError(f"{feld} darf nicht leer sein.")
+    gtin = _gtin(gtin)
     # Fremdschlüssel/Wertebereiche vorab prüfen → klarer 422 statt IntegrityError.
     tax_code = _ensure_tax_code(tax_code)
     cost_center_id = _ensure_cost_center(cost_center_id)
@@ -230,12 +237,15 @@ def create_article(
     with business_transaction(actor_app_user_id):
         article = Article.objects.create(
             id=uuid.uuid4(),
-            article_number=article_number.strip(),
+            # Leer heißt „vergib du": trg_article_number ersetzt den Leerstring
+            # im INSERT durch die nächste freie ART-Nummer (Migration 0149).
+            article_number=(article_number or "").strip(),
             description=description.strip(),
             unit=unit.strip(),
             line_type=line_type,
             list_price=list_price,
             long_description=long_description,
+            gtin=gtin,
             manufacturer_name=manufacturer_name,
             manufacturer_number=manufacturer_number,
             manufacturer_type=manufacturer_type,
@@ -250,6 +260,9 @@ def create_article(
             status="AKTIV",
             version=1,
         )
+    # Die Nummer entsteht im Trigger, nicht in Python — ohne Nachlesen trüge das
+    # zurückgegebene Objekt den Leerstring, mit dem es geschrieben wurde.
+    article.refresh_from_db(fields=["article_number"])
     return article
 
 
@@ -321,13 +334,7 @@ def update_article(actor_app_user_id, *, article_id, **felder):
                 )
             _merke(feld, feld, wert)
         elif feld == "gtin":
-            wert = (wert or "").strip() or None
-            if wert is not None and not _gtin_gueltig(wert):
-                raise ValueError(
-                    "Ungültige GTIN/EAN: erwartet 8, 12, 13 oder 14 Ziffern mit "
-                    "korrekter Prüfziffer."
-                )
-            _merke(feld, feld, wert)
+            _merke(feld, feld, _gtin(wert))
         elif feld == "list_price":
             if wert is not None and Decimal(str(wert)) < 0:
                 raise ValueError("list_price darf nicht negativ sein.")
@@ -369,6 +376,17 @@ def update_article(actor_app_user_id, *, article_id, **felder):
         article.save(update_fields=spalten + ["updated_at"])
     article.refresh_from_db()
     return article
+
+
+def _gtin(wert):
+    """Leerwert → None, sonst geprüfte GTIN. Eine Stelle für Anlage und Änderung."""
+    wert = (wert or "").strip() or None
+    if wert is not None and not _gtin_gueltig(wert):
+        raise ValueError(
+            "Ungültige GTIN/EAN: erwartet 8, 12, 13 oder 14 Ziffern mit "
+            "korrekter Prüfziffer."
+        )
+    return wert
 
 
 def _gtin_gueltig(gtin):
@@ -444,18 +462,22 @@ def _prepare_component(comp, pos):
 def create_assembly(
     actor_app_user_id,
     *,
-    assembly_number,
+    assembly_number=None,
     name,
     unit,
     description=None,
+    internal_name=None,
     components=None,
 ):
     """Legt eine Leistung mit Stückliste an.
 
     components: Liste von dicts, je entweder {'article_id', 'quantity'} (Material)
     oder {'wage_group_id', 'minutes'} (Lohn) — nie beides (DB-XOR-CHECK).
+
+    `assembly_number` darf leer bleiben: dann vergibt `trg_assembly_number` die
+    nächste freie Nummer (LEI-#####, Migration 0149).
     """
-    for feld, wert in (("assembly_number", assembly_number), ("name", name), ("unit", unit)):
+    for feld, wert in (("name", name), ("unit", unit)):
         if not wert or not str(wert).strip():
             raise ValueError(f"{feld} darf nicht leer sein.")
     components = components or []
@@ -471,10 +493,12 @@ def create_assembly(
     with business_transaction(actor_app_user_id):
         assembly = Assembly.objects.create(
             id=uuid.uuid4(),
-            assembly_number=assembly_number.strip(),
+            # Leer heißt „vergib du" (trg_assembly_number, Migration 0149).
+            assembly_number=(assembly_number or "").strip(),
             name=name.strip(),
             unit=unit.strip(),
             description=description,
+            internal_name=(internal_name or "").strip() or None,
             status="AKTIV",
             version=1,
         )
@@ -482,6 +506,8 @@ def create_assembly(
             AssemblyComponent.objects.create(
                 id=uuid.uuid4(), assembly_id=assembly.id, position=pos, **cols
             )
+    # Die Nummer entsteht im Trigger — ohne Nachlesen bliebe hier der Leerstring.
+    assembly.refresh_from_db(fields=["assembly_number"])
     return assembly
 
 
@@ -520,6 +546,105 @@ def add_assembly_components(actor_app_user_id, *, assembly_id, components):
                 )
             )
     return created
+
+
+ASSEMBLY_UPDATE_FIELDS = (
+    "assembly_number",
+    "name",
+    "internal_name",
+    "unit",
+    "description",
+)
+
+
+def update_assembly(actor_app_user_id, *, assembly_id, **felder):
+    """Ändert die Stammdaten einer Leistung. Nur Felder aus der Whitelist.
+
+    Wie beim Artikel ist die Nummer änderbar, aber eindeutig — ein Duplikat
+    ergibt einen klaren 422 statt eines IntegrityError. Leeren lässt sich die
+    Nummer nicht: eine Leistung ohne Nummer ist in Belegen nicht auffindbar.
+    """
+    unbekannt = set(felder) - set(ASSEMBLY_UPDATE_FIELDS)
+    if unbekannt:
+        raise ValueError(f"Unbekannte Felder: {', '.join(sorted(unbekannt))}")
+    assembly = Assembly.objects.filter(id=assembly_id).first()
+    if assembly is None:
+        raise ValueError("Leistung nicht gefunden.")
+
+    werte = {}
+    for feld, wert in felder.items():
+        if feld in ("assembly_number", "name", "unit"):
+            wert = (wert or "").strip()
+            if not wert:
+                raise ValueError(f"{feld} darf nicht leer sein.")
+            if feld == "assembly_number" and wert != assembly.assembly_number:
+                if Assembly.objects.filter(assembly_number=wert).exists():
+                    raise ValueError(f"Leistungsnummer '{wert}' ist bereits vergeben.")
+        else:
+            # internal_name/description: „nicht erfasst" ist NULL, nicht ''.
+            wert = (wert or "").strip() or None
+        werte[feld] = wert
+
+    if not werte:
+        return assembly
+    for feld, wert in werte.items():
+        setattr(assembly, feld, wert)
+    with business_transaction(actor_app_user_id):
+        assembly.save(update_fields=list(werte))
+    return Assembly.objects.get(id=assembly_id)
+
+
+def set_assembly_status(actor_app_user_id, *, assembly_id, status):
+    """Setzt den Leistungsstatus (AKTIV/INAKTIV).
+
+    Gelöscht wird nie (`trg_assembly_no_delete`): Angebote und Rechnungen
+    verweisen über `source_assembly_id` auf die Leistung, ein Löschen risse die
+    Herkunft historischer Positionen heraus. INAKTIV nimmt sie aus der Auswahl,
+    ohne die Vergangenheit anzutasten.
+    """
+    if status not in ARTICLE_STATUS:
+        raise ValueError(
+            f"Ungültiger Status '{status}'. Erlaubt: {', '.join(ARTICLE_STATUS)}."
+        )
+    assembly = Assembly.objects.filter(id=assembly_id).first()
+    if assembly is None:
+        raise ValueError("Leistung nicht gefunden.")
+    if assembly.status == status:
+        return assembly
+    assembly.status = status
+    with business_transaction(actor_app_user_id):
+        assembly.save(update_fields=["status"])
+    return Assembly.objects.get(id=assembly_id)
+
+
+def replace_assembly_components(actor_app_user_id, *, assembly_id, components):
+    """Ersetzt die Stückliste einer Leistung **vollständig**.
+
+    Ändern, Löschen und Umsortieren laufen über denselben Aufruf — der Editor
+    schickt immer die ganze Liste. Ein Teil-Update einzelner Positionen wäre bei
+    umsortierten Positionsnummern nicht eindeutig (dieselbe Überlegung wie bei
+    `update_quote`). Die Positionsnummern werden aus der Reihenfolge der Liste
+    neu vergeben, also lückenlos ab 1.
+
+    Eine leere Liste ist erlaubt und leert die Stückliste — anders als bei
+    `add_assembly_components`, wo „nichts anhängen" ein Aufruf ohne Wirkung wäre.
+    `pricing.assembly_component` trägt keine Löschsperre, aber einen
+    Delete-Audit-Trigger: die entfernten Positionen bleiben nachweisbar.
+    """
+    ensure_exists(Assembly, assembly_id, "Leistung")
+    components = components or []
+    ensure_all_exist(Article, [c.get("article_id") for c in components], "Artikel")
+    ensure_all_exist(WageGroup, [c.get("wage_group_id") for c in components], "Lohngruppe")
+    prepared = [_prepare_component(comp, pos) for pos, comp in enumerate(components, start=1)]
+    with business_transaction(actor_app_user_id):
+        AssemblyComponent.objects.filter(assembly_id=assembly_id).delete()
+        for pos, cols in enumerate(prepared, start=1):
+            AssemblyComponent.objects.create(
+                id=uuid.uuid4(), assembly_id=assembly_id, position=pos, **cols
+            )
+    return list(
+        AssemblyComponent.objects.filter(assembly_id=assembly_id).order_by("position")
+    )
 
 
 def create_sale_price_group(
@@ -1016,7 +1141,7 @@ _ARTICLE_COPY_FIELDS = (
 )
 
 
-def copy_article(actor_app_user_id, *, source_article_id, article_number):
+def copy_article(actor_app_user_id, *, source_article_id, article_number=None):
     """Dupliziert einen Artikel unter neuer Nummer (Hero „Kopieren").
 
     In EINER Transaktion:
@@ -1035,13 +1160,12 @@ def copy_article(actor_app_user_id, *, source_article_id, article_number):
     # Lokaler Import: kein Modul-Zyklus (kalkulation importiert artikel nicht).
     from db_core.services import kalkulation as kalkulation_service
 
+    # Leer heißt „vergib du" — wie beim Anlegen (trg_article_number, 0149).
     nummer = (article_number or "").strip()
-    if not nummer:
-        raise ValueError("Die neue Artikelnummer darf nicht leer sein.")
     source = Article.objects.filter(id=source_article_id).first()
     if source is None:
         raise ValueError("Quellartikel nicht gefunden.")
-    if Article.objects.filter(article_number=nummer).exists():
+    if nummer and Article.objects.filter(article_number=nummer).exists():
         raise ValueError(f"Artikelnummer '{nummer}' ist bereits vergeben.")
 
     werte = {feld: getattr(source, feld) for feld in _ARTICLE_COPY_FIELDS}

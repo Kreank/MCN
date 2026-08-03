@@ -4,7 +4,16 @@ import { ActivatedRoute, RouterLink } from '@angular/router';
 import { NgTemplateOutlet } from '@angular/common';
 import { CdkDragDrop, DragDropModule, moveItemInArray } from '@angular/cdk/drag-drop';
 import { FormBuilder, FormControl, ReactiveFormsModule, Validators } from '@angular/forms';
-import { Observable, Subject, debounceTime, distinctUntilChanged, map } from 'rxjs';
+import {
+  Observable,
+  Subject,
+  catchError,
+  debounceTime,
+  distinctUntilChanged,
+  forkJoin,
+  map,
+  of,
+} from 'rxjs';
 import { BelegService } from '../../core/beleg.service';
 import { ArtikelService } from '../../core/artikel.service';
 import { AufschlagsmatrixService } from '../../core/aufschlagsmatrix.service';
@@ -1754,8 +1763,21 @@ export class AngebotEditor {
     const zielRubrik = ziel ? ziel.rubrikUid : this.zielRubrik();
     const zielIndex = ziel ? ziel.index : ANS_ENDE;
     const zielName = zielRubrik === null ? 'Ohne Abschnitt' : this.rubrikName(zielRubrik);
-    this.artikelSvc.getAssembly(id).subscribe({
-      next: (asm) => {
+    // Stammdaten und Kalkulation gemeinsam: Der Preis einer Leistung steht
+    // nicht am Kopf, er ergibt sich aus ihrer Stückliste.
+    forkJoin({
+      asm: this.artikelSvc.getAssembly(id),
+      kalk: this.artikelSvc.assemblyKalkulation(id).pipe(
+        // Ohne Kalkulation wird die Leistung trotzdem übernommen — nur eben
+        // ohne Preis. Ein harter Fehler wäre hier die schlechtere Antwort.
+        catchError(() => of(null)),
+      ),
+    }).subscribe({
+      next: ({ asm, kalk }) => {
+        // Nur ein vollständiger VK darf als Preis einziehen: eine Teilsumme,
+        // der Positionen fehlen, sähe im Angebot wie ein fertiger Preis aus.
+        const preis = kalk && kalk.vollstaendig ? kalk.vk_gesamt : null;
+        const kosten = kalk && kalk.vollstaendig ? kalk.ek_gesamt : null;
         const line: EditorLine = {
           uid: neueUid(),
           rubrikUid: zielRubrik,
@@ -1764,26 +1786,32 @@ export class AngebotEditor {
           description: asm.name,
           quantity: '1',
           unit: asm.unit,
-          unit_price: null,
+          unit_price: preis,
           discount_percent: null,
           tax_code: 'DE_19',
-          unit_cost: null,
+          unit_cost: kosten,
           markup_percent: null,
           sale_price_group_id: null,
           source_article_id: null,
           source_assembly_id: asm.id,
           netAmount: null,
           taxRatePercent: null,
-          // Der Server leitet den § 35a-Anteil aus der Positionsart ab.
+          // Der § 35a-Anteil bleibt offen. Die Kalkulation kennt ihn zwar je
+          // Leistungseinheit, aber `labour_net_amount` ist ein Betrag für die
+          // GANZE Position und wird beim Ändern der Menge nicht mitskaliert —
+          // ein hier eingesetzter Wert wäre ab der zweiten Einheit falsch.
           labour_net_amount: null,
           labourManual: false,
-          // Leistungen/Stücklisten liefern keinen Matrix-VK → kein Auto-Preis.
+          // Der Preis kommt aus der Stückliste, nicht aus der Matrix: ein
+          // Auto-Preis würde ihn beim nächsten Mengenwechsel überschreiben.
           preisAuto: false,
           markupManuell: false,
         };
         this.lineEinsetzen(line, zielRubrik, zielIndex);
         this.ansage.set(
-          `Leistung „${asm.name}" nach „${zielName}" übernommen. Bitte Einzelpreis ergänzen.`,
+          preis === null
+            ? `Leistung „${asm.name}" nach „${zielName}" übernommen. Bitte Einzelpreis ergänzen — die Stückliste ergibt noch keinen vollständigen Preis.`
+            : `Leistung „${asm.name}" nach „${zielName}" übernommen, Preis aus der Stückliste berechnet.`,
         );
       },
       error: (err) => {

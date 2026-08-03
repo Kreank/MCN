@@ -432,7 +432,12 @@ class TechnicalAsset(models.Model):
 
 
 class Building(models.Model):
-    """property.building — Gebäude einer Liegenschaft."""
+    """property.building — Gebäude einer Liegenschaft.
+
+    `building_number` wird bei leerem Wert von `trg_building_number` vergeben:
+    fortlaufend je LIEGENSCHAFT (Migration 0149). Eine sprechende Nummer
+    („Hinterhaus") bleibt möglich und zählt beim Hochzählen nicht mit.
+    """
 
     id = models.UUIDField(primary_key=True)
     property = models.ForeignKey(
@@ -466,6 +471,10 @@ class Unit(models.Model):
     building; Django modelliert beide Spalten als eigene FKs. property_id ist
     redundant, aber von der DB konsistenzgesichert und muss beim Anlegen zum
     Gebäude passen.
+
+    `unit_number` wird bei leerem Wert von `trg_unit_number` vergeben —
+    fortlaufend je LIEGENSCHAFT über alle Gebäude hinweg, weil A-09
+    `UNIQUE (property_id, unit_number)` verlangt (Migration 0149).
     """
 
     id = models.UUIDField(primary_key=True)
@@ -1845,7 +1854,10 @@ class DueItem(models.Model):
 class Article(models.Model):
     """pricing.article — Artikel/Material (Migration 0028, list_price aus 0033).
 
-    Keine automatische Nummernvergabe (article_number ist app-/nutzergesetzt).
+    `article_number` bleibt setzbar (Importe geben ihre Nummern vor), wird aber
+    bei leerem Wert von `trg_article_number` vergeben (ART-#####, Migration
+    0149). Bewusst KEIN `db_default`: Der Trigger behandelt den Leerstring, den
+    die ORM für ein unbelegtes TextField schickt, ohnehin wie NULL.
     Kein Löschen (No-Delete-Trigger) — nur status AKTIV/INAKTIV.
     """
 
@@ -1926,7 +1938,11 @@ class WageGroup(models.Model):
 
 
 class Assembly(models.Model):
-    """pricing.assembly — Leistung (Stückliste aus Material + Lohn; Migration 0033)."""
+    """pricing.assembly — Leistung (Stückliste aus Material + Lohn; Migration 0033).
+
+    `assembly_number` wird bei leerem Wert von `trg_assembly_number` vergeben
+    (LEI-#####, Migration 0149) — siehe `Article`.
+    """
 
     id = models.UUIDField(primary_key=True)
     assembly_number = models.TextField()

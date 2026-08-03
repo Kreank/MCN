@@ -14,7 +14,9 @@ import {
   AssemblyComponentsInput,
   AssemblyDetail,
   AssemblyIn,
+  AssemblyKalkulation,
   AssemblyPage,
+  AssemblyUpdateIn,
   HistorieEintrag,
   LieferantIn,
   SalePriceGroup,
@@ -180,6 +182,37 @@ export class ArtikelService {
     return this.http.post<AssemblyDetail>(
       `${this.base}/assemblies/${assemblyId}/components`,
       payload,
+    );
+  }
+
+  /** Stückliste vollständig ersetzen — Ändern, Löschen und Umsortieren in
+   *  EINEM Aufruf. Die Positionsnummern ergeben sich aus der Reihenfolge. */
+  replaceAssemblyComponents(
+    assemblyId: string,
+    payload: AssemblyComponentsInput,
+  ): Observable<AssemblyDetail> {
+    return this.http.put<AssemblyDetail>(
+      `${this.base}/assemblies/${assemblyId}/components`,
+      payload,
+    );
+  }
+
+  /** Leistungsstammdaten ändern. Erfordert Recht pricing.AENDERN. */
+  updateAssembly(id: string, payload: AssemblyUpdateIn): Observable<AssemblyDetail> {
+    return this.http.put<AssemblyDetail>(`${this.base}/assemblies/${id}`, payload);
+  }
+
+  /** Leistung aktivieren/deaktivieren (kein Löschen — Belege verweisen darauf). */
+  setAssemblyStatus(id: string, status: StammStatus): Observable<AssemblyDetail> {
+    return this.http.post<AssemblyDetail>(`${this.base}/assemblies/${id}/status`, {
+      status,
+    });
+  }
+
+  /** Preis der Leistung aus ihrer Stückliste (Material + Lohn). Rein lesend. */
+  assemblyKalkulation(id: string): Observable<AssemblyKalkulation> {
+    return this.http.get<AssemblyKalkulation>(
+      `${this.base}/assemblies/${id}/kalkulation`,
     );
   }
 }

@@ -321,10 +321,9 @@ export class ArtikelDetail {
   protected readonly kopierenLaedt = signal(false);
   protected readonly kopierenMeldung = signal<string | null>(null);
   protected readonly kopierenForm = this.fb.group({
-    article_number: this.fb.control('', {
-      nonNullable: true,
-      validators: [Validators.required],
-    }),
+    // Leer heisst „die DB vergibt" (Migration 0149) — kein Zwang zu Namen wie
+    // „ART-00042-KOPIE", die nur so lange stimmen, bis jemand zweimal kopiert.
+    article_number: this.fb.control('', { nonNullable: true }),
   });
 
   constructor() {
@@ -606,8 +605,7 @@ export class ArtikelDetail {
     if (!art) return;
     this.kopierenMeldung.set(null);
     serverFehlerZuruecksetzen(this.kopierenForm);
-    // Vorschlag: alte Nummer + Suffix, editierbar.
-    this.kopierenForm.reset({ article_number: `${art.article_number}-KOPIE` });
+    this.kopierenForm.reset({ article_number: '' });
     this.kopierenOffen.set(true);
   }
 
@@ -624,7 +622,7 @@ export class ArtikelDetail {
     felderAlsBeruehrtMarkieren(this.kopierenForm);
     if (this.kopierenForm.invalid) return;
 
-    const nummer = this.kopierenForm.controls.article_number.value.trim();
+    const nummer = this.kopierenForm.controls.article_number.value.trim() || null;
     this.kopierenLaedt.set(true);
     this.svc.copyArticle(art.id, { article_number: nummer }).subscribe({
       next: (neu) => {

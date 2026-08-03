@@ -20,6 +20,7 @@ import { AuthService } from '../../core/auth.service';
 import {
   AssemblyComponent,
   AssemblyDetail,
+  AssemblyKalkulation,
   ComponentIn,
   StammStatus,
 } from '../../core/artikel.model';
@@ -30,7 +31,16 @@ type ViewState =
   | VerbotenState
   | { kind: 'error' };
 
+type KalkState =
+  | { kind: 'idle' }
+  | { kind: 'loading' }
+  | { kind: 'ready'; data: AssemblyKalkulation }
+  | { kind: 'error' };
+
 type Meldung = { art: 'erfolg' | 'fehler'; text: string };
+
+/** Position, die der Dialog gerade bearbeitet — `null` heisst „neue Position". */
+type PosZiel = { position: number } | null;
 
 @Component({
   selector: 'app-leistung-detail',
@@ -50,6 +60,7 @@ export class LeistungDetail {
 
   protected readonly tabs: MappeTab[] = [
     { id: 'stueckliste', label: 'Stückliste' },
+    { id: 'kalkulation', label: 'Kalkulation' },
     { id: 'stammdaten', label: 'Stammdaten' },
   ];
 
@@ -61,10 +72,14 @@ export class LeistungDetail {
   // --- Rechte (nur UI-Sichtbarkeit; der Server setzt sie durch) -----------
   protected readonly darfAendern = computed(() => this.auth.darf('pricing', 'AENDERN'));
 
-  // --- Position anhängen (Dialog) -----------------------------------------
   protected readonly meldung = signal<Meldung | null>(null);
+  /** Eine Aktion auf der Stückliste läuft — sperrt die übrigen Knöpfe. */
+  protected readonly listeLaedt = signal(false);
+
+  // --- Position anlegen/bearbeiten (Dialog) --------------------------------
   protected readonly posOffen = signal(false);
   protected readonly posLaedt = signal(false);
+  protected readonly posZiel = signal<PosZiel>(null);
   protected readonly formularMeldung = signal<string | null>(null);
   /** Lohngruppen als Auswahl (Lohn-Position); leer bis geladen. */
   protected readonly lohngruppen = signal<FeldOption[]>([]);
@@ -85,6 +100,10 @@ export class LeistungDetail {
     note: this.fb.control('', { nonNullable: true }),
   });
 
+  protected readonly posDialogTitel = computed(() =>
+    this.posZiel() === null ? 'Position anhängen' : 'Position bearbeiten',
+  );
+
   /** Artikelsuche für Material-Positionen. */
   protected readonly artikelSuche: RefSuche = (q) =>
     this.svc.listArticles({ page: 1, page_size: 20, q }).pipe(
@@ -93,10 +112,32 @@ export class LeistungDetail {
       ),
     );
 
+  // --- Stammdaten bearbeiten ----------------------------------------------
+  protected readonly bearbeitenOffen = signal(false);
+  protected readonly bearbeitenLaedt = signal(false);
+  protected readonly bearbeitenForm = this.fb.group({
+    assembly_number: this.fb.control('', {
+      nonNullable: true,
+      validators: [Validators.required],
+    }),
+    name: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
+    unit: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
+    internal_name: this.fb.control('', { nonNullable: true }),
+    description: this.fb.control('', { nonNullable: true }),
+  });
+
+  // --- Status --------------------------------------------------------------
+  protected readonly statusLaedt = signal(false);
+
+  // --- Kalkulation ---------------------------------------------------------
+  protected readonly kalk = signal<KalkState>({ kind: 'idle' });
+  private kalkReqId = 0;
+
   constructor() {
     this.route.paramMap.pipe(takeUntilDestroyed()).subscribe((pm) => {
       const id = pm.get('id');
       this.tab.set('stueckliste');
+      this.kalk.set({ kind: 'idle' });
       if (!id) {
         this.state.set({ kind: 'error' });
         return;
@@ -133,7 +174,99 @@ export class LeistungDetail {
     this.meldung.set(null);
   }
 
-  // ---- Position anhängen --------------------------------------------------
+  /** Reiterwechsel: die Kalkulation wird erst geladen, wenn sie sichtbar wird. */
+  tabWechsel(id: string): void {
+    this.tab.set(id);
+    if (id === 'kalkulation' && this.kalk().kind === 'idle') this.kalkLaden();
+  }
+
+  // ---- Kalkulation --------------------------------------------------------
+  kalkLaden(): void {
+    const a = this.daten();
+    if (!a) return;
+    const rid = ++this.kalkReqId;
+    this.kalk.set({ kind: 'loading' });
+    this.svc.assemblyKalkulation(a.id).subscribe({
+      next: (data) => {
+        if (rid === this.kalkReqId) this.kalk.set({ kind: 'ready', data });
+      },
+      error: () => {
+        if (rid === this.kalkReqId) this.kalk.set({ kind: 'error' });
+      },
+    });
+  }
+
+  /** Nach jeder Änderung an der Stückliste: ein alter Preis wäre schlicht falsch. */
+  private kalkVerwerfen(): void {
+    this.kalkReqId++;
+    this.kalk.set({ kind: 'idle' });
+    if (this.tab() === 'kalkulation') this.kalkLaden();
+  }
+
+  // ---- Stückliste: eine Liste, drei Aktionen ------------------------------
+  /** Die geladene Stückliste als Eingabeliste — Ausgangspunkt jeder Änderung. */
+  private aktuelleListe(): ComponentIn[] {
+    const a = this.daten();
+    if (!a) return [];
+    return a.components.map((c) => this.zuEingabe(c));
+  }
+
+  private zuEingabe(c: AssemblyComponent): ComponentIn {
+    return c.kind === 'MATERIAL'
+      ? { article_id: c.article_id, quantity: c.quantity, note: c.note }
+      : { wage_group_id: c.wage_group_id, minutes: c.minutes, note: c.note };
+  }
+
+  /** Schickt die ganze Liste; die Positionsnummern folgen der Reihenfolge. */
+  private listeSpeichern(components: ComponentIn[], erfolg: string): void {
+    const a = this.daten();
+    if (!a) return;
+    this.listeLaedt.set(true);
+    this.svc.replaceAssemblyComponents(a.id, { components }).subscribe({
+      next: (detail) => {
+        this.listeLaedt.set(false);
+        this.state.set({ kind: 'ready', data: detail });
+        this.meldung.set({ art: 'erfolg', text: erfolg });
+        this.kalkVerwerfen();
+      },
+      error: () => {
+        this.listeLaedt.set(false);
+        this.meldung.set({
+          art: 'fehler',
+          text: 'Die Stückliste konnte nicht gespeichert werden.',
+        });
+      },
+    });
+  }
+
+  posEntfernen(c: AssemblyComponent): void {
+    if (this.listeLaedt()) return;
+    const liste = this.aktuelleListe().filter((_, i) => i !== c.position - 1);
+    this.listeSpeichern(liste, `Position ${c.position} wurde entfernt.`);
+  }
+
+  posVerschieben(c: AssemblyComponent, richtung: -1 | 1): void {
+    if (this.listeLaedt()) return;
+    const liste = this.aktuelleListe();
+    const von = c.position - 1;
+    const nach = von + richtung;
+    if (nach < 0 || nach >= liste.length) return;
+    [liste[von], liste[nach]] = [liste[nach], liste[von]];
+    this.listeSpeichern(
+      liste,
+      `Position wurde nach ${richtung < 0 ? 'oben' : 'unten'} verschoben.`,
+    );
+  }
+
+  /** Erste/letzte Zeile: die Pfeile dort führen ins Leere. */
+  istErste(c: AssemblyComponent): boolean {
+    return c.position <= 1;
+  }
+  istLetzte(c: AssemblyComponent): boolean {
+    return c.position >= (this.daten()?.components.length ?? 0);
+  }
+
+  // ---- Position anlegen/bearbeiten ---------------------------------------
   private posValidatoren(kind: 'MATERIAL' | 'LOHN'): void {
     const article = this.posForm.controls.article_id;
     const quantity = this.posForm.controls.quantity;
@@ -161,6 +294,7 @@ export class LeistungDetail {
   }
 
   posOeffnen(): void {
+    this.posZiel.set(null);
     this.posForm.reset({
       kind: 'MATERIAL',
       article_id: '',
@@ -175,6 +309,26 @@ export class LeistungDetail {
     if (!this.lohngruppenGeladen()) this.ladeLohngruppen();
   }
 
+  posBearbeiten(c: AssemblyComponent): void {
+    if (this.listeLaedt()) return;
+    this.posZiel.set({ position: c.position });
+    // reset() loest den valueChanges-Abonnenten auf `kind` aus, der die Felder
+    // der jeweils ANDEREN Art leert. Deshalb steht posValidatoren() darunter
+    // noch einmal — es setzt die Pflichtfelder passend zur geladenen Art.
+    this.posForm.reset({
+      kind: c.kind,
+      article_id: c.article_id ?? '',
+      quantity: c.quantity ?? '',
+      wage_group_id: c.wage_group_id ?? '',
+      minutes: c.minutes ?? '',
+      note: c.note ?? '',
+    });
+    this.posValidatoren(c.kind);
+    this.formularMeldung.set(null);
+    this.posOffen.set(true);
+    if (!this.lohngruppenGeladen()) this.ladeLohngruppen();
+  }
+
   posSchliessen(): void {
     if (!this.posLaedt()) this.posOffen.set(false);
   }
@@ -182,8 +336,7 @@ export class LeistungDetail {
   private ladeLohngruppen(): void {
     this.lohngruppenGeladen.set(true);
     this.svc.listWageGroups().subscribe({
-      next: (wg) =>
-        this.lohngruppen.set(wg.map((g) => ({ wert: g.id, label: g.name }))),
+      next: (wg) => this.lohngruppen.set(wg.map((g) => ({ wert: g.id, label: g.name }))),
       error: () => this.lohngruppen.set([]),
     });
   }
@@ -210,13 +363,22 @@ export class LeistungDetail {
             note: v.note.trim() || null,
           };
 
+    const ziel = this.posZiel();
+    const liste = this.aktuelleListe();
+    if (ziel === null) liste.push(component);
+    else liste[ziel.position - 1] = component;
+
     this.posLaedt.set(true);
-    this.svc.addAssemblyComponents(a.id, { components: [component] }).subscribe({
+    this.svc.replaceAssemblyComponents(a.id, { components: liste }).subscribe({
       next: (detail) => {
         this.posLaedt.set(false);
         this.posOffen.set(false);
-        this.meldung.set({ art: 'erfolg', text: 'Position wurde angehängt.' });
         this.state.set({ kind: 'ready', data: detail });
+        this.meldung.set({
+          art: 'erfolg',
+          text: ziel === null ? 'Position wurde angehängt.' : 'Position wurde geändert.',
+        });
+        this.kalkVerwerfen();
       },
       error: (err) => {
         this.posLaedt.set(false);
@@ -225,6 +387,87 @@ export class LeistungDetail {
     });
   }
 
+  // ---- Stammdaten bearbeiten ---------------------------------------------
+  bearbeitenOeffnen(): void {
+    const a = this.daten();
+    if (!a) return;
+    serverFehlerZuruecksetzen(this.bearbeitenForm);
+    this.formularMeldung.set(null);
+    this.bearbeitenForm.reset({
+      assembly_number: a.assembly_number,
+      name: a.name,
+      unit: a.unit,
+      internal_name: a.internal_name ?? '',
+      description: a.description ?? '',
+    });
+    this.bearbeitenOffen.set(true);
+  }
+
+  bearbeitenSchliessen(): void {
+    if (!this.bearbeitenLaedt()) this.bearbeitenOffen.set(false);
+  }
+
+  bearbeitenAbsenden(): void {
+    const a = this.daten();
+    if (!a || this.bearbeitenLaedt()) return;
+    serverFehlerZuruecksetzen(this.bearbeitenForm);
+    this.formularMeldung.set(null);
+    felderAlsBeruehrtMarkieren(this.bearbeitenForm);
+    if (this.bearbeitenForm.invalid) return;
+
+    const v = this.bearbeitenForm.getRawValue();
+    this.bearbeitenLaedt.set(true);
+    this.svc
+      .updateAssembly(a.id, {
+        assembly_number: v.assembly_number.trim(),
+        name: v.name.trim(),
+        unit: v.unit.trim(),
+        internal_name: v.internal_name.trim() || null,
+        description: v.description.trim() || null,
+      })
+      .subscribe({
+        next: (detail) => {
+          this.bearbeitenLaedt.set(false);
+          this.bearbeitenOffen.set(false);
+          this.state.set({ kind: 'ready', data: detail });
+          this.meldung.set({ art: 'erfolg', text: 'Die Stammdaten wurden geändert.' });
+        },
+        error: (err) => {
+          this.bearbeitenLaedt.set(false);
+          this.formularMeldung.set(apiFehlerZuweisen(err, this.bearbeitenForm).formular);
+        },
+      });
+  }
+
+  // ---- Status -------------------------------------------------------------
+  statusUmschalten(): void {
+    const a = this.daten();
+    if (!a || this.statusLaedt()) return;
+    const ziel: StammStatus = a.status === 'AKTIV' ? 'INAKTIV' : 'AKTIV';
+    this.statusLaedt.set(true);
+    this.svc.setAssemblyStatus(a.id, ziel).subscribe({
+      next: (detail) => {
+        this.statusLaedt.set(false);
+        this.state.set({ kind: 'ready', data: detail });
+        this.meldung.set({
+          art: 'erfolg',
+          text:
+            ziel === 'INAKTIV'
+              ? 'Die Leistung ist deaktiviert und steht nicht mehr zur Auswahl. Bestehende Belege bleiben unberührt.'
+              : 'Die Leistung ist wieder aktiv.',
+        });
+      },
+      error: () => {
+        this.statusLaedt.set(false);
+        this.meldung.set({
+          art: 'fehler',
+          text: 'Der Status konnte nicht geändert werden.',
+        });
+      },
+    });
+  }
+
+  // ---- Anzeige ------------------------------------------------------------
   statusLabel(s: StammStatus): string {
     return s === 'AKTIV' ? 'Aktiv' : 'Inaktiv';
   }
@@ -250,5 +493,31 @@ export class LeistungDetail {
 
   kindLabel(k: 'MATERIAL' | 'LOHN'): string {
     return k === 'MATERIAL' ? 'Material' : 'Lohn';
+  }
+
+  /** Betrag als Euro; `null` heisst „unbekannt" und wird nicht als 0 gezeigt. */
+  euro(betrag: string | null): string {
+    if (betrag === null) return '—';
+    return new Intl.NumberFormat('de-DE', {
+      style: 'currency',
+      currency: 'EUR',
+    }).format(Number(betrag));
+  }
+
+  prozent(wert: string | null): string {
+    if (wert === null) return '—';
+    return `${new Intl.NumberFormat('de-DE', { maximumFractionDigits: 1 }).format(
+      Number(wert),
+    )} %`;
+  }
+
+  /** Minuten als „1 h 30 min" — in Stundensätzen denkt niemand in 90 Minuten. */
+  dauer(minuten: string): string {
+    const m = Number(minuten);
+    if (!m) return '—';
+    const std = Math.floor(m / 60);
+    const rest = Math.round((m % 60) * 100) / 100;
+    if (!std) return `${rest} min`;
+    return rest ? `${std} h ${rest} min` : `${std} h`;
   }
 }

@@ -25,7 +25,8 @@
       backLink="/artikel"
       backLabel="Artikel & Leistungen"
       [tabs]="tabs"
-      [(aktiv)]="tab"
+      [aktiv]="tab()"
+      (aktivChange)="tabWechsel($event)"
     >
       <span mappe-kopf class="stamp {{ statusClass(daten()!.status) }}">{{ statusLabel(daten()!.status) }}</span>
       <span mappe-kopf class="stamp stamp--type">je {{ daten()!.unit }}</span>
@@ -45,16 +46,25 @@
         </div>
       }
 
+      <!-- ============================ Stückliste ============================ -->
       @if (tab() === 'stueckliste') {
         @if (darfAendern()) {
           <div class="tab-aktionen">
-            <button type="button" class="btn btn--primary" (click)="posOeffnen()">
+            <button type="button" class="btn btn--primary" [disabled]="listeLaedt()" (click)="posOeffnen()">
               <span aria-hidden="true">＋</span> Position anhängen
             </button>
           </div>
         }
+        <p class="sr-only" role="status">{{ listeLaedt() ? 'Stückliste wird gespeichert' : '' }}</p>
+
         @if (daten()!.components.length === 0) {
-          <div class="tab-platzhalter"><p>Diese Leistung hat noch keine Positionen (Material oder Lohn).</p></div>
+          <div class="tab-platzhalter">
+            <p class="tab-platzhalter__titel">Diese Leistung hat noch keine Positionen</p>
+            <p>
+              Aus Material und Lohn ergibt sich der Preis — solange die Stückliste
+              leer ist, kann die Leistung im Angebot keinen Preis vorschlagen.
+            </p>
+          </div>
         } @else {
           <div class="pos-wrap">
             <table class="pos">
@@ -64,6 +74,9 @@
                   <th scope="col">Art</th>
                   <th scope="col">Bezeichnung</th>
                   <th class="pos__num" scope="col">Menge / Zeit</th>
+                  @if (darfAendern()) {
+                    <th class="pos__akt" scope="col">Aktionen</th>
+                  }
                 </tr>
               </thead>
               <tbody>
@@ -71,8 +84,43 @@
                   <tr>
                     <td class="pos__nr">{{ c.position }}</td>
                     <td><span class="stamp {{ c.kind === 'LOHN' ? 'stamp--positive' : '' }}">{{ kindLabel(c.kind) }}</span></td>
-                    <td>{{ c.description }}</td>
+                    <td>
+                      {{ c.description }}
+                      @if (c.note) {
+                        <span class="pos__notiz">{{ c.note }}</span>
+                      }
+                    </td>
                     <td class="pos__num">{{ menge(c) }}</td>
+                    @if (darfAendern()) {
+                      <td class="pos__akt">
+                        <div class="zeilen-akt">
+                          <button
+                            type="button" class="ikon-btn"
+                            [disabled]="listeLaedt() || istErste(c)"
+                            (click)="posVerschieben(c, -1)"
+                            [attr.aria-label]="'Position ' + c.position + ' nach oben schieben'"
+                          ><span aria-hidden="true">↑</span></button>
+                          <button
+                            type="button" class="ikon-btn"
+                            [disabled]="listeLaedt() || istLetzte(c)"
+                            (click)="posVerschieben(c, 1)"
+                            [attr.aria-label]="'Position ' + c.position + ' nach unten schieben'"
+                          ><span aria-hidden="true">↓</span></button>
+                          <button
+                            type="button" class="btn btn--klein"
+                            [disabled]="listeLaedt()"
+                            (click)="posBearbeiten(c)"
+                            [attr.aria-label]="'Position ' + c.position + ' bearbeiten'"
+                          >Bearbeiten</button>
+                          <button
+                            type="button" class="btn btn--klein btn--gefahr"
+                            [disabled]="listeLaedt()"
+                            (click)="posEntfernen(c)"
+                            [attr.aria-label]="'Position ' + c.position + ' entfernen'"
+                          >Entfernen</button>
+                        </div>
+                      </td>
+                    }
                   </tr>
                 }
               </tbody>
@@ -81,20 +129,179 @@
         }
       }
 
+      <!-- ============================ Kalkulation =========================== -->
+      @if (tab() === 'kalkulation') {
+        @switch (kalk().kind) {
+          @case ('idle') {
+            <p class="lade-hinweis" role="status">Kalkulation wird geladen …</p>
+          }
+          @case ('loading') {
+            <p class="lade-hinweis" role="status">Kalkulation wird geladen …</p>
+          }
+          @case ('error') {
+            <div class="note note--error" role="alert">
+              <h2 class="note__titel">Kalkulation nicht verfügbar</h2>
+              <p class="note__text">Die Preise konnten nicht ermittelt werden.</p>
+              <div class="note__aktionen">
+                <button type="button" class="btn btn--primary" (click)="kalkLaden()">Erneut versuchen</button>
+              </div>
+            </div>
+          }
+          @case ('ready') {
+            @if (!$any(kalk()).data.vollstaendig) {
+              <div class="melde melde--warnung detail__melde" role="status">
+                <span class="melde__mark" aria-hidden="true">!</span>
+                <span class="melde__text">
+                  <strong>Unvollständig:</strong> Mindestens einer Materialposition
+                  fehlt der Verkaufspreis. Die Summe unten lässt diese Positionen
+                  aus und ist deshalb noch kein fertiger Angebotspreis.
+                </span>
+              </div>
+            }
+            @if ($any(kalk()).data.vollstaendig && !$any(kalk()).data.kosten_vollstaendig) {
+              <div class="melde melde--warnung detail__melde" role="status">
+                <span class="melde__mark" aria-hidden="true">!</span>
+                <span class="melde__text">
+                  <strong>Kosten unvollständig:</strong> Für mindestens eine
+                  Position fehlt der Einkaufspreis oder der Kostensatz der
+                  Lohngruppe. Der Verkaufspreis stimmt, die Marge wird deshalb
+                  nicht ausgewiesen — sie wäre zu hoch.
+                </span>
+              </div>
+            }
+
+            <div class="summen">
+              <div class="summe summe--gross">
+                <span class="summe__label">Verkaufspreis je {{ $any(kalk()).data.unit }}</span>
+                <span class="summe__wert">{{ euro($any(kalk()).data.vk_gesamt) }}</span>
+              </div>
+              <div class="summe">
+                <span class="summe__label">Selbstkosten</span>
+                <span class="summe__wert">{{ euro($any(kalk()).data.ek_gesamt) }}</span>
+              </div>
+              <div class="summe">
+                <span class="summe__label">Marge</span>
+                <span class="summe__wert">{{ prozent($any(kalk()).data.marge_prozent) }}</span>
+              </div>
+              <div class="summe">
+                <span class="summe__label">Arbeitszeit</span>
+                <span class="summe__wert">{{ dauer($any(kalk()).data.minuten_gesamt) }}</span>
+              </div>
+            </div>
+
+            <dl class="feld-raster">
+              <div class="feld">
+                <dt class="feld__label">Material (VK)</dt>
+                <dd class="feld__wert">{{ euro($any(kalk()).data.material_vk) }}</dd>
+              </div>
+              <div class="feld">
+                <dt class="feld__label">Lohn (VK)</dt>
+                <dd class="feld__wert">{{ euro($any(kalk()).data.lohn_vk) }}</dd>
+              </div>
+              <div class="feld">
+                <dt class="feld__label">Material (EK)</dt>
+                <dd class="feld__wert">{{ euro($any(kalk()).data.material_ek) }}</dd>
+              </div>
+              <div class="feld">
+                <dt class="feld__label">Lohn (Kosten)</dt>
+                <dd class="feld__wert">{{ euro($any(kalk()).data.lohn_ek) }}</dd>
+              </div>
+              <div class="feld">
+                <dt class="feld__label">Lohnanteil § 35a</dt>
+                <dd class="feld__wert">{{ euro($any(kalk()).data.lohnanteil_vk) }}</dd>
+              </div>
+            </dl>
+
+            @if ($any(kalk()).data.positionen.length) {
+              <div class="pos-wrap">
+                <table class="pos">
+                  <caption class="pos__caption">Woraus sich der Preis ergibt</caption>
+                  <thead>
+                    <tr>
+                      <th class="pos__nr" scope="col">Pos.</th>
+                      <th scope="col">Art</th>
+                      <th scope="col">Bezeichnung</th>
+                      <th class="pos__num" scope="col">Menge / Zeit</th>
+                      <th class="pos__num" scope="col">EK</th>
+                      <th class="pos__num" scope="col">VK</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    @for (p of $any(kalk()).data.positionen; track p.position) {
+                      <tr>
+                        <td class="pos__nr">{{ p.position }}</td>
+                        <td><span class="stamp {{ p.kind === 'LOHN' ? 'stamp--positive' : '' }}">{{ kindLabel(p.kind) }}</span></td>
+                        <td>
+                          {{ p.description }}
+                          @if (p.reference) {
+                            <span class="pos__notiz">{{ p.reference }}</span>
+                          }
+                          @if (p.hinweis && p.vk_summe === null) {
+                            <span class="pos__warn">{{ p.hinweis }}</span>
+                          }
+                        </td>
+                        <td class="pos__num">
+                          @if (p.kind === 'MATERIAL') {
+                            {{ p.quantity }} {{ p.unit }}
+                          } @else {
+                            {{ dauer(p.minutes) }}
+                          }
+                        </td>
+                        <td class="pos__num" [class.pos__num--leer]="p.ek_summe === null">{{ euro(p.ek_summe) }}</td>
+                        <td class="pos__num" [class.pos__num--leer]="p.vk_summe === null">{{ euro(p.vk_summe) }}</td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+              </div>
+            }
+            <p class="kalk-fuss">
+              Material wird über denselben VK-Vorschlag bepreist wie ein einzeln
+              ins Angebot gezogener Artikel — sonst hätte dieselbe Ware zwei
+              Preise. Lohn rechnet mit dem Verrechnungssatz der Lohngruppe; ist
+              deren Kostensatz nicht hinterlegt, gilt für die Kosten ersatzweise
+              derselbe Satz.
+            </p>
+          }
+        }
+      }
+
+      <!-- ============================ Stammdaten ============================ -->
       @if (tab() === 'stammdaten') {
+        @if (darfAendern()) {
+          <div class="tab-aktionen">
+            <button type="button" class="btn btn--primary" (click)="bearbeitenOeffnen()">Bearbeiten</button>
+            <button
+              type="button" class="btn"
+              [disabled]="statusLaedt()" [attr.aria-busy]="statusLaedt()"
+              (click)="statusUmschalten()"
+            >
+              {{ daten()!.status === 'AKTIV' ? 'Deaktivieren' : 'Wieder aktivieren' }}
+            </button>
+          </div>
+        }
         <dl class="feld-raster">
           <div class="feld"><dt class="feld__label">Leistungsnummer</dt><dd class="feld__wert">{{ daten()!.assembly_number }}</dd></div>
+          <div class="feld"><dt class="feld__label">Name</dt><dd class="feld__wert">{{ daten()!.name }}</dd></div>
           <div class="feld"><dt class="feld__label">Einheit</dt><dd class="feld__wert">{{ daten()!.unit }}</dd></div>
+          <div class="feld"><dt class="feld__label">Status</dt><dd class="feld__wert">{{ statusLabel(daten()!.status) }}</dd></div>
           <div class="feld"><dt class="feld__label">Interner Name</dt><dd class="feld__wert" [class.feld__wert--leer]="!daten()!.internal_name">{{ daten()!.internal_name || '—' }}</dd></div>
         </dl>
         @if (daten()!.description) {
           <p class="langtext">{{ daten()!.description }}</p>
         }
+        @if (daten()!.status === 'INAKTIV') {
+          <p class="kalk-fuss">
+            Deaktivierte Leistungen erscheinen nicht mehr in der Auswahl. Gelöscht
+            wird nie: Angebote und Rechnungen verweisen auf die Leistung, aus der
+            ihre Positionen entstanden sind.
+          </p>
+        }
       }
     </app-mappe>
 
-    <!-- ---------------------------- Position anhängen --------------------- -->
-    <app-dialog [offen]="posOffen()" titel="Position anhängen" (schliessen)="posSchliessen()">
+    <!-- ------------------------ Position anlegen/bearbeiten ---------------- -->
+    <app-dialog [offen]="posOffen()" [titel]="posDialogTitel()" (schliessen)="posSchliessen()">
       <form id="pos-form" class="dialog-form" (submit)="$event.preventDefault(); posAbsenden()" novalidate>
         @if (formularMeldung(); as fm) {
           <div class="melde melde--fehler" role="alert">
@@ -152,7 +359,38 @@
       <div dialog-aktionen class="dialog__aktionen">
         <button type="button" class="btn" [disabled]="posLaedt()" (click)="posSchliessen()">Abbrechen</button>
         <button type="submit" form="pos-form" class="btn btn--primary" [disabled]="posLaedt()" [attr.aria-busy]="posLaedt()">
-          {{ posLaedt() ? 'Wird angehängt …' : 'Position anhängen' }}
+          @if (posLaedt()) {
+            Wird gespeichert …
+          } @else if (posZiel() === null) {
+            Position anhängen
+          } @else {
+            Änderung speichern
+          }
+        </button>
+      </div>
+    </app-dialog>
+
+    <!-- ------------------------ Stammdaten bearbeiten ---------------------- -->
+    <app-dialog [offen]="bearbeitenOffen()" titel="Leistung bearbeiten" (schliessen)="bearbeitenSchliessen()">
+      <form id="leistung-bearbeiten-form" class="dialog-form" (submit)="$event.preventDefault(); bearbeitenAbsenden()" novalidate>
+        @if (formularMeldung(); as fm) {
+          <div class="melde melde--fehler" role="alert">
+            <span class="melde__mark" aria-hidden="true">!</span>
+            <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
+          </div>
+        }
+        <app-feld [control]="bearbeitenForm.controls.name" label="Name" [pflicht]="true" hinweis="So steht sie im Angebot." />
+        <div class="dlg-grid">
+          <app-feld [control]="bearbeitenForm.controls.unit" label="Einheit" [pflicht]="true" hinweis="z. B. Stk, m, Pauschal." />
+          <app-feld [control]="bearbeitenForm.controls.assembly_number" label="Leistungsnummer" [pflicht]="true" hinweis="Eindeutig." />
+        </div>
+        <app-feld [control]="bearbeitenForm.controls.internal_name" label="Interne Bezeichnung" hinweis="Optional, nur intern sichtbar." />
+        <app-feld [control]="bearbeitenForm.controls.description" label="Beschreibung" typ="textarea" hinweis="Optional." />
+      </form>
+      <div dialog-aktionen class="dialog__aktionen">
+        <button type="button" class="btn" [disabled]="bearbeitenLaedt()" (click)="bearbeitenSchliessen()">Abbrechen</button>
+        <button type="submit" form="leistung-bearbeiten-form" class="btn btn--primary" [disabled]="bearbeitenLaedt()" [attr.aria-busy]="bearbeitenLaedt()">
+          {{ bearbeitenLaedt() ? 'Wird gespeichert …' : 'Speichern' }}
         </button>
       </div>
     </app-dialog>

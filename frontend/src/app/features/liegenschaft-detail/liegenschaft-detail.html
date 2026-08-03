@@ -534,7 +534,12 @@
             <span class="melde__text"><strong>Fehler:</strong> {{ fm }}</span>
           </div>
         }
-        <app-feld [control]="gebaeudeForm.controls.building_number" label="Gebäudenummer" [pflicht]="true" hinweis="Je Liegenschaft eindeutig." />
+        <app-feld
+          [control]="gebaeudeForm.controls.building_number"
+          label="Gebäudenummer"
+          platzhalter="wird automatisch vergeben"
+          hinweis="Leer lassen genügt. Eigene Nummer möglich — je Liegenschaft eindeutig."
+        />
         <app-feld [control]="gebaeudeForm.controls.name" label="Bezeichnung" hinweis="Optional, z. B. Vorderhaus." />
       </form>
       <div dialog-aktionen class="dialog__aktionen">
@@ -561,7 +566,12 @@
         <!-- Wrapper nur, damit „Speichern und noch eine" den Fokus zurück ins
              Nummernfeld setzen kann (app-feld nimmt keine id entgegen). -->
         <div id="einheit-nummer">
-          <app-feld [control]="einheitForm.controls.unit_number" label="Einheitsnummer" [pflicht]="true" hinweis="Je Liegenschaft eindeutig." />
+          <app-feld
+            [control]="einheitForm.controls.unit_number"
+            label="Einheitsnummer"
+            platzhalter="wird automatisch vergeben"
+            hinweis="Leer lassen genügt. Eigene Nummer möglich — je Liegenschaft eindeutig."
+          />
         </div>
         <app-feld [control]="einheitForm.controls.storey" label="Etage" hinweis="Optional, Freitext — z. B. EG, 3. OG, Souterrain." />
       </form>

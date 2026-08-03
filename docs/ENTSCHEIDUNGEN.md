@@ -596,3 +596,79 @@ steht als `PAUSE_AB_MINUTEN` im Service.
 Richtung: Nur **vollständige** Nachtlücken werden herausgerechnet, was am Rand
 eines Einsatzes tatsächlich über den Feierabend hinausgeht, bleibt stehen. Es
 verschwindet also lieber Überlast in die Sichtbarkeit als aus ihr heraus.
+
+---
+
+## Nummernvergabe: leer heißt automatisch (2026-08-03)
+
+**Anlass** (Sascha): „IDs werden nicht automatisch vergeben. Wenn da 3–5 Leute
+Artikel anlegen, kann das schnell zu Problemen führen. Das gilt für alle
+Bereiche, in denen eine ID angegeben werden soll."
+
+**Bestandsaufnahme.** Sieben Nummernkreise wurden längst von der DB vergeben
+(`OBJ-`, `MA-`, `RES-`, `EB-`, `W-`, `V-/P-/AU-/E-`, `AN-/RE-/GS-`). Vier waren
+Handarbeit geblieben: Artikel-, Leistungs-, Gebäude- und Einheitsnummer.
+
+**Format** (Sascha 2026-08-03): `ART-00001` / `LEI-00001` — sprechendes Präfix,
+fortlaufend, **ohne Jahr**. Artikel und Leistungen sind Stammdaten, keine
+Belege: Sie gehören in keinen GoBD-Belegkreis und leben über Jahre. Muster ist
+deshalb `property.property_number_seq`, nicht `workflow.next_number`.
+Gebäude und Einheiten: schlicht `1, 2, 3` bzw. `01, 02, 03`.
+
+**Warum optional statt Pflicht-weg.** Das Feld bleibt in der Maske und bleibt
+eingebbar; leer heißt „vergib du". Ein verschwundenes Feld hätte sprechende
+Nummern unmöglich gemacht („Hinterhaus", „WE 12 links"), und vor allem: **jeder
+Import gibt seine Nummern selbst vor.** DATANORM schreibt `DN-<Namespace>-<Nr>`,
+IDS ebenso. Ein Zwang zur Automatik hätte die Wiedererkennbarkeit beim nächsten
+Katalogimport zerstört.
+
+**Warum im INSERT und nicht in der Maske.** Ein vorbelegter Vorschlag hätte das
+Rennen nur verschoben: Drei gleichzeitig geöffnete Masken zeigten dieselbe
+Nummer. Die Vergabe passiert deshalb im BEFORE-INSERT-Trigger — im Schreibmoment,
+wo die Nebenläufigkeit tatsächlich entschieden wird.
+
+**Warum Einheiten je Liegenschaft durchzählen und nicht je Gebäude.** A-09
+verlangt `UNIQUE (property_id, unit_number)`. Ein je Gebäude neu startender
+Zähler liefe im zweiten Gebäude sofort in den Constraint. Die Nummernfolge in
+einer Liegenschaft mit zwei Häusern ist also `01, 02, 03, 04` — nicht
+`Haus 1: 01, 02 / Haus 2: 01, 02`.
+
+**Was NICHT automatisiert wurde und warum:** Sachkonto (`4400`) und Kostenstelle
+sind der Kontenrahmen SKR03/04 — da darf keine Software raten. Gewerk-,
+Quellen- und Qualifikations-Codes sind sprechende Kürzel, keine laufenden
+Nummern.
+
+Umsetzung: Migration `0149_automatische_nummernvergabe`.
+
+---
+
+## Die Leistung rechnet sich selbst (2026-08-03)
+
+**Anlass.** Eine Leistung war eine Stückliste ohne Preis. Der Angebots-Editor
+übernahm sie als Pauschalposition mit **leerem** Einzelpreis und der Ansage
+„Bitte Einzelpreis ergänzen". Damit war der Zweck der Stückliste verfehlt: Sie
+soll den Preis *ergeben*, nicht ihn offenlassen.
+
+**Entscheidung.** `GET /assemblies/{id}/kalkulation` rechnet Material und Lohn
+zu einem Einzelpreis je Leistungseinheit zusammen. Material läuft über
+`vk_vorschlag` — **denselben** Weg wie ein einzeln ins Angebot gezogener
+Artikel. Jede zweite Rechenstelle hätte bedeutet: dieselbe Ware, zwei Preise.
+
+**Unvollständigkeit wird ausgesprochen, nicht weggerechnet.** Zwei getrennte
+Flaggen, weil es zwei verschiedene Schäden sind:
+* `vollstaendig = false` — einem Material fehlt der VK. Die Summe ist dann eine
+  Teilsumme und zieht **nicht** als Preis in den Editor ein.
+* `kosten_vollstaendig = false` — ein EK oder ein Lohn-Kostensatz fehlt. Der
+  Verkaufspreis stimmt, aber die **Marge** wird nicht ausgewiesen: Sie wäre zu
+  hoch, und zwar in genau der Zahl, auf die jemand schaut, um zu entscheiden,
+  ob sich ein Auftrag lohnt.
+
+**Der § 35a-Anteil bleibt bewusst offen.** Die Kalkulation kennt ihn je
+Leistungseinheit, aber `labour_net_amount` ist ein Betrag für die ganze Position
+und skaliert nicht mit der Menge mit. Automatisch eingesetzt wäre er ab der
+zweiten Einheit falsch — schlimmer als offen.
+
+**Stückliste ändern = ganze Liste schicken** (`PUT .../components`). Ändern,
+Löschen und Umsortieren laufen über einen Aufruf; die Positionsnummern ergeben
+sich aus der Reihenfolge. Ein Teil-Update einzelner Positionen wäre bei
+umsortierten Nummern nicht eindeutig — dieselbe Überlegung wie bei `update_quote`.

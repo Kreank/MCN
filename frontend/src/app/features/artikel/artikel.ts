@@ -7,7 +7,7 @@ import {
   viewChild,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { RouterLink } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Subject, debounceTime, distinctUntilChanged, map } from 'rxjs';
 import { ArtikelService } from '../../core/artikel.service';
@@ -116,6 +116,7 @@ export class Artikel {
   private readonly partySvc = inject(PartyService);
   private readonly auth = inject(AuthService);
   private readonly fb = inject(FormBuilder);
+  private readonly router = inject(Router);
 
   protected readonly pageSize = 20;
   protected readonly modus = signal<Modus>('artikel');
@@ -169,10 +170,11 @@ export class Artikel {
 
   protected readonly artikelOffen = signal(false);
   protected readonly artikelForm = this.fb.group({
-    article_number: this.fb.control('', {
-      nonNullable: true,
-      validators: [Validators.required],
-    }),
+    // Kein Validators.required: leer heisst „die DB vergibt". Die Nummer wird
+    // erst im Schreibmoment gezogen, deshalb kollidieren gleichzeitige
+    // Erfasser nicht.
+    article_number: this.fb.control('', { nonNullable: true }),
+    gtin: this.fb.control('', { nonNullable: true }),
     description: this.fb.control('', {
       nonNullable: true,
       validators: [Validators.required],
@@ -218,10 +220,9 @@ export class Artikel {
 
   protected readonly leistungOffen = signal(false);
   protected readonly leistungForm = this.fb.group({
-    assembly_number: this.fb.control('', {
-      nonNullable: true,
-      validators: [Validators.required],
-    }),
+    // Siehe artikelForm.article_number: leer heisst „die DB vergibt".
+    assembly_number: this.fb.control('', { nonNullable: true }),
+    internal_name: this.fb.control('', { nonNullable: true }),
     name: this.fb.control('', {
       nonNullable: true,
       validators: [Validators.required],
@@ -397,6 +398,7 @@ export class Artikel {
   private artikelFormLeeren(): void {
     this.artikelForm.reset({
       article_number: '',
+      gtin: '',
       description: '',
       unit: '',
       product_group: '',
@@ -451,7 +453,8 @@ export class Artikel {
 
     const v = this.artikelForm.getRawValue();
     const payload: ArticleIn = {
-      article_number: v.article_number.trim(),
+      article_number: v.article_number.trim() || null,
+      gtin: v.gtin.trim() || null,
       description: v.description.trim(),
       unit: v.unit.trim(),
       line_type: v.line_type,
@@ -546,6 +549,7 @@ export class Artikel {
   leistungOeffnen(): void {
     this.leistungForm.reset({
       assembly_number: '',
+      internal_name: '',
       name: '',
       unit: '',
       description: '',
@@ -568,7 +572,8 @@ export class Artikel {
 
     const v = this.leistungForm.getRawValue();
     const payload: AssemblyIn = {
-      assembly_number: v.assembly_number.trim(),
+      assembly_number: v.assembly_number.trim() || null,
+      internal_name: v.internal_name.trim() || null,
       name: v.name.trim(),
       unit: v.unit.trim(),
       description: v.description.trim() || null,
@@ -579,14 +584,9 @@ export class Artikel {
       next: (a) => {
         this.neuLaedt.set(false);
         this.leistungOffen.set(false);
-        this.meldung.set({
-          art: 'erfolg',
-          text: `Leistung ${a.assembly_number} „${a.name}“ wurde angelegt (ohne Stückliste).`,
-        });
-        this.modus.set('leistungen');
-        this.query.set('');
-        this.page.set(1);
-        this.fetch();
+        // Direkt in die neue Leistung: dort wird die Stückliste gefüllt. Wer in
+        // der Liste landete, musste die eben angelegte Leistung erst wiederfinden.
+        this.router.navigate(['/leistungen', a.id]);
       },
       error: (err) => {
         this.neuLaedt.set(false);
