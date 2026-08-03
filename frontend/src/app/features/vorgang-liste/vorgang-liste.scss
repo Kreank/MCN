@@ -161,69 +161,22 @@
 
 // ============================== Vorgangsliste ===============================
 .rows {
-  list-style: none;
   margin: 0 0 var(--space-5);
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
 }
 .row {
-  background: var(--surface);
-  border: 1px solid var(--line);
   border-left: 3px solid var(--line-strong);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-1);
   transition: border-color 0.15s ease;
 }
-.row:has(.row__link:hover) {
-  border-left-color: var(--accent);
-}
-.row__link {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  min-height: 3.75rem;
-  padding: var(--space-3) var(--space-4);
-  color: inherit;
-  text-decoration: none;
 
-  &:focus-visible {
-    outline: 2.5px solid var(--focus-ring);
-    outline-offset: 2px;
-    border-radius: var(--radius);
-  }
-}
-
-.row__body {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
 .row__title {
   font-size: var(--step-0);
-  font-weight: 600;
-  color: var(--ink);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .row__meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-3);
   font-size: var(--step--1);
   color: var(--ink-muted);
-}
-.row__num {
-  font-family: var(--font-mono);
-  color: var(--ink-faint);
-}
-.row__prop {
-  color: var(--accent-ink);
 }
 .row__ohne {
   color: var(--ink-faint);
@@ -234,60 +187,31 @@
 }
 .row__stamps {
   flex: none;
-  display: flex;
-  flex-wrap: wrap;
   justify-content: flex-end;
-  gap: var(--space-2);
 }
 
 // ============================== Pagination ==================================
-.pager {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-4);
-  padding-top: var(--space-2);
-}
-.pager__pos {
-  font-family: var(--font-mono);
-  font-size: var(--step--1);
-  color: var(--ink-muted);
-}
 
 // ============================== Skelett =====================================
 .row--skeleton {
-  border-left-color: var(--line);
   display: flex;
   align-items: center;
   gap: var(--space-4);
   min-height: 3.75rem;
   padding: var(--space-3) var(--space-4);
 }
-.sk-block {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
 .sk {
-  display: block;
-  border-radius: var(--radius-sm);
-  background: var(--surface-sunken);
   position: relative;
   overflow: hidden;
 }
 .sk--box {
-  flex: none;
   width: 5rem;
-  height: 1.5rem;
 }
 .sk--line {
   width: 38%;
-  height: 1rem;
 }
 .sk--chips {
   width: 16rem;
-  height: 0.85rem;
 }
 @media (prefers-reduced-motion: no-preference) {
   .sk::after {

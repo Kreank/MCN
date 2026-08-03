@@ -2083,3 +2083,177 @@ button {
   height: 100%;
   object-fit: contain;
 }
+
+
+/* ==========================================================================
+   Das Listenmuster: .rows / .row / .sk / .pager
+   --------------------------------------------------------------------------
+   Neunzehn Listen im Produkt zeigen dieselbe Zeile — Beleg, Kontakt, Auftrag,
+   Artikel, Aufgabe, Einsatz … Ihre Stylesheets trugen diese Regeln bis
+   2026-08-03 JEDES FUER SICH, praktisch wortgleich. Das war nicht nur Ballast:
+   Eine Korrektur am Fokusring oder an der Zeilenhoehe musste an neunzehn
+   Stellen nachgezogen werden, und wer eine vergass, hinterliess eine Liste,
+   die sich anders anfuehlt als die daneben.
+
+   Hier steht nur, was ALLE Vorkommen wortgleich hatten — die Schnittmenge,
+   maschinell bestimmt. Alles Eigene (abweichende Zeilenhoehe, zusaetzliche
+   Spalten, Hover-Varianten) bleibt in der jeweiligen Komponente und gewinnt
+   dort ohnehin: Angulars Kapselung haengt ein Attribut an den Selektor und
+   hebt damit seine Spezifitaet ueber die dieser globalen Regeln.
+
+   ZWEI BAUARTEN, und der Unterschied ist wichtig:
+   * `.row` IST der Link — `<a class="row">`. Die Zeile ist als Ganzes anklickbar.
+   * `.row` ist nur die Karte, `.row__link` darin traegt das Flexbild. So bauen
+     Listen, die neben dem Link noch Bedienelemente fuehren (Auswahlkasten,
+     Zuweisen-Knopf): verschachtelt interaktive Elemente waeren mit der Tastatur
+     nicht erreichbar.
+   Deshalb steht hier bei `.row` NUR der Kartenkern (Flaeche, Rahmen, Schatten)
+   und kein `display: flex` — das wuerde der zweiten Bauart doppeltes Innenmass
+   verpassen.
+   ========================================================================== */
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  list-style: none;
+  padding: 0;
+}
+
+.row {
+  background: var(--surface);
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-1);
+}
+
+.row:has(.row__link:hover) {
+  border-left-color: var(--accent);
+}
+
+.row__link {
+  align-items: center;
+  color: inherit;
+  display: flex;
+  gap: var(--space-4);
+  min-height: 3.75rem;
+  padding: var(--space-3) var(--space-4);
+  text-decoration: none;
+  &:focus-visible {
+  outline: 2.5px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--radius);
+  }
+}
+
+.row--skeleton {
+  border-left-color: var(--line);
+}
+
+.row__badge {
+  border-radius: var(--radius);
+  border: 1.5px solid color-mix(in srgb, var(--accent-ink) 45%, var(--line-strong));
+  color: var(--accent-ink);
+  display: grid;
+  flex: none;
+  font-family: var(--font-mono);
+  height: 2.5rem;
+  letter-spacing: 0.06em;
+  place-items: center;
+  width: 2.5rem;
+}
+
+.row__body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.row__meta {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.row__num {
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+}
+
+.row__prop {
+  color: var(--accent-ink);
+}
+
+.row__stamps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.row__sum {
+  color: var(--ink);
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--step-1);
+  font-weight: 600;
+}
+
+.row__title {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.sk {
+  background: var(--surface-sunken);
+  border-radius: var(--radius-sm);
+  display: block;
+}
+
+.sk--badge {
+  border-radius: var(--radius);
+  flex: none;
+  height: 2.5rem;
+  width: 2.5rem;
+}
+
+.sk--box {
+  flex: none;
+  height: 1.5rem;
+}
+
+.sk--chips {
+  height: 0.85rem;
+}
+
+.sk--line {
+  height: 1rem;
+}
+
+.sk--sum {
+  flex: none;
+  height: 1rem;
+}
+
+.sk-block {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: var(--space-2);
+}
+
+.pager {
+  align-items: center;
+  display: flex;
+  gap: var(--space-4);
+  justify-content: center;
+  padding-top: var(--space-2);
+}
+
+.pager__pos {
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+}

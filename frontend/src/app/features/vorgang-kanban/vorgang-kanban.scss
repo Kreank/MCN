@@ -344,14 +344,8 @@
 }
 
 // ================================ Skelett ===================================
-.sk {
-  display: block;
-  border-radius: var(--radius-sm);
-  background: var(--surface-sunken);
-}
 .sk--line {
   width: 60%;
-  height: 1rem;
 }
 .sk--card {
   height: 4rem;
