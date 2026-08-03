@@ -235,7 +235,16 @@ export class AngebotEditor {
   protected readonly state = signal<ViewState>({ kind: 'loading' });
   protected readonly quote = signal<BelegDetail | null>(null);
   private reqId = 0;
-  private quoteId = '';
+  /**
+   * Ein Signal, kein einfaches Feld: `idsQuoteId` weiter unten ist ein
+   * `computed` darüber, und ein computed ohne Signal-Producer friert nach der
+   * ersten Auswertung dauerhaft ein. Bei einem Routenwechsel ohne Neuaufbau
+   * (`/angebote/A` → `/angebote/B` behält dieselbe Instanz) hinge die
+   * IDS-Punchout-Session danach am Fremdschlüssel des VORIGEN Angebots — der
+   * Warenkorb landete im falschen Beleg. Die `paramMap`-Subscription existiert
+   * genau deshalb, weil der Parameter wechseln kann.
+   */
+  private readonly quoteId = signal('');
   /** Belegart aus der Route (data.belegArt); steuert Laden/Speichern/Kopf. */
   protected readonly istRechnung = this.route.snapshot.data['belegArt'] === 'rechnung';
   protected readonly belegWort = this.istRechnung ? 'Rechnung' : 'Angebot';
@@ -712,7 +721,7 @@ export class AngebotEditor {
         this.state.set({ kind: 'error' });
         return;
       }
-      this.quoteId = id;
+      this.quoteId.set(id);
       this.load(id);
     });
 
@@ -800,7 +809,7 @@ export class AngebotEditor {
   }
 
   retry(): void {
-    if (this.quoteId) this.load(this.quoteId);
+    if (this.quoteId()) this.load(this.quoteId());
   }
 
   // ======================= Laden ==========================================
@@ -953,8 +962,8 @@ export class AngebotEditor {
 
   private kalkulationLaden(): void {
     const kalk$ = this.istRechnung
-      ? this.svc.invoiceKalkulation(this.quoteId)
-      : this.svc.kalkulation(this.quoteId);
+      ? this.svc.invoiceKalkulation(this.quoteId())
+      : this.svc.kalkulation(this.quoteId());
     kalk$.subscribe({
       next: (k) => {
         this.kalk.set(k);
@@ -1012,8 +1021,8 @@ export class AngebotEditor {
     const flatUids = this.flatLineUids();
     const rid = ++this.vorschauReq;
     const req$: Observable<BelegVorschau> = this.istRechnung
-      ? this.svc.invoiceVorschau(this.quoteId, payload as InvoiceUpdate)
-      : this.svc.quoteVorschau(this.quoteId, payload as QuoteUpdate);
+      ? this.svc.invoiceVorschau(this.quoteId(), payload as InvoiceUpdate)
+      : this.svc.quoteVorschau(this.quoteId(), payload as QuoteUpdate);
     req$.subscribe({
       next: (v) => {
         if (rid !== this.vorschauReq) return;
@@ -1822,7 +1831,7 @@ export class AngebotEditor {
 
   /** quote_id-Kontext für den Punchout: nur bei einem echten Angebot (die
    * Session-FK zeigt auf invoicing.quote — eine Rechnungs-ID gehört NICHT dahin). */
-  protected readonly idsQuoteId = computed(() => (this.istRechnung ? null : this.quoteId || null));
+  protected readonly idsQuoteId = computed(() => (this.istRechnung ? null : this.quoteId() || null));
 
   /** Die aus dem Händler-Warenkorb zurückgegebenen Positionen als Belegzeilen
    * übernehmen. Der Netto-EK des Händlers wird als Einkaufspreis (`unit_cost`)
@@ -2057,8 +2066,8 @@ export class AngebotEditor {
     this.saving.set(true);
     this.meldung.set(null);
     const speichern$: Observable<BelegDetail> = this.istRechnung
-      ? this.svc.updateInvoice(this.quoteId, this.payloadBauen() as InvoiceUpdate)
-      : this.svc.updateQuote(this.quoteId, this.payloadBauen() as QuoteUpdate);
+      ? this.svc.updateInvoice(this.quoteId(), this.payloadBauen() as InvoiceUpdate)
+      : this.svc.updateQuote(this.quoteId(), this.payloadBauen() as QuoteUpdate);
     speichern$.subscribe({
       next: (data) => {
         this.saving.set(false);
@@ -2098,8 +2107,8 @@ export class AngebotEditor {
     this.versendenLaedt.set(true);
     // Angebot: versenden (→ VERSENDET). Rechnung: veröffentlichen (→ VEROEFFENTLICHT).
     const aktion$: Observable<BelegDetail> = this.istRechnung
-      ? this.svc.publishInvoice(this.quoteId)
-      : this.svc.sendQuote(this.quoteId);
+      ? this.svc.publishInvoice(this.quoteId())
+      : this.svc.sendQuote(this.quoteId());
     aktion$.subscribe({
       next: (data) => {
         this.versendenLaedt.set(false);
@@ -2209,7 +2218,7 @@ export class AngebotEditor {
     const ziel = this.ausgangZiel();
     if (this.ausgangLaedt() || !ziel) return;
     this.ausgangLaedt.set(true);
-    this.svc.setQuoteStatus(this.quoteId, ziel).subscribe({
+    this.svc.setQuoteStatus(this.quoteId(), ziel).subscribe({
       next: (data) => {
         this.ausgangLaedt.set(false);
         this.ausgangOffen.set(false);

@@ -24,7 +24,9 @@
  * Auftrag deshalb VOR: erfasst, terminiert, aber bewusst nicht entschieden.
  */
 import { HttpErrorResponse } from '@angular/common/http';
-import { Component, computed, effect, inject, input, output, signal, viewChild } from '@angular/core';
+import {
+  Component, computed, effect, inject, input, output, signal, untracked, viewChild,
+} from '@angular/core';
 import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { map, startWith } from 'rxjs';
@@ -301,23 +303,42 @@ export class AnrufDialog {
       .subscribe((t) => this.dubletten.set(t));
 
     // Beim Öffnen zurücksetzen und mit dem angeklickten Slot vorbelegen.
+    //
+    // `untracked` ist hier NICHT Kosmetik, sondern der Unterschied zwischen einer
+    // brauchbaren und einer unbrauchbaren Maske. Der Rumpf ruft
+    // `pflichtfelderSynchronisieren()`, das `bereichNoetig()` liest — ein
+    // computed über Objektwahl, Objektart, Notfall und Vorlege-Weg. Ohne
+    // `untracked` wird dieses computed zur ABHÄNGIGKEIT des Effekts: Sobald die
+    // Frage „Verantwortungsbereich nötig?" ihre Antwort wechselt, läuft der
+    // Effekt erneut — und `form.reset()` löscht alles Eingetippte.
+    //
+    // Gemeldet wurde genau das, und es waren zwei Wege in denselben Fehler:
+    // ein bestehendes Objekt wählen (`bestehend` → true) und die Objektart von
+    // „Einfamilienhaus" wegstellen. Beide kippen `bereichNoetig` von false auf
+    // true, beide räumten daraufhin den bereits gewählten Kunden mit ab.
+    //
+    // Gewollt ist eine einzige Abhängigkeit: `offen()`. Alles andere wird beim
+    // Öffnen GELESEN, nicht beobachtet — `oeffnen()` setzt die Vorbelegung
+    // ohnehin, bevor es `offen` auf true stellt.
     effect(() => {
       if (!this.offen()) return;
-      this.formularMeldung.set(null);
-      this.dubletten.set([]);
-      this.vorlegen.set(false);
-      this.form.reset({
-        property_type: 'EINFAMILIENHAUS',
-        priority: 'NORMAL',
-        is_emergency: false,
-        start_datum: this.startDatum(),
-        start_zeit: this.startZeit(),
+      untracked(() => {
+        this.formularMeldung.set(null);
+        this.dubletten.set([]);
+        this.vorlegen.set(false);
+        this.form.reset({
+          property_type: 'EINFAMILIENHAUS',
+          priority: 'NORMAL',
+          is_emergency: false,
+          start_datum: this.startDatum(),
+          start_zeit: this.startZeit(),
+        });
+        // Nach `reset` von Hand: Der Weg steht wieder auf „freigeben", und `reset`
+        // allein räumt die Validatoren des Vorlege-Wegs nicht ab.
+        this.pflichtfelderSynchronisieren();
+        this.gewaehlteMitarbeiter.set([...this.mitarbeiterVorauswahl()]);
+        this.stammdatenLaden();
       });
-      // Nach `reset` von Hand: Der Weg steht wieder auf „freigeben", und `reset`
-      // allein räumt die Validatoren des Vorlege-Wegs nicht ab.
-      this.pflichtfelderSynchronisieren();
-      this.gewaehlteMitarbeiter.set([...this.mitarbeiterVorauswahl()]);
-      this.stammdatenLaden();
     });
   }
 

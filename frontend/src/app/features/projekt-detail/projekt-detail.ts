@@ -99,6 +99,8 @@ export class ProjektDetail {
   protected readonly logState = signal<LazyState<LogEntry>>({ kind: 'idle' });
   protected readonly checklistsState = signal<LazyState<Checklist>>({ kind: 'idle' });
   private reqId = 0;
+  /** Für welches Projekt das Notizfeld befüllt ist — schützt laufende Eingaben. */
+  private notizFuer: string | null = null;
 
   protected readonly tabs: MappeTab[] = [
     { id: 'uebersicht', label: 'Übersicht' },
@@ -487,7 +489,17 @@ export class ProjektDetail {
       next: (data) => {
         if (rid === this.reqId) {
           this.state.set({ kind: 'ready', data });
-          this.notizForm.reset({ internal_note: data.internal_note ?? '' });
+          // Das Notizfeld gehört EINEM Projekt. Ein Nachladen desselben
+          // Projekts darf es nicht überschreiben: Notizfeld und „＋ Vorgang"
+          // stehen auf derselben Seite — wer eine längere Notiz tippt und
+          // dazwischen einen Vorgang anlegt, verlöre sie wortlos, und
+          // `notizGeaendert()` fiele auf false zurück, sodass sogar der
+          // Speichern-Knopf wieder korrekt deaktiviert aussähe.
+          // (Muster `formularFuer` aus `shared/berichte`.)
+          if (this.notizFuer !== data.id) {
+            this.notizFuer = data.id;
+            this.notizForm.reset({ internal_note: data.internal_note ?? '' });
+          }
         }
       },
       error: (err) => {

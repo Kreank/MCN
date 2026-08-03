@@ -64,6 +64,10 @@ export class AnlageDialog {
   protected readonly laedt = signal(false);
   protected readonly formularMeldung = signal<string | null>(null);
 
+  /** Wofür das Formular gerade befüllt ist — schützt laufende Eingaben vor einem
+   *  erneuten Befüllen mit denselben Daten (Muster aus `shared/berichte`). */
+  private formularFuer: string | null = null;
+
   protected readonly bearbeiten = computed(() => this.anlage() !== null);
   protected readonly titel = computed(() =>
     this.bearbeiten() ? 'Anlage bearbeiten' : 'Anlage erfassen',
@@ -107,9 +111,23 @@ export class AnlageDialog {
   constructor() {
     // Beim Öffnen befüllen (bzw. leeren). Ohne dieses Zurücksetzen stünden beim
     // nächsten „Neu" noch die Werte der zuletzt bearbeiteten Anlage im Formular.
+    // Befüllt wird EINMAL je geöffneter Anlage, nicht bei jedem Impuls.
+    //
+    // `anlage()` ist ein berechtigter Auslöser (ein anderer Datensatz gehört ins
+    // Formular), aber ein Nachladen liefert dasselbe Objekt mit neuer Identität.
+    // Ohne diesen Merker würfe das die halb getippte Anlage weg — derselbe
+    // Fehler, der die Anruf-Maske unbenutzbar gemacht hat. Heute löst kein
+    // Aufrufer das aus (beide schließen erst und setzen dann), aber diese
+    // Korrektheit hinge an der Reihenfolge zweier Zeilen in fremden Dateien.
     effect(() => {
-      if (!this.offen()) return;
+      if (!this.offen()) {
+        this.formularFuer = null;
+        return;
+      }
       const a = this.anlage();
+      const schluessel = a?.id ?? '__neu__';
+      if (this.formularFuer === schluessel) return;
+      this.formularFuer = schluessel;
       this.formularMeldung.set(null);
       this.form.reset({
         name: a?.name ?? '',

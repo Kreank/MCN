@@ -1,4 +1,5 @@
 import { Component, computed, inject, signal } from '@angular/core';
+import { toSignal } from '@angular/core/rxjs-interop';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { map } from 'rxjs';
@@ -107,9 +108,17 @@ export class Pruefungen {
   private reqId = 0;
   protected readonly intervallLabel = intervallLabel;
 
-  /** Die gewählte Prüfart — für die Vorschau von Intervall/Vorlauf im Formular. */
+  /** Die gewählte Prüfart — für die Vorschau von Intervall/Vorlauf im Formular.
+   *
+   * `arten()` allein reicht als Producer NICHT: Das computed rechnete dann nur
+   * neu, wenn sich der KATALOG ändert, nicht wenn der Nutzer eine andere Art
+   * wählt — die Vorschau zeigte weiter die Werte der ersten Auswahl. Deshalb
+   * kommt die Auswahl über `toSignal` aus den `valueChanges`. */
+  private readonly artId = toSignal(this.form.controls.inspection_type_id.valueChanges, {
+    initialValue: this.form.controls.inspection_type_id.value,
+  });
   protected readonly gewaehlteArt = computed(() =>
-    this.arten().find((a) => a.id === this.form.controls.inspection_type_id.value),
+    this.arten().find((a) => a.id === this.artId()),
   );
 
   protected readonly liegenschaftSuche: RefSuche = (q) =>

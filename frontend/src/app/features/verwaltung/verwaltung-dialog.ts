@@ -1,4 +1,5 @@
 import { Component, computed, effect, inject, input, output, signal } from '@angular/core';
+import { toSignal } from '@angular/core/rxjs-interop';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { map } from 'rxjs';
 import { VerwaltungService } from '../../core/verwaltung.service';
@@ -111,10 +112,6 @@ export class VerwaltungDialog {
     ),
   );
 
-  protected readonly teilmandat = computed(
-    () => this.form.controls.scope_type.value === 'SELECTED_UNITS',
-  );
-
   protected readonly form = this.fb.group({
     management_party_id: this.fb.control('', {
       nonNullable: true,
@@ -142,6 +139,30 @@ export class VerwaltungDialog {
     responsible_party_id: this.fb.control('', { nonNullable: true }),
     priority: this.fb.control('100', { nonNullable: true }),
   });
+
+  /**
+   * Umfang „ausgewählte Einheiten"? Der Umweg über `toSignal` ist Pflicht.
+   *
+   * Ein `computed`, das nur `this.form.controls.scope_type.value` liest, hat
+   * KEINEN Signal-Producer: Es wird nach der ersten Auswertung nie wieder als
+   * veraltet markiert und behält deren Ergebnis für die Lebensdauer des
+   * Dialogs. Der Effekt weiter unten setzt beim Öffnen `ENTIRE_PROPERTY` —
+   * damit stand hier für immer `false`, und die Einheitenauswahl im Template
+   * (`@if (teilmandat())`) erschien nie.
+   *
+   * Die Folge war eine Sackgasse: Wer den Umfang auf „ausgewählte Einheiten"
+   * stellte, bekam nichts zum Auswählen, und `absenden()` wies ihn dann ab —
+   * „braucht mindestens eine Einheit". Gefragt nach etwas, das die Maske gar
+   * nicht anbot. (Dieselbe Falle wie in `belegung-dialog.ts`, wo der Kommentar
+   * ausdrücklich davor warnt.)
+   *
+   * Deklariert NACH `form`: `toSignal` wertet sofort aus, `computed` erst beim
+   * ersten Lesen — die Reihenfolge der Felder ist hier also nicht beliebig.
+   */
+  private readonly umfang = toSignal(this.form.controls.scope_type.valueChanges, {
+    initialValue: this.form.controls.scope_type.value,
+  });
+  protected readonly teilmandat = computed(() => this.umfang() === 'SELECTED_UNITS');
 
   protected readonly parteiSuche: RefSuche = (q) =>
     this.partySvc

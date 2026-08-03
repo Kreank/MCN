@@ -8,6 +8,7 @@ import {
   inject,
   input,
   signal,
+  untracked,
   viewChild,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
@@ -15,6 +16,7 @@ import { FormControl, ReactiveFormsModule } from '@angular/forms';
 import {
   Observable,
   Subject,
+  Subscription,
   catchError,
   debounceTime,
   distinctUntilChanged,
@@ -110,7 +112,8 @@ export class ReferenzWahl {
   private readonly injector = inject(Injector);
   private readonly sucheInput = viewChild<ElementRef<HTMLInputElement>>('sucheInput');
   private readonly aendernBtn = viewChild<ElementRef<HTMLButtonElement>>('aendernBtn');
-  private valueSub = false;
+  /** Das laufende Abo auf das aktuelle Control — bei einem Tausch abbestellt. */
+  private valueSub?: Subscription;
 
   constructor() {
     this.such$
@@ -132,17 +135,48 @@ export class ReferenzWahl {
         this.aufklappen();
       });
 
-    // Externer Reset (Aufrufer setzt das Control auf '') räumt die Anzeige ab.
+    /**
+     * Externer Reset (Aufrufer setzt das Control auf '') räumt die Anzeige ab —
+     * und ein WECHSEL des Controls wird mitgemacht.
+     *
+     * Die frühere Fassung hatte hier eine einmalige Sperre (`if (valueSub)
+     * return`). Sie verhinderte das Doppelabo, machte den Effekt damit aber
+     * blind für einen Control-Tausch: Das alte Abo lief weiter, das neue
+     * Control wurde nie beobachtet, und der angezeigte Chip blieb auf dem alten
+     * Wert stehen.
+     *
+     * Das ist keine Theorie. Im Eigentümer-Dialog laufen die Zeilen über
+     * `@for (… ; track $index)`: Wer die mittlere Zeile entfernt, bekommt an
+     * ihrem Platz die Gruppe der nächsten Zeile gebunden. Die gewöhnlichen
+     * Felder zogen nach, dieser Chip nicht — im Formular stand „Schulz",
+     * gespeichert wurde Weber. Ein falscher Eigentümer an einer Angabe, für die
+     * das Modul ausdrücklich Quellenpflicht verlangt.
+     *
+     * `untracked` um den Rumpf: Gelesen werden dort `gewaehlt()` und die
+     * Anzeige-Signale, die der Rumpf selbst schreibt — ohne die Kapselung wäre
+     * der Effekt sein eigener Auslöser.
+     */
     effect(() => {
       const c = this.control();
-      if (this.valueSub) return;
-      this.valueSub = true;
-      c.valueChanges.pipe(takeUntilDestroyed(this.destroyRef)).subscribe((v) => {
-        if (!v && this.gewaehlt()) {
+      untracked(() => {
+        this.valueSub?.unsubscribe();
+        // Erst angleichen, dann abonnieren: Der Chip gehört zum ALTEN Control,
+        // wenn seine Id nicht zum Wert des neuen passt.
+        const g = this.gewaehlt();
+        if (g && g.id !== c.value) {
           this.gewaehlt.set(null);
           this.suchtext.set('');
           this.offen.set(false);
         }
+        this.valueSub = c.valueChanges
+          .pipe(takeUntilDestroyed(this.destroyRef))
+          .subscribe((v) => {
+            if (!v && this.gewaehlt()) {
+              this.gewaehlt.set(null);
+              this.suchtext.set('');
+              this.offen.set(false);
+            }
+          });
       });
     });
   }

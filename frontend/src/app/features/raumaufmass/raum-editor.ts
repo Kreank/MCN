@@ -1,4 +1,4 @@
-import { Component, computed, effect, inject, input, output, signal } from '@angular/core';
+import { Component, computed, effect, inject, input, output, signal, untracked } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Feld, FeldOption } from '../../shared/formular/feld';
@@ -164,6 +164,9 @@ export class RaumEditor {
   protected readonly huellen = signal<Huelle[]>([]);
   protected readonly oeffnungen = signal<Oeffnung[]>([]);
   protected readonly aufbauGeaendert = signal(false);
+
+  /** Wofür das Formular befüllt ist — schützt laufende Eingaben (siehe Effekt). */
+  private uebernommenFuer: string | null = null;
   protected readonly speichertRaum = signal(false);
   protected readonly speichertAufbau = signal(false);
   protected readonly raumFehler = signal<string | null>(null);
@@ -240,9 +243,42 @@ export class RaumEditor {
       },
     });
 
+    /**
+     * Den Serverstand übernehmen — aber nicht über laufende Eingaben hinweg.
+     *
+     * Die beiden Blöcke „Schritt 1 · Der Raum" und „Schritt 2 · Aufbau" stehen
+     * gleichzeitig auf der Seite und haben je einen eigenen Speichern-Knopf.
+     * Jedes Speichern meldet den neuen Raum nach oben, die Liste tauscht ihn
+     * aus, und `raum()` bekommt eine neue Identität — der Effekt lief also nach
+     * JEDEM Speichern und schrieb beide Blöcke neu.
+     *
+     * Die Folge war Datenverlust über Kreuz: Wer in Schritt 2 eine Öffnung mit
+     * Maßen anlegt und dann in Schritt 1 „Raum speichern" drückt, verliert die
+     * Öffnung — samt der Marke „Ungespeichert", die ihn hätte warnen können.
+     * Umgekehrt setzte ein „Aufbau speichern" eine korrigierte Raumhöhe stumm
+     * zurück (`emitEvent: false`, also ohne jede Spur).
+     *
+     * Dasselbe Schutzmuster steht im Schwesterpanel `auslegung-panel`: nur
+     * übernehmen, wenn sich der Raum wirklich geändert hat und gerade niemand
+     * tippt. Nach dem EIGENEN Speichern wird gezielt erzwungen (`uebernehmen(r,
+     * true)`), damit Nummer und Fassung nachziehen.
+     */
     effect(() => {
       const r = this.raum();
-      this.uebernehmen(r);
+      // `vorbelegung` gehört in die Abhängigkeiten UND in den Schlüssel: Beim
+      // NEUEN Raum (`raum() === null`) ist sie die einzige Angabe, die sich
+      // ändert — sie trägt die Zuordnung, aus deren Einheiten-Gruppe heraus
+      // „＋ Raum" gedrückt wurde.
+      const v = this.vorbelegung();
+      const schluessel = r
+        ? `raum:${r.id}`
+        : `neu:${v?.building_id ?? ''}|${v?.unit_id ?? ''}`;
+      untracked(() => {
+        if (this.uebernommenFuer === schluessel) return;
+        if (this.form.dirty || this.aufbauGeaendert()) return;
+        this.uebernommenFuer = schluessel;
+        this.uebernehmen(r);
+      });
     });
 
     // L oder B geändert → Flächenvorschlag nachziehen, SOLANGE die Fläche nicht

@@ -1,4 +1,5 @@
 import { Component, computed, inject, signal } from '@angular/core';
+import { toSignal } from '@angular/core/rxjs-interop';
 import { HttpErrorResponse } from '@angular/common/http';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { RouterLink } from '@angular/router';
@@ -83,9 +84,13 @@ export class MeinePersonalakte {
    * sein. Der Hinweistext wechselt entsprechend mit; die Bescheinigung lädt man
    * anschließend weiter unten hoch (§ 5 EFZG).
    */
-  protected readonly istKrankmeldung = computed(
-    () => this.antragForm.controls.absence_type.value === 'KRANKHEIT',
-  );
+  // Über `toSignal`, nicht direkt aus dem Control: Ein `computed`, das nur
+  // `control.value` liest, hat keinen Signal-Producer und friert auf dem Wert
+  // seiner ersten Auswertung ein — hier also auf dem leeren Formular.
+  private readonly antragArt = toSignal(this.antragForm.controls.absence_type.valueChanges, {
+    initialValue: this.antragForm.controls.absence_type.value,
+  });
+  protected readonly istKrankmeldung = computed(() => this.antragArt() === 'KRANKHEIT');
 
   private readonly dateFmt = new Intl.DateTimeFormat('de-DE', {
     day: '2-digit',

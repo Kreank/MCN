@@ -1,4 +1,5 @@
 import { DestroyRef, Component, computed, inject, signal } from '@angular/core';
+import { toSignal } from '@angular/core/rxjs-interop';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { ZeiterfassungService } from '../../core/zeiterfassung.service';
 import { MitarbeiterService } from '../../core/mitarbeiter.service';
@@ -202,11 +203,20 @@ export class Zeiterfassung {
     reason: this.fb.control('', { nonNullable: true, validators: [Validators.required] }),
   });
 
-  /** Der Hinweistext zur gewählten Art (Vorzeichen-Erwartung). */
-  protected readonly artHinweis = computed(() => {
-    const art = this.ausgleichForm.controls.adjustment_type.value;
-    return AUSGLEICHSARTEN.find((a) => a.wert === art)?.hinweis ?? '';
-  });
+  /** Der Hinweistext zur gewählten Art (Vorzeichen-Erwartung).
+   *
+   * Über `toSignal`, nicht direkt aus dem Control: Ein `computed`, das nur
+   * `control.value` liest, hat keinen Signal-Producer und friert auf dem Wert
+   * seiner ersten Auswertung ein — der Hinweis bliebe für immer der der
+   * Startauswahl und sagte damit für jede andere Art das Falsche. Bei einem
+   * Text, der die Vorzeichen-Erwartung erklärt, ist das schlimmer als keiner. */
+  private readonly ausgleichsart = toSignal(
+    this.ausgleichForm.controls.adjustment_type.valueChanges,
+    { initialValue: this.ausgleichForm.controls.adjustment_type.value },
+  );
+  protected readonly artHinweis = computed(
+    () => AUSGLEICHSARTEN.find((a) => a.wert === this.ausgleichsart())?.hinweis ?? '',
+  );
 
   private ausgleicheLaden(): void {
     this.svc.ausgleiche(this.ausgleichEmployeeFilter()).subscribe({

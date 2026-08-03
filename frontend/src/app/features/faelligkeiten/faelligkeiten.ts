@@ -1,4 +1,5 @@
 import { Component, computed, inject, signal } from '@angular/core';
+import { toSignal } from '@angular/core/rxjs-interop';
 import { FormBuilder, ReactiveFormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { AuthService } from '../../core/auth.service';
@@ -112,9 +113,13 @@ export class Faelligkeiten {
    * Zeitraum: der Einsatz landet immer im Rückstand der Plantafel, weil die
    * Fälligkeit niemanden zuweist — und eine Kachel ohne Bahn wäre unsichtbar.
    */
-  protected readonly istTermin = computed(
-    () => this.form.controls.folgeaktion.value === 'TERMIN',
-  );
+  // Über `toSignal`, nicht direkt aus dem Control: Ein `computed`, das nur
+  // `control.value` liest, hat keinen Signal-Producer und friert auf dem Wert
+  // seiner ersten Auswertung ein — die Umschaltung wäre wirkungslos.
+  private readonly folgeaktion = toSignal(this.form.controls.folgeaktion.valueChanges, {
+    initialValue: this.form.controls.folgeaktion.value,
+  });
+  protected readonly istTermin = computed(() => this.folgeaktion() === 'TERMIN');
 
   private reqId = 0;
 

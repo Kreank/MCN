@@ -1,5 +1,5 @@
 import { Component, computed, effect, inject, signal } from '@angular/core';
-import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { map } from 'rxjs';
@@ -255,7 +255,24 @@ export class KontaktDetail {
     title: this.fb.control('', { nonNullable: true }),
   });
 
-  protected readonly ansprechNeu = computed(() => this.ansprechForm.controls.quelle.value === 'neu');
+  /**
+   * „Neue Person anlegen" statt „bestehende wählen"?
+   *
+   * Über `toSignal`, nicht direkt aus dem Control: Ein `computed`, das nur
+   * `control.value` liest, hat KEINEN Signal-Producer — es wird nach der ersten
+   * Auswertung nie wieder als veraltet markiert. Beim Öffnen steht dort
+   * `'bestehend'`, also blieb es für immer `false`.
+   *
+   * Der Weg „neue Person" war dadurch komplett verschlossen: Die Namensfelder
+   * unter `@if (ansprechNeu())` erschienen nicht, und `ansprechAbsenden()` las
+   * denselben eingefrorenen Wert — es verlangte weiter eine ausgewählte Person
+   * und wies das Absenden mit „Pflichtfeld" an genau dem Feld ab, das der
+   * Nutzer bewusst nicht benutzen wollte.
+   */
+  private readonly ansprechQuelle = toSignal(this.ansprechForm.controls.quelle.valueChanges, {
+    initialValue: this.ansprechForm.controls.quelle.value,
+  });
+  protected readonly ansprechNeu = computed(() => this.ansprechQuelle() === 'neu');
 
   constructor() {
     this.notizForm.controls.note.valueChanges
